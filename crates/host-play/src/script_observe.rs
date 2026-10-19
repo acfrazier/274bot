@@ -426,6 +426,7 @@ pub(crate) fn script_observe_cached_with_channels(
             .get_mut(name)
         {
             bot.work_scope = work_scope;
+            bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
         }
         // Only the random-event guardian holds the seat (`SessionHeld`,
         // `28-seat-sg.md:65`; `27-decision-r5.md` §6). Every other frame
@@ -1222,6 +1223,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         let mut navs = navs.lock().unwrap();
                         let bot = navs.entry(name.to_owned()).or_default();
                         bot.work_scope = slot.work_scope();
+                        bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
                         bot.native_permissions = slot.native_walk_permissions();
                         bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
                     }

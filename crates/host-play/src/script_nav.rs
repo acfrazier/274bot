@@ -262,6 +262,7 @@ struct RoutePreflights {
     missing_route: SearchPreflight,
     blocking: SearchPreflight,
     unresolved: SearchPreflight,
+    entrance: SearchPreflight,
 }
 
 fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
@@ -391,6 +392,12 @@ impl RouteSubmission {
             avoid_capacity,
             max_settles,
         })?;
+        let entrance = preflight(SearchRequestShape::EntranceRequirements {
+            target_capacity: candidate_capacity,
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
         let preflights = RoutePreflights {
             single,
             post_bank_single,
@@ -400,6 +407,7 @@ impl RouteSubmission {
             missing_route,
             blocking,
             unresolved,
+            entrance,
         };
 
         let plan_item_rows = preflights
@@ -494,6 +502,13 @@ impl RouteSubmission {
             })
             .ok_or(RouteJobError::Budget)?;
         result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
+        result_bytes = result_bytes.max(preflights.entrance.reservation().result_bytes);
+        result_bytes = result_bytes
+            .checked_add(state.quest_evidence.as_ref().map_or(
+                0,
+                nav::quest_gates::QuestEvidence::owned_provider_bytes,
+            ))
+            .ok_or(RouteJobError::Budget)?;
 
         let mut peak = input_bytes
             .checked_add(result_bytes)
@@ -526,6 +541,7 @@ impl RouteSubmission {
             &preflights.missing_route,
             &preflights.blocking,
             &preflights.unresolved,
+            &preflights.entrance,
         ] {
             include_peak(
                 search
@@ -978,6 +994,7 @@ enum RouteSearchPurpose {
     Blocking,
     Unresolved,
     MissingCarry,
+    Entrance,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1736,6 +1753,19 @@ impl RouteJob {
                 self.preflights.unresolved,
             )
             .map_err(|_| RouteJobError::Search)?,
+            RouteSearchPurpose::Entrance => SearchCursor::new_preflighted(
+                SearchRequest::EntranceRequirements {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.entrance,
+            )
+            .map_err(|_| RouteJobError::Search)?,
         };
         #[cfg(test)]
         route_work_tests::record_search_event(&self.thread_name, self.search_purpose, true);
@@ -1926,6 +1956,16 @@ impl RouteJob {
             (RouteSearchPurpose::MissingCarry, SearchOutcome::MissingItemReqs(missing)) => {
                 self.missing_requirements = missing;
                 self.missing_diag_index = 0;
+                self.prepare_goal_copy(
+                    RouteGoalCopy::Diagnostics,
+                    RouteSearchPurpose::Entrance,
+                )?;
+            }
+            (RouteSearchPurpose::Entrance, SearchOutcome::EntranceRequirements(requirement)) => {
+                if let Some(requirement) = requirement {
+                    self.native_failure = Some(script::native::WalkEnd::Blocked);
+                    self.detail = Some(requirement.to_string());
+                }
                 self.stage = RouteJobStage::Diagnostics;
             }
             _ => return Err(RouteJobError::ResultShape),
@@ -3839,6 +3879,88 @@ impl ScriptRouteExclusions {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct RouteQuestContext {
+    selected: Arc<api::game_data::SelectedGameData>,
+    stamp: EvidenceStamp,
+}
+
+/// Retain only immutable catalog ownership and the observation's actual
+/// causal stamp. Status rows are copied only when a route is requested.
+pub(crate) fn route_quest_context(
+    slot: &script::SlotScript,
+    tick: u64,
+) -> Option<RouteQuestContext> {
+    let api::identity::Scope::Slot(key) = slot.work_scope()? else {
+        return None;
+    };
+    let run = slot.native_run().unwrap_or(api::selected::RunKey {
+        slot: key.incarnation().get(),
+        run: slot.runtime_generation(),
+        session: slot.work_epoch(),
+    });
+    Some(RouteQuestContext {
+        selected: slot.compiled_game_data()?,
+        stamp: EvidenceStamp { run, tick, sequence: tick },
+    })
+}
+
+struct RouteQuestProvider {
+    explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    ordinary: api::quest_progress::QuestListEvidenceProvider,
+}
+
+impl api::quest_progress::EvidenceProvider for RouteQuestProvider {
+    fn test_gate(
+        &self,
+        gate: &api::selected::QuestGate,
+        required_after: EvidenceStamp,
+    ) -> api::selected::Truth {
+        if let Some(explicit) = self.explicit.as_ref() {
+            let truth = explicit.test_gate(gate, required_after);
+            if truth != api::selected::Truth::Unknown {
+                return truth;
+            }
+        }
+        self.ordinary.test_gate(gate, required_after)
+    }
+}
+
+fn captured_route_quests(
+    family: nav::quest_gates::QuestFamilyId,
+    context: Option<&RouteQuestContext>,
+    snapshot: &GameSnapshot,
+    explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    required_after: EvidenceStamp,
+) -> Option<nav::quest_gates::QuestEvidence> {
+    let prepared = context.and_then(|context| {
+        let identity = context.selected.quest_family_identity()?;
+        if nav::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema) != family {
+            return None;
+        }
+        let quests = context.selected.try_quests()?;
+        Some(api::quest_progress::QuestListEvidenceProvider::from_snapshot(
+            &quests,
+            Some(identity),
+            Some(identity),
+            SnapshotView::new(Some(snapshot), context.stamp),
+        ))
+    });
+    if let Some(ordinary) = prepared {
+        let layout = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+            .extend(std::alloc::Layout::new::<RouteQuestProvider>())
+            .ok()?.0.pad_to_align();
+        let bytes = layout.size().checked_add(ordinary.retained_status_bytes())?;
+        let provider = Arc::new(RouteQuestProvider { explicit, ordinary });
+        Some(nav::quest_gates::QuestEvidence::new(provider, family, required_after)
+            .with_owned_provider_bytes(bytes))
+    } else {
+        explicit.map(|provider| {
+            nav::quest_gates::QuestEvidence::new(provider, family, required_after)
+        })
+    }
+}
+
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route, produced by the shared route-work
 /// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
@@ -3849,6 +3971,7 @@ impl ScriptRouteExclusions {
 pub(crate) struct NavBot {
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
+    pub(crate) quest_context: Option<RouteQuestContext>,
     /// Actual compiled-slot identity. None is a fail-closed admission state.
     pub(crate) work_scope: Option<Scope>,
     /// The shared preferences each admission reads the globals from.
@@ -4239,15 +4362,14 @@ impl ScriptWalkArm {
             }
         }
         self.state = Some(route_world_state(snapshot, self.state.take()));
-        if let (Some(provider), Some(family)) = (request.evidence, world.graph.quest_family) {
-            self.state
-                .get_or_insert_with(Default::default)
-                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
-                provider,
-                family,
-                request.required_after,
-            ));
-        }
+        let context = self.navs.lock().unwrap()
+            .get(&self.name).and_then(|bot| bot.quest_context.clone());
+        self.state.as_mut().expect("request state was captured").quest_evidence =
+            world.graph.quest_family.and_then(|family| {
+                captured_route_quests(
+                    family, context.as_ref(), snapshot, request.evidence, request.required_after,
+                )
+            });
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
@@ -4452,20 +4574,15 @@ impl ScriptWalkArm {
             compat_v1: false,
             escape: None,
         };
-        if let (Some(provider), Some(family)) = (
-            request.evidence,
-            self.world
-                .as_ref()
-                .and_then(|world| world.graph.quest_family),
-        ) {
-            self.state
-                .get_or_insert_with(Default::default)
-                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
-                provider,
-                family,
-                request.required_after,
-            ));
-        }
+        let context = self.navs.lock().unwrap()
+            .get(&self.name).and_then(|bot| bot.quest_context.clone());
+        self.state.as_mut().expect("request state was captured").quest_evidence =
+            self.world.as_ref().and_then(|world| world.graph.quest_family)
+                .and_then(|family| {
+                    captured_route_quests(
+                        family, context.as_ref(), snapshot, request.evidence, request.required_after,
+                    )
+                });
         let exclusions = ScriptRouteExclusions {
             cross: request.cross.to_vec(),
             ..Default::default()
@@ -4957,6 +5074,16 @@ impl ScriptWalkArm {
             })
         };
         let mut state = self.state.take();
+        if state.as_ref().is_none_or(|state| state.quest_evidence.is_none()) {
+            if let (Some(snapshot), Some(family)) = (snapshot, world.graph.quest_family) {
+                let context = self.navs.lock().unwrap()
+                    .get(&self.name).and_then(|bot| bot.quest_context.clone());
+                if let Some(context) = context.as_ref() {
+                    state.get_or_insert_with(|| WorldState::from_snapshot(snapshot)).quest_evidence =
+                        captured_route_quests(family, Some(context), snapshot, None, context.stamp);
+                }
+            }
+        }
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
             let state = state.get_or_insert_with(WorldState::empty);
             state.quest_evidence = basis.quest_evidence.clone();
@@ -6324,7 +6451,10 @@ impl NavBot {
                 },
             ))),
             nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
-            nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
+            nav::traveller::TravelOutcome::Blocked { .. }
+            | nav::traveller::TravelOutcome::EntranceRefused { .. } => {
+                Some(script::native::WalkEnd::Blocked)
+            }
             nav::traveller::TravelOutcome::EvidenceUnproven {
                 verdict: Truth::Unknown,
                 unresolved,
@@ -7355,6 +7485,7 @@ mod diagnostic_tests {
                     RouteSearchPurpose::Blocking => "Blocking",
                     RouteSearchPurpose::Unresolved => "Unresolved",
                     RouteSearchPurpose::MissingCarry => "MissingCarry",
+                    RouteSearchPurpose::Entrance => "Entrance",
                 };
                 saw_bank_access |= job.search_purpose == RouteSearchPurpose::BankAccess;
                 saw_post_bank |= job.search_purpose == RouteSearchPurpose::PostBank;

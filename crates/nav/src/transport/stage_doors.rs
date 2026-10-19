@@ -6,6 +6,9 @@ use super::*;
 #[path = "stage_doors_forced.rs"]
 mod forced;
 
+#[path = "stage_doors_keys.rs"]
+mod keys;
+
 // ---------------------------------------------------------------------------
 // Quest-stage and guild doors, and guarded ladders: named openers evaluated
 // per crossing.
@@ -202,6 +205,8 @@ const NON_MOVING_COMMANDS: &[&str] = &[
     "clearbit",
     "clearbit_range",
     "inzone",
+    "db_getfield",
+    "db_getfieldcount",
     // Active-NPC lookups and speech. Spawning, deleting or re-moding an
     // NPC (npc_add/npc_del/npc_setmode) queues AI scripts and is excluded,
     // as is if_close (it runs the closed interface's close trigger).
@@ -297,7 +302,11 @@ struct Block {
 /// The script facts an opener evaluation reads.
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
+    oplocu: HashMap<String, Vec<Option<Block>>>,
+    quest_family: Option<crate::quest_gates::QuestFamilyId>,
+    quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
     labels: HashMap<String, Vec<Option<Block>>>,
+    timers: HashMap<String, Vec<Option<Block>>>,
     /// Proc name → each definition's normalized header parameters + body,
     /// and its parsed body.
     procs: HashMap<String, Vec<ProcDef>>,
@@ -312,14 +321,24 @@ struct Sources {
 }
 
 impl Sources {
-    fn read(content_root: &Path, ids: &HashMap<String, i32>) -> Self {
+    fn read(content_root: &Path, ids: &HashMap<String, i32>, quests: Option<&QuestSource<'_>>) -> Self {
         let mut oplocs: [HashMap<String, Vec<Option<Block>>>; 5] =
             std::array::from_fn(|_| HashMap::new());
+        let mut oplocu: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut labels: HashMap<String, Vec<Option<Block>>> = HashMap::new();
+        let mut timers: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         visit_rs2(&content_root.join("scripts"), &mut |text| {
             for (kind, name, params, body) in header_blocks(text) {
                 let reads_members = body.contains("map_members");
+                if kind == "oplocu" {
+                    oplocu.entry(name).or_default().push(parse_body(&body).map(|body| Block {
+                        params,
+                        body,
+                        reads_members,
+                    }));
+                    continue;
+                }
                 if let Some(option) = oploc_option(&kind).filter(|op| (1..=5).contains(op)) {
                     oplocs[(option - 1) as usize].entry(name).or_default().push(
                         parse_body(&body).map(|body| Block {
@@ -341,6 +360,11 @@ impl Sources {
                                 reads_members,
                             }))
                     }
+                    "timer" => timers.entry(name).or_default().push(parse_body(&body).map(|body| Block {
+                        params,
+                        body,
+                        reads_members,
+                    })),
                     "proc" => procs.entry(name).or_default().push(ProcDef {
                         identity: proc_identity(&params, &body),
                         block: parse_body(&body).map(|body| Block {
@@ -358,7 +382,14 @@ impl Sources {
         let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
             oplocs,
+            quest_family: quests.map(|quests| quests.family),
+            quest_complete: quests.into_iter().flat_map(|quests| &quests.facts.rows)
+                .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
+                .map(|row| (row.varp.clone(), (api::selected::FactKey::new(&row.id), row.complete)))
+                .collect(),
+            oplocu,
             labels,
+            timers,
             procs,
             non_moving: RefCell::new(HashMap::new()),
             constants,
@@ -626,6 +657,10 @@ struct Needs {
     skills: Vec<(i32, i32)>,
     items: Vec<(i32, i32)>,
     worn: Vec<(i32, i32)>,
+    quests: Vec<api::selected::QuestGate>,
+    quest_family: Option<crate::quest_gates::QuestFamilyId>,
+    forbidden_held: Vec<i32>,
+    forbidden_worn: Vec<i32>,
     members: bool,
 }
 
@@ -635,6 +670,10 @@ impl Needs {
         self.skills.extend(other.skills);
         self.items.extend(other.items);
         self.worn.extend(other.worn);
+        self.quests.extend(other.quests);
+        self.quest_family = self.quest_family.or(other.quest_family);
+        self.forbidden_held.extend(other.forbidden_held);
+        self.forbidden_worn.extend(other.forbidden_worn);
         self.members |= other.members;
     }
 }
@@ -685,6 +724,9 @@ enum Val {
     Tool,
     /// A plain script name (synth, obj, category, …) or a string.
     Name(String),
+    /// An observed equipment slot; category tests can prove which IDs must be absent.
+    WornSlot(i32),
+    WornCategory(i32),
     /// A tile relative to the player, for an opener run without a stand
     /// (a ladder climbed from any side): `movecoord(coord, dx, dy, dz)`.
     Rel(i32, i32, i32),
@@ -1020,6 +1062,7 @@ impl Eval<'_> {
             "loc_angle" => Val::Int(self.angle),
             "loc_type" => Val::Loc(LocRef::Itself),
             "loc_shape" | "null" => Val::Opaque,
+            "last_useitem" => env.get(w)?.clone(),
             _ if w.starts_with('$') => env.get(w)?.clone(),
             _ if w.starts_with('^') => Val::Int(*self.src.constants.get(&w[1..])?),
             _ if w.starts_with(['%', '~', '@', '.']) => return None,
@@ -1225,6 +1268,11 @@ impl Eval<'_> {
                         CmpOp::Ne => Cond::known(a != b),
                         _ => Cond::unknown(),
                     },
+                    (Val::Name(a), Val::Name(b)) => match op {
+                        CmpOp::Eq => Cond::known(a == b),
+                        CmpOp::Ne => Cond::known(a != b),
+                        _ => Cond::unknown(),
+                    },
                     _ => Cond::unknown(),
                 }
             }
@@ -1408,9 +1456,10 @@ pub(super) fn stage_door_edges(
     skipped: &mut HashMap<&'static str, usize>,
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
+    quests: Option<&QuestSource<'_>>,
 ) {
-    let src = Sources::read(content_root, ids);
-    forced::forced_move_edges(
+    let src = Sources::read(content_root, ids, quests);
+    let motion_facts = forced::forced_move_edges(
         content_root,
         &src,
         ids,
@@ -1426,6 +1475,7 @@ pub(super) fn stage_door_edges(
     bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
     if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
         bump(skipped, SKIP_STAGE_DOOR_PROCS, 1);
+        motion_facts.entrances(&src, positions, loc_defs, graph, collision, skipped, observable, audit);
         return;
     }
     let facts = loc_config_facts(content_root, ids);
@@ -1598,6 +1648,8 @@ pub(super) fn stage_door_edges(
             bump(skipped, SKIP_STAGE_DOOR_UNOBSERVABLE, 1);
         }
     }
+    keys::key_use_edges(&src, positions, graph, collision, skipped, observable, audit);
+    motion_facts.entrances(&src, positions, loc_defs, graph, collision, skipped, observable, audit);
 }
 
 /// Loc names with an `[oploc…]` block in `ladders+stairs/scripts/
@@ -1647,31 +1699,30 @@ fn gated_edge(
     needs: Needs,
 ) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
-    TransportEdge {
-        kind,
-        player_delta: None,
-        at,
-        to,
-        takeoff: None,
-        loc_id: id,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: max_per_key(&needs.skills),
-        item_req: max_per_key(&needs.items),
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: max_per_key(&needs.varps),
-        worn_req: vec![],
-        worn_all_req: worn
-            .into_iter()
-            .filter(|(_, count)| *count > 0)
-            .map(|(obj, _)| obj)
-            .collect(),
-        members_req: needs.members,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    let quest_gates = (!needs.quests.is_empty()).then(|| crate::quest_gates::QuestGates::new(
+        needs.quest_family.expect("quest predicate carries its family"), needs.quests,
+    ).expect("content-derived complete gates"));
+    TransportEdge { kind,
+    player_delta: None,
+    at,
+    to,
+    takeoff: None,
+    loc_id: id,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: max_per_key(&needs.skills),
+    item_req: max_per_key(&needs.items),
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: max_per_key(&needs.varps),
+    worn_req: vec![], worn_all_req: worn
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(obj, _)| obj)
+        .collect(), forbidden_held: needs.forbidden_held, forbidden_worn: needs.forbidden_worn, members_req: needs.members,
+    wildy_cap: None,
+    quest_gates, }
 }

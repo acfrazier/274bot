@@ -136,6 +136,26 @@ fn load(
     manifest: &[u8],
     family: &[u8],
 ) -> Result<(QuestCatalog, QuestFamilyIdentity), FactError> {
+    let (facts, identity) = verified_identity(pin, manifest, family)?;
+    let catalog = QuestCatalog::from_identity(Some(&facts))?;
+    Ok((catalog, identity))
+}
+
+/// The offline bake consumes identity rows, not a runtime progress catalog.
+/// Keep verification shared with normal worker preparation while avoiding
+/// construction of a catalog that the bake would immediately discard.
+pub(crate) fn for_bake(
+    data: &SelectedGameData,
+) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+    let pin = data.selected_pin()?;
+    verified_identity(&pin, MANIFEST, embedded(pin.revision))
+}
+
+fn verified_identity(
+    pin: &SelectedPin,
+    manifest: &[u8],
+    family: &[u8],
+) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
     let verified =
         family_asset::verify_family(pin, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
     let schema = NonZeroU16::new(verified.schema).ok_or(FactError::Schema {
@@ -143,9 +163,8 @@ fn load(
         actual: verified.schema,
     })?;
     let facts = wire::decode(pin, family)?;
-    let catalog = QuestCatalog::from_identity(Some(&facts))?;
     Ok((
-        catalog,
+        facts,
         QuestFamilyIdentity {
             sha256: verified.sha256,
             schema,

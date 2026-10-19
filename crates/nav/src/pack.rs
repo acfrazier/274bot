@@ -104,13 +104,14 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// teleport caps and the Wilderness-level formula. v11 binds the selected
 /// quest family and appends typed quest-stage gates. v12 appends the zone
 /// table, v13 approach geometry, v14 player-relative landings, v15 consumed
-/// resources and returns, and v16 `worn_all_req` plus optional exact takeoff.
-pub const VERSION: u8 = 16;
+/// resources and returns, v16 `worn_all_req` plus optional exact takeoff,
+/// and v17 observed held/equipment exclusion requirements.
+pub const VERSION: u8 = 17;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities.
 /// A format improvement changes this identity and invalidates staged builds.
-pub const FORMAT_ID: &str = "274V16";
+pub const FORMAT_ID: &str = "274V17";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// High bit of a ladder/stairs kind byte: `to - at` is a player displacement.
@@ -485,6 +486,8 @@ pub fn encode(
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
         write_req_ids(&mut out, &e.worn_all_req);
+        write_req_ids(&mut out, &e.forbidden_held);
+        write_req_ids(&mut out, &e.forbidden_worn);
         out.push(u8::from(e.members_req));
         out.extend_from_slice(&e.wildy_cap.unwrap_or(-1).to_le_bytes());
         write_quest_gates(&mut out, e.quest_gates.as_ref());
@@ -614,6 +617,8 @@ fn encoded_size(
             edge.worn_all_req.len(),
             "conjunctive worn requirements",
         )?;
+        size_ids(&mut edge_size, edge.forbidden_held.len(), "held exclusions")?;
+        size_ids(&mut edge_size, edge.forbidden_worn.len(), "worn exclusions")?;
         edge_size = add_encoded_size(edge_size, 13, "transport takeoff")?;
         size_quest_gates(&mut edge_size, edge.quest_gates.as_ref())?;
         if let Some(takeoff) = edge.takeoff {
@@ -873,64 +878,64 @@ fn decode_pack_body<R: PackRead>(
                 "player-relative landing is only valid for ladders and stairs".into(),
             ));
         }
-        let mut edge = TransportEdge {
-            kind,
-            player_delta: None,
-            at: WorldTile {
-                x: read_i32(&mut r)?,
-                z: read_i32(&mut r)?,
-                level: read_i32(&mut r)?,
-            },
-            to: WorldTile {
-                x: read_i32(&mut r)?,
-                z: read_i32(&mut r)?,
-                level: read_i32(&mut r)?,
-            },
-            loc_id: read_i32(&mut r)?,
-            option: read_i32(&mut r)?,
-            ticks: read_i32(&mut r)?,
-            dir: dir_from_u8(read_u8(&mut r)?)?,
-            open_loc_id: {
-                let id = read_i32(&mut r)?;
-                if id == -1 {
-                    None
-                } else {
-                    Some(id)
-                }
-            },
-            skill_req: read_req_pairs(&mut r)?,
-            item_req: read_req_pairs(&mut r)?,
-            consumed_req: read_req_pairs(&mut r)?,
-            item_returns: read_req_pairs(&mut r)?,
-            quest_req: read_req_strings(&mut r)?,
-            varp_req: read_req_pairs(&mut r)?,
-            worn_req: read_req_ids(&mut r)?,
-            worn_all_req: read_req_ids(&mut r)?,
-            members_req: match read_u8(&mut r)? {
-                0 => false,
-                1 => true,
-                other => {
+        let mut edge = TransportEdge { kind,
+        player_delta: None,
+        at: WorldTile {
+            x: read_i32(&mut r)?,
+            z: read_i32(&mut r)?,
+            level: read_i32(&mut r)?,
+        },
+        to: WorldTile {
+            x: read_i32(&mut r)?,
+            z: read_i32(&mut r)?,
+            level: read_i32(&mut r)?,
+        },
+        loc_id: read_i32(&mut r)?,
+        option: read_i32(&mut r)?,
+        ticks: read_i32(&mut r)?,
+        dir: dir_from_u8(read_u8(&mut r)?)?,
+        open_loc_id: {
+            let id = read_i32(&mut r)?;
+            if id == -1 {
+                None
+            } else {
+                Some(id)
+            }
+        },
+        skill_req: read_req_pairs(&mut r)?,
+        item_req: read_req_pairs(&mut r)?,
+        consumed_req: read_req_pairs(&mut r)?,
+        item_returns: read_req_pairs(&mut r)?,
+        quest_req: read_req_strings(&mut r)?,
+        varp_req: read_req_pairs(&mut r)?,
+        worn_req: read_req_ids(&mut r)?,
+        worn_all_req: read_req_ids(&mut r)?,
+        forbidden_held: read_req_ids(&mut r)?,
+        forbidden_worn: read_req_ids(&mut r)?,
+        members_req: match read_u8(&mut r)? {
+            0 => false,
+            1 => true,
+            other => {
+                return Err(PackError::BadLength(format!(
+                    "members_req flag {other} is not 0 or 1"
+                )));
+            }
+        },
+        wildy_cap: {
+            let cap = read_i32(&mut r)?;
+            if cap < 0 {
+                if cap != -1 {
                     return Err(PackError::BadLength(format!(
-                        "members_req flag {other} is not 0 or 1"
+                        "wildy_cap {cap} is not -1 or a non-negative level"
                     )));
                 }
-            },
-            wildy_cap: {
-                let cap = read_i32(&mut r)?;
-                if cap < 0 {
-                    if cap != -1 {
-                        return Err(PackError::BadLength(format!(
-                            "wildy_cap {cap} is not -1 or a non-negative level"
-                        )));
-                    }
-                    None
-                } else {
-                    Some(cap)
-                }
-            },
-            quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
-            takeoff: None,
-        };
+                None
+            } else {
+                Some(cap)
+            }
+        },
+        quest_gates: read_quest_gates(&mut r, quest_family.as_ref(), &mut keys)?,
+        takeoff: None, };
         edge.takeoff = read_takeoff(&mut r, edge.at)?;
         validate_resource_requirements(&edge)?;
         if player_relative {

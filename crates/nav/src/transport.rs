@@ -194,6 +194,11 @@ pub struct TransportEdge {
     /// Unlike `worn_req`, this cannot be satisfied by an alternative, a
     /// carried item, or a banked item.
     pub worn_all_req: Vec<i32>,
+    /// Each listed obj must be absent from an observed held inventory.
+    pub forbidden_held: Vec<i32>,
+    /// Each listed obj must be absent from observed worn equipment.
+    /// Carried or banked copies do not violate this gate.
+    pub forbidden_worn: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
     /// handler (see `members_guard`): an F2P refusal on its leading path
     /// gates every edge through it; gliders, Zanaris, spirit trees, stage
@@ -405,12 +410,17 @@ impl TransportGraph {
 /// edges and land in [`TransportGraph::teleports`], never in the `at`
 /// index. Rows that do not resolve are counted per reason on stderr, never
 /// faked.
+pub(crate) struct QuestSource<'a> {
+    pub(crate) family: crate::quest_gates::QuestFamilyId,
+    pub(crate) facts: &'a api::game_data::QuestIdentityFacts,
+}
+
 pub fn derive_transports(
     content_root: &Path,
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None).0
 }
 
 /// The graph and accounting for source gates the live snapshot cannot prove.
@@ -420,12 +430,14 @@ pub(crate) fn derive_transports_for_bake(
     collision: &WorldCollision,
     configured_door_ids: &HashSet<i32>,
     parsed_door_configs: &[PathBuf],
+    quests: Option<&QuestSource<'_>>,
 ) -> (TransportGraph, VarpGateAudit) {
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
         loc_defs,
         collision,
         Some((configured_door_ids, parsed_door_configs)),
+        quests,
     );
     report(content_root, &graph, &skipped);
     (graph, audit)
@@ -437,7 +449,7 @@ fn derive_transports_with_skips(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
-    let (graph, skipped, _) = derive_transports_with_audit(content_root, loc_defs, collision, None);
+    let (graph, skipped, _) = derive_transports_with_audit(content_root, loc_defs, collision, None, None);
     (graph, skipped)
 }
 
@@ -446,8 +458,10 @@ fn derive_transports_with_audit(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
+    quests: Option<&QuestSource<'_>>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph::default();
+    graph.quest_family = quests.map(|quests| quests.family);
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
     let mut audit = VarpGateAudit::default();
     let gates = ObservableGates::from_content(content_root);
@@ -578,6 +592,7 @@ fn derive_transports_with_audit(
         &mut skipped,
         &gates,
         &mut audit,
+        quests,
     );
     scripted_climb_edges(
         content_root,
@@ -658,6 +673,8 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
                 &e.varp_req,
                 &e.worn_req,
                 &e.worn_all_req,
+                &e.forbidden_held,
+                &e.forbidden_worn,
                 e.members_req,
                 e.wildy_cap,
             ),

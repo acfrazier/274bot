@@ -1495,6 +1495,7 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         &mut HashMap::new(),
         &ObservableGates::from_content(fx.path()),
         &mut audit,
+        None,
     );
     assert_eq!(
         graph.edges.len(),

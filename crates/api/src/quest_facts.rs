@@ -11,7 +11,7 @@ mod cache;
 mod catalog;
 mod wire;
 
-pub(crate) use cache::{cached, cached_identity, prepare};
+pub(crate) use cache::{cached, cached_identity, for_bake, prepare};
 pub use catalog::{QuestCatalog, QuestFacts, QuestKind, StageFacts, StartLocation, Transmission};
 
 pub const IDENTITY_UNAVAILABLE: &str = "family-unavailable:quest_identity";

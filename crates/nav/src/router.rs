@@ -1476,6 +1476,7 @@ impl SearchRequest {
             | Self::UnresolvedQuestGates { max_settles, .. }
             | Self::EntranceRequirements { max_settles, .. } => *max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
+        }
     }
 }
 

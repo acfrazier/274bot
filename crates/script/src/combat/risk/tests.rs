@@ -1704,29 +1704,25 @@ fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
 }
 
 fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
-    TransportEdge {
-        kind: TransportKind::Ladder,
-        at,
-        to,
-        takeoff: None,
-        player_delta: None,
-        loc_id: 1,
-        option: 1,
-        ticks,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![],
-        item_req: vec![],
-        consumed_req: vec![],
-        item_returns: vec![],
-        quest_req: vec![],
-        varp_req: vec![],
-        worn_req: vec![],
-        worn_all_req: vec![],
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { kind: TransportKind::Ladder,
+    at,
+    to,
+    takeoff: None,
+    player_delta: None,
+    loc_id: 1,
+    option: 1,
+    ticks,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![],
+    item_req: vec![],
+    consumed_req: vec![],
+    item_returns: vec![],
+    quest_req: vec![],
+    varp_req: vec![],
+    worn_req: vec![], worn_all_req: vec![], forbidden_held: Vec::new(), forbidden_worn: Vec::new(), members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 #[test]

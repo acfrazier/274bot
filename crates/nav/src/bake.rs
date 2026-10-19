@@ -1,5 +1,5 @@
 //! Shared world bake: door ids, loc defs, the whole-world collision, the
-//! transport graph, the bank stand table, the v16 pack bytes, the raw flags
+//! transport graph, the bank stand table, the v17 pack bytes, the raw flags
 //! sidecar, the paint-reach sidecar, the static canlight sidecar and the bound
 //! manifest. Both frontends of this logic call
 //! [`bake_world`] — the `nav-pack` developer CLI and the application build
@@ -1345,12 +1345,29 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
+    let selected = request.revision.map(|revision| {
+        let revision = match revision {
+            274 => api::selected::ClientRevision::R274,
+            289 => api::selected::ClientRevision::R289,
+            other => return Err(format!("unsupported quest-family revision {other}")),
+        };
+        let data = api::game_data::for_revision(revision)?;
+        data.quest_identity_for_bake()
+            .map_err(|error| format!("quest family: {error:?}"))
+    }).transpose()?;
+    let quest_source = selected.as_ref().map(|(facts, identity)| {
+        crate::transport::QuestSource {
+            family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+            facts,
+        }
+    });
     let (mut graph, audit) = derive_transports_for_bake(
         content_root,
         &loc_defs,
         &collision,
         &door_ids,
         &parsed_door_configs,
+        quest_source.as_ref(),
     );
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph)?;

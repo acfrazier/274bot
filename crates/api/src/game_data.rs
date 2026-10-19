@@ -1551,6 +1551,15 @@ impl SelectedGameData {
         }))
     }
 
+    /// Verify and decode the immutable quest identity artifact for an offline
+    /// navigation bake. Never call this on a pump or tick; runtime preparation
+    /// uses `prepare_quests` and cache-only accessors instead.
+    pub fn quest_identity_for_bake(
+        &self,
+    ) -> Result<(QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+        crate::quest_facts::for_bake(self)
+    }
+
     /// Verify and prepare the selected identity-only quest family off-pump.
     pub fn prepare_quests(
         &self,

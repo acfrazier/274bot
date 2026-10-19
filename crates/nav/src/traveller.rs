@@ -150,6 +150,12 @@ pub enum TravelOutcome {
         verdict: api::selected::Truth,
         unresolved: std::sync::Arc<[api::selected::QuestGate]>,
     },
+    /// A live content exclusion failed before the transport send.
+    EntranceRefused {
+        at: WorldTile,
+        leg: usize,
+        requirement: crate::world_state::EntranceRequirement,
+    },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
 }
@@ -1134,9 +1140,9 @@ impl FollowRun {
         }
     }
 
-    /// Recheck worn-all equipment and quest-stage evidence before a
-    /// transport interaction is sent. A missing equipment prerequisite
-    /// blocks without attempting to wear or fetch it.
+    /// Recheck worn-all equipment, content exclusions and quest evidence
+    /// before a transport send. This never changes the player's equipment
+    /// or deposits an excluded item.
     fn check_transport_gate(
         &self,
         edge: &TransportEdge,
@@ -1144,6 +1150,15 @@ impl FollowRun {
         snapshot: &GameSnapshot,
         evidence: Option<&crate::quest_gates::QuestEvidence>,
     ) -> Option<TravelOutcome> {
+        if let Some(requirement) =
+            crate::world_state::WorldState::snapshot_exclusion_failure(edge, snapshot)
+        {
+            return Some(TravelOutcome::EntranceRefused {
+                at,
+                leg: self.leg_index,
+                requirement,
+            });
+        }
         if let Some(missing) = edge.worn_all_req.iter().find(|&&id| {
             !snapshot
                 .equipment()

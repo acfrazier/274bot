@@ -37,37 +37,33 @@ fn client() -> Client {
 /// 10 coins, plus one requirement of each other kind so the gating
 /// test covers all five vectors.
 fn gated_edge() -> TransportEdge {
-    TransportEdge {
-        takeoff: None,
-        worn_all_req: Vec::new(),
-        kind: TransportKind::Door,
-        player_delta: None,
-        at: WorldTile {
-            x: 3268,
-            z: 3227,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 3269,
-            z: 3227,
-            level: 0,
-        },
-        loc_id: 2882,
-        option: 1,
-        ticks: 1,
-        dir: None,
-        open_loc_id: None,
-        skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
-        item_req: vec![],
-        consumed_req: vec![(995, 10)], // the 10-coin toll
-        item_returns: vec![],
-        quest_req: vec!["Rune Mysteries".to_string()],
-        varp_req: vec![(150, 160)], // Grand Tree complete
-        worn_req: vec![1712],       // a charged glory
-        members_req: false,
-        wildy_cap: None,
-        quest_gates: None,
-    }
+    TransportEdge { takeoff: None, worn_all_req: Vec::new(), forbidden_held: Vec::new(), forbidden_worn: Vec::new(), kind: TransportKind::Door,
+    player_delta: None,
+    at: WorldTile {
+        x: 3268,
+        z: 3227,
+        level: 0,
+    },
+    to: WorldTile {
+        x: 3269,
+        z: 3227,
+        level: 0,
+    },
+    loc_id: 2882,
+    option: 1,
+    ticks: 1,
+    dir: None,
+    open_loc_id: None,
+    skill_req: vec![(6, 25)], // Magic 25 (spell teleports)
+    item_req: vec![],
+    consumed_req: vec![(995, 10)], // the 10-coin toll
+    item_returns: vec![],
+    quest_req: vec!["Rune Mysteries".to_string()],
+    varp_req: vec![(150, 160)], // Grand Tree complete
+    worn_req: vec![1712],       // a charged glory
+    members_req: false,
+    wildy_cap: None,
+    quest_gates: None, }
 }
 
 #[test]
@@ -418,6 +414,69 @@ fn worn_all_req_requires_every_item_to_be_equipped() {
     assert!(!state.allows(&edge), "one equipped piece is not enough");
     state.worn.insert(1321);
     assert!(state.allows(&edge), "every listed piece is now equipped");
+}
+
+#[test]
+fn exclusions_require_observed_absence_and_name_the_actual_item_and_entrance() {
+    let mut edge = gated_edge();
+    edge.skill_req.clear();
+    edge.item_req.clear();
+    edge.consumed_req.clear();
+    edge.quest_req.clear();
+    edge.varp_req.clear();
+    edge.worn_req.clear();
+    let mut state = WorldState::empty();
+    assert!(state.allows(&edge), "an ungated edge needs no observation");
+
+    edge.forbidden_held = vec![1842];
+    assert_eq!(
+        state.exclusion_failure(&edge),
+        Some(EntranceRequirement::InventoryNotObserved { at: edge.at })
+    );
+    state.inventory_ready = true;
+    assert!(state.allows(&edge), "observed empty inventory proves absence");
+    state.inv.insert(1842, 0);
+    assert!(state.allows(&edge), "zero is not a held item");
+    state.inv.insert(1842, 1);
+    assert_eq!(
+        state.exclusion_failure(&edge),
+        Some(EntranceRequirement::ForbiddenHeld { id: 1842, at: edge.at })
+    );
+    assert!(!state.allows(&edge));
+    assert!(!state.allows_without_carry_worn(&edge), "BankBudget cannot remove an exclusion");
+    state.inv.clear();
+
+    edge.forbidden_worn = vec![1277];
+    assert_eq!(
+        state.exclusion_failure(&edge),
+        Some(EntranceRequirement::EquipmentNotObserved { at: edge.at })
+    );
+    state.equipment_ready = true;
+    state.inv.insert(1277, 1);
+    assert!(state.allows(&edge), "carried gear is not worn gear");
+    state.worn.insert(1277);
+    assert_eq!(
+        state.exclusion_failure(&edge),
+        Some(EntranceRequirement::ForbiddenWorn { id: 1277, at: edge.at })
+    );
+    assert!(!state.allows(&edge));
+    state.worn.clear();
+    assert!(state.allows(&edge));
+}
+
+#[test]
+fn empty_observed_inventory_and_equipment_are_not_unknown() {
+    let mut snapshot = GameSnapshot::default();
+    let unknown = WorldState::from_snapshot(&snapshot);
+    assert!(!unknown.inventory_ready);
+    assert!(!unknown.equipment_ready);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    let observed = WorldState::from_snapshot(&snapshot);
+    assert!(observed.inventory_ready);
+    assert!(observed.equipment_ready);
+    assert!(observed.inv.is_empty());
+    assert!(observed.worn.is_empty());
 }
 
 #[test]

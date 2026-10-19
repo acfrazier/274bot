@@ -4,6 +4,9 @@ use super::super::rs2_syntax::ArithmeticOp;
 use super::*;
 use api::query::loc_approach::LocApproach;
 
+#[path = "stage_doors_entrances.rs"]
+mod entrances;
+
 pub(super) const ENGINE_FORCED_PROCS: &str = include_str!("engine_forced_procs.rs2");
 const SKIP_FORCED_CONFLICT: &str =
     "forced-move loc handler or configuration is ambiguous or unparsed";
@@ -15,6 +18,7 @@ const SKIP_FORCED_UNOBSERVABLE: &str = "forced-move trajectory reads an unobserv
 struct Facts {
     locs: HashMap<i32, Option<LocFacts>>,
     objects: HashMap<(i32, String), Option<Val>>,
+    categories: HashMap<i32, Option<String>>,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -96,6 +100,8 @@ impl Facts {
                 let line = raw.split("//").next().unwrap_or("").trim();
                 if let Some(name) = config_header(line) {
                     id = src.objs.get(name).copied();
+                } else if let (Some(id), Some(category)) = (id, line.strip_prefix("category=")) {
+                    insert_fact(&mut facts.categories, id, Some(category.trim().to_owned()));
                 } else if let (Some(id), Some((key, value))) = (
                     id,
                     line.strip_prefix("param=").and_then(|p| p.split_once(',')),
@@ -283,6 +289,9 @@ enum End {
 
 fn has_requirement(needs: &Needs) -> bool {
     needs.members
+        || !needs.quests.is_empty()
+        || !needs.forbidden_held.is_empty()
+        || !needs.forbidden_worn.is_empty()
         || needs
             .skills
             .iter()
@@ -318,11 +327,20 @@ struct Motion<'a> {
     moved: bool,
     ticks: i32,
     gate_read: bool,
+    entrance: Option<entrances::Inputs<'a>>,
+    returned: Option<Val>,
+    timer: Option<&'a str>,
 }
 
 impl Motion<'_> {
     fn run(&mut self, body: &[Stmt], env: &mut Env) -> End {
-        for stmt in body {
+        for (index, stmt) in body.iter().enumerate() {
+            if self.entrance.is_some() && self.moved
+                && matches!(stmt, Stmt::If(..) | Stmt::Assign(..))
+                && body[index..].iter().all(|stmt| self.base.src.certified(stmt))
+            {
+                return End::Continue;
+            }
             let end = self.statement(stmt, env);
             if end != End::Continue {
                 return end;
@@ -336,7 +354,8 @@ impl Motion<'_> {
             Stmt::Block(body) => self.run(body, env),
             Stmt::Return(calls) if calls.is_empty() => End::Return,
             Stmt::ReturnValue(value) => {
-                if self.value(value, env).is_some() {
+                if let Some(value) = self.value(value, env) {
+                    self.returned = Some(value);
                     End::Return
                 } else {
                     End::Refused
@@ -363,6 +382,9 @@ impl Motion<'_> {
                 }
             }
             Stmt::If(arms, other) => {
+                if self.entrance.is_some() && entrances::preserves_completion(stmt, self.base.src) {
+                    return End::Continue;
+                }
                 // Cosmetic-only branches cannot gate the trajectory.
                 if arms
                     .iter()
@@ -380,6 +402,9 @@ impl Motion<'_> {
                     match cond.value {
                         Some(true) => return self.run(body, env),
                         Some(false) => {}
+                        None if self.entrance.is_some()
+                            && body.iter().all(|stmt| matches!(stmt, Stmt::Return(calls) if calls.is_empty()))
+                            && self.base.src.certified(stmt) => {}
                         None => return End::Refused,
                     }
                 }
@@ -450,6 +475,11 @@ impl Motion<'_> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], env: &Env) -> End {
+        if self.entrance.is_some() {
+            if let Some(end) = self.entrance_call(name, args, env) {
+                return end;
+            }
+        }
         let result = match name {
             "~forcemove" if self.proofs.contains("forcemove") => match args {
                 [dest] => self.value(dest, env).and_then(|value| match value {
@@ -548,7 +578,7 @@ impl Motion<'_> {
             },
             "p_teleport" | "p_telejump" => match args {
                 [dest] => self.value(dest, env).and_then(|value| match value {
-                    Val::Coord(to) => self.relocate(to),
+                    Val::Coord(to) => self.relocate(to).map(|()| self.moved = true),
                     _ => None,
                 }),
                 _ => None,
@@ -603,7 +633,7 @@ impl Motion<'_> {
             }
         }
         matches!(stmt, Stmt::Call(name, _) if matches!(name.as_str(),
-            "mes" | "anim" | "sound_synth" | "facesquare" | "loc_anim" |
+            "mes" | "say" | "npc_say" | "anim" | "sound_synth" | "facesquare" | "loc_anim" |
             "spotanim" | "spotanim_map" | "stat_advance" | "p_stopaction")
             && self.base.src.certified(stmt))
     }
@@ -618,6 +648,11 @@ impl Motion<'_> {
     }
 
     fn value(&mut self, expr: &Expr, env: &Env) -> Option<Val> {
+        if self.entrance.is_some() {
+            if let Some(value) = self.entrance_value(expr, env) {
+                return value;
+            }
+        }
         match expr {
             Expr::Arithmetic(op, a, b) => {
                 let (Val::Int(a), Val::Int(b)) = (self.value(a, env)?, self.value(b, env)?) else {
@@ -787,6 +822,11 @@ impl Motion<'_> {
                 }
             }
             Expr::Cmp(op, lhs, rhs) => {
+                if self.entrance.is_some() {
+                    if let Some(condition) = self.entrance_compare(*op, lhs, rhs, env) {
+                        return condition;
+                    }
+                }
                 let Some(right) = self.value(rhs, env) else {
                     return Cond::unknown();
                 };
@@ -862,6 +902,24 @@ impl Motion<'_> {
     }
 }
 
+pub(super) struct MotionFacts {
+    facts: Facts,
+    proofs: HashSet<String>,
+    supported: HashSet<String>,
+    selectors: HashMap<String, Vec<Tool>>,
+}
+
+impl MotionFacts {
+    #[expect(clippy::too_many_arguments, reason = "shares the stage-door bake inputs")]
+    pub(super) fn entrances(&self, src: &Sources, positions: &HashMap<i32, Vec<Placement>>,
+        defs: &LocDefs, graph: &mut TransportGraph, collision: &WorldCollision,
+        skipped: &mut HashMap<&'static str, usize>, observable: &ObservableGates, audit: &mut VarpGateAudit,
+    ) {
+        entrances::edges(src, positions, defs, graph, collision, skipped, observable, audit,
+            &self.facts, &self.proofs, &self.supported, &self.selectors);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn forced_move_edges(
     root: &Path,
@@ -874,7 +932,7 @@ pub(super) fn forced_move_edges(
     skipped: &mut HashMap<&'static str, usize>,
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
-) {
+) -> MotionFacts {
     let facts = Facts::read(root, src);
     let proofs = movement_proofs(src);
     let supported = src.supported_procs().0;
@@ -1023,6 +1081,9 @@ pub(super) fn forced_move_edges(
                                 moved: false,
                                 ticks: 1,
                                 gate_read: false,
+                                entrance: None,
+                                returned: None,
+                                timer: None,
                             };
                             let mut env = Env::new();
                             if motion.run(&handler.body, &mut env) == End::Refused
@@ -1062,4 +1123,5 @@ pub(super) fn forced_move_edges(
             }
         }
     }
+    MotionFacts { facts, proofs, supported, selectors }
 }

@@ -450,6 +450,7 @@ fn terminal_at(outcome: &nav::traveller::TravelOutcome) -> WorldTile {
         | TravelOutcome::Refused { at, .. }
         | TravelOutcome::Blocked { at, .. }
         | TravelOutcome::EvidenceUnproven { at, .. }
+        | TravelOutcome::EntranceRefused { at, .. }
         | TravelOutcome::GaveUp { at, .. } => *at,
     }
 }
@@ -486,6 +487,9 @@ impl fmt::Display for TerminalReason<'_> {
             TravelOutcome::Blocked { .. } => f.write_str("Blocked"),
             TravelOutcome::EvidenceUnproven { verdict, .. } => {
                 write!(f, "EvidenceUnproven({verdict:?})")
+            }
+            TravelOutcome::EntranceRefused { requirement, .. } => {
+                write!(f, "EntranceRefused({requirement})")
             }
             TravelOutcome::GaveUp { .. } => f.write_str("GaveUp"),
         }

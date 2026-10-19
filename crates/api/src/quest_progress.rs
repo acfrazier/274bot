@@ -158,6 +158,12 @@ impl QuestListEvidenceProvider {
             statuses,
         }
     }
+
+    /// Owned status storage; canonical quest-key strings are shared with the
+    /// prepared catalog, whose owner already retains them.
+    pub fn retained_status_bytes(&self) -> usize {
+        self.statuses.capacity() * std::mem::size_of::<QuestListStatusEvidence>()
+    }
 }
 
 impl EvidenceProvider for QuestListEvidenceProvider {
