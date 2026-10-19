@@ -474,15 +474,14 @@ mod tests {
         assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
 
         // A file an older build (or the other frontend's process) wrote.
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
+        vault::write_private_file(&path, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
         preferences.reload().unwrap();
         let migrated = WalkGlobals::read(&preferences).unwrap();
         assert_eq!(migrated.danger_level(), DangerLevel::WhenSurvivable);
         assert!(migrated.survivable_routing);
         assert_eq!(migrated.effective_danger_level(), DangerLevel::Never);
 
-        std::fs::write(&path, b"{malformed").unwrap();
+        vault::write_private_file(&path, b"{malformed").unwrap();
         assert!(preferences.reload().is_err());
         assert!(WalkGlobals::read(&preferences).is_err());
         assert_eq!(

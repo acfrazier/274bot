@@ -415,7 +415,8 @@ fn drop_coins_from_hint(path: &Path) -> Result<(String, String), String> {
     }
     document["rows"] = serde_json::json!(kept);
     let after = serde_json::to_string(&document).expect("encode the edited hint");
-    std::fs::write(path, &after).map_err(|error| format!("write {}: {error}", path.display()))?;
+    vault::write_private_file(path, after.as_bytes())
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
     Ok((before, after))
 }
 
