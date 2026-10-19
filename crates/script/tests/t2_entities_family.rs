@@ -10,9 +10,7 @@ fn entity<'a>(
     index: i32,
     id: i32,
     name: Option<&'a str>,
-    x: i32,
-    z: i32,
-    level: i32,
+    (x, z, level): (i32, i32, i32),
     distance: i32,
     actions: &'a [String],
 ) -> SceneEntityInput<'a> {
@@ -407,7 +405,7 @@ fn query_batch_tick(iso: &LoadIsolate, tick: u64, iterations: u32) -> serde_json
         .unwrap();
     let mut snapshot = empty_snapshot(tick);
     let actions = ["Attack".to_string()];
-    let npcs = [entity(1, 9, Some("Goblin"), 3201, 3201, 0, 1, &actions)];
+    let npcs = [entity(1, 9, Some("Goblin"), (3201, 3201, 0), 1, &actions)];
     snapshot.npcs = &npcs;
     iso.post_snapshot(encode_snapshot(&snapshot));
     iso.on_game_tick(tick);
@@ -441,7 +439,7 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     ];
     let player_actions = ["hidden".to_string(), "Trade".to_string()];
     let ground_actions = ["hidden".to_string(), "Take".to_string()];
-    let mut npc = entity(7, 9, Some("Goblin"), 3201, 3202, 0, 1, &npc_actions);
+    let mut npc = entity(7, 9, Some("Goblin"), (3201, 3202, 0), 1, &npc_actions);
     npc.in_combat = true;
     npc.health = 5;
     npc.max_health = 10;
@@ -451,12 +449,19 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     npc.size = 2;
     npc.nx = 3199;
     npc.nz = 3200;
-    let mut other_npc = entity(8, 10, Some("Goblin"), 3202, 3201, 1, 2, &npc_actions);
+    let mut other_npc = entity(8, 10, Some("Goblin"), (3202, 3201, 1), 2, &npc_actions);
     other_npc.target_kind = 2;
     other_npc.target_index = 3;
     let npcs = [npc, other_npc];
-    let locs = [entity(1, 100, Some("Door"), 3200, 3201, 0, 1, &loc_actions)];
-    let mut player = entity(2, 20, Some("alice"), 3202, 3202, 0, 2, &player_actions);
+    let locs = [entity(
+        1,
+        100,
+        Some("Door"),
+        (3200, 3201, 0),
+        1,
+        &loc_actions,
+    )];
+    let mut player = entity(2, 20, Some("alice"), (3202, 3202, 0), 2, &player_actions);
     player.in_combat = true;
     player.combat_level = 42;
     player.target_kind = 2;
@@ -466,9 +471,7 @@ fn complete_entities_and_query_contract_on_served_isolates() {
         3,
         200,
         Some("Bones"),
-        3200,
-        3202,
-        0,
+        (3200, 3202, 0),
         2,
         &ground_actions,
     )];
