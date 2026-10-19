@@ -45,6 +45,8 @@ mod distance;
 mod fire_v8;
 mod gather_methods_v8;
 #[cfg(feature = "load")]
+mod gathering_v8;
+#[cfg(feature = "load")]
 mod hunt_v8;
 #[cfg(feature = "load")]
 mod isolate;
@@ -76,6 +78,8 @@ mod recovery_hints_v8;
 #[cfg(feature = "load")]
 mod run_policy_v8;
 #[cfg(feature = "load")]
+mod rune_routes_v8;
+#[cfg(feature = "load")]
 mod runtime_bridge;
 #[cfg(feature = "load")]
 mod scene_v8;
@@ -83,6 +87,8 @@ mod selected_facts_v8;
 mod shape;
 #[cfg(feature = "load")]
 mod shop_ops_v8;
+#[cfg(feature = "load")]
+mod skills_v8;
 #[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;

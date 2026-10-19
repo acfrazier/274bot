@@ -412,6 +412,28 @@ import { Paint } from '*paint/Paint.js';
 import { Input } from '*input/Input.js';
 import type { PaintState } from '*paint/paintLogic.js';
 import { GameMessages } from '*api/chatbox/gameMessages.js';
+import {
+    DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare,
+    locationOptions, boothFields, resolveGatheringLocation,
+} from '@rs2b0t/api';
+import Tile from '*geometry/Tile.js';
+import type { GatheringLocation } from '*shim/gathering_locations.js';
+const gatherTile = new Tile(3200, 3200, 0);
+const gatherRows = [{ name: 'Camp', spot: gatherTile, bankStand: gatherTile, verified: true, marker: 7 as const }];
+const gatherShape: GatheringLocation = gatherRows[0];
+const gatherName: 'Bank booth' = DEFAULT_BOOTH_NAME;
+const gatherOp: 'Use-quickly' = DEFAULT_BOOTH_OP;
+const gatherChunk: 64 = MAP_SQUARE;
+const gatherSame: boolean = sameMapSquare(gatherTile, gatherTile);
+const gatherOptions: string[] = locationOptions(gatherRows);
+const gatherBooth: { boothName: string; boothOp: string } = boothFields(gatherShape);
+const gatherChosen: 7 | undefined = resolveGatheringLocation('Auto', gatherTile, gatherRows)?.marker;
+// @ts-expect-error A location table is not a string.
+locationOptions('Camp');
+// @ts-expect-error Generic caller-row identity must not become any.
+const wrongGatherMarker: string = resolveGatheringLocation('Auto', gatherTile, gatherRows)!.marker;
+// @ts-expect-error Both world-tile coordinates are required by the frozen signature.
+sameMapSquare({}, gatherTile);
 function onPaint(ctx: CanvasRenderingContext2D): void {
     const frame = Paint.begin(ctx);
     frame.title('title');
