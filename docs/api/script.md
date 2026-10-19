@@ -1738,21 +1738,21 @@ those approach endpoints directly.
 
 ## Game messages (compat v1)
 
-`GameMessages.since(mark)` returns fresh `{ seq, text }` copies of messages
-whose sequence is greater than `mark` on the current posted chat page. Results
-keep page order, newest first. Each call creates new DTOs. Changing a returned
-DTO does not change a later result. Messages retained only in history, including
-manual `record` calls and messages from older pages, are not included.
+Incoming host chat lines and public `record(text)` calls enter one history.
+The history retains at most 64 original `{ seq, text }` objects per script context.
+Its sequence increases for each record, including repeated text, even after older records leave the history.
 
-This intentionally differs from frozen rs2b0t: its `since` reads the retained
-64-record history, returns the original DTO references, and orders them oldest
-first. The operator ruling of 2026-10-19 keeps 274bot's newest-first copies.
+`mark()` returns the current history sequence. `since(mark)` returns original
+history objects whose sequence exceeds `mark`, oldest first. Each call creates
+a new result array, not new message objects. `sawSince(mark, pattern)` searches
+the same history. `firstSince(mark, pattern)` returns its first matching original
+object. Pattern matching resets `lastIndex` before each test.
 
-`mark` and `sawSince` also read only the current posted page. The separate
-history methods are `record`, `firstSince`, `recent` and `reset`. History uses
-its own sequence numbers. `firstSince` returns an original matching history DTO;
-`recent(limit)` returns original history DTOs newest first, with a default limit
-of eight. Do not treat a posted-page mark as the history sequence counter.
+`recent(limit)` returns original history objects newest first, with a default
+limit of eight. `reset()` clears history and resets its sequence to zero.
+It does not replay previously ingested host lines. Session resets also clear
+the host-ingestion cursor. Omitted chat pages do not add duplicate records.
+These methods match the frozen rs2b0t history contract.
 
 ## Bank item ops (compat v1)
 

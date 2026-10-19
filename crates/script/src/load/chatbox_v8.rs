@@ -1,8 +1,7 @@
 //! Native ownership for the v1 GameMessages API.
 //!
-//! The current posted page remains the source for `mark`, `since`, and
-//! `sawSince`. The bounded native ring owns only V8 references to its message
-//! DTOs and the fixed metadata needed to order them.
+//! All readers use the bounded native history. The ring retains original V8
+//! message DTOs in recording order and fixed metadata, without copying text.
 
 use super::callback_v8::{self as cb, JsResult, Throw};
 use rustyscript::deno_core::v8;
@@ -247,45 +246,33 @@ fn append_record<'s>(
 }
 
 fn mark<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let lines = current_lines(scope)?;
-    let length = cb::get(scope, lines, "length")?;
-    let zero = v8::Integer::new(scope, 0);
-    if length.strict_equals(zero.into()) {
-        return Ok(zero.into());
-    }
-    let reduce = cb::get(scope, lines, "reduce")?;
-    let callback = v8::Function::builder(mark_reduce_callback)
-        .length(2)
-        .build(scope)
-        .ok_or_else(|| cb::type_error(scope, "could not create GameMessages reduce callback"))?;
-    let initial = v8::Integer::new(scope, 0).into();
-    cb::call(
-        scope,
-        reduce,
-        lines,
-        &[callback.into(), initial],
-        "rs.reduce",
-    )
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "GameMessages state is not installed"))?;
+    let sequence = state.history.borrow().local_seq;
+    Ok(v8::Number::new(scope, sequence).into())
 }
 
 fn since<'s>(
     scope: &mut v8::HandleScope<'s>,
     mark: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let lines = current_lines(scope)?;
-    let filter = cb::get(scope, lines, "filter")?;
-    let predicate = v8::Function::builder(page_since_callback)
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "GameMessages state is not installed"))?;
+    let (rows, generation) = history_view(scope, &state)?;
+    let filter = cb::get(scope, rows.into(), "filter")?;
+    let predicate = v8::Function::builder(history_since_callback)
         .data(mark)
         .length(1)
         .build(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create GameMessages filter callback"))?;
-    let filtered = cb::call(scope, filter, lines, &[predicate.into()], "lines.filter")?;
-    let map = cb::get(scope, filtered, "map")?;
-    let mapper = v8::Function::builder(page_dto_callback)
-        .length(1)
-        .build(scope)
-        .ok_or_else(|| cb::type_error(scope, "could not create GameMessages map callback"))?;
-    cb::call(scope, map, filtered, &[mapper.into()], "filtered.map")
+    refresh_view_if_current(scope, &state, rows, generation)?;
+    cb::call(
+        scope,
+        filter,
+        rows.into(),
+        &[predicate.into()],
+        "ring.filter",
+    )
 }
 
 fn saw_since<'s>(
@@ -293,15 +280,18 @@ fn saw_since<'s>(
     mark: v8::Local<'s, v8::Value>,
     pattern: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let lines = current_lines(scope)?;
-    let some = cb::get(scope, lines, "some")?;
+    let state = state_for_scope(scope)
+        .ok_or_else(|| cb::type_error(scope, "GameMessages state is not installed"))?;
+    let (rows, generation) = history_view(scope, &state)?;
+    let some = cb::get(scope, rows.into(), "some")?;
     let data = pair_data(scope, mark, pattern)?;
-    let predicate = v8::Function::builder(page_saw_callback)
+    let predicate = v8::Function::builder(history_match_callback)
         .data(data.into())
         .length(1)
         .build(scope)
         .ok_or_else(|| cb::type_error(scope, "could not create GameMessages some callback"))?;
-    cb::call(scope, some, lines, &[predicate.into()], "lines.some")
+    refresh_view_if_current(scope, &state, rows, generation)?;
+    cb::call(scope, some, rows.into(), &[predicate.into()], "ring.some")
 }
 
 fn first_since<'s>(
@@ -314,7 +304,7 @@ fn first_since<'s>(
     let (rows, generation) = history_view(scope, &state)?;
     let find = cb::get(scope, rows.into(), "find")?;
     let data = pair_data(scope, mark, pattern)?;
-    let predicate = v8::Function::builder(history_find_callback)
+    let predicate = v8::Function::builder(history_match_callback)
         .data(data.into())
         .length(1)
         .build(scope)
@@ -438,38 +428,13 @@ fn pair_data<'s>(
     Ok(data)
 }
 
-fn mark_reduce_callback<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
-) {
-    let result = (|| {
-        let global = scope.get_current_context().global(scope);
-        let math = cb::get(scope, global.into(), "Math")?;
-        let max = cb::get(scope, math, "max")?;
-        let row = args.get(1);
-        let seq_type = cb::get(scope, row, "seq")?;
-        let seq = if seq_type.is_number() {
-            cb::get(scope, row, "seq")?
-        } else {
-            cb::num(scope, 0.0)
-        };
-        cb::call(scope, max, math, &[args.get(0), seq], "Math.max")
-    })();
-    cb::finish(scope, rv, result);
-}
-
-fn page_since_callback<'s>(
+fn history_since_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
         let row = args.get(0);
-        let seq_type = cb::get(scope, row, "seq")?;
-        if !seq_type.is_number() {
-            return Ok(v8::Boolean::new(scope, false).into());
-        }
         let seq = cb::get(scope, row, "seq")?;
         let newer = cb::gt(scope, seq, args.data())?;
         Ok(v8::Boolean::new(scope, newer).into())
@@ -477,59 +442,24 @@ fn page_since_callback<'s>(
     cb::finish(scope, rv, result);
 }
 
-fn page_dto_callback<'s>(
+fn history_match_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let result = (|| {
-        let row = args.get(0);
-        let seq = cb::get(scope, row, "seq")?;
-        let text = cb::get(scope, row, "text")?;
-        cb::object(scope, &[("seq", seq), ("text", text)])
-    })();
-    cb::finish(scope, rv, result);
-}
-
-fn page_saw_callback<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
-) {
-    let result = match page_match(scope, args.get(0), args.data(), true) {
+    let result = match history_match(scope, args.get(0), args.data()) {
         Ok(value) => Ok(v8::Boolean::new(scope, value).into()),
         Err(error) => Err(error),
     };
     cb::finish(scope, rv, result);
 }
 
-fn history_find_callback<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    args: v8::FunctionCallbackArguments<'s>,
-    rv: v8::ReturnValue,
-) {
-    let result = match page_match(scope, args.get(0), args.data(), false) {
-        Ok(value) => Ok(v8::Boolean::new(scope, value).into()),
-        Err(error) => Err(error),
-    };
-    cb::finish(scope, rv, result);
-}
-
-fn page_match<'s>(
+fn history_match<'s>(
     scope: &mut v8::HandleScope<'s>,
     row: v8::Local<'s, v8::Value>,
     data: v8::Local<'s, v8::Value>,
-    numeric_only: bool,
 ) -> JsResult<'s, bool> {
-    let seq_type = cb::get(scope, row, "seq")?;
-    let seq = if numeric_only {
-        if !seq_type.is_number() {
-            return Ok(false);
-        }
-        cb::get(scope, row, "seq")?
-    } else {
-        seq_type
-    };
+    let seq = cb::get(scope, row, "seq")?;
     let mark = cb::get_index(scope, data, 0)?;
     if !cb::gt(scope, seq, mark)? {
         return Ok(false);
@@ -576,15 +506,15 @@ mod tests {
             gm(0, 'first history');
             gm(0, 'second history');
             const mark = gm(1);
-            const page = gm(2, 3);
-            const saw = gm(3, 0, /page newest/);
+            const rows = gm(2, 0);
+            const saw = gm(3, 0, /second history/);
             const first = gm(4, 0, /first history/);
             const newest = gm(5, 1);
-            const valid = mark === 9 &&
-                page.length === 1 && page[0].seq === 9 &&
+            const valid = mark === 2 &&
+                rows.length === 2 && rows[0].seq === 1 && rows[1].seq === 2 &&
                 first.seq === 1 && newest.length === 1 &&
                 newest[0].seq === 2 && saw &&
-                first !== newest[0] && page[0] !== globalThis.__rs2b0t_host.snapshot.chat_lines[0];
+                rows[0] === first && rows[1] === newest[0];
             gm(6);
             return valid;
         };

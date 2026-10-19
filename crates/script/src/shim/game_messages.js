@@ -1,7 +1,7 @@
 export const CANT_REACH = /^i can't reach that/i;
 export const WRONG_SIDE = /can(?:'t|not) do that from here/i;
 
-// Native owns per-context history and page policy; this shim retains the
+// Native owns per-context history policy; this shim retains the
 // public class, singleton, constants and argument marshaling only.
 
 class GameMessagesImpl {
