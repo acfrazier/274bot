@@ -1,7 +1,7 @@
 use super::*;
 use crate::quester::families::tests::with_tick_output;
 use crate::quester::queue::{Queue, QueueSettings, ReleaseIndex};
-use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView};
+use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView, VarpView};
 use std::sync::LazyLock;
 
 #[derive(Default)]
@@ -46,6 +46,13 @@ fn fixture(settings: QueueSettings) -> (QueuedQuester, GameSnapshot) {
 fn cook_settings() -> QueueSettings {
     QueueSettings {
         quests: vec!["cook".into()],
+        ..QueueSettings::default()
+    }
+}
+
+fn runemysteries_settings() -> QueueSettings {
+    QueueSettings {
+        quests: vec!["runemysteries".into()],
         ..QueueSettings::default()
     }
 }
@@ -114,8 +121,15 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
 }
 #[test]
 fn individually_missing_quest_row_stays_fail_closed() {
-    let (mut queued, mut snapshot) = fixture(cook_settings());
-    snapshot.seed_quest_statuses(vec![], true);
+    let (mut queued, mut snapshot) = fixture(runemysteries_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
     let mut ledger = None;
     let mut output = Capture::default();
     with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
@@ -129,7 +143,86 @@ fn individually_missing_quest_row_stays_fail_closed() {
             ScriptFlow::Blocked(_)
         ));
     });
+    assert!(queued.active.is_none());
     assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
+}
+
+#[test]
+fn runemysteries_queue_uses_selected_identity_status_row() {
+    let (mut queued, mut snapshot) = fixture(runemysteries_settings());
+    snapshot.seed_varps(vec![VarpView {
+        index: 101,
+        value: 1,
+    }]);
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Rune Mysteries Quest".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+    assert_eq!(output.0.last().unwrap().phase, NativePhase::Preparing);
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    assert_eq!(path.id.0.as_ref(), "runemysteries");
+    assert_eq!(path.display_name.as_ref(), "Rune Mysteries");
+    assert_eq!(
+        queued
+            .quests
+            .quest("runemysteries")
+            .unwrap()
+            .display
+            .as_ref(),
+        "Rune Mysteries Quest"
+    );
+    let index = queued.active_index.expect("preparing Rune Mysteries row");
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_some());
+    assert_eq!(
+        queued.queue.status(index),
+        Some(crate::quester::queue::QueueStatus::Running)
+    );
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
+}
+
+#[test]
+fn completed_canonical_quest_row_wins_before_missing_requirements() {
+    let (mut queued, mut snapshot) = fixture(runemysteries_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Rune Mysteries Quest".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    let index = queued.active_index.expect("preparing Rune Mysteries row");
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_none());
+    assert_eq!(
+        queued.queue.status(index),
+        Some(crate::quester::queue::QueueStatus::Done)
+    );
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
