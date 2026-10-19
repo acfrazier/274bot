@@ -7596,3 +7596,319 @@ mod diagnostic_tests {
         .unwrap();
     }
 }
+#[cfg(test)]
+mod route_quest_provider_tests {
+    use super::*;
+    use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
+    use api::selected::{QuestGate, RunKey, Truth};
+    use api::snapshot::{QuestStatusView, SnapshotView};
+    use std::sync::LazyLock;
+
+    fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
+        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> =
+            LazyLock::new(|| {
+                let selected =
+                    api::game_data::for_revision(api::selected::ClientRevision::R289)
+                        .expect("selected R289 game data");
+                let worker_data = Arc::clone(&selected);
+                let input = script::preparation::PreparationInput::new(
+                    1,
+                    0,
+                    8 * 1024 * 1024,
+                    2 * 1024 * 1024,
+                )
+                .expect("quest preparation budget");
+                script::preparation::submit(
+                    script::preparation::PreparationKind::Profile,
+                    Scope::Process,
+                    input,
+                    move |worker| worker_data.prepare_quests(worker),
+                )
+                .expect("submit production quest preparation")
+                .join()
+                .expect("quest preparation worker")
+                .expect("prepare selected quest family");
+                selected
+            });
+        Arc::clone(&SELECTED)
+    }
+
+    fn selected_quest(
+        selected: &api::game_data::SelectedGameData,
+    ) -> (api::selected::FactKey, String) {
+        let facts = selected
+            .try_quests()
+            .expect("selected quest catalog")
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
+        (facts.id.clone(), facts.display.to_string())
+    }
+
+    fn family(selected: &api::game_data::SelectedGameData) -> nav::quest_gates::QuestFamilyId {
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        nav::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
+    }
+
+    fn run() -> RunKey {
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        }
+    }
+
+    fn stamp(run: RunKey, tick: u64, sequence: u64) -> EvidenceStamp {
+        EvidenceStamp {
+            run,
+            tick,
+            sequence,
+        }
+    }
+
+    fn snapshot(name: &str, colour: i32, available: bool) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: name.to_owned(),
+                colour,
+            }],
+            available,
+        );
+        snapshot
+    }
+
+    fn real_list_provider(
+        selected: &api::game_data::SelectedGameData,
+        name: &str,
+        colour: i32,
+        available: bool,
+        observed: EvidenceStamp,
+    ) -> Arc<dyn EvidenceProvider> {
+        let quests = selected.try_quests().expect("prepared quest catalog");
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        Arc::new(QuestListEvidenceProvider::from_snapshot(
+            &quests,
+            Some(identity),
+            Some(identity),
+            SnapshotView::new(
+                Some(&snapshot(name, colour, available)),
+                observed,
+            ),
+        ))
+    }
+
+    fn context(
+        selected: Arc<api::game_data::SelectedGameData>,
+        stamp: EvidenceStamp,
+    ) -> RouteQuestContext {
+        RouteQuestContext { selected, stamp }
+    }
+
+    #[test]
+    fn explicit_real_evidence_wins_when_known_and_unknown_falls_back() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let run = run();
+        let floor = stamp(run, 9, 9);
+        let complete = nav::world_state::QUEST_COMPLETE_COLOUR;
+        let not_started = 0xF80000;
+        let gate = QuestGate::Complete(quest);
+        let context = context(Arc::clone(&selected), floor);
+
+        let explicit_false = real_list_provider(
+            &selected,
+            &name,
+            not_started,
+            true,
+            floor,
+        );
+        let ordinary_true = snapshot(&name, complete, true);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_true,
+            Some(explicit_false),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::False,
+            "known explicit False must override ordinary Complete"
+        );
+
+        let explicit_true =
+            real_list_provider(&selected, &name, complete, true, floor);
+        let ordinary_false = snapshot(&name, not_started, true);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_false,
+            Some(explicit_true),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::True,
+            "known explicit True must override ordinary NotStarted"
+        );
+
+        let explicit_unknown =
+            real_list_provider(&selected, &name, complete, false, floor);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_true,
+            Some(explicit_unknown),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::True,
+            "Unknown explicit evidence must fall back to ordinary Complete"
+        );
+    }
+
+    #[test]
+    fn captured_rows_fail_closed_after_the_run_or_causal_floor_changes() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let observed = stamp(run(), 5, 5);
+        let complete = snapshot(
+            &name,
+            nav::world_state::QUEST_COMPLETE_COLOUR,
+            true,
+        );
+        let gate = QuestGate::Complete(quest);
+
+        let later_floor = stamp(run(), 6, 6);
+        let context = context(Arc::clone(&selected), observed);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &complete,
+            None,
+            later_floor,
+        )
+        .expect("matching-family ordinary provider");
+        assert_eq!(evidence.test(&gate), Truth::Unknown);
+
+        let changed_run = RunKey { run: 2, ..run() };
+        let changed_run_floor = stamp(changed_run, 5, 5);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &complete,
+            None,
+            changed_run_floor,
+        )
+        .expect("matching-family ordinary provider");
+        assert_eq!(evidence.test(&gate), Truth::Unknown);
+    }
+
+    fn tiny_world() -> Arc<NavWorld> {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: 4,
+                height: 4,
+                walk: vec![0; 16],
+                blocked: vec![0; 1],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ))
+    }
+
+    fn request(world: Arc<NavWorld>) -> ScriptRouteRequest {
+        let (completion, _receiver) = RouteCompletion::channel();
+        let origin = world.collision.origin;
+        ScriptRouteRequest {
+            generation: 1,
+            request_id: 1,
+            world,
+            from: origin,
+            to: WorldTile {
+                x: origin.x + 1,
+                z: origin.z + 1,
+                level: origin.level,
+            },
+            radius: 0,
+            loc_id: None,
+            arrival: ArrivalKind::Reach,
+            opts: FindOptions::default(),
+            state: None,
+            admission: crate::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                1,
+                crate::WalkGlobals::default(),
+            ),
+            bank_origin: Origin::Unknown,
+            bank: Vec::new(),
+            live_geometry: None,
+            exclusions: None,
+            compat_tile_intent: false,
+            completion,
+        }
+    }
+
+    #[test]
+    fn ordinary_provider_bytes_are_charged_to_route_input_and_output() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let stamp = stamp(run(), 12, 12);
+        let context = context(Arc::clone(&selected), stamp);
+        let snapshot = snapshot(
+            &name,
+            nav::world_state::QUEST_COMPLETE_COLOUR,
+            true,
+        );
+        let evidence = captured_route_quests(family, Some(&context), &snapshot, None, stamp)
+            .expect("real ordinary quest-list evidence");
+        assert_eq!(evidence.test(&QuestGate::Complete(quest)), Truth::True);
+        let owned_bytes = evidence.owned_provider_bytes();
+        assert!(owned_bytes > 0, "the provider owns its retained status table");
+
+        let world = tiny_world();
+        let request = request(Arc::clone(&world));
+        let lease = nav_lease(&world).expect("navigation lease");
+        let without_evidence = Arc::new(WorldState::default());
+        let with_evidence =
+            Arc::new(WorldState::default().with_quest_evidence(evidence));
+        let base_state_bytes = without_evidence
+            .try_shared_retained_bytes()
+            .expect("baseline state byte bound");
+        let evidence_state_bytes = with_evidence
+            .try_shared_retained_bytes()
+            .expect("evidence state byte bound");
+        assert_eq!(evidence_state_bytes - base_state_bytes, owned_bytes);
+
+        let (baseline, _) =
+            RouteSubmission::prepare(&request, &without_evidence, &lease, 0, 0)
+                .expect("baseline route budget");
+        let (charged, _) =
+            RouteSubmission::prepare(&request, &with_evidence, &lease, 0, 0)
+                .expect("evidence route budget");
+        assert_eq!(charged.input_bytes - baseline.input_bytes, owned_bytes);
+        assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
+    }
+}
