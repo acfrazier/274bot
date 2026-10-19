@@ -86,6 +86,8 @@ mod shape;
 #[cfg(feature = "load")]
 mod shop_ops_v8;
 #[cfg(feature = "load")]
+mod skills_v8;
+#[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;
 #[cfg(feature = "load")]

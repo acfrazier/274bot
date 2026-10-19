@@ -15,6 +15,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. Rust owns these calculations over
   caller-provided locations, without a second resource catalog.
+- Skills lookups and HP fraction calculations now run in Rust over the
+  already-posted stats rows. Compatibility names, row ordering, missing-skill
+  errors and boosted levels keep their existing behavior.
 - World Tile copying, translation, equality, text conversion and posted-coordinate
   validation now run in Rust. Area sampling returns a real Tile in the same native
   call. Existing geometry bounds, plane rules and caller-visible values stay the
