@@ -942,7 +942,7 @@ const SURFACE: &[(&str, Decision)] = &[
     ("tui/bin.rs::temp_live_vault", Excluded(HARNESS)),
     (
         "tui/bin.rs::map_bundle",
-        Excluded("`--map-bundle` packaging flag: bakes the shipped map images; not an operator command"),
+        Excluded("`--map-bundle` packaging flag: bakes the shipped map bundle; not an operator command"),
     ),
     // --- tui: routers and the pump ---
     (

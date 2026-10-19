@@ -37,7 +37,7 @@ flatbuffers = { version = "=25.12.19", optional = true }
 deno_core = { version = "=0.355.0", optional = true }
 parking_lot = "=0.12.5"
 rand = "=0.8.5"
-rustyscript = { version = "=0.12.3", optional = true }
+rustyscript = { version = "=0.12.3", default-features = false, features = ["worker", "web_stub", "console"], optional = true }
 tokio = { version = "=1.53.1", features = ["rt-multi-thread", "time"], optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
@@ -431,6 +431,10 @@ name = "script_seam_engine"
 required-features = ["load"]
 [[test]]
 name = "upstream_tier1"
+required-features = ["load"]
+
+[[test]]
+name = "crypto_stub"
 required-features = ["load"]
 
 [[example]]

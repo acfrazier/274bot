@@ -4500,7 +4500,7 @@ impl ScriptWalkArm {
     /// follow first and only calls this when no worker/bank session is active.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn refresh_route_in_snapshot(
-        &self,
+        mut self,
         snapshot: &GameSnapshot,
         to: WorldTile,
         radius: i32,
@@ -4612,7 +4612,7 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
     ) -> bool {
-        self.queue_route_impl(
+        self.clone().queue_route_impl(
             x,
             z,
             level,
@@ -4641,7 +4641,7 @@ impl ScriptWalkArm {
     /// not whether a path exists.
     #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene
     pub(crate) fn queue_route_in_snapshot(
-        &self,
+        mut self,
         snapshot: &GameSnapshot,
         x: i32,
         z: i32,
@@ -4674,7 +4674,7 @@ impl ScriptWalkArm {
     /// Queue a walk with the request's frozen avoid rectangles and zone names.
     #[allow(clippy::too_many_arguments)] // route queue plus the walk's exclusions
     pub(crate) fn queue_fixed_route_in_snapshot_avoiding(
-        &self,
+        mut self,
         snapshot: &GameSnapshot,
         x: i32,
         z: i32,
@@ -4705,7 +4705,7 @@ impl ScriptWalkArm {
     /// [`Self::queue_route_in_snapshot`] for a walk with request exclusions.
     #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene and exclusions
     pub(crate) fn queue_route_in_snapshot_avoiding(
-        &self,
+        mut self,
         snapshot: &GameSnapshot,
         x: i32,
         z: i32,
@@ -4753,24 +4753,25 @@ impl ScriptWalkArm {
         loc_id: Option<i32>,
     ) -> Option<std::sync::mpsc::Receiver<()>> {
         let (completion, receiver) = RouteCompletion::channel();
-        self.queue_route_impl(
-            x,
-            z,
-            level,
-            opts,
-            radius,
-            retarget,
-            request_id,
-            Some(snapshot),
-            completion,
-            ScriptRouteExclusions::default(),
-            None,
-            loc_id,
-            ArrivalKind::Reach,
-            None,
-            false,
-        )
-        .then_some(receiver)
+        self.clone()
+            .queue_route_impl(
+                x,
+                z,
+                level,
+                opts,
+                radius,
+                retarget,
+                request_id,
+                Some(snapshot),
+                completion,
+                ScriptRouteExclusions::default(),
+                None,
+                loc_id,
+                ArrivalKind::Reach,
+                None,
+                false,
+            )
+            .then_some(receiver)
     }
 
     #[allow(clippy::too_many_arguments)] // admission mirrors the wire request identity
@@ -4851,9 +4852,12 @@ impl ScriptWalkArm {
         None
     }
 
+    /// Queue one route request. The request takes the arm's own captured
+    /// [`WorldState`] (moved, not copied again), so it keeps the facts of the
+    /// frame that armed it.
     #[allow(clippy::too_many_arguments)] // queue state plus borrowed arm-time scene
     fn queue_route_impl(
-        &self,
+        &mut self,
         x: i32,
         z: i32,
         level: i32,
@@ -4952,7 +4956,7 @@ impl ScriptWalkArm {
                     .flatten()
             })
         };
-        let mut state = self.state.clone();
+        let mut state = self.state.take();
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
             let state = state.get_or_insert_with(WorldState::empty);
             state.quest_evidence = basis.quest_evidence.clone();
@@ -5014,7 +5018,7 @@ impl ScriptWalkArm {
                 snapshot.map(|snapshot| {
                     crate::admission::capture(
                         snapshot,
-                        self.state.as_ref().is_some_and(|state| state.map_members),
+                        state.as_ref().is_some_and(|state| state.map_members),
                         Default::default(),
                         false,
                     )
@@ -6042,6 +6046,15 @@ impl NavBot {
             generation: self.route_generation,
             request_id: self.walk_request_id,
         }));
+    }
+
+    /// The gating facts of the route request still waiting for a pump turn.
+    #[cfg(test)]
+    pub(crate) fn pending_route_state_for_test(&self) -> Option<&WorldState> {
+        match self.pending_route.as_deref()? {
+            RouteDemand::Pending { request, .. } => request.state.as_ref(),
+            RouteDemand::Preparing { .. } | RouteDemand::Prepared(_) => None,
+        }
     }
 
     /// Abandon the accepted route when bank work takes ownership of the nav entry.

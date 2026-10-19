@@ -11,10 +11,10 @@
 //! operator `~/.274bot/map-cache` is never touched. `--catalogue` measures
 //! the TUI's catalogue-only demand. `--interrupt-after` first closes a bake
 //! after SECS, so the first cycle measures the resume. `--shipped DIR` gives
-//! the manager release-shipped terrain (the `map` directory of an install
+//! the manager release-shipped map data (the `map` directory of an install
 //! resource root, e.g. `target/release/map` after `tui-play --map-bundle
 //! target/release ...`): the first cycle installs it instead of baking, and
-//! later cycles are warm reopens of the installed terrain. `--pause` stops
+//! later cycles are warm reopens of the installed data. `--pause` stops
 //! after the baseline and after each close until a line arrives on stdin, so
 //! an outside tool (`footprint -p`, `vmmap --summary`) can snapshot the
 //! process. One JSON line per sample on stdout. macOS reports
@@ -27,9 +27,7 @@
 //! first thread (the bake worker, in `MapDemandManager::reap`); it lives for
 //! the process and does not grow per open. The panel initializes libobjc
 //! through its window system long before a map opens.
-use host_play::map_cache::{
-    MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus, ShippedMapImages,
-};
+use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus, ShippedMap};
 use host_play::{map_profile_descriptor, NativeMapProducer};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -120,7 +118,7 @@ fn run() -> Result<(), String> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--cache-root" => cache_root = rest.next().map(PathBuf::from),
-            "--shipped" => shipped = rest.next().map(ShippedMapImages::at),
+            "--shipped" => shipped = rest.next().map(ShippedMap::at),
             "--catalogue" => demand = MapDemand::CatalogueOnly,
             "--pause" => pauses = true,
             "--interrupt-after" => {
@@ -145,7 +143,7 @@ fn run() -> Result<(), String> {
     let root = MapCacheRoot::from_root(cache_root);
     let producer = Arc::new(NativeMapProducer::new());
     let manager = match shipped {
-        Some(shipped) => MapDemandManager::with_shipped_images(root, producer, shipped),
+        Some(shipped) => MapDemandManager::with_shipped_map(root, producer, shipped),
         None => MapDemandManager::new(root, producer),
     };
     let pause = |phase: &str| {

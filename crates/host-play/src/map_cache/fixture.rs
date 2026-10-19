@@ -24,7 +24,7 @@ use super::{
     ArtifactKind, BakePlan, BakeRequest, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
     MapBakeCursorStep, MapBakeProducer, MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle,
     MapDemandManager, MapJobStatus, MapProfileDescriptor, MapProgressSnapshot, MapStage,
-    ShippedMapImages,
+    ShippedMap,
 };
 
 /// A 289 descriptor with a fixed content identity and fixed policies,
@@ -68,7 +68,7 @@ pub fn wait_for_status(handle: &MapDemandHandle, expected: MapJobStatus) {
 /// [`fixture_descriptor`]'s terrain shipped under `dir/map` the way release
 /// packaging ships a bake: the counting producer publishes it into a scratch
 /// cache under `dir`, which is shipped and then removed.
-pub fn ship_fixture_terrain(dir: &Path) -> ShippedMapImages {
+pub fn ship_fixture_terrain(dir: &Path) -> ShippedMap {
     let scratch = dir.join("packaging-cache");
     let root = MapCacheRoot::from_root(&scratch);
     let manager = MapDemandManager::new(root.clone(), Arc::new(CountingMapProducer::default()));
@@ -78,10 +78,31 @@ pub fn ship_fixture_terrain(dir: &Path) -> ShippedMapImages {
     wait_for_status(&handle, MapJobStatus::Ready);
     drop(handle);
     manager.reap();
-    let shipped = ShippedMapImages::at(dir.join("map"));
+    let shipped = ShippedMap::at(dir.join("map"));
     shipped
-        .ship_from(&root, fixture_descriptor().image_identity())
+        .ship_images_from(&root, fixture_descriptor().image_identity())
         .expect("ship fixture terrain");
+    let _ = std::fs::remove_dir_all(&scratch);
+    shipped
+}
+
+/// [`fixture_descriptor`]'s catalogue shipped under `dir/map` the way release
+/// packaging ships a derive: the counting producer publishes it into a scratch
+/// cache under `dir`, which is shipped and then removed.
+pub fn ship_fixture_catalogue(dir: &Path) -> ShippedMap {
+    let scratch = dir.join("packaging-cache");
+    let root = MapCacheRoot::from_root(&scratch);
+    let manager = MapDemandManager::new(root.clone(), Arc::new(CountingMapProducer::default()));
+    let handle = manager
+        .request(fixture_descriptor(), MapDemand::CatalogueOnly)
+        .expect("fixture catalogue demand");
+    wait_for_status(&handle, MapJobStatus::Ready);
+    drop(handle);
+    manager.reap();
+    let shipped = ShippedMap::at(dir.join("map"));
+    shipped
+        .ship_catalogue_from(&root, fixture_descriptor().catalogue_identity())
+        .expect("ship fixture catalogue");
     let _ = std::fs::remove_dir_all(&scratch);
     shipped
 }
