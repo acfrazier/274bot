@@ -634,6 +634,14 @@ mod tests {
             }
         });
         eprintln!("GameMessages complete cold={cold:?}; warm1000={warm:?}");
+        eprintln!(
+            "GameMessages fixed Rust structure sizes: History={} bytes; ChatboxState={} bytes; \
+             {} record handle slots={} bytes (included in both structures); excludes Rc/allocator bookkeeping and V8 heap",
+            std::mem::size_of::<History>(),
+            std::mem::size_of::<ChatboxState>(),
+            CAPACITY,
+            std::mem::size_of::<[Option<v8::Global<v8::Object>>; CAPACITY]>(),
+        );
         assert_cold_bounded(cold);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
