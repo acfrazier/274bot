@@ -33,6 +33,7 @@ export { Bank, withdrawOp } from '*api/bank/Bank.js';
 export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '*api/bank/Banking.js';
 export { bankDistance, nearestUsableBank } from '*api/bank/BankLocations.js';
 export { reader } from '*adapter/ClientAdapter.js';
+export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '*shim/gathering_locations.js';
 export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '*api/acquisition/Tools.js';
 export { Execution } from '*api/execution/Execution.js';
 export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '*api/bot/Bot.js';
@@ -67,8 +68,6 @@ export const BOB_VENDOR: never;
 export const BROKEN_AXE: never;
 export class BranchTask { failure(...args: unknown[]): never; success(...args: unknown[]): never; validate(...args: unknown[]): never; constructor(...args: unknown[]); }
 export const COINS: never;
-export const DEFAULT_BOOTH_NAME: never;
-export const DEFAULT_BOOTH_OP: never;
 export const FISHING_LOCATIONS: never;
 export const FISHING_LOCATION_OPTIONS: never;
 export const FISHING_METHODS: never;
@@ -80,7 +79,6 @@ export const GERRANT_ONLY_FISHING: never;
 export const GERRANT_VENDOR: never;
 export const HARRY_VENDOR: never;
 export class LeafTask { execute(...args: unknown[]): never; constructor(...args: unknown[]); }
-export const MAP_SQUARE: never;
 export const MINING_LOCATIONS: never;
 export const MINING_LOCATION_OPTIONS: never;
 export const MINING_LOCATION_OPTION_LABELS: never;
@@ -101,7 +99,6 @@ export function axeShopOffers(...args: unknown[]): never;
 export function bestAffordableShopTier(...args: unknown[]): never;
 export function bestOwnedTier(...args: unknown[]): never;
 export function bestSmithableAxe(...args: unknown[]): never;
-export function boothFields(...args: unknown[]): never;
 export function buyPlansCost(...args: unknown[]): never;
 export function canFundPlan(...args: unknown[]): never;
 export function coinsToWithdraw(...args: unknown[]): never;
@@ -116,7 +113,6 @@ export function hasAll(...args: unknown[]): never;
 export function hasFishingGear(...args: unknown[]): never;
 export function held(...args: unknown[]): never;
 export function isFishingBaitPiece(...args: unknown[]): never;
-export function locationOptions(...args: unknown[]): never;
 export function miningLocationLabel(...args: unknown[]): never;
 export function missingFishingGear(...args: unknown[]): never;
 export function parseToolAcquireMode(...args: unknown[]): never;
@@ -131,10 +127,8 @@ export function registerScript(...args: unknown[]): never;
 export function resolveDestination(...args: unknown[]): never;
 export function resolveFishMethod(...args: unknown[]): never;
 export function resolveFishingLocation(...args: unknown[]): never;
-export function resolveGatheringLocation(...args: unknown[]): never;
 export function resolveMiningLocation(...args: unknown[]): never;
 export function resolveWoodcuttingLocation(...args: unknown[]): never;
-export function sameMapSquare(...args: unknown[]): never;
 export function shopableMissingFishingGear(...args: unknown[]): never;
 export function spotMatchesMethod(...args: unknown[]): never;
 export function withBaitTarget(...args: unknown[]): never;
@@ -4992,5 +4986,43 @@ export function presentOps(actions: readonly (string | null)[] | null): string[]
 export function opIndex(actions: readonly (string | null)[], action: string): number;
 export function entitySnapView(row: Record<string, unknown> | null): Record<string, unknown> | null;
 export function optionalText(value: unknown): string | null;
+
+}
+
+declare module '*shim/gathering_locations.js' {
+import { WorldTile } from "*adapter/ClientAdapter.js";
+import Tile from "*geometry/Tile.js";
+export interface BaitVendor {
+    readonly keeper: string;
+    readonly stand: Tile;
+    readonly price: number;
+    readonly item: string;
+}
+export interface GatheringLocation {
+    name: string;
+    spot: Tile;
+    bankStand: Tile;
+    verified: boolean;
+    boothName?: string;
+    boothOp?: string;
+    obstacles?: string[];
+    campRadius?: number;
+    chaseRadius?: number;
+    resources?: readonly string[];
+    readonly avoidSpots?: readonly Tile[];
+    readonly sweep?: readonly Tile[];
+    readonly baitVendor?: BaitVendor;
+    notes?: string;
+}
+export const DEFAULT_BOOTH_NAME: "Bank booth";
+export const DEFAULT_BOOTH_OP: "Use-quickly";
+export const MAP_SQUARE: 64;
+export function sameMapSquare(a: WorldTile, b: WorldTile): boolean;
+export function locationOptions(table: readonly GatheringLocation[]): string[];
+export function boothFields(loc: GatheringLocation | null | undefined): {
+    boothName: string;
+    boothOp: string;
+};
+export function resolveGatheringLocation<T extends GatheringLocation>(setting: string, startTile: WorldTile, table: readonly T[]): T | null;
 
 }

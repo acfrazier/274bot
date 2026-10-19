@@ -12,6 +12,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Gathering scripts can use the declared location options, booth defaults,
+  map-square checks and location resolver. A shared Rust preset core serves
+  compiled callers and compatibility adapters without a second resource catalog.
+  Both resolver entrypoints share one pool/ranking driver, while caller-owned
+  compatibility methods and getters keep their original evaluation order.
 - Cooking location options and name lookups now run in Rust over the existing
   bank-bound catalog. Curated surfaces, unlock callbacks and returned object
   identities keep their existing behavior.

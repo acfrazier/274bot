@@ -45,6 +45,8 @@ mod distance;
 mod fire_v8;
 mod gather_methods_v8;
 #[cfg(feature = "load")]
+mod gathering_v8;
+#[cfg(feature = "load")]
 mod hunt_v8;
 #[cfg(feature = "load")]
 mod inventory_v8;

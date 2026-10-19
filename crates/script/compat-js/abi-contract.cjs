@@ -123,6 +123,7 @@ const MODULE_RULES = [
     ['paint/', { id: 'paint', nav: false }],
     ['input/', { id: 'input', nav: false }],
     ['event/', { id: 'walking', nav: true }],
+    ['shim/gathering_locations.js', { id: 'gathering', nav: false }],
     ['shim/', { id: 'compat-runtime', nav: false }],
 ];
 
