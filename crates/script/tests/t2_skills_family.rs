@@ -20,7 +20,9 @@ export default class SkillsFixture extends LoopingBot {
     common::post_snapshot_input(&isolate, &snapshot);
     isolate.on_game_tick(1);
     assert_eq!(
-        isolate.probe("globalThis.__skillsDirect === globalThis.__skillsRoot").unwrap(),
+        isolate
+            .probe("globalThis.__skillsDirect === globalThis.__skillsRoot")
+            .unwrap(),
         true,
         "the root barrel and served Skills module share one exported object"
     );
