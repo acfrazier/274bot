@@ -42,6 +42,8 @@ mod dialog_v8;
 #[cfg(feature = "load")]
 mod distance;
 #[cfg(feature = "load")]
+mod entities_v8;
+#[cfg(feature = "load")]
 mod fire_v8;
 mod gather_methods_v8;
 #[cfg(feature = "load")]

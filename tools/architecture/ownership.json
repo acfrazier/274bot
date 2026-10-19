@@ -3427,6 +3427,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/entities_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/fire_v8.rs",
       "owner": "T2"
     },
@@ -5088,6 +5092,10 @@
     },
     {
       "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_entities_family.rs",
       "owner": "T2"
     },
     {

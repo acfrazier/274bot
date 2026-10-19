@@ -8,31 +8,31 @@ export class GroundItem {
     }
 
     get name() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.name', this);
+        return globalThis.__rs2b0t_entities_v8(51 /* grounditem.name */, this);
     }
 
     get id() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.id', this);
+        return globalThis.__rs2b0t_entities_v8(52 /* grounditem.id */, this);
     }
 
     get count() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.count', this);
+        return globalThis.__rs2b0t_entities_v8(53 /* grounditem.count */, this);
     }
 
     tile() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.tile', this, Tile);
+        return globalThis.__rs2b0t_entities_v8(54 /* grounditem.tile */, this, Tile);
     }
 
     distance() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.distance', this);
+        return globalThis.__rs2b0t_entities_v8(55 /* grounditem.distance */, this);
     }
 
     actions() {
-        return globalThis.__rs2b0t_entities_v8('grounditem.actions', this);
+        return globalThis.__rs2b0t_entities_v8(56 /* grounditem.actions */, this);
     }
 
     interact(action) {
-        return globalThis.__rs2b0t_entities_v8('grounditem.interact', this, action, queue);
+        return globalThis.__rs2b0t_entities_v8(57 /* grounditem.interact */, this, action, queue);
     }
 }
 
