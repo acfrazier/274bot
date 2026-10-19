@@ -105,10 +105,10 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
         .unwrap();
     let mut s: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
     s.set_bypass_asset_startup(true);
-    s.start(vault, play);
+    s.start_for_test(vault, play);
     let mut surface = HeadlessSurface::new();
     s.load("alice", &mut surface);
-    let arm = s.play().unwrap().arm("alice").unwrap();
+    let arm = s.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.wants_login(), "the worker is parked");
     let mut edited = s.durable_profile("alice").unwrap().clone();
     edited.password = "new-pass".into();
@@ -147,7 +147,7 @@ fn a_parked_worker_logs_in_with_the_password_saved_after_it_spawned() {
         "every handshake after the save uses it: {seen:?}"
     );
     s.logout("alice");
-    if let Some(play) = s.play_mut() {
+    if let Some(play) = s.play_mut_for_test() {
         play.stop_slot("alice");
     }
 }

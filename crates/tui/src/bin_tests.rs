@@ -1,9 +1,25 @@
 use super::*;
-use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice};
+use frontend_core::scripts::{
+    CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
+};
+use frontend_core::test_support::live::{
+    passing_runner_for_test, runner_status_for_test, tick_scenario_runner_for_test,
+};
+use frontend_core::test_support::paint::TestPaint;
+use frontend_core::test_support::scripts::{
+    assign_compiled, assign_loaded, file_identity, live_example_path, raw_content_fingerprint,
+    reset_quester_registry, LoadedCardSnapshot,
+};
+use frontend_core::test_support::session::install_vault;
+use frontend_core::test_support::tui::{
+    arm_random_event_policy, card_api_family, play_script_state, quester_draft_path_ids,
+    quester_folder_path_ids, remove_saved_profile, saved_script_bag, saved_script_settings,
+    start_script_source,
+};
+use frontend_core::test_support::{FixtureProfile, IsolatedStores};
 use host_play::profile::ProfileEnvironment;
 use host_play::{Play, SlotArm, WalkArm};
 use nav::router::FindOptions;
-use script::IsolatedEnv;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,13 +29,13 @@ mod map_fixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 
-fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState) {
+fn wait_script_state(play: &host_play::Play, name: &str, want: ScriptRunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while play.script_state(name) != want && Instant::now() < deadline {
+    while play_script_state(play, name) != want && Instant::now() < deadline {
         play.pump_script_lifecycle(name);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(play.script_state(name), want);
+    assert_eq!(play_script_state(play, name), want);
 }
 
 fn dummy_options() -> PlayOptions {
@@ -347,7 +363,7 @@ fn pump_copies_nav_world_onto_the_app() {
     let profile = home.bind(None);
     let template = SharedClientTemplate::load(profile).unwrap();
     let mut session = TuiSession::new_bound(template);
-    let vault = Vault::create(&home.root.join("map-world.vault"), "test-passphrase-01").unwrap();
+    let vault = VaultFixture::create(&home.root.join("map-world.vault"), "test-passphrase-01");
     session.start_play(vault).unwrap();
     let mut app = TuiApp::new("274bot headless");
     assert!(app.world.is_none(), "fresh app has no pack");
@@ -553,35 +569,10 @@ fn core_gate_flags_need_a_live_run_and_parse_the_environment_form() {
     assert!(live_core_from_env(Some("core")).is_err());
 }
 
-/// A one-step scenario the synthetic client passes, so the runner reports
-/// Passed before any shared witness has qualified.
-fn passed_runner() -> scenario::ScenarioRunner {
-    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
-    let scenario = Scenario {
-        name: "core_hold",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "energy",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    c.runenergy = 5;
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 5 },
-                budget_ticks: 5,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 5 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::with_world(scenario, None);
-    runner.set_scene_settle(Duration::ZERO);
+/// Install a one-step scenario the synthetic client has passed, so the
+/// runner reports Passed before any shared witness has qualified.
+fn install_passed_runner(handle: &frontend_core::live::RunnerHandle) {
+    let mut runner = passing_runner_for_test("core_hold", None, None);
     let mut c = client::client::Client::new(client::client::ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -591,11 +582,14 @@ fn passed_runner() -> scenario::ScenarioRunner {
     });
     c.ingame = true;
     c.scene_state = 2;
-    runner.tick(&mut c);
+    tick_scenario_runner_for_test(&mut runner, &mut c);
     c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-    runner.tick(&mut c);
-    assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
-    runner
+    tick_scenario_runner_for_test(&mut runner, &mut c);
+    handle.install(runner);
+    assert_eq!(
+        runner_status_for_test(handle),
+        Some(frontend_core::live::RunnerStatus::Passed)
+    );
 }
 
 /// What `--catalog-core` prepare leaves: the Play's catalog witness armed for
@@ -616,10 +610,7 @@ fn catalog_core_holds_live_pass_until_the_witness_qualifies_or_its_deadline_fail
     arm_catalog_witness(&mut session, &play);
     session.inject_play(play);
     session.live_name = Some("core_hold".into());
-    session
-        .core
-        .live_runner()
-        .install_scenario_runner_for_test(passed_runner());
+    install_passed_runner(session.core.live_runner());
     session.live_core_deadline = Some(Instant::now() + Duration::from_secs(60));
     assert_eq!(
         session.live_status(),
@@ -706,10 +697,7 @@ fn only_the_witness_a_live_run_armed_decides_it() {
 
     // A plain `--live` run passes on its own proof, without a witness line.
     session.live_name = Some("plain".into());
-    session
-        .core
-        .live_runner()
-        .install_scenario_runner_for_test(passed_runner());
+    install_passed_runner(session.core.live_runner());
     let (code, lines) = session.live_status();
     assert_eq!(code, Some(0), "{lines:?}");
     assert!(
@@ -722,7 +710,7 @@ fn only_the_witness_a_live_run_armed_decides_it() {
 
 #[test]
 fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
-    let _iso = IsolatedEnv::enter("tui-pair-refusal");
+    let _iso = IsolatedStores::enter("tui-pair-refusal");
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let error = session
@@ -731,7 +719,10 @@ fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
         )
         .expect_err("a paired proof must not run outside the pair gate");
     assert!(error.contains("pair core gate"), "{error}");
-    assert!(session.core.play().is_none(), "refused before any boot");
+    assert!(
+        session.core.play_for_test().is_none(),
+        "refused before any boot"
+    );
     assert!(session
         .core
         .live_runner()
@@ -741,8 +732,8 @@ fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
 
 #[test]
 fn pair_gate_stashes_both_slots_with_complementary_role_bags() {
-    let iso = IsolatedEnv::enter("tui-pair-gate");
-    let root = iso.dir.join("rs2b0t");
+    let iso = IsolatedStores::enter("tui-pair-gate");
+    let root = iso.dir().join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(scripts.join("NatureCrafter")).unwrap();
     std::fs::write(
@@ -758,7 +749,7 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
         "export default class NatureCrafter extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    iso.set_rs2b0t(&root);
+    iso.set_catalog_root(&root);
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session.live_pair_core = true;
@@ -789,7 +780,7 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
     assert_eq!(modes, [Some("Master"), Some("Runner")]);
     assert!(session
         .core
-        .play()
+        .play_for_test()
         .expect("play")
         .paired_core_watch()
         .configured());
@@ -849,7 +840,7 @@ fn create_profile_upsert_error_returns_err() {
     let path = dir.join("vault.vault");
     let mut session = TuiSession::new(dummy_options());
     session
-        .start_play(Vault::create(&path, "test-passphrase-01").unwrap())
+        .start_play(VaultFixture::create(&path, "test-passphrase-01"))
         .unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
     let err = session.create_profile("alice").unwrap_err();
@@ -864,11 +855,14 @@ fn create_profile_upsert_error_returns_err() {
 /// existing vault keeps its profiles.
 #[test]
 fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
-    let iso = IsolatedEnv::enter("tui-fresh-vault-empty");
+    let iso = IsolatedStores::enter("tui-fresh-vault-empty");
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
-        .start_play(Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap())
+        .start_play(VaultFixture::create(
+            &iso.dir().join("vault"),
+            "test-passphrase-01",
+        ))
         .unwrap();
     // No `--user`: an honest error, and no `test` profile left behind.
     let err = session.bootstrap_interactive_profiles(&[]).unwrap_err();
@@ -878,7 +872,7 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     );
     assert!(session.names.is_empty(), "names: {:?}", session.names);
     assert!(
-        session.core.vault().is_none_or(|v| v.get("test").is_none()),
+        session.core.profile("test").is_none(),
         "fresh vault must not seed `test`"
     );
     // `--user` creates the first profile (and focuses it).
@@ -890,10 +884,7 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     );
     assert_eq!(session.names, vec!["alice".to_string()]);
     assert!(
-        session
-            .core
-            .vault()
-            .is_some_and(|v| v.get("test").is_none() && v.get("alice").is_some()),
+        session.core.profile("test").is_none() && session.core.profile("alice").is_some(),
         "only `--user` profiles exist"
     );
     // An existing vault keeps its profiles: no seeding, no wipe.
@@ -914,7 +905,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
         let template = SharedClientTemplate::load(profile).unwrap();
         let mut session = TuiSession::new_bound(Arc::clone(&template));
-        let vault = Vault::create(&home.root.join(vault), "test-passphrase-01").unwrap();
+        let vault = VaultFixture::create(&home.root.join(vault), "test-passphrase-01");
         session.start_play(vault).unwrap();
         (session, template)
     };
@@ -925,7 +916,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let world = template.world().expect("the packaged world decodes");
     let played = session
         .core
-        .play()
+        .play_for_test()
         .and_then(|play| play.world())
         .expect("the TUI play has the packaged world");
     assert!(Arc::ptr_eq(&played, &world));
@@ -940,7 +931,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
             if message.contains("rebuild it with nav-pack")
     ));
     let (session, _) = start(overridden, "override.vault");
-    assert!(session.core.play().unwrap().world().is_none());
+    assert!(session.core.play_for_test().unwrap().world().is_none());
     assert!(session.core.nav_world().is_none());
     assert!(home.old_pack_untouched());
 }
@@ -951,7 +942,7 @@ fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
     let profile = home.bind(None);
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let mut session = TuiSession::new_bound(template);
-    let vault = Vault::create(&home.root.join("reach.vault"), "test-passphrase-01").unwrap();
+    let vault = VaultFixture::create(&home.root.join("reach.vault"), "test-passphrase-01");
     session.start_play(vault).unwrap();
     let mut app = TuiApp::new("reach fixture");
     app.map_active = true;
@@ -1046,9 +1037,9 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
 
 #[test]
 fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
-    let iso = IsolatedEnv::enter("tui-bone-live");
-    let root = fake_rs2b0t_tree(&iso.dir, false);
-    iso.set_rs2b0t(&root);
+    let iso = IsolatedStores::enter("tui-bone-live");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    iso.set_catalog_root(&root);
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
@@ -1061,7 +1052,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "prepare sets script_sel to the catalog card"
     );
-    assert!(session.core.play().is_some(), "play started");
+    assert!(session.core.play_for_test().is_some(), "play started");
     assert!(
         session.core.fleet().contains(&name),
         "the minted driver is a loaded member"
@@ -1079,9 +1070,9 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
 
 #[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
-    let iso = IsolatedEnv::enter("tui-jive-kq-fleet");
-    let root = fake_rs2b0t_tree(&iso.dir, true);
-    iso.set_rs2b0t(&root);
+    let iso = IsolatedStores::enter("tui-jive-kq-fleet");
+    let root = fake_rs2b0t_tree(iso.dir(), true);
+    iso.set_catalog_root(&root);
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
@@ -1122,34 +1113,28 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
 
 #[test]
 fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
-    let ts = script::live_example_path("bone_burier_v2.ts").expect("ts example");
-    let js = script::live_example_path("bone_burier_v2.js").expect("js example");
+    let ts = live_example_path("bone_burier_v2.ts").expect("ts example");
+    let js = live_example_path("bone_burier_v2.js").expect("js example");
     for (name, path) in [
         ("bone_burier_v2_ts", ts.as_path()),
         ("bone_burier_v2_js", js.as_path()),
     ] {
-        let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
+        let iso = IsolatedStores::enter(&format!("tui-bone-v2-{name}"));
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
-        session.scripts.set_js(script::JsLibrary::with_cache(
-            iso.dir.join("js-scripts.json"),
-            iso.dir.join("js-cache"),
-        ));
-        session.scripts.js_mut().load(&ts).expect("preload ts");
-        session.scripts.js_mut().load(&js).expect("preload js");
-        session.scripts.legacy_mut().set_str(
-            script::ScriptSource::File,
-            "bone_burier_v2",
-            "boneName",
-            "stem",
+        session.scripts.use_library_at(
+            iso.dir().join("js-scripts.json"),
+            iso.dir().join("js-cache"),
         );
-        let identity = script::file_identity(path);
-        session.scripts.legacy_mut().set_str(
-            script::ScriptSource::File,
-            &identity,
-            "boneName",
-            "identity",
-        );
+        session.scripts.load_card(&ts).expect("preload ts");
+        session.scripts.load_card(&js).expect("preload js");
+        session
+            .scripts
+            .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+        let identity = file_identity(path);
+        session
+            .scripts
+            .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
         session
             .live_prepare_script(frontend_core::live::Scenario::get(name).expect("registered"))
             .expect("prepare");
@@ -1181,8 +1166,8 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
 
 #[test]
 fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
-    let iso = IsolatedEnv::enter("tui-thiever-bag");
-    let root = iso.dir.join("rs2b0t");
+    let iso = IsolatedStores::enter("tui-thiever-bag");
+    let root = iso.dir().join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(scripts.join("ThievingBot")).unwrap();
     std::fs::write(
@@ -1198,7 +1183,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         "export default class ThievingBot extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    iso.set_rs2b0t(&root);
+    iso.set_catalog_root(&root);
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session
@@ -1226,7 +1211,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
 
 #[test]
 fn first_browse_without_rs2b0t_opens_catalog_prompt() {
-    let iso = IsolatedEnv::enter("tui-browse");
+    let iso = IsolatedStores::enter("tui-browse");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
     app.script_browse_open = true;
@@ -1236,14 +1221,14 @@ fn first_browse_without_rs2b0t_opens_catalog_prompt() {
         "first browse opens folder picker"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "first browse must not write rs2b0t-path"
     );
 }
 
 #[test]
 fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
-    let iso = IsolatedEnv::enter("tui-defer");
+    let iso = IsolatedStores::enter("tui-defer");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
     app.script_browse_open = true;
@@ -1251,42 +1236,36 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     session.defer_rs2b0t_catalog(&mut app);
     assert!(
         frontend_core::scripts::paths::rs2b0t_import_deferred_at(
-            &iso.home.join(".274bot/rs2b0t-import")
+            &iso.home().join(".274bot/rs2b0t-import")
         ),
         "defer flag written"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "defer must not write rs2b0t-path"
     );
     assert!(
-        session
-            .scripts
-            .js()
-            .cards()
-            .iter()
-            .all(|c| c.source != script::ScriptSource::Catalog),
+        !session.scripts.has_cards_from(CardSource::Catalog),
         "zero Catalog cards after defer"
     );
 }
 
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
-    let iso = IsolatedEnv::enter("tui-import");
-    let root = fake_rs2b0t_tree(&iso.dir, false);
+    let iso = IsolatedStores::enter("tui-import");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("274bot headless");
     session.import_rs2b0t_catalog(&root).expect("import");
     assert!(session.scripts.catalog_work_pending());
-    assert!(!iso.home.join(".274bot/rs2b0t-path").exists());
+    assert!(!iso.home().join(".274bot/rs2b0t-path").exists());
     settle_catalog_work(&mut session, &mut app);
-    assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
+    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
     let card = session
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card(CardSource::Catalog, "BoneBurier")
         .expect("catalog card");
-    assert_eq!(card.description, "Buries bones");
+    assert_eq!(card.description(), "Buries bones");
 }
 
 #[test]
@@ -1332,21 +1311,14 @@ fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
 
 #[test]
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
-    let iso = IsolatedEnv::enter("tui-initial-load");
+    let iso = IsolatedStores::enter("tui-initial-load");
     let mut session = TuiSession::new(dummy_options());
-    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     for (uid, name) in [(7, "alice"), (8, "bob")] {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: "pw".into(),
-                uid,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(FixtureProfile::new(name, "pw").uid(uid));
     }
-    session.core.set_vault(Some(vault));
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    install_vault(&mut session.core, vault);
+    let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(7, false));
     play.attach_arm("bob", SlotArm::new(8, false));
     session.inject_play(play);
@@ -1355,12 +1327,12 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let mut app = TuiApp::new("initial load proof");
     app.names = vec!["alice".into(), "bob".into(), "missing".into()];
     app.focused = Some(0);
-    let path = iso.dir.join("retry.ts");
-    let helper = iso.dir.join("gate.ts");
+    let path = iso.dir().join("retry.ts");
+    let helper = iso.dir().join("gate.ts");
     std::fs::write(&helper, "export const fail = true;").unwrap();
     let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
     std::fs::write(&path, src).unwrap();
-    let card = session.scripts.js_mut().load(&path).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
@@ -1371,47 +1343,57 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         shown.starts_with("script: ") && shown.contains("tui-initial-load"),
         "{shown}"
     );
-    let failure = session
-        .scripts
-        .js()
-        .load_failure(&card.identity_key())
-        .unwrap()
-        .clone();
-    assert_eq!(failure.identity_key, card.identity_key());
-    assert_eq!(failure.path, path);
-    assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
-    assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
+    let failure = session.scripts.load_failure(card.identity_key()).unwrap();
+    assert_eq!(failure.identity_key(), card.identity_key());
+    assert_eq!(failure.path(), path.as_path());
+    assert_eq!(failure.stage(), LoadStage::RuntimeLoad);
+    let retained = failure.copyable_text();
+    let retained_failure = |session: &TuiSession| {
+        session
+            .scripts
+            .load_failure(card.identity_key())
+            .map(|failure| failure.copyable_text())
+    };
     assert_eq!(
-        failure.fingerprint,
-        script::raw_content_fingerprint(&path, src)
+        session
+            .scripts
+            .load_failure_api_family(card.identity_key())
+            .as_deref(),
+        Some("v2")
+    );
+    assert_eq!(
+        session
+            .scripts
+            .load_failure_fingerprint(card.identity_key()),
+        Some(raw_content_fingerprint(&path, src))
     );
     assert_eq!(
         session
             .core
-            .play()
+            .play_for_test()
             .unwrap()
             .script_runtime_generation("alice"),
         Some(0)
     );
 
-    let good_path = iso.dir.join("good.ts");
+    let good_path = iso.dir().join("good.ts");
     std::fs::write(
         &good_path,
         "export default class T extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    let good = session.scripts.js_mut().load(&good_path).unwrap();
-    assert_eq!(good.api_family, script::ApiFamily::V1);
+    let good = session.scripts.load_card(&good_path).unwrap();
+    assert_eq!(
+        card_api_family(&session.scripts, good.source(), good.identity_id()).as_deref(),
+        Some("v1")
+    );
     app.focused = Some(1);
     session.script_start(
         &mut app,
         &ScriptChoice::loaded(CardSource::File, &good_path.to_string_lossy()),
     );
     settle_starts(&mut session, &mut app);
-    assert_eq!(
-        session.core.play().unwrap().script_state("bob"),
-        script::RunState::Running
-    );
+    assert_eq!(session.core.script_state("bob"), ScriptRunState::Running);
     let output = app.error.as_deref().unwrap();
     assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
     assert!(output.contains(&path.display().to_string()));
@@ -1421,38 +1403,28 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         .as_deref()
         .unwrap()
         .contains("script already active"));
-    assert_eq!(
-        session.scripts.js().load_failure(&card.identity_key()),
-        Some(&failure)
-    );
+    assert_eq!(retained_failure(&session).as_ref(), Some(&retained));
     app.focused = Some(2);
     session.script_start(&mut app, &sel);
     assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
-    assert_eq!(
-        session.scripts.js().load_failure(&card.identity_key()),
-        Some(&failure)
-    );
+    assert_eq!(retained_failure(&session).as_ref(), Some(&retained));
 
     std::fs::write(&helper, "export const fail = false;").unwrap();
     app.focused = Some(0);
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
-    assert!(session
-        .scripts
-        .js()
-        .load_failure(&card.identity_key())
-        .is_none());
+    assert!(session.scripts.load_failure(card.identity_key()).is_none());
     assert_eq!(app.error, None);
     assert_eq!(
         session
             .core
-            .play()
+            .play_for_test()
             .unwrap()
             .script_runtime_generation("alice"),
         Some(1)
     );
-    session.core.play().unwrap().script_stop("alice");
-    session.core.play().unwrap().script_stop("bob");
+    session.core.play_for_test().unwrap().script_stop("alice");
+    session.core.play_for_test().unwrap().script_stop("bob");
 }
 
 /// Task 13 fix: the paint-as-chat toggle must not stick across a
@@ -1463,12 +1435,11 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
 /// panel's `script_toggle_pause` (Resume when Paused, Pause when Running).
 #[test]
 fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
-        .unwrap();
-    wait_script_state(&play, "alice", script::RunState::Running);
+    start_script_source(&play, "alice", src, LoadShape::NativeTick).unwrap();
+    wait_script_state(&play, "alice", ScriptRunState::Running);
 
     let mut session = TuiSession::new(dummy_options());
     session.inject_play(play);
@@ -1478,52 +1449,44 @@ fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
 
     dispatch(&mut session, &mut app, AppAction::ScriptPause);
     assert_eq!(
-        session.core.play().unwrap().script_state("alice"),
-        script::RunState::Paused,
+        session.core.script_state("alice"),
+        ScriptRunState::Paused,
         "Pause while Running"
     );
 
     dispatch(&mut session, &mut app, AppAction::ScriptPause);
     assert_eq!(
-        session.core.play().unwrap().script_state("alice"),
-        script::RunState::Running,
+        session.core.script_state("alice"),
+        ScriptRunState::Running,
         "Resume while Paused"
     );
 }
 
 #[test]
 fn paint_button_action_does_not_queue_a_wire_cmd() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
-        .unwrap();
-    wait_script_state(&play, "alice", script::RunState::Running);
+    start_script_source(&play, "alice", src, LoadShape::NativeTick).unwrap();
+    wait_script_state(&play, "alice", ScriptRunState::Running);
     let mut session = TuiSession::new(dummy_options());
     session.inject_play(play);
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
-    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
-        title: Some("NatureCrafter".into()),
-        accent: None,
-        lines: vec!["status".into()],
-        buttons: vec![script::shim::ScriptPaintButton {
-            id: "gobank".into(),
-            label: "Go bank".into(),
-        }],
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }));
+    app.chat_data.script_paint = Some(
+        TestPaint::new(Some("NatureCrafter"), &["status"])
+            .with_button("gobank", "Go bank")
+            .frame(),
+    );
     dispatch(
         &mut session,
         &mut app,
         AppAction::Chat(ChatAction::PaintButton(0)),
     );
     assert_eq!(
-        session.core.play().unwrap().script_state("alice"),
-        script::RunState::Running,
+        session.core.script_state("alice"),
+        ScriptRunState::Running,
         "paint click must not pause or stop"
     );
 }
@@ -1990,7 +1953,7 @@ fn refused_no_origin_walk_does_not_arm_destination() {
 
 #[test]
 fn worker_panic_does_not_restore_tui_terminal() {
-    let _iso = IsolatedEnv::enter("tui-worker-panic-hook");
+    let _iso = IsolatedStores::enter("tui-worker-panic-hook");
     super::install_tui_panic_hook();
     crate::stderr_capture::capture();
     assert!(
@@ -2392,7 +2355,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
 }
 
 fn empty_play() -> Play {
-    run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+    frontend_core::test_support::empty_play(&dummy_options())
 }
 
 fn two_arm_play() -> Play {
@@ -2414,7 +2377,7 @@ fn pump_two_slots(session: &mut TuiSession) -> TuiApp {
 
 #[test]
 fn tui_live_mode_does_not_show_or_persist_background_notice() {
-    let iso = IsolatedEnv::enter("tui-live-ack");
+    let iso = IsolatedStores::enter("tui-live-ack");
     let mut session = TuiSession::new(dummy_options());
     session.persist_ui = false;
     let app = pump_two_slots(&mut session);
@@ -2429,7 +2392,7 @@ fn tui_live_mode_does_not_show_or_persist_background_notice() {
 
 #[test]
 fn tui_notice_uses_shared_ack_file() {
-    let iso = IsolatedEnv::enter("tui-shared-ack");
+    let iso = IsolatedStores::enter("tui-shared-ack");
     let mut session = TuiSession::new(dummy_options());
     let app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
@@ -2451,7 +2414,7 @@ fn tui_notice_uses_shared_ack_file() {
 
 #[test]
 fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
-    let iso = IsolatedEnv::enter("tui-map-bake");
+    let iso = IsolatedStores::enter("tui-map-bake");
     let path = frontend_core::scripts::paths::bot_home()
         .join(".274bot")
         .join("panel-ui.json");
@@ -2487,7 +2450,7 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
 /// keep them.
 #[test]
 fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
-    let iso = IsolatedEnv::enter("tui-state-round-trip");
+    let iso = IsolatedStores::enter("tui-state-round-trip");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.map_bake = frontend_core::MapBakeChoice::Always;
@@ -2514,7 +2477,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
         peer.preferences().value("map_bake"),
         Some(serde_json::json!("always"))
     );
-    let mut peer_form = Loadouts::over(Arc::new(peer.operator_loadouts()));
+    let mut peer_form = Loadouts::operator(&peer);
     assert_eq!(
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
@@ -2548,7 +2511,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     app.map_bake_dirty = true;
     session.pump(&mut app);
     assert_eq!(app.error, None);
-    let mut reread = Loadouts::over(Arc::new(peer.operator_loadouts()));
+    let mut reread = Loadouts::operator(&peer);
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
@@ -2564,7 +2527,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
 
 #[test]
 fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
-    let iso = IsolatedEnv::enter("tui-manual-walk-pause");
+    let iso = IsolatedStores::enter("tui-manual-walk-pause");
     let path = frontend_core::scripts::paths::bot_home()
         .join(".274bot")
         .join("panel-ui.json");
@@ -2612,7 +2575,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
 
 #[test]
 fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
-    let iso = IsolatedEnv::enter("tui-quester-paths-save-failure");
+    let iso = IsolatedStores::enter("tui-quester-paths-save-failure");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.share());
@@ -2628,7 +2591,7 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let before_enabled = app.quester_paths.enabled();
     let before_folder = app.quester_paths.folder().to_path_buf();
     app.quester_paths.set_enabled(true);
-    app.quester_paths.set_folder(iso.dir.join("paths"));
+    app.quester_paths.set_folder(iso.dir().join("paths"));
     app.quester_paths_dirty = true;
 
     session.project_quester_paths(&mut app);
@@ -2647,8 +2610,8 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
 
 #[test]
 fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
-    let iso = IsolatedEnv::enter("tui-quester-paths-startup");
-    let folder = iso.dir.join("paths");
+    let iso = IsolatedStores::enter("tui-quester-paths-startup");
+    let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
     for (id, name) in [("cook", "Folder Cook"), ("fresh-draft", "Fresh Draft")] {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -2703,25 +2666,22 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
         std::thread::yield_now();
     }
 
-    let registry = script::quester::registry::snapshot();
-    assert!(registry.rows().iter().any(|row| {
-        row.id == "cook" && row.source == script::quester::registry::PathSource::Folder
-    }));
-    assert!(registry.rows().iter().any(|row| {
-        row.id == "fresh-draft" && row.source == script::quester::registry::PathSource::Draft
-    }));
+    assert!(quester_folder_path_ids().iter().any(|id| id == "cook"));
+    assert!(quester_draft_path_ids()
+        .iter()
+        .any(|id| id == "fresh-draft"));
     let report = app
         .quester_paths_controller
         .notice_text()
         .expect("startup validation report");
     assert!(report.contains("2 folder documents"), "{report}");
     assert!(report.contains("0 validation errors"), "{report}");
-    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+    reset_quester_registry();
 }
 
 #[test]
 fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
-    let iso = IsolatedEnv::enter("tui-reap-finished");
+    let iso = IsolatedStores::enter("tui-reap-finished");
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(1, false));
     play.attach_finished_worker_for_test("bob", SlotArm::new(2, false));
@@ -2756,7 +2716,7 @@ fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
     app.names = session.names.clone();
     app.focused = Some(0);
     session.pump(&mut app);
-    let play = session.core.play().unwrap();
+    let play = session.core.play_for_test().unwrap();
     assert!(
         play.arm("bob").is_none(),
         "pump must reap the finished worker"
@@ -2772,7 +2732,7 @@ fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
 
 #[test]
 fn tui_failed_ack_persist_then_success_clears_only_that_error() {
-    let iso = IsolatedEnv::enter("tui-ack-fail");
+    let iso = IsolatedStores::enter("tui-ack-fail");
     let mut session = TuiSession::new(dummy_options());
     let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
@@ -2807,7 +2767,7 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
 
 #[test]
 fn tui_successful_ack_preserves_unrelated_error() {
-    let iso = IsolatedEnv::enter("tui-ack-unrelated");
+    let iso = IsolatedStores::enter("tui-ack-unrelated");
     let mut session = TuiSession::new(dummy_options());
     let mut app = pump_two_slots(&mut session);
     app.error = Some("script: no focused profile".into());
@@ -2821,24 +2781,18 @@ fn tui_successful_ack_preserves_unrelated_error() {
 }
 
 /// Vault with `alice` pinned to world 2 and auto-login on, in a temp dir.
-fn lifecycle_vault(test: &str) -> Vault {
+fn lifecycle_vault(test: &str) -> VaultFixture {
     let dir = std::env::temp_dir().join(format!("274bot-tui-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault");
     let _ = std::fs::remove_file(&path);
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault
-        .upsert(Profile {
-            username: "alice".into(),
-            password: "pw".into(),
-            uid: 7,
-            settings: vault::ProfileSettings {
-                auto_login: true,
-                world: Some(2),
-                ..vault::ProfileSettings::default()
-            },
-        })
-        .unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(
+        FixtureProfile::new("alice", "pw")
+            .uid(7)
+            .auto_login(true)
+            .world(Some(2)),
+    );
     vault
 }
 
@@ -2851,7 +2805,7 @@ fn multibox_key_logs_a_loaded_logged_out_member_back_in() {
     alice.request_logout();
     alice.hold_logged_out();
     play.attach_arm("alice", Arc::clone(&alice));
-    session.core.start(lifecycle_vault("multibox-rearm"), play);
+    lifecycle_vault("multibox-rearm").start_session(&mut session.core, play);
     let mut app = TuiApp::new("tui");
     assert!(!alice.wants_login());
 
@@ -2867,30 +2821,19 @@ fn multibox_key_logs_a_loaded_logged_out_member_back_in() {
 
 #[test]
 fn load_all_keeps_focus_when_others_log_in() {
-    let iso = IsolatedEnv::enter("tui-loadall-keeps-focus");
+    let iso = IsolatedStores::enter("tui-loadall-keeps-focus");
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     for (i, name) in ["alice", "bob", "carol", "dave"].iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: (*name).into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings {
-                    auto_login: *name != "alice",
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
+        vault.put(
+            FixtureProfile::new(name, "pw")
+                .uid(1 + i as i32)
+                .auto_login(*name != "alice"),
+        );
     }
-    session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
+    install_vault(&mut session.core, vault);
+    session.inject_play(empty_play());
     let mut surface = HeadlessSurface::new();
     session.core.load("alice", &mut surface);
     session.core.select("alice");
@@ -2913,7 +2856,13 @@ fn load_all_keeps_focus_when_others_log_in() {
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
 
     for name in ["bob", "carol", "dave"] {
-        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
         rows.retain(|row| row.username != name);
         rows.push(host_play::SlotStatus {
             username: name.into(),
@@ -2929,7 +2878,13 @@ fn load_all_keeps_focus_when_others_log_in() {
             Some("alice"),
             "{name} at scene_state==1 must not take TUI focus"
         );
-        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
         rows.retain(|row| row.username != name);
         rows.push(host_play::SlotStatus {
             username: name.into(),
@@ -2952,30 +2907,19 @@ fn load_all_keeps_focus_when_others_log_in() {
 
 #[test]
 fn load_all_picks_focus_when_none_was_focused() {
-    let iso = IsolatedEnv::enter("tui-loadall-picks-focus");
+    let iso = IsolatedStores::enter("tui-loadall-picks-focus");
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     for (i, name) in ["bob", "carol", "dave"].iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: (*name).into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings {
-                    auto_login: true,
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
+        vault.put(
+            FixtureProfile::new(name, "pw")
+                .uid(1 + i as i32)
+                .auto_login(true),
+        );
     }
-    session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
+    install_vault(&mut session.core, vault);
+    session.inject_play(empty_play());
     let mut app = TuiApp::new("tui");
     session.pump(&mut app);
     assert_eq!(session.core.selected(), None);
@@ -2989,7 +2933,13 @@ fn load_all_picks_focus_when_none_was_focused() {
     assert_eq!(app.focused_name(), picked);
 
     for name in ["carol", "dave"] {
-        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
         rows.retain(|row| row.username != name);
         rows.push(host_play::SlotStatus {
             username: name.into(),
@@ -3005,7 +2955,13 @@ fn load_all_picks_focus_when_none_was_focused() {
             picked,
             "{name} at scene_state==1 must not take TUI focus"
         );
-        let mut rows = session.core.play().unwrap().statuses.lock().unwrap();
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
         rows.retain(|row| row.username != name);
         rows.push(host_play::SlotStatus {
             username: name.into(),
@@ -3031,12 +2987,10 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let alice = SlotArm::new(7, true);
+    lifecycle_vault("settings-fields").start_session(&mut session.core, empty_play());
     session
         .core
-        .start(lifecycle_vault("settings-fields"), empty_play());
-    session
-        .core
-        .play_mut()
+        .play_mut_for_test()
         .unwrap()
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
@@ -3047,8 +3001,8 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
         .unwrap();
     session.core.flush_writes();
     assert_eq!(
-        alice.random_event_policies.lock().unwrap()["river troll"],
-        vault::RandomEventPolicy::Fight
+        arm_random_event_policy(&alice, "river troll"),
+        frontend_core::GuardianPolicy::Fight
     );
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
@@ -3072,19 +3026,20 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     );
     session.core.flush_writes();
 
-    let saved = session.core.vault().unwrap().get("alice").unwrap().clone();
-    assert!(!saved.settings.random_events);
-    assert_eq!(saved.settings.lamp_skill, "Magic");
-    assert!(saved.settings.lamp_auto);
-    assert_eq!(saved.settings.world, Some(2), "world pin survives");
-    assert!(saved.settings.auto_login, "auto-login survives");
+    let saved = session.core.profile("alice").unwrap();
+    let saved_settings = saved.settings_draft();
+    assert!(!saved.random_events());
+    assert_eq!(saved_settings.lamp_skill(), "Magic");
+    assert!(saved_settings.lamp_auto());
+    assert_eq!(saved_settings.world(), Some(2), "world pin survives");
+    assert!(saved.auto_login(), "auto-login survives");
     assert_eq!(
-        saved.settings.random_event_policy("river troll"),
-        vault::RandomEventPolicy::Flee
+        saved.random_event_policy("river troll"),
+        frontend_core::GuardianPolicy::Flee
     );
     assert_eq!(
-        alice.random_event_policies.lock().unwrap()["river troll"],
-        vault::RandomEventPolicy::Flee
+        arm_random_event_policy(&alice, "river troll"),
+        frontend_core::GuardianPolicy::Flee
     );
     assert!(!alice.random_events.load(Ordering::Relaxed));
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Magic");
@@ -3094,9 +3049,7 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
 fn settings_popup_shows_unavailable_policy_refusal() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    session
-        .core
-        .start(lifecycle_vault("settings-policy-refusal"), empty_play());
+    lifecycle_vault("settings-policy-refusal").start_session(&mut session.core, empty_play());
     session.core.fleet_mut().add("alice");
     session.core.select("alice");
     let mut app = TuiApp::new("tui");
@@ -3125,12 +3078,10 @@ fn removing_the_focused_member_focuses_its_neighbour() {
         connected: true,
         ..host_play::SlotStatus::default()
     });
-    session
-        .core
-        .start(lifecycle_vault("remove-neighbour"), play);
+    lifecycle_vault("remove-neighbour").start_session(&mut session.core, play);
     session.core.fleet_mut().add("alice");
     session.core.fleet_mut().add("bob");
-    let bob = session.core.play().unwrap().arm("bob").unwrap();
+    let bob = session.core.play_for_test().unwrap().arm("bob").unwrap();
     let mut app = TuiApp::new("tui");
     app.names = vec!["alice".into(), "bob".into()];
     app.focused = Some(1);
@@ -3166,31 +3117,19 @@ const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', de
 
 /// A TUI session over a real vault and an empty play: members loaded
 /// (arms attached, no worker threads), library in the isolated home.
-fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) {
+fn tui_with_profiles(iso: &IsolatedStores, names: &[&str]) -> (TuiSession, TuiApp) {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    let mut vault = Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     for (i, name) in names.iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: (*name).into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
-    session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
-    session.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
+    install_vault(&mut session.core, vault);
+    session.inject_play(empty_play());
+    session.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
     let mut surface = HeadlessSurface::new();
     for name in names {
         session.core.load(name, &mut surface);
@@ -3200,10 +3139,14 @@ fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) 
     (session, app)
 }
 
-fn assign(session: &mut TuiSession, name: &str, card: &script::JsCard) {
-    assert!(session
-        .scripts
-        .persist_assignment(&mut session.core, name, card.assignment()));
+fn assign(session: &mut TuiSession, name: &str, card: &LoadedCardSnapshot) {
+    assert!(assign_loaded(
+        &mut session.scripts,
+        &mut session.core,
+        name,
+        card.source(),
+        card.identity_id()
+    ));
     session.core.flush_writes();
 }
 
@@ -3214,16 +3157,20 @@ fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
 
 #[test]
 fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
-    let iso = IsolatedEnv::enter("tui-restart-settings-prompt");
+    let iso = IsolatedStores::enter("tui-restart-settings-prompt");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    session.core.play_mut().unwrap().bind_script_test_data(data);
-    let id = script::CompiledId("Gatherer");
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_data(data);
     let card_id = CompiledCardId::lookup("Gatherer").unwrap();
-    assert!(session.scripts.persist_assignment(
+    assert!(assign_compiled(
+        &mut session.scripts,
         &mut session.core,
         "alice",
-        script::compiled_assignment(id)
+        card_id
     ));
     session.core.flush_writes();
     session
@@ -3244,9 +3191,9 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
         .unwrap();
     settle_starts(&mut session, &mut app);
     wait_script_state(
-        session.core.play().unwrap(),
+        session.core.play_for_test().unwrap(),
         "alice",
-        script::RunState::Running,
+        ScriptRunState::Running,
     );
 
     session
@@ -3300,17 +3247,21 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
 
 #[test]
 fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
-    let iso = IsolatedEnv::enter("tui-restart-settings-stale-summary");
+    let iso = IsolatedStores::enter("tui-restart-settings-stale-summary");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    session.core.play_mut().unwrap().bind_script_test_data(data);
-    let id = script::CompiledId("Gatherer");
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_data(data);
     let card_id = CompiledCardId::lookup("Gatherer").unwrap();
     for name in ["alice", "bob"] {
-        assert!(session.scripts.persist_assignment(
+        assert!(assign_compiled(
+            &mut session.scripts,
             &mut session.core,
             name,
-            script::compiled_assignment(id)
+            card_id
         ));
     }
     session.core.flush_writes();
@@ -3337,9 +3288,9 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {
         wait_script_state(
-            session.core.play().unwrap(),
+            session.core.play_for_test().unwrap(),
             name,
-            script::RunState::Running,
+            ScriptRunState::Running,
         );
     }
 
@@ -3378,11 +3329,11 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
             )
     ));
 
-    session.core.play().unwrap().script_stop("alice");
+    session.core.play_for_test().unwrap().script_stop("alice");
     wait_script_state(
-        session.core.play().unwrap(),
+        session.core.play_for_test().unwrap(),
         "alice",
-        script::RunState::Idle,
+        ScriptRunState::Idle,
     );
     session.poll_scripts(&mut app);
 
@@ -3431,11 +3382,11 @@ fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
 /// focused profile.
 #[test]
 fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
-    let iso = IsolatedEnv::enter("tui-settings-bind");
+    let iso = IsolatedStores::enter("tui-settings-bind");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     session
         .core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -3491,13 +3442,12 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     // Persisting writes alice's row, never bob's.
     session.pump(&mut app);
     session.core.flush_writes();
-    let vault = session.core.vault().unwrap();
     assert!(
-        !vault.get("alice").unwrap().settings.random_events,
+        !session.core.profile("alice").unwrap().random_events(),
         "the edit lands on the bound profile"
     );
     assert!(
-        vault.get("bob").unwrap().settings.random_events,
+        session.core.profile("bob").unwrap().random_events(),
         "bob untouched"
     );
 }
@@ -3548,7 +3498,7 @@ fn open_settings(session: &mut TuiSession, app: &mut TuiApp) {
 /// only once the persist is durable.
 #[test]
 fn settings_popup_shows_saved_once_the_write_is_durable() {
-    let iso = IsolatedEnv::enter("tui-settings-saved");
+    let iso = IsolatedStores::enter("tui-settings-saved");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
@@ -3579,16 +3529,15 @@ fn settings_popup_shows_saved_once_the_write_is_durable() {
         );
         assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Green, "{w}x{h}");
     }
-    let vault = session.core.vault().unwrap();
-    assert!(!vault.get("alice").unwrap().settings.random_events);
-    assert!(vault.get("bob").unwrap().settings.random_events);
+    assert!(!session.core.profile("alice").unwrap().random_events());
+    assert!(session.core.profile("bob").unwrap().random_events());
 }
 
 /// Closing the settings popup before a persist completes: the popup opened
 /// next, here on another profile, never shows that persist's `Saved`.
 #[test]
 fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
-    let iso = IsolatedEnv::enter("tui-settings-close-pending");
+    let iso = IsolatedStores::enter("tui-settings-close-pending");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
@@ -3613,9 +3562,8 @@ fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
             "{w}x{h}: alice's persist never shows in bob's popup"
         );
     }
-    let vault = session.core.vault().unwrap();
     assert!(
-        !vault.get("alice").unwrap().settings.random_events,
+        !session.core.profile("alice").unwrap().random_events(),
         "the persist itself landed"
     );
 }
@@ -3628,7 +3576,7 @@ fn a_persist_completing_after_close_shows_nothing_in_the_next_popup() {
 fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     use std::os::unix::fs::PermissionsExt;
 
-    let iso = IsolatedEnv::enter("tui-settings-late-failure");
+    let iso = IsolatedStores::enter("tui-settings-late-failure");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
@@ -3638,11 +3586,11 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
     session.pump(&mut app);
     assert!(!app.settings.random_events(), "the popup shows the edit");
 
-    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
     drop(held);
     session.core.flush_writes();
     session.pump(&mut app);
-    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         let (left, top) = cell_of(&screen, "settings — alice").expect("the popup is drawn");
@@ -3666,14 +3614,7 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
         );
     }
     assert!(
-        session
-            .core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .random_events,
+        session.core.profile("alice").unwrap().random_events(),
         "nothing was saved"
     );
 
@@ -3694,7 +3635,7 @@ fn a_late_persist_failure_shows_in_the_popup_it_came_from() {
 fn a_persist_failing_after_close_reaches_only_the_message_line() {
     use std::os::unix::fs::PermissionsExt;
 
-    let iso = IsolatedEnv::enter("tui-settings-late-closed");
+    let iso = IsolatedStores::enter("tui-settings-late-closed");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
@@ -3707,11 +3648,11 @@ fn a_persist_failing_after_close_reaches_only_the_message_line() {
     focus_member(&mut session, &mut app, "bob");
     open_settings(&mut session, &mut app);
 
-    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
     drop(held);
     session.core.flush_writes();
     session.pump(&mut app);
-    std::fs::set_permissions(&iso.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         assert!(cell_of(&screen, "settings — bob").is_some(), "{w}x{h}");
@@ -3731,11 +3672,11 @@ fn a_persist_failing_after_close_reaches_only_the_message_line() {
 /// line; editing the popup again clears it.
 #[test]
 fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
-    let iso = IsolatedEnv::enter("tui-settings-refused");
+    let iso = IsolatedStores::enter("tui-settings-refused");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     focus_member(&mut session, &mut app, "alice");
     open_settings(&mut session, &mut app);
-    session.core.vault_mut().unwrap().remove("alice").unwrap();
+    remove_saved_profile(&mut session.core, "alice");
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     session.pump(&mut app);
     for (w, h) in SIZES {
@@ -3764,10 +3705,9 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
             "{w}x{h}: editing the popup clears the refusal"
         );
     }
-    let vault = session.core.vault().unwrap();
-    assert!(vault.get("alice").is_none(), "nothing recreated");
+    assert!(session.core.profile("alice").is_none(), "nothing recreated");
     assert!(
-        vault.get("bob").unwrap().settings.random_events,
+        session.core.profile("bob").unwrap().random_events(),
         "bob untouched"
     );
 }
@@ -3784,11 +3724,11 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
 /// stops both.
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
-    let iso = IsolatedEnv::enter("tui-bulk-scripts");
+    let iso = IsolatedStores::enter("tui-bulk-scripts");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
-    let path = iso.dir.join("shared.ts");
+    let path = iso.dir().join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js_mut().load(&path).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
     assign(&mut session, "alice", &card);
     assign(&mut session, "bob", &card);
 
@@ -3797,13 +3737,17 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     assert_eq!(click, "Start all: started 1, queued 1, skipped 0");
     settle_starts(&mut session, &mut app);
     let generation = |session: &TuiSession, name: &str| {
-        session.core.play().unwrap().script_runtime_generation(name)
+        session
+            .core
+            .play_for_test()
+            .unwrap()
+            .script_runtime_generation(name)
     };
     for name in ["alice", "bob"] {
         wait_script_state(
-            session.core.play().unwrap(),
+            session.core.play_for_test().unwrap(),
             name,
-            script::RunState::Running,
+            ScriptRunState::Running,
         );
     }
     let before = (generation(&session, "alice"), generation(&session, "bob"));
@@ -3811,10 +3755,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     focus_member(&mut session, &mut app, "alice");
     assert_eq!(
         app.script_sel,
-        Some(ScriptChoice::loaded(
-            CardSource::File,
-            &card.assignment().identity,
-        )),
+        Some(ScriptChoice::loaded(CardSource::File, card.identity_id(),)),
         "the heading is alice's assignment"
     );
     std::fs::write(&path, format!("{LOOPING_TS}// changed\n")).unwrap();
@@ -3861,9 +3802,9 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     settle_starts(&mut session, &mut app);
     for name in ["alice", "bob"] {
         wait_script_state(
-            session.core.play().unwrap(),
+            session.core.play_for_test().unwrap(),
             name,
-            script::RunState::Running,
+            ScriptRunState::Running,
         );
     }
     assert_ne!(generation(&session, "alice"), before.0);
@@ -3872,7 +3813,11 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
 
     dispatch(&mut session, &mut app, AppAction::ScriptStopAll);
     for name in ["alice", "bob"] {
-        wait_script_state(session.core.play().unwrap(), name, script::RunState::Idle);
+        wait_script_state(
+            session.core.play_for_test().unwrap(),
+            name,
+            ScriptRunState::Idle,
+        );
     }
 }
 
@@ -3881,14 +3826,14 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
 #[test]
 fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     use crossterm::event::KeyCode;
-    let iso = IsolatedEnv::enter("tui-apply-to-all");
+    let iso = IsolatedStores::enter("tui-apply-to-all");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob", "carol"]);
-    let thiever_path = iso.dir.join("thiever.ts");
+    let thiever_path = iso.dir().join("thiever.ts");
     std::fs::write(&thiever_path, THIEVER_TS).unwrap();
-    let miner_path = iso.dir.join("miner.ts");
+    let miner_path = iso.dir().join("miner.ts");
     std::fs::write(&miner_path, LOOPING_TS).unwrap();
-    let thiever = session.scripts.js_mut().load(&thiever_path).unwrap();
-    let miner = session.scripts.js_mut().load(&miner_path).unwrap();
+    let thiever = session.scripts.load_card(&thiever_path).unwrap();
+    let miner = session.scripts.load_card(&miner_path).unwrap();
     assign(&mut session, "alice", &thiever);
     assign(&mut session, "bob", &thiever);
     assign(&mut session, "carol", &miner);
@@ -3898,9 +3843,9 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
         .unwrap();
     settle_starts(&mut session, &mut app);
     wait_script_state(
-        session.core.play().unwrap(),
+        session.core.play_for_test().unwrap(),
         "bob",
-        script::RunState::Running,
+        ScriptRunState::Running,
     );
 
     focus_member(&mut session, &mut app, "alice");
@@ -3922,16 +3867,7 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
 
     let key = thiever.identity_key();
     let target = |session: &TuiSession, name: &str| {
-        session
-            .core
-            .vault()
-            .unwrap()
-            .get(name)
-            .unwrap()
-            .settings
-            .script_settings
-            .get(&key)
-            .and_then(|bag| bag.get("target").cloned())
+        saved_script_bag(&session.core, name, key).and_then(|bag| bag.get("target").cloned())
     };
     let guard = Some(serde_json::json!("Guard"));
     assert_eq!(target(&session, "alice"), guard);
@@ -3940,8 +3876,7 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     assert!(
         session
             .scripts
-            .legacy()
-            .overrides(script::ScriptSource::File, &thiever.name)
+            .legacy_overrides(CardSource::File, thiever.name())
             .is_empty(),
         "the global store is not written"
     );
@@ -3951,28 +3886,28 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
         (1, 1, 1)
     );
     assert_eq!(app.error.as_deref(), Some(report.summary()));
-    session.core.play().unwrap().script_stop("bob");
+    session.core.play_for_test().unwrap().script_stop("bob");
 }
 
 /// Start with a prior load failure lists it on the strip; a newer front-end
 /// error replaces it; the Start settling Ready leaves that error shown.
 #[test]
 fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
-    let iso = IsolatedEnv::enter("tui-ready-newer-error");
+    let iso = IsolatedStores::enter("tui-ready-newer-error");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
-    std::fs::write(iso.dir.join("gate.ts"), "export const fail = true;").unwrap();
-    let path = iso.dir.join("retry.ts");
+    std::fs::write(iso.dir().join("gate.ts"), "export const fail = true;").unwrap();
+    let path = iso.dir().join("retry.ts");
     std::fs::write(
         &path,
         "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-first-load');\nexport function tick(api) {}\n",
     )
     .unwrap();
-    let card = session.scripts.js_mut().load(&path).unwrap();
-    let sel = ScriptChoice::loaded(CardSource::File, &card.identity_id());
+    let card = session.scripts.load_card(&path).unwrap();
+    let sel = ScriptChoice::loaded(CardSource::File, card.identity_id());
     focus_member(&mut session, &mut app, "alice");
     session.script_start(&mut app, &sel);
     settle_starts(&mut session, &mut app);
-    std::fs::write(iso.dir.join("gate.ts"), "export const fail = false;").unwrap();
+    std::fs::write(iso.dir().join("gate.ts"), "export const fail = false;").unwrap();
 
     session.script_start(&mut app, &sel);
     assert!(
@@ -3985,35 +3920,28 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     );
     app.error = Some("map: no route".into());
     settle_starts(&mut session, &mut app);
-    assert!(session
-        .scripts
-        .js()
-        .load_failure(&card.identity_key())
-        .is_none());
+    assert!(session.scripts.load_failure(card.identity_key()).is_none());
     assert_eq!(app.error.as_deref(), Some("map: no route"));
-    session.core.play().unwrap().script_stop("alice");
+    session.core.play_for_test().unwrap().script_stop("alice");
 }
 
 #[test]
 fn tui_start_all_paces_admission_through_the_shared_coordinator() {
-    let iso = IsolatedEnv::enter("tui-start-pace");
+    let iso = IsolatedStores::enter("tui-start-pace");
     let names = ["p0", "p1", "p2", "p3", "p4"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    let path = iso.dir.join("shared.ts");
+    let path = iso.dir().join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js_mut().load(&path).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
     for name in names {
         assign(&mut session, name, &card);
     }
 
     dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
-    let starting = {
-        let play = session.core.play().unwrap();
-        names
-            .iter()
-            .filter(|name| play.script_state(name) == script::RunState::Starting)
-            .count()
-    };
+    let starting = names
+        .iter()
+        .filter(|name| session.core.script_state(name) == ScriptRunState::Starting)
+        .count();
     assert!(
         starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
         "TUI Start all dispatched {starting} in the click frame"
@@ -4022,11 +3950,11 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
     settle_starts(&mut session, &mut app);
     for name in names {
         wait_script_state(
-            session.core.play().unwrap(),
+            session.core.play_for_test().unwrap(),
             name,
-            script::RunState::Running,
+            ScriptRunState::Running,
         );
-        session.core.play().unwrap().script_stop(name);
+        session.core.play_for_test().unwrap().script_stop(name);
     }
 }
 
@@ -4049,15 +3977,15 @@ fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
 /// its own, and the report names the marked bot that could not take it.
 #[test]
 fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
-    let iso = IsolatedEnv::enter("tui-apply-marked");
+    let iso = IsolatedStores::enter("tui-apply-marked");
     let (mut session, mut app) =
         tui_with_profiles(&iso, &["alice", "bob", "carol", "dave", "erin"]);
-    let thiever = iso.dir.join("thiever.ts");
+    let thiever = iso.dir().join("thiever.ts");
     std::fs::write(&thiever, THIEVER_TS).unwrap();
-    let card = session.scripts.js_mut().load(&thiever).unwrap();
-    let looping = iso.dir.join("looping.ts");
+    let card = session.scripts.load_card(&thiever).unwrap();
+    let looping = iso.dir().join("looping.ts");
     std::fs::write(&looping, LOOPING_TS).unwrap();
-    let other = session.scripts.js_mut().load(&looping).unwrap();
+    let other = session.scripts.load_card(&looping).unwrap();
     for name in ["alice", "bob", "carol", "dave"] {
         assign(&mut session, name, &card);
     }
@@ -4068,8 +3996,8 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
             &mut session.core,
             "alice",
             CardSource::File,
-            &card.name,
-            &card.path,
+            card.name(),
+            card.path(),
             "target",
             serde_json::json!("Guard"),
         )
@@ -4078,7 +4006,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     session.pump(&mut app);
 
     focus_member(&mut session, &mut app, "alice");
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     let command = crate::commands::Command::ScriptApplyMarked;
     assert_eq!(
         command.availability(&app),
@@ -4108,7 +4036,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     }
 
     // Running it freezes the scope and asks first; Esc drops it unwritten.
-    let vault_file = iso.dir.join("vault");
+    let vault_file = iso.dir().join("vault");
     let rows_before = script_settings_rows(&session);
     let bytes_before = std::fs::read(&vault_file).unwrap();
     app.modal = None;
@@ -4141,18 +4069,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
         "cancel wrote the vault"
     );
     let key = card.identity_key();
-    let saved = |session: &TuiSession, name: &str| {
-        session
-            .core
-            .vault()
-            .unwrap()
-            .get(name)
-            .unwrap()
-            .settings
-            .script_settings
-            .get(&key)
-            .cloned()
-    };
+    let saved = |session: &TuiSession, name: &str| saved_script_bag(&session.core, name, key);
     assert_eq!(saved(&session, "bob"), None, "cancel writes nothing");
 
     // Confirming applies it to the marked same-card bots only.
@@ -4188,29 +4105,28 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
 /// dialog promises, while the frozen scope still carries the migrated bag.
 #[test]
 fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwritten() {
-    let iso = IsolatedEnv::enter("tui-apply-marked-fresh");
+    let iso = IsolatedStores::enter("tui-apply-marked-fresh");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
-    let thiever = iso.dir.join("thiever.ts");
+    let thiever = iso.dir().join("thiever.ts");
     std::fs::write(&thiever, THIEVER_TS).unwrap();
-    let card = session.scripts.js_mut().load(&thiever).unwrap();
+    let card = session.scripts.load_card(&thiever).unwrap();
     for name in ["alice", "bob"] {
         assign(&mut session, name, &card);
     }
     session
         .scripts
-        .legacy_mut()
-        .set_str(card.source, &card.name, "target", "Guard");
+        .set_legacy_str(card.source(), card.name(), "target", "Guard");
     focus_member(&mut session, &mut app, "alice");
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     let id = session.core.profile_identity("bob").unwrap();
     app.table.selection.set(id, true);
 
-    let vault_file = iso.dir.join("vault");
+    let vault_file = iso.dir().join("vault");
     let rows_before = script_settings_rows(&session);
     assert!(
         rows_before
             .iter()
-            .all(|(_, settings)| !settings.contains_key(&card.identity_key())),
+            .all(|(_, settings)| !settings.contains_key(card.identity_key())),
         "a newly assigned card has no per-card key"
     );
     let bytes_before = std::fs::read(&vault_file).unwrap();
@@ -4245,23 +4161,17 @@ type SettingsRows = Vec<(
 
 /// Every profile's per-card settings map, by name.
 fn script_settings_rows(session: &TuiSession) -> SettingsRows {
-    session
-        .core
-        .vault()
-        .unwrap()
-        .profiles()
-        .map(|row| (row.username.clone(), row.settings.script_settings.clone()))
-        .collect()
+    saved_script_settings(&session.core)
 }
 
 #[test]
 fn memory_relog_warns_before_cancelling_a_queued_start() {
-    let iso = IsolatedEnv::enter("tui-relog-queued-start");
+    let iso = IsolatedStores::enter("tui-relog-queued-start");
     let names = ["p0", "p1", "p2", "p3", "p4"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    let path = iso.dir.join("shared.ts");
+    let path = iso.dir().join("shared.ts");
     std::fs::write(&path, LOOPING_TS).unwrap();
-    let card = session.scripts.js_mut().load(&path).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
     for name in names {
         assign(&mut session, name, &card);
     }
@@ -4272,8 +4182,8 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
         .expect("more Starts than one frame admits")
         .to_string();
     assert_eq!(
-        session.core.play().unwrap().script_state(&queued),
-        script::RunState::Idle,
+        session.core.script_state(&queued),
+        ScriptRunState::Idle,
         "the warning subject is queued, not already running"
     );
 
@@ -4294,7 +4204,7 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
     assert!(
         !session
             .core
-            .play()
+            .play_for_test()
             .unwrap()
             .arm(&queued)
             .unwrap()
@@ -4309,12 +4219,10 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let alice = SlotArm::new(7, true);
+    lifecycle_vault("mem-persist").start_session(&mut session.core, empty_play());
     session
         .core
-        .start(lifecycle_vault("mem-persist"), empty_play());
-    session
-        .core
-        .play_mut()
+        .play_mut_for_test()
         .unwrap()
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
@@ -4337,32 +4245,24 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
     );
     session.core.flush_writes();
     assert!(
-        !session
-            .core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem,
+        !session.core.profile("alice").unwrap().lowmem(),
         "the setting is durable"
     );
 }
 
 #[test]
 fn memory_relog_confirms_while_a_script_runs() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = empty_play();
     let alice = SlotArm::new(7, false);
     play.attach_arm("alice", Arc::clone(&alice));
-    play.script_start_load(
+    start_script_source(
+        &play,
         "alice",
         "export function tick(api) { api._n = (api._n||0)+1 }".to_string(),
-        script::LoadShape::NativeTick,
-        None,
-        vec![],
+        LoadShape::NativeTick,
     )
     .unwrap();
-    wait_script_state(&play, "alice", script::RunState::Running);
+    wait_script_state(&play, "alice", ScriptRunState::Running);
     let mut session = TuiSession::new(dummy_options());
     session.inject_play(play);
     let mut app = TuiApp::new("tui");
@@ -4413,10 +4313,10 @@ fn memory_relog_confirms_while_a_script_runs() {
 #[test]
 fn import_overlay_debug_holds_no_export_password() {
     const SECRET: &str = "r4t-tui-pw-60234";
-    let iso = IsolatedEnv::enter("tui-import-redacted");
+    let iso = IsolatedStores::enter("tui-import-redacted");
     let (mut session, mut app) = tui_with_profiles(&iso, &[]);
     let path = iso
-        .dir
+        .dir()
         .join(frontend_core::rs2b0t_import::PROFILE_FILE_NAME);
     std::fs::write(
         &path,
@@ -4462,15 +4362,16 @@ fn import_overlay_debug_holds_no_export_password() {
 
 #[test]
 fn profile_import_preview_waits_for_first_catalog_scan() {
-    let iso = IsolatedEnv::enter("tui-import-catalog-pending");
-    let root = fake_rs2b0t_tree(&iso.dir, false);
-    iso.set_rs2b0t(&root);
+    let iso = IsolatedStores::enter("tui-import-catalog-pending");
+    let root = fake_rs2b0t_tree(iso.dir(), false);
+    iso.set_catalog_root(&root);
     let mut session = TuiSession::new(dummy_options());
-    session.core.set_vault(Some(
-        Vault::create(&iso.dir.join("vault"), "test-passphrase-01").unwrap(),
-    ));
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01"),
+    );
     let mut app = TuiApp::new("274bot headless");
-    let path = iso.dir.join("profiles.json");
+    let path = iso.dir().join("profiles.json");
     std::fs::write(
         &path,
         serde_json::json!({
@@ -4505,12 +4406,12 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
 /// rows, then run a marked bulk action (Assign) and read its report.
 #[test]
 fn fleet_session_filters_marks_shown_and_assigns_marked() {
-    let iso = IsolatedEnv::enter("tui-fleet-session");
+    let iso = IsolatedStores::enter("tui-fleet-session");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob", "carol", "bobby"]);
-    let looping = iso.dir.join("looping.ts");
+    let looping = iso.dir().join("looping.ts");
     std::fs::write(&looping, LOOPING_TS).unwrap();
-    let card = session.scripts.js_mut().load(&looping).unwrap();
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &card.identity_id()));
+    let card = session.scripts.load_card(&looping).unwrap();
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     session.pump(&mut app);
 
     // Filter by a typed term: only bob and bobby stay shown.
@@ -4549,11 +4450,10 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let run = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     dispatch(&mut session, &mut app, run);
     session.core.flush_writes();
-    let assigned = |name: &str| {
-        frontend_core::Scripts::profile_assignment(&session.core, name).map(|a| a.key())
-    };
-    assert_eq!(assigned("bob"), Some(card.identity_key()));
-    assert_eq!(assigned("bobby"), Some(card.identity_key()));
+    let assigned =
+        |name: &str| frontend_core::Scripts::test_assignment(&session.core, name).map(|a| a.key());
+    assert_eq!(assigned("bob"), Some(card.identity_key().to_owned()));
+    assert_eq!(assigned("bobby"), Some(card.identity_key().to_owned()));
     assert_eq!(assigned("alice"), None, "the filtered-out bot is untouched");
     assert_eq!(assigned("carol"), None, "the filtered-out bot is untouched");
     let report = app.error.clone().expect("the assign report is shown");

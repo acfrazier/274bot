@@ -42,10 +42,7 @@ fn decode_service_test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn decode_service_capacity() -> api::work::WorkCapacity {
-    script::work_admission::WorkService::shared()
-        .expect("shared work service")
-        .lock()
-        .capacity()
+    frontend_core::test_support::session::decode_service_capacity()
 }
 
 fn wait_for_decode_service_capacity_zero() {

@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use frontend_core::scripts::LoadShape;
+use frontend_core::test_support::tui::start_script_source;
 use nav::bank_fetch::BankRows;
 use nav::router::FindOptions;
 use nav::tile::Tile;
@@ -246,7 +248,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     let deadline = Instant::now() + LIVE_WAIT;
     loop {
         session.pump(&mut app);
-        let scene_ready = session.core.play().is_some_and(|play| {
+        let scene_ready = session.core.play_for_test().is_some_and(|play| {
             play.statuses()
                 .iter()
                 .any(|status| status.username == name && status.ingame && status.scene_state == 2)
@@ -271,17 +273,16 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     };
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(host_play::Play::world)
         .ok_or("live navigation world is unavailable")?;
     let destination = reachable_destination(&world, route_from)?;
-    let play = session.core.play().ok_or("Play disappeared")?;
-    play.script_start_load(
+    let play = session.core.play_for_test().ok_or("Play disappeared")?;
+    start_script_source(
+        play,
         &name,
         walk_source(destination),
-        script::LoadShape::CompatClass,
-        None,
-        vec![],
+        LoadShape::CompatClass,
     )?;
 
     let deadline = Instant::now() + WALK_WAIT;
@@ -289,7 +290,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         session.pump(&mut app);
         let proof = session
             .core
-            .play()
+            .play_for_test()
             .ok_or("Play disappeared")?
             .manual_click_live_probe(&name);
         let moved = app.here.is_some_and(|tile| tile != here);
@@ -321,13 +322,13 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
             let here = app.here.ok_or("TUI tile during recovery")?;
             session
                 .core
-                .play()
+                .play_for_test()
                 .ok_or("Play disappeared")?
                 .manual_click_live_age_gameplay(&name, here)?;
             session.pump(&mut app);
             let proof = session
                 .core
-                .play()
+                .play_for_test()
                 .ok_or("Play disappeared")?
                 .manual_click_live_probe(&name);
             if proof["script"]["recovering_anchor"].is_array()
@@ -368,7 +369,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
             session.pump(&mut app);
             let proof = session
                 .core
-                .play()
+                .play_for_test()
                 .ok_or("Play disappeared")?
                 .manual_click_live_probe(&name);
             if proof["script"]["run_state"] == "Paused" && proof["nav"]["reason"] == "UserInput" {
@@ -392,7 +393,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         }
         session
             .core
-            .play()
+            .play_for_test()
             .ok_or("Play disappeared")?
             .script_resume(&name);
     }
@@ -402,7 +403,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         session.pump(&mut app);
         let proof = session
             .core
-            .play()
+            .play_for_test()
             .ok_or("Play disappeared")?
             .manual_click_live_probe(&name);
         if proof["script"]["walk_result"] == false && proof["script"]["terminal_count"] == 1 {
@@ -423,7 +424,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     }
     let settled = session
         .core
-        .play()
+        .play_for_test()
         .ok_or("Play disappeared")?
         .manual_click_live_probe(&name);
     assert_eq!(
@@ -487,7 +488,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         "PASS TUI {cols}x{rows} account={name} before={before} after={after} settled={settled} initial_here={here:?} armed_here={armed_here:?} final_here={:?}",
         app.here
     );
-    if let Some(play) = session.core.play() {
+    if let Some(play) = session.core.play_for_test() {
         play.script_stop(&name);
     }
     session.core.set_play(None);

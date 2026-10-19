@@ -431,6 +431,7 @@ impl<H, P, T, S> ClientOps<H, P, T, S, NoLiveFrame> {
 }
 
 impl<H, P, T, S, L> ClientOps<H, P, T, S, L> {
+    #[cfg(feature = "live-harness")]
     pub(crate) fn with_live_frame<F>(self, live: F) -> ClientOps<H, P, T, S, F> {
         ClientOps {
             here: self.here,

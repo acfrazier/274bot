@@ -1803,7 +1803,7 @@ where
         // wakes for its next deadline, so a render grant whose head stops
         // consuming expires on time even when no frame is drawn. It never
         // renders on this thread.
-        let render_due = host::render_head::pump(Instant::now()).map(|deadline| deadline.instant());
+        let render_due = frontend_core::surface::pump_render(Instant::now());
         if self.poll_gpu(event_loop) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(earliest(
                 Instant::now() + GPU_INIT_POLL,

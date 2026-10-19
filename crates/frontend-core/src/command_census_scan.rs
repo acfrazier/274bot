@@ -375,7 +375,8 @@ fn line_of(starts: &[usize], off: usize) -> u32 {
 // File inventory
 // ---------------------------------------------------------------------------
 
-/// Whether a file name is excluded as a test file.
+/// Whether a file name is excluded as a test file (a `test_support/`
+/// directory is skipped whole by [`collect_rs`]).
 fn is_test_name(name: &str) -> bool {
     name.ends_with("_tests.rs") || name == "tests.rs" || name == "test_support.rs"
 }
@@ -414,7 +415,11 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>, errors: &mut Vec<String>) {
             }
         };
         if kind.is_dir() {
-            collect_rs(&path, out, errors);
+            // A `test_support/` module tree is test fixtures, like a
+            // `test_support.rs` file.
+            if path.file_name().and_then(|n| n.to_str()) != Some("test_support") {
+                collect_rs(&path, out, errors);
+            }
         } else if kind.is_file() && matches!(path.extension().and_then(|e| e.to_str()), Some("rs"))
         {
             out.push(path);

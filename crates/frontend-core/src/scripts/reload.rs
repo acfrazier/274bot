@@ -260,6 +260,7 @@ impl PendingReload {
     }
 
     /// Prepared cards waiting to apply.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prepared(&self) -> &[script::PreparedCard] {
         &self.prepared
     }

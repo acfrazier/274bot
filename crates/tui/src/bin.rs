@@ -41,6 +41,8 @@ use frontend_core::resources::background_ack_text;
 use frontend_core::scripts::{
     CardSource, CompiledCardId, Loadouts, OwnedSchema, PaintFrame, ScriptChoice,
 };
+#[cfg(test)]
+use frontend_core::test_support::VaultFixture;
 use frontend_core::walk_map::{
     peek_walk_catalogue, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState, WalkMapStage,
     WalkReadyCatalogue,
@@ -53,9 +55,7 @@ use frontend_core::{
     OperatorSession, SubmitError, Targets,
 };
 #[cfg(test)]
-use host_play::{run_with_io, PlayOptions, SharedClientTemplate};
-#[cfg(test)]
-use vault::{Profile, Vault};
+use host_play::{PlayOptions, SharedClientTemplate};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
@@ -453,7 +453,7 @@ impl TuiSession {
         permit: frontend_core::launch::InstancePermit,
     ) -> Self {
         #[cfg(test)]
-        script::IsolatedEnv::ensure_thread();
+        frontend_core::test_support::IsolatedStores::ensure_thread();
         // A missing store is a first run; a refused or corrupt one is said out
         // loud (and nothing is saved over a refused one).
         let (scripts, restore_error) = frontend_core::Scripts::open_default();
@@ -588,11 +588,16 @@ impl TuiSession {
         Ok(())
     }
 
-    /// Start the play over an already-open `vault` (tests).
+    /// Start the play over an already-written fixture `vault` (tests).
     #[cfg(test)]
-    fn start_play(&mut self, vault: Vault) -> Result<(), String> {
+    fn start_play(&mut self, vault: VaultFixture) -> Result<(), String> {
         let (launch, hook) = self.play_launch();
-        self.core.start_play(vault, launch, hook)?;
+        frontend_core::test_support::tui::start_play_with_vault(
+            &mut self.core,
+            vault,
+            launch,
+            hook,
+        )?;
         self.play_started();
         Ok(())
     }
@@ -2822,15 +2827,15 @@ impl TuiSession {
     fn bootstrap_interactive_profiles(&mut self, users: &[String]) -> Result<String, String> {
         // `--user` names may not exist: create them like host-play does.
         for u in users {
-            if self.core.vault().is_none_or(|v| v.get(u).is_none()) {
+            if self.core.profile(u).is_none() {
                 self.create_profile(u)?;
             }
         }
         self.names = self
             .core
-            .vault()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
+            .profiles()
+            .map(|p| p.username().to_string())
+            .collect();
         users
             .first()
             .cloned()

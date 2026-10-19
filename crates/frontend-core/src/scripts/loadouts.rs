@@ -40,12 +40,6 @@ impl Loadouts {
         Self(Box::new(script::LoadoutsStore::detached(loadouts)))
     }
 
-    /// The form over an explicit backing (tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn over(backing: Arc<dyn script::LoadoutsBacking>) -> Self {
-        Self(Box::new(script::LoadoutsStore::over(backing)))
-    }
-
     pub(crate) fn store(&self) -> &script::LoadoutsStore {
         &self.0
     }

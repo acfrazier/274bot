@@ -11,14 +11,10 @@ client = { workspace = true }
 # a paste, is read whole instead of stalling until the next key).
 crossterm = { version = "0.29", features = ["use-dev-tty"] }
 frontend-core = { path = "../frontend-core", features = ["live-harness"] }
-host-play = { path = "../host-play", features = ["live-harness"] }
 libc = "0.2"
 nav = { path = "../nav" }
 ratatui = "0.30"
-scenario = { path = "../scenario" }
-script = { path = "../script" }
 serde_json = "=1.0.140"
-vault = { path = "../vault" }
 
 [dev-dependencies]
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
@@ -30,11 +26,7 @@ name = "tui-play"
 path = "src/main.rs"
 
 [features]
-memory-profile = ["host-play/memory-profile", "frontend-core/memory-profile"]
+memory-profile = ["frontend-core/memory-profile"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
-memory-profile-no-alloc = [
-    "memory-profile",
-    "host-play/memory-profile-no-alloc",
-    "frontend-core/memory-profile-no-alloc",
-]
+memory-profile-no-alloc = ["memory-profile", "frontend-core/memory-profile-no-alloc"]

@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use frontend_core::scripts::ReloadOutcome;
 use frontend_core::scripts::{CardSource, SchemaRef, ScriptChoice};
-use serde_json::{Map, Value};
 #[cfg(test)]
-use vault::ScriptAssignment;
+use frontend_core::test_support::scripts::Assignment;
+use serde_json::{Map, Value};
 
 use crate::session::Session;
 
@@ -51,8 +51,8 @@ impl Session {
     }
 
     #[cfg(test)]
-    pub fn profile_assignment(&self, profile: &str) -> Option<ScriptAssignment> {
-        frontend_core::Scripts::profile_assignment(&self.core, profile)
+    pub fn profile_assignment(&self, profile: &str) -> Option<Assignment> {
+        frontend_core::Scripts::test_assignment(&self.core, profile)
     }
 
     pub fn heading_is_pending(&self) -> bool {
@@ -65,9 +65,9 @@ impl Session {
     }
 
     #[cfg(test)]
-    pub fn persist_successful_assignment(&mut self, profile: &str, assignment: ScriptAssignment) {
+    pub fn persist_successful_assignment(&mut self, profile: &str, assignment: Assignment) {
         self.scripts
-            .persist_assignment(&mut self.core, profile, assignment);
+            .persist_test_assignment(&mut self.core, profile, assignment);
         self.apply_script_notice();
     }
 

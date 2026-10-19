@@ -52,6 +52,8 @@ pub mod selection;
 pub mod session;
 pub mod slot_view;
 pub mod surface;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod views;
 pub mod walk_map;
 pub mod walk_permissions;

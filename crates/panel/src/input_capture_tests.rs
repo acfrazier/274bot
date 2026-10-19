@@ -718,7 +718,7 @@ struct OwnershipProbe {
     text: String,
     field: [f32; 2],
     game: [f32; 2],
-    input: std::sync::Arc<host::SlotInput>,
+    input: std::sync::Arc<frontend_core::surface::SlotInput>,
     keyboard: KeyboardOwner,
     tx: Option<InputSender>,
     shell: GameShell,
@@ -729,7 +729,7 @@ impl OwnershipProbe {
         discard_unconsumed_native_capture();
         let mut ctx = crate::test_support::imgui_context();
         ctx.set_ini_filename(None::<String>).unwrap();
-        let input = host::SlotInput::new();
+        let input = frontend_core::surface::SlotInput::new();
         input.set_enabled(true);
         let tx = InputSender::connect(&input);
         let mut probe = Self {
@@ -948,7 +948,7 @@ fn reselect_after_disabled_wake_does_not_lose_held_key_release() {
         probe.shell.key_held[1]
     );
 
-    let bob = host::SlotInput::new();
+    let bob = frontend_core::surface::SlotInput::new();
     let bob_tx = InputSender::connect(&bob);
     bob.set_enabled(true);
     probe.tx = Some(bob_tx);

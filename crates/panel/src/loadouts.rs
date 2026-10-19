@@ -593,12 +593,11 @@ mod tests {
     use frontend_core::scripts::Loadouts;
     use std::collections::HashSet;
     use std::path::Path;
-    use std::sync::Arc;
 
     /// A form over the loadouts of a service opened on `dir`, a scratch
     /// state root (another such form on the same `dir` is another writer).
     fn store_in(dir: &Path) -> Loadouts {
-        Loadouts::over(Arc::new(scratch_service(dir).operator_loadouts()))
+        Loadouts::operator(&scratch_service(dir))
     }
 
     /// A session whose Loadouts form holds `rows`, saved in a scratch root,
@@ -677,7 +676,7 @@ mod tests {
         let fail_dir = TestDir::new("loadouts-fail");
         let service = scratch_service(&fail_dir);
         let file = service.root().loadouts_file();
-        let mut store = Loadouts::over(Arc::new(service.operator_loadouts()));
+        let mut store = Loadouts::operator(&service);
         store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
         save_store_patiently(&mut store);
         std::fs::remove_file(&file).unwrap();
@@ -814,7 +813,7 @@ mod tests {
     /// the status, and no save writes over it.
     #[test]
     fn unreadable_loadouts_file_is_named_in_the_status_and_never_written_over() {
-        let _iso = script::IsolatedEnv::enter("loadouts-refused");
+        let _iso = frontend_core::test_support::IsolatedStores::enter("loadouts-refused");
         let file = thread_state_root().loadouts_file();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         let corrupt = b"{ not valid json";

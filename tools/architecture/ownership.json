@@ -6793,6 +6793,30 @@
     {
       "path": "crates/frontend-core/src/live/mod.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/mod.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/live.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/session.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/test_support/tui.rs",
+      "owner": "T3"
     }
   ]
 }

@@ -71,8 +71,8 @@ impl AsRef<Path> for TestPath {
 /// The state root a `Session` on this thread opens its service at: this
 /// thread's pinned scratch home, never the operator's.
 pub(crate) fn thread_state_root() -> StateRoot {
-    script::IsolatedEnv::ensure_thread();
-    StateRoot::new(script::bot_home().join(".274bot"))
+    frontend_core::test_support::IsolatedStores::ensure_thread();
+    StateRoot::new(frontend_core::scripts::paths::bot_home().join(".274bot"))
 }
 
 /// A process service opened on `dir` itself, a scratch state root: its

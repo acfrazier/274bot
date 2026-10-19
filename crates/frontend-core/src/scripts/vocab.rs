@@ -512,6 +512,11 @@ impl<'a> LoadedCard<'a> {
     }
 
     /// The persistence identity key.
+    /// Whether the card's JavaScript is compiled and ready to start.
+    pub fn is_transpiled(&self) -> bool {
+        !self.0.js.is_empty()
+    }
+
     pub fn identity_key(&self) -> String {
         self.0.identity_key()
     }

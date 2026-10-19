@@ -329,6 +329,7 @@ impl StartSettled {
     }
 
     /// Isolate setup outcome, or `None` if removal cancelled it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn outcome(&self) -> Option<&script::StartOutcome> {
         self.outcome.as_ref()
     }
@@ -719,9 +720,15 @@ impl<Io> OperatorSession<Io> {
         &self.live_runner
     }
 
+    /// [`Self::start`] for front-end and integration test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_for_test(&mut self, vault: Vault, play: Play) {
+        self.start(vault, play);
+    }
+
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
-    pub fn start(&mut self, vault: Vault, mut play: Play) {
+    pub(crate) fn start(&mut self, vault: Vault, mut play: Play) {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
@@ -895,7 +902,13 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// The process local-state service bound at startup, if any.
-    pub fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+    pub(crate) fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+        self.local_state.as_ref()
+    }
+
+    /// [`Self::local_state`] for front-end tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn local_state_for_test(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
         self.local_state.as_ref()
     }
 
@@ -929,15 +942,28 @@ impl<Io> OperatorSession<Io> {
         self.walk_globals_store = Some(preferences);
     }
 
-    pub fn vault(&self) -> Option<&Vault> {
+    pub(crate) fn vault(&self) -> Option<&Vault> {
         self.vault.as_ref()
     }
 
-    pub fn play(&self) -> Option<&Play> {
+    pub(crate) fn play(&self) -> Option<&Play> {
         self.play.as_ref()
     }
 
-    pub fn play_mut(&mut self) -> Option<&mut Play> {
+    #[cfg(test)]
+    pub(crate) fn play_mut(&mut self) -> Option<&mut Play> {
+        self.play.as_mut()
+    }
+
+    /// The play session, for front-end test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn play_for_test(&self) -> Option<&Play> {
+        self.play.as_ref()
+    }
+
+    /// The play session, for front-end test fixtures (writes).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn play_mut_for_test(&mut self) -> Option<&mut Play> {
         self.play.as_mut()
     }
 
@@ -975,7 +1001,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Rows from the last [`Self::poll`] (or [`Self::start`]).
-    pub fn statuses(&self) -> &[SlotStatus] {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn statuses_for_test(&self) -> &[SlotStatus] {
         &self.statuses
     }
 
@@ -996,8 +1023,14 @@ impl<Io> OperatorSession<Io> {
         out.extend_from_slice(&self.statuses[kept..]);
     }
 
-    pub fn status(&self, name: &str) -> Option<&SlotStatus> {
+    pub(crate) fn status(&self, name: &str) -> Option<&SlotStatus> {
         self.statuses.iter().find(|s| s.username == name)
+    }
+
+    /// The raw status row of `name`, for front-end test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn status_for_test(&self, name: &str) -> Option<&SlotStatus> {
+        self.status(name)
     }
 
     /// Status changes observed by the last poll.
@@ -2316,7 +2349,19 @@ impl<Io> OperatorSession<Io> {
     /// Start a script on `name`. Both execution kinds settle through
     /// [`Self::poll`], even while the slot is offline or queued.
     /// `identity` is the Load identity; native installation owns its identity.
-    pub fn start_script(
+    /// [`Self::start_script`] for front-end tests; the refusal as text.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_script_for_test(
+        &mut self,
+        name: &str,
+        start: ScriptStart,
+        identity: Option<String>,
+    ) -> Result<OperationId, String> {
+        self.start_script(name, start, identity)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn start_script(
         &mut self,
         name: &str,
         start: ScriptStart,
@@ -3199,6 +3244,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Direct vault access for fixture setup. Settles queued writes first
     /// and lets the next write snapshot whatever the fixture persisted.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn vault_mut(&mut self) -> Option<&mut Vault> {
         self.flush_writes();
         self.writer = None;
@@ -3212,7 +3258,8 @@ impl<Io> OperatorSession<Io> {
         Arc::clone(&self.write_gate)
     }
 
-    pub fn set_vault(&mut self, vault: Option<Vault>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_vault(&mut self, vault: Option<Vault>) {
         self.flush_writes();
         self.vault = vault;
         self.writer = None;

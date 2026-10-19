@@ -570,6 +570,7 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::unlock_vault", Row(C::UnlockVault)),
     ("slot_view.rs::StatusBuf::refresh", Excluded(PROJECTION)),
     ("surface.rs::map_image_to_applet", Excluded(FORMAT)),
+    ("surface.rs::pump_render", Excluded(PUMP)),
     // scripts/loadouts.rs: the operator loadout form.
     ("scripts/loadouts.rs::Loadouts::upsert", Excluded(LOADOUT_DRAFT)),
     ("scripts/loadouts.rs::Loadouts::replace_at", Excluded(LOADOUT_DRAFT)),
@@ -815,7 +816,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure choice of the focus after Load all / MultiBox adoption"),
     ),
     ("session.rs::MemoryNotice::status_text", Excluded(FORMAT)),
-    ("session.rs::OperatorSession::start", Row(C::UnlockVault)),
     (
         "session.rs::OperatorSession::set_pause_script_on_manual_walk_abort",
         Row(C::SetNavPreference(
@@ -835,7 +835,6 @@ const CORE: &[(&str, Decision)] = &[
         "session.rs::OperatorSession::bind_local_state",
         Excluded(STARTUP),
     ),
-    ("session.rs::OperatorSession::play_mut", Excluded(ACCESSOR)),
     ("session.rs::OperatorSession::close_play", Row(C::Quit)),
     (
         "session.rs::OperatorSession::copy_statuses_into",
@@ -896,7 +895,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("projection publication: queue places into the fleet rows"),
     ),
     ("session.rs::OperatorSession::advance_removals", Excluded(PUMP)),
-    ("session.rs::OperatorSession::start_script", Row(C::StartScript)),
     (
         "session.rs::OperatorSession::toggle_pause",
         Rows(

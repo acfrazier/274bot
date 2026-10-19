@@ -591,8 +591,9 @@ mod tests {
     use ratatui::Terminal;
 
     use frontend_core::scripts::{
-        CardRuntime, CardSource, ScriptChoice, ScriptRunState, StatusView,
+        CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState,
     };
+    use frontend_core::test_support::scripts::NativeStatus;
 
     use super::{
         browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
@@ -1070,22 +1071,11 @@ mod tests {
     }
     #[test]
     fn native_block_is_visible_without_a_quester_window() {
-        let status = script::native::ScriptStatus {
-            run: api::selected::RunKey {
-                slot: 1,
-                run: 2,
-                session: 3,
-            },
-            card: script::CompiledId("Quester"),
-            phase: script::native::NativePhase::Blocked,
-            active_settings: 1,
-            pending_settings: None,
-            fields: std::sync::Arc::from([]),
-            failure: Some(script::native::ScriptFailure {
-                code: "queue-blocked".into(),
-                message: "quest list unavailable; log in normally, then Stop/Start Quester".into(),
-            }),
-        };
+        let status = NativeStatus::blocked(
+            CompiledCardId::QUESTER,
+            "queue-blocked",
+            "quest list unavailable; log in normally, then Stop/Start Quester",
+        );
         let text = render(
             ScriptPane::new(
                 ScriptRunState::Running,
@@ -1098,7 +1088,7 @@ mod tests {
                 "",
                 false,
             )
-            .with_native_status(Some(StatusView::from_script(&status))),
+            .with_native_status(Some(status.view())),
             90,
             10,
         );
@@ -1146,30 +1136,9 @@ mod tests {
         let comment = fields
             .map(|fields| fields["step_comment"].as_str().unwrap())
             .unwrap_or("Folder Path live-edit witness: accept Cook's request");
-        let mut status = script::native::ScriptStatus {
-            run: api::selected::RunKey {
-                slot: 1,
-                run: 2,
-                session: 3,
-            },
-            card: script::CompiledId("Quester"),
-            phase: script::native::NativePhase::Working,
-            active_settings: 1,
-            pending_settings: None,
-            fields: std::sync::Arc::from([
-                script::native::StatusField {
-                    key: "path_source",
-                    label: "Path source",
-                    value: script::native::StatusValue::Text(source.into()),
-                },
-                script::native::StatusField {
-                    key: "step_comment",
-                    label: "Step comment",
-                    value: script::native::StatusValue::Text(comment.into()),
-                },
-            ]),
-            failure: None,
-        };
+        let mut status = NativeStatus::working(CompiledCardId::QUESTER)
+            .with_text_field("path_source", "Path source", source)
+            .with_text_field("step_comment", "Step comment", comment);
         for (width, height) in [(80, 24), (120, 40)] {
             let text = render(
                 ScriptPane::new(
@@ -1183,7 +1152,7 @@ mod tests {
                     "",
                     false,
                 )
-                .with_native_status(Some(StatusView::from_script(&status))),
+                .with_native_status(Some(status.view())),
                 width,
                 height,
             );
@@ -1209,9 +1178,9 @@ mod tests {
                 .unwrap();
             }
         }
-        status.fields = std::sync::Arc::from([status.fields[1].clone()]);
+        status.keep_fields(&["step_comment"]);
         assert!(
-            frontend_core::views::script_status_rows(StatusView::from_script(&status))
+            frontend_core::views::script_status_rows(status.view())
                 .next()
                 .is_none(),
             "a bundled-only status retains the existing short rows"

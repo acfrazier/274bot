@@ -25,8 +25,8 @@ use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
+use frontend_core::test_support::IsolatedStores;
 use frontend_core::walk_map::{WalkMap, WalkRouteSource};
-use script::IsolatedEnv;
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
 // lock for every test that mutates picker statics (incl. Session drop →
@@ -93,21 +93,20 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));
     session.core.set_walk_arms(arms);
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
-    let paint = session.core.play().unwrap().script_nav_paint();
-    let scenario = Arc::clone(&session.scenario);
+    session
+        .core
+        .set_play(Some(frontend_core::test_support::empty_play(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            },
+        )));
+    let paint = session.core.play_for_test().unwrap().script_nav_paint();
+    let runner = session.core.live_runner().share();
     let barrier = Arc::new(std::sync::Barrier::new(2));
     MAP_ROUTE_BARRIER.with(|hook| *hook.borrow_mut() = Some(Arc::clone(&barrier)));
     let (ready, navs_locked) = std::sync::mpsc::channel();
@@ -118,8 +117,8 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
             ready.send(()).unwrap();
             barrier.wait();
             let _manual = arm.lock().unwrap();
-            // The frame must also release scenario before waiting on navs.
-            let _scenario = scenario.lock().unwrap();
+            // The frame must also release the runner before waiting on navs.
+            let _runner_lock = runner.lock_for_test();
         });
     });
     navs_locked
@@ -556,7 +555,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
         super::GLOBAL_DANGER_WARNING,
         "Global danger-zone override is enabled."
     );
-    let _isolated = IsolatedEnv::enter("picker-durable-danger");
+    let _isolated = IsolatedStores::enter("picker-durable-danger");
     let mut ctx = crate::test_support::imgui_context();
     let world = open_world(3, 3);
 
