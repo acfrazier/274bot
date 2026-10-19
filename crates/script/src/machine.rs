@@ -1123,6 +1123,15 @@ impl Cx<'_> {
         self.hooks.get(hook).is_some_and(|hook| hook.present)
     }
 
+    /// The script's native `GameMessages.mark()` now ([`Js::game_messages_mark`]),
+    /// for a mark a script callback hands to `GameMessages.sawSince`. Begin
+    /// has no script side and sees the empty history's mark, 0.
+    pub(crate) fn game_messages_mark(&mut self) -> f64 {
+        self.js
+            .as_deref_mut()
+            .map_or(0.0, |js| js.game_messages_mark())
+    }
+
     /// Invoke one bank prompt callback using its source-backed path.
     pub(crate) fn call_prompt(
         &mut self,
@@ -1234,6 +1243,13 @@ pub(crate) trait Js {
     /// a terminate: no more script may run. A callback may have absorbed
     /// the terminate, so a later one would otherwise spin past it.
     fn claimed(&mut self) -> bool;
+    /// The native `GameMessages` history's mark now (`load/chatbox_v8.rs`):
+    /// the sequence a script's own `GameMessages.sawSince` compares, which
+    /// differs from the host chat-line `seq`. A host without that history
+    /// (the unit-test hosts) has the empty history's mark, 0.
+    fn game_messages_mark(&mut self) -> f64 {
+        0.0
+    }
 }
 
 /// A promise a script callback returned, held until it settles.

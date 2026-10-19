@@ -703,8 +703,25 @@ pub(crate) struct LocOpArgs {
     within: Option<f64>,
     #[serde(default)]
     id: Option<i32>,
-    #[serde(default)]
-    expect_ms: Option<u64>,
+    /// Any JSON value: frozen `delayUntil(cond, expectMs)` arms a bound only
+    /// for `expectMs > 0` (`Execution.ts:19-21`), so zero, a negative or a
+    /// non-number waits without one, and a fractional value is kept.
+    #[serde(default = "loc_expect_ms_default")]
+    expect_ms: Value,
+}
+
+/// Frozen `opts.expectMs ?? 12_000` (`Reach.ts:258`).
+fn loc_expect_ms_default() -> Value {
+    json!(12_000)
+}
+
+/// The watch window in whole milliseconds, rounded up so a positive window
+/// stays positive; `None` waits without a bound.
+fn loc_expect_window(expect_ms: &Value) -> Option<u64> {
+    expect_ms
+        .as_f64()
+        .filter(|ms| *ms > 0.0)
+        .map(|ms| ms.ceil() as u64)
 }
 
 enum LocPhase {
@@ -740,9 +757,15 @@ pub(crate) struct LocOp {
     near: Tile,
     within: f64,
     id: Option<i32>,
-    expect_ms: u64,
+    /// `None`: frozen `delayUntil` without a timeout.
+    expect_ms: Option<u64>,
     round: u32,
+    /// Host chat-line `seq` at the click, for [`saw_cant_reach`].
     mark: i32,
+    /// Native `GameMessages` mark at the click, for the script's own
+    /// `refused(mark)` (`GameMessages.sawSince`). The two sequences differ:
+    /// the native one counts only recorded game messages from 1.
+    messages_mark: f64,
     logger: Logger,
     after: Option<Next>,
     /// `Sustain.run()` already ran for this ladder pass.
@@ -790,9 +813,10 @@ impl Family for LocOp {
             near: args.near,
             within: args.within.unwrap_or(10.0),
             id: args.id,
-            expect_ms: args.expect_ms.unwrap_or(12_000),
+            expect_ms: loc_expect_window(&args.expect_ms),
             round: 0,
             mark: 0,
+            messages_mark: 0.0,
             logger: Logger::default(),
             after: None,
             pumped: false,
@@ -1008,7 +1032,11 @@ impl LocOp {
                     return self.call(LocPhase::AfterExpect, LOC_EXPECT, Vec::new());
                 }
                 if cx.has(LOC_REFUSED) {
-                    return self.call(LocPhase::WatchRefused, LOC_REFUSED, vec![json!(self.mark)]);
+                    return self.call(
+                        LocPhase::WatchRefused,
+                        LOC_REFUSED,
+                        vec![json!(self.messages_mark)],
+                    );
                 }
                 self.phase = LocPhase::Watch;
                 Next::Wait
@@ -1025,7 +1053,11 @@ impl LocOp {
                     return Next::Done("done");
                 }
                 if cx.has(LOC_REFUSED) {
-                    return self.call(LocPhase::AfterRefused, LOC_REFUSED, vec![json!(self.mark)]);
+                    return self.call(
+                        LocPhase::AfterRefused,
+                        LOC_REFUSED,
+                        vec![json!(self.messages_mark)],
+                    );
                 }
                 self.after_refusal()
             }
@@ -1064,15 +1096,23 @@ impl LocOp {
         }
     }
 
-    /// Frozen `mark` + the loc attempt (`Reach.ts:179–186, 252–256`).
+    /// Frozen `mark` + the loc attempt (`Reach.ts:179–186, 252–256`). Each
+    /// check reads the sequence its own mark came from.
     fn attempt(&mut self, cx: &mut Cx<'_>) -> Next {
         self.mark = chat_mark();
+        self.messages_mark = cx.game_messages_mark();
         let dispatched = match self.find() {
             Some(loc) => interact(&loc, &self.op, cx),
             None => false,
         };
         if dispatched {
-            cx.clock().arm(self.expect_ms);
+            // A window past any representable instant never ends either.
+            let clock = cx.clock();
+            clock.deadline = self.expect_ms.and_then(|ms| {
+                clock
+                    .now()
+                    .checked_add(std::time::Duration::from_millis(ms))
+            });
             self.phase = LocPhase::Watch;
             return Next::Wait;
         }
@@ -1961,5 +2001,47 @@ mod tests {
         let mut d = Driver::new(reach_opts(TalkExpect::DialogReady, false, true));
         assert_eq!(d.step(), (None, vec![]));
         assert_eq!(d.step(), (Some("retry"), vec![]));
+    }
+
+    /// Frozen `locOp` (`Reach.ts:247-251`): a stand walk whose ladder ends on
+    /// a dead verify probe is `'unreachable'`, without a click.
+    #[test]
+    fn loc_op_stand_walk_that_cannot_reach_is_unreachable() {
+        crate::walk::tests::reset();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                })
+                .locs(vec![SceneRow {
+                    id: 7000,
+                    name: Some("Barrel of flour".into()),
+                    x: 9,
+                    z: 0,
+                    distance: 9,
+                    actions: observed::ops_of(&["Take From".to_string()]),
+                    ..SceneRow::default()
+                }]);
+        });
+        let args = json!({
+            "name": "Barrel of flour",
+            "op": "Take From",
+            "near": { "x": 10, "z": 0, "level": 0 },
+        });
+        let Started::Running(h) = machine::start("reach-loc-op", args, Vec::new(), 0) else {
+            panic!("reach-loc-op runs");
+        };
+        crate::walk::tests::ladder_to_a_dead_probe(h, LOC_STAND_RADIUS);
+        machine::step(&mut NoJs);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "no click after an unreachable stand"
+        );
+        assert_eq!(
+            machine::take(h),
+            Take::Settled(machine::Outcome::Done(json!("unreachable")))
+        );
     }
 }

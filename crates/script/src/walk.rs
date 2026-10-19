@@ -2366,11 +2366,32 @@ pub(crate) mod tests {
 
     /// `passes` no-progress ladder passes (baked fail, scene, unstick),
     /// with the backoff between them. Returns the next walk-outcome seq.
-    fn no_progress_passes(h: machine::Handle, mut seq: u64, passes: u32) -> u64 {
+    fn no_progress_passes(h: machine::Handle, seq: u64, passes: u32) -> u64 {
+        ladder_no_progress_passes(h, seq, passes, 0)
+    }
+
+    /// [`no_progress_passes`] for any row whose ladder walks from (0,0) to
+    /// (10,0) with walk `radius`: every baked walk fails where it began.
+    fn ladder_no_progress_passes(
+        h: machine::Handle,
+        mut seq: u64,
+        passes: u32,
+        radius: i32,
+    ) -> u64 {
+        let here = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let dest = WorldTile {
+            x: 10,
+            z: 0,
+            level: 0,
+        };
         for pass in 0..passes {
             machine::step(&mut NoJs);
             let token = walk_token();
-            fail_walk(seq, token, 0, 0, true);
+            post_walk_outcome(seq, token, here, dest, radius, true);
             seq += 1;
             machine::step(&mut NoJs);
             assert_eq!(
@@ -2390,6 +2411,14 @@ pub(crate) mod tests {
             }
         }
         seq
+    }
+
+    /// Drive a row's (0,0) to (10,0) ladder with walk `radius` through every
+    /// no-progress pass to its verify probe, and settle that probe dead.
+    pub(crate) fn ladder_to_a_dead_probe(h: machine::Handle, radius: i32) {
+        ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, radius);
+        let probe = probe_token();
+        crate::inspect_wait::settle_for_tests(probe, false);
     }
 
     fn probe_token() -> u64 {
