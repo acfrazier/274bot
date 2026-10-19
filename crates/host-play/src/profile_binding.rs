@@ -320,8 +320,9 @@ impl ProfileSelection {
     ) -> Result<Arc<ServerProfile>, String> {
         let supplied = self.supplied_manifest(runtime)?;
         let runtime_cache = if runtime {
-            client_adapter::service::NetworkService::current_started()
-                .map_err(|error| crate::cache::CachePreparationError::ServiceStart(error).to_string())?;
+            client_adapter::service::NetworkService::current_started().map_err(|error| {
+                crate::cache::CachePreparationError::ServiceStart(error).to_string()
+            })?;
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
                 0,
@@ -331,10 +332,12 @@ impl ProfileSelection {
             // network/lock wait and maintain from the same caller at every
             // step boundary, rather than starting an extra caretaker thread.
             let mut fill = client::unpack::RuntimeCacheFill::begin(&self.runtime_cache_request());
+            fill.observe_slow_lookups(log_slow_lookup);
             let prepared = loop {
                 let now = std::time::Instant::now();
-                let network = client_adapter::service::NetworkService::current_started()
-                    .map_err(|error| crate::cache::CachePreparationError::ServiceStart(error).to_string())?;
+                let network = client_adapter::service::NetworkService::current_started().map_err(
+                    |error| crate::cache::CachePreparationError::ServiceStart(error).to_string(),
+                )?;
                 network.maintain(now);
                 match fill.step(Some(now + TEMPLATE_STEP_WAIT)) {
                     Ok(client::unpack::RuntimeCacheStep::Continue { written, total }) => {
@@ -437,14 +440,17 @@ impl ProfileSelection {
             .as_ref()
             .map_or(self.unpack_dir.as_path(), |p| p.unpack_root());
         let cache_preparation = if runtime_cache.is_none() {
-            Some(crate::cache::prepare(
-                cache_dir,
-                unpack_dir,
-                self.transport(),
-                &self.asset_host,
-                self.asset_port,
-                observer,
-            ).map_err(|error| error.to_string())?)
+            Some(
+                crate::cache::prepare(
+                    cache_dir,
+                    unpack_dir,
+                    self.transport(),
+                    &self.asset_host,
+                    self.asset_port,
+                    observer,
+                )
+                .map_err(|error| error.to_string())?,
+            )
         } else {
             None
         };
@@ -982,12 +988,6 @@ impl ProfileSelection {
 /// whose game host or asset host is that name. The stepped fill and the
 /// one-call fill both report a failed lookup of either host.
 ///
-/// Limit: the one-call fill (`prepare_runtime_cache`) looks up the asset
-/// host again for each JAG download, and that error does not name the host.
-/// So a name that looked up for `/crc` and then fails at the JAG download
-/// can be looked up again for the next world that shares it. The cost is
-/// one more resolver wait for each such world. Only a public (wss) roster
-/// has more than one world.
 struct WorldFallback {
     count: usize,
     /// The roster index of the selected world.
@@ -1053,15 +1053,15 @@ impl WorldFallback {
     }
 }
 
-/// Log a cache-fill name lookup step that ended after its deadline, the
-/// one exception to the step deadline ([`client::unpack::SlowLookup`]).
+/// Log a cache-fill name lookup that completed after its step deadline.
+/// [`client::unpack::SlowLookup`] reports the backend's time and overrun.
 fn log_slow_lookup(lookup: &client::unpack::SlowLookup<'_>) {
     host_log!(
         stderr;
         Category::Lifecycle,
         Level::Warn,
         "cache preparation: name lookup of the {} {} took {:?}, {:?} past the step deadline \
-         (the system resolver cannot be interrupted)",
+         (the resolver backend may outlive the step)",
         lookup.role,
         lookup.host,
         lookup.took,

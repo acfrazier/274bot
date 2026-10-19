@@ -20,18 +20,19 @@ use std::sync::{Arc, LazyLock, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use api::hostlog::{Record, Sink};
 use client::io::{JagFile, Packet};
+use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::{ProfileProgressObserver, ProfileProgressStage};
-use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host_play::{ProfileOptions, TemplateStep, TEMPLATE_STEP_WAIT};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 /// A game host whose lookup fails at once.
 const FAILED_GAME_HOST: &str = "no-game.cold-fill-lookups.invalid";
-/// An asset host whose lookup fails at once.
-const FAILED_ASSET_HOST: &str = "no-asset.cold-fill-lookups.invalid";
+/// Failed asset hosts for the separate stepped and one-call preparations.
+const FAILED_ASSET_STEPPED_HOST: &str = "no-asset-stepped.cold-fill-lookups.invalid";
+const FAILED_ASSET_ONE_CALL_HOST: &str = "no-asset-one-call.cold-fill-lookups.invalid";
 /// An asset host whose lookup takes [`LOOKUP_DELAY`].
 const SLOW_ASSET_HOST: &str = "slow-asset.cold-fill-lookups.invalid";
 const LOOKUP_DELAY: Duration = Duration::from_millis(350);
@@ -70,7 +71,9 @@ pub unsafe extern "C" fn getaddrinfo(
         let name = unsafe { CStr::from_ptr(node) }.to_bytes();
         let failed = if name == FAILED_GAME_HOST.as_bytes() {
             Some(&FAILED_LOOKUPS)
-        } else if name == FAILED_ASSET_HOST.as_bytes() {
+        } else if name == FAILED_ASSET_STEPPED_HOST.as_bytes()
+            || name == FAILED_ASSET_ONE_CALL_HOST.as_bytes()
+        {
             Some(&FAILED_ASSET_LOOKUPS)
         } else {
             None
@@ -124,9 +127,9 @@ static TEST_TLS: LazyLock<TestTlsIdentity> = LazyLock::new(|| {
 fn trust_test_certificate() {
     static TRUST: Once = Once::new();
     TRUST.call_once(|| {
-        let config = client_adapter::tls_handshake::build_test_client_config_with_roots(&[
-            TEST_TLS.certificate.clone(),
-        ])
+        let config = client_adapter::tls_handshake::build_test_client_config_with_roots(
+            std::slice::from_ref(&TEST_TLS.certificate),
+        )
         .expect("build test client TLS config");
         NetworkService::install_test_tls_config(config)
             .expect("install test TLS config before starting the service");
@@ -412,8 +415,7 @@ fn prepare_until(
             "the preparation stalled"
         );
         let now = Instant::now();
-        if let TemplateStep::Complete(result) =
-            preparation.step(now + TEMPLATE_STEP_WAIT, observer)
+        if let TemplateStep::Complete(result) = preparation.step(now + TEMPLATE_STEP_WAIT, observer)
         {
             return Err(format!("completed early: {:?}", result.map(|_| ())));
         }
@@ -584,29 +586,29 @@ fn an_unreachable_asset_server_moves_the_fill_to_the_next_world_as_a_whole() {
     outcome.unwrap();
 }
 
-/// Three worlds use the same asset host name on different ports, and the
-/// name cannot be looked up. Each preparation, the stepped one and the
-/// one-call one (`bind_runtime_with_progress`), looks the name up once,
-/// attempts world 1 only and passes over worlds 2 and 3.
+/// Each preparation uses a different failed asset name to avoid the resolver's
+/// process-scoped negative cache. Each name is shared by three roster worlds.
+/// Both preparations look up that name once, attempt world 1 only, and pass
+/// over worlds 2 and 3.
 #[test]
 fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
     let driver = start_network_service();
     let root = TempRoot::new("failed-asset");
-    let selection = wss_selection(
+    let packs = packs();
+    let stepped_selection = wss_selection(
         &root,
-        &packs(),
+        &packs,
         &[
-            ("127.0.0.1", 1, FAILED_ASSET_HOST, 1),
-            ("127.0.0.1", 2, FAILED_ASSET_HOST, 2),
-            ("127.0.0.1", 3, FAILED_ASSET_HOST, 3),
+            ("127.0.0.1", 1, FAILED_ASSET_STEPPED_HOST, 1),
+            ("127.0.0.1", 2, FAILED_ASSET_STEPPED_HOST, 2),
+            ("127.0.0.1", 3, FAILED_ASSET_STEPPED_HOST, 3),
         ],
     );
-    assert_eq!(selection.asset_host(), FAILED_ASSET_HOST);
-    let (observer, attempts) = attempt_counter();
+    assert_eq!(stepped_selection.asset_host(), FAILED_ASSET_STEPPED_HOST);
 
     let before = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed);
     let started = Instant::now();
-    let mut preparation = selection.begin_template_preparation();
+    let mut preparation = stepped_selection.begin_template_preparation();
     let stepped = loop {
         assert!(
             started.elapsed() < Duration::from_secs(10),
@@ -624,10 +626,25 @@ fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
     let stepped_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;
     let stepped_attempts = attempts.swap(0, Ordering::Relaxed);
 
+    let one_call_selection = wss_selection(
+        &root,
+        &packs,
+        &[
+            ("127.0.0.1", 1, FAILED_ASSET_ONE_CALL_HOST, 1),
+            ("127.0.0.1", 2, FAILED_ASSET_ONE_CALL_HOST, 2),
+            ("127.0.0.1", 3, FAILED_ASSET_ONE_CALL_HOST, 3),
+        ],
+    );
+    assert_eq!(one_call_selection.asset_host(), FAILED_ASSET_ONE_CALL_HOST);
     let before = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed);
-    let one_call = selection
+    let one_call_started = Instant::now();
+    let one_call = one_call_selection
         .bind_runtime_with_progress(&observer)
         .expect_err("the asset host lookup fails");
+    assert!(
+        one_call_started.elapsed() < Duration::from_secs(10),
+        "the one-call preparation exceeded its 10 s bound"
+    );
     let one_call_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;
     let one_call_attempts = attempts.load(Ordering::Relaxed);
 
@@ -747,7 +764,7 @@ fn a_slow_name_lookup_reaches_the_host_log() {
 
     // Until the update-server fill connects to the game endpoint: every
     // step that uses the asset host is done.
-    let outcome = prepare_until(&selection, &observer, &driver, || game.connections() > 0);
+    let outcome = prepare_until(&selection, &observer, driver, || game.connections() > 0);
 
     let lookups = SLOW_LOOKUPS.load(Ordering::Relaxed) - slow_before;
     let logged: Vec<String> = LOGGED
