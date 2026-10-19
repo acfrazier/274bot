@@ -10777,6 +10777,7 @@ export default class T extends LoopingBot {
             fires: (c.fire_plots || []).map((p) => p.name),
             rocks: c.rock_type_names || [],
             hasItems: Object.prototype.hasOwnProperty.call(c, 'items'),
+            hasRuneRoutes: Object.prototype.hasOwnProperty.call(c, 'rune_routes'),
             ve_x: ((c.fire_plots || []).find((p) => p.name === 'Varrock East') || {}).bank?.x,
         };
     }
@@ -10809,6 +10810,7 @@ export default class T extends LoopingBot {
         probe.get("hasItems").and_then(|value| value.as_bool()),
         Some(false)
     );
+    assert_eq!(probe["hasRuneRoutes"], false);
     assert_eq!(probe["nearestCow"], "South of Falador");
     assert_eq!(probe["nearestCowLum"], "Lumbridge cow field");
     assert_eq!(probe["cowToll"], true);
