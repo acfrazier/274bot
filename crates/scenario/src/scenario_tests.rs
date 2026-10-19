@@ -12116,6 +12116,46 @@ fn rebuild_npc_chat_snapshot(client: &mut Client) -> GameSnapshot {
     snapshot
 }
 
+/// LIVE `nav_mage_arena_bank` (FIX-024): the opener walked onto Gundai's
+/// last seen tile every poll and only talked when adjacent, so it chased
+/// the wandering banker around the cellar until the step budget ran out.
+/// A banker in view but not adjacent gets one Talk-to (the engine walks to
+/// it for the op) and no chase walks while the chat is pending.
+#[test]
+fn shop_buyout_npc_opener_talks_to_a_distant_banker_once_instead_of_chasing() {
+    let approach = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    let step = shop_buyout_open_npc_bank(
+        "open Gundai's bank",
+        Proof::BankOpen,
+        "Gundai",
+        approach,
+        "Talk-to",
+        "Cool, I'd like to access my bank account please.",
+    );
+    let StepKind::Repeat { send } = &step.kind else {
+        panic!("teller open must Repeat");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    // Player at scene (20,20); Gundai six tiles east.
+    plant_named_banker(&mut client, "Gundai", 26, 21);
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot), "the Talk-to must send");
+    let after_talk = client.out.pos;
+    assert!(after_talk > 0, "the opener sends one packet");
+    for _ in 0..3 {
+        assert!(send(&mut client, &snapshot));
+    }
+    assert_eq!(
+        client.out.pos, after_talk,
+        "no chase walk while the engine approaches for the Talk-to"
+    );
+}
+
 /// LIVE livemoj7nw / livevpttcg: Repeat re-Talk-to while the first
 /// continue page is up (`chat_continue_component_id == -1` because the
 /// pause latch hid it, chat modal still 968, "I can't reach that!").

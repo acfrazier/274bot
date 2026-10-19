@@ -929,9 +929,17 @@ fn shop_buyout_variant(
     )
 }
 
+/// Game ticks the opener waits for the banker's first chat after its
+/// Talk-to before it talks again. The engine walks the player to the NPC
+/// for the op (`opnpc1` interaction approach); the banker is within 12 tiles
+/// of the approach tile, so a player inside the same 12-tile box is at most
+/// 24 tiles away, 24 ticks at the 1 tile per tick walking pace.
+const NPC_BANK_TALK_APPROACH_TICKS: u32 = 24;
+
 #[derive(Default)]
 struct ShopBuyoutNpcOpenState {
     talked: bool,
+    talked_tick: u32,
     saw_chat: bool,
     continued: Option<(i32, i32, String)>,
     answered: Option<(i32, String)>,
@@ -1007,10 +1015,14 @@ pub(crate) fn shop_buyout_open_npc_bank(
                         SendResult::Refused { .. } => true,
                     };
                 }
-                if chat_open || (state.talked && !state.saw_chat) || state.answered.is_some() {
+                let waiting_for_chat = state.talked
+                    && !state.saw_chat
+                    && snapshot.tick().saturating_sub(state.talked_tick)
+                        <= NPC_BANK_TALK_APPROACH_TICKS;
+                if chat_open || waiting_for_chat || state.answered.is_some() {
                     return true;
                 }
-                if state.talked && state.saw_chat {
+                if state.talked {
                     *state = ShopBuyoutNpcOpenState::default();
                 }
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
@@ -1028,22 +1040,16 @@ pub(crate) fn shop_buyout_open_npc_bank(
                 }) else {
                     return true;
                 };
-                let Some((px, pz, level)) = snapshot.tile() else {
-                    return true;
-                };
-                if level != npc.tile.level
-                    || (px - npc.tile.x).abs().max((pz - npc.tile.z).abs()) > 1
-                {
-                    let mut ix = Interactions::new(snapshot, c);
-                    return matches!(
-                        ix.walk(npc.tile),
-                        SendResult::Sent { .. } | SendResult::Refused { .. }
-                    );
-                }
+                // Talk-to from where the player stands: the engine's op
+                // interaction walks to the NPC and follows it while it
+                // wanders. Walking onto the banker's last seen tile first
+                // chased Gundai around the Mage Arena cellar until the
+                // step budget ran out.
                 let mut ix = Interactions::new(snapshot, c);
                 match ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.to_string())) {
                     SendResult::Sent { .. } => {
                         state.talked = true;
+                        state.talked_tick = snapshot.tick();
                         true
                     }
                     SendResult::Refused {
