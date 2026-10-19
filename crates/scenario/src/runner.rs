@@ -1683,6 +1683,11 @@ impl ScenarioRunner {
         FindOptions {
             allow_teleports: force_teleports || n.allow_teleports,
             allow_wilderness: n.allow_wilderness,
+            zones: if n.allow_danger_zones {
+                nav::zones::ZoneExempt::all()
+            } else {
+                nav::zones::ZoneExempt::NONE
+            },
             ..FindOptions::default()
         }
     }

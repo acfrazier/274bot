@@ -9607,7 +9607,7 @@ fn every_nav_scenario_uses_the_paint_preset() {
 #[test]
 fn nav_shantay_walks_exactly_through_both_henge_branches() {
     let s = get("nav_shantay").expect("nav_shantay");
-    assert_eq!(s.steps.len(), 9);
+    assert_eq!(s.steps.len(), 11);
     for (index, expected) in [
         (
             1,
@@ -9640,11 +9640,22 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
+    // The default Danger routing admits the desert route only above the
+    // Ugthanki combat cap (84): the account's own melee stats are seeded
+    // to 99 before the tail.
+    assert!(matches!(
+        s.steps[4].wait.arm,
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 99
+        }
+    ));
+    assert!(matches!(s.steps[5].kind, StepKind::DrainDialogs { .. }));
     // Upstream tail (shantay-pass-route-test): the Varrock walk from the
     // desert start with 10 coins must latch the crossing-tile watcher and
     // end inside the Varrock radius, with the toll paid.
-    let StepKind::Walk { dest } = &s.steps[6].kind else {
-        panic!("tail step 6 must be the Varrock WalkTo");
+    let StepKind::Walk { dest } = &s.steps[8].kind else {
+        panic!("tail step 8 must be the Varrock WalkTo");
     };
     assert_eq!(
         *dest,
@@ -9655,7 +9666,7 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     );
     assert!(matches!(
-        s.steps[6].wait.arm,
+        s.steps[8].wait.arm,
         Proof::VisitedWithin {
             min_x: 3300,
             max_x: 3306,
@@ -9665,11 +9676,11 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     ));
     assert!(matches!(
-        s.steps[5].wait.arm,
+        s.steps[7].wait.arm,
         Proof::ItemId { count: 10, .. }
     ));
     assert!(matches!(
-        s.steps[8].wait.arm,
+        s.steps[10].wait.arm,
         Proof::ItemIdAtMost { count: 0, .. }
     ));
 }
@@ -9952,8 +9963,11 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
     assert!(s.settings.full_rate);
     assert_eq!(
         s.settings.nav,
-        nav_test_paints().with_tick_ms(300),
-        "seam run uses the paint preset and speed 300"
+        ScenarioNav {
+            allow_danger_zones: true,
+            ..nav_test_paints().with_tick_ms(300)
+        },
+        "seam run uses the paint preset, speed 300 and Danger routing Always"
     );
     assert_eq!(s.settings.deadline, Duration::from_secs(3600));
     assert_eq!(s.settings.sustains, nav_energy_sustains());

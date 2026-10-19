@@ -187,6 +187,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   Busy search capacity or result storage delays a valid inspection instead
   of refusing it. Reset cancels the current inspection and prevents stale
   output. Recent results remain available until acknowledged or replaced.
+- Fixed: walks through the Ardougne lever to the Wilderness (for example to
+  the Mage Arena bank) no longer stop at the lever on an account that has
+  not pulled it before. The walk now answers the lever's Wilderness warning
+  with "Yes I'm brave." and does not change the account's "don't show this
+  message again" choice.
 
 ### Random-event guardian
 
