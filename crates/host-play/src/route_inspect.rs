@@ -2418,6 +2418,8 @@ pub(super) fn validate_request(
     Ok(())
 }
 
+/// `state` borrows the observe frame's gating facts. An admitted inspection
+/// copies them once into its capture, so it keeps that frame's facts.
 #[expect(
     clippy::too_many_arguments,
     reason = "The one production call site hands over the slot's navigation table, name, world, state, bank rows, cache and object names from separate owners, plus the request."
@@ -2426,7 +2428,7 @@ pub(super) fn queue_inspect(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     bank: BankRows,
     cache: Option<Arc<Cache>>,
     obj_names: Option<Arc<ObjNames>>,
@@ -2500,7 +2502,7 @@ pub(super) fn queue_inspect(
         revision,
         world,
         lease,
-        state: Arc::new(state.unwrap_or_else(WorldState::empty)),
+        state: Arc::new(state.map_or_else(WorldState::empty, WorldState::clone)),
         bank_origin: bank.origin,
         bank: bank.rows,
         from: req.from,

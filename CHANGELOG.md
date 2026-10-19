@@ -20,6 +20,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   repeating bank callbacks or extending the operation's active-time limit.
   The v2 BoneBurier example uses `Bank.withdrawLoad` instead of the removed
   low-level `withdraw-load` request.
+- Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
+  `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
+  `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
 - Script operations now share a bounded request seat across native cards and
   JavaScript. A second top-level Gatherer, combat, quest progress or Hunt
   Session reports **busy** while one Session is live. Capability roots started
@@ -128,6 +131,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Navigation
 
+- Release packages now also ship the 289 WalkTo map catalogue beside the
+  shipped map terrain. The first map open installs it like the shipped
+  terrain (identity and integrity checked) instead of deriving it from the
+  client cache, so it opens faster. A catalogue shipped for another client
+  cache, or a damaged one, falls back to the existing local derive.
 - Route planning now runs independently for each request, with a 192 MiB
   memory limit for each search. A request waits when search capacity is full.
   Replacing or stopping a walk cancels its old search, so a late result
@@ -338,6 +346,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   look up that name again for the next world. Each such world costs one
   more wait for the name lookup. Before, 274bot took only the cache from
   the next world and kept the first world's game server.
+
+### Performance
+
+- Each running bot copies its route facts (held and worn items, skills,
+  settings and quest progress) only when it prepares a walk request, a bank
+  selection or a route inspection. Before, its script watchdog also copied them on
+  every frame, about 30 times each game tick. In a measured Gatherer bank
+  loop, each bot now allocates about 0.25 MB/s less memory for these facts,
+  about half of the earlier amount.
+
 ### Fixed during development
 
 #### Navigation
@@ -378,6 +396,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   They skip finished reachability proofs and unnecessary zone-check futures.
   Routes, search budgets and cancellation checks stay unchanged.
 
+#### Live scenarios
+
+- Live script scenarios no longer send a world-wide `::speed 600` command by
+  default. A scenario sends `::speed` only when it explicitly asks for a
+  tick, such as `QUESTER_TICK_MS=300` on Engine Q. Every request is sent and
+  then confirmed by a system-chat line newer than that send; a matching
+  confirmation already in the ring neither suppresses nor satisfies it.
+  Scenario pass criteria are unchanged.
+
 #### Maps
 
 - Map baking saves progress in batches of 64 tiles. Cancelling or finishing a
@@ -409,6 +436,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 - Windows now promptly cancels blocked login transport I/O when a login attempt
   ends.
+
+#### Windows
+
+- On Windows, the instance-lock warning names the live panel or TUI that
+  already holds the lock, even when this Windows account cannot open that
+  process. It no longer calls that live copy an unknown process.
 
 ### Release engineering
 

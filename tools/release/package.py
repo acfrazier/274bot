@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Stage release binaries, navigation and WalkTo map terrain; optionally
+"""Stage release binaries, navigation and the WalkTo map bundle; optionally
 Developer-ID sign macOS.
 
 Build first with cargo build --locked --release and default features. Every
 platform ships panel-play and tui-play. The input must be the Cargo profile
 directory containing matching nav/<revision> outputs. Revision 289 packages
-also ship WalkTo map terrain: the staged tui-play bakes it from the pinned
-client cache the nav bundle was built from (--map-cache and --map-unpack; by
-default the nav build's BOT_NAV_ENGINE_DIR / ENGINE_DIR and
-BOT_NAV_SNAPSHOT_ROOT resolution), and the bake must carry the nav bundle's
-decoded content identity. --check stages into a temporary directory, verifies
-every staged file, prints a summary and removes it. This tool never publishes a
-release or uploads to Apple's notary service.
+also ship the WalkTo map catalogue and terrain: the staged tui-play bakes
+them from the pinned client cache the nav bundle was built from
+(--map-cache and --map-unpack; by default the nav build's
+BOT_NAV_ENGINE_DIR / ENGINE_DIR and BOT_NAV_SNAPSHOT_ROOT resolution), and
+the bake must carry the nav bundle's decoded content identity. --check
+stages into a temporary directory, verifies every staged file, prints a
+summary and removes it. This tool never publishes a release or uploads to
+Apple's notary service.
 """
 import argparse
 import hashlib
@@ -25,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 SHIPPED_IMAGES_NAME = '274bot.mapimages.json'
+SHIPPED_CATALOGUE_NAME = '274bot.mapcatalogue.json'
 
 
 def run(*args):
@@ -47,8 +49,8 @@ def nav_build_inputs(revision):
     return cache, Path(snapshots) if snapshots else None
 
 
-def ship_map_terrain(p, tool, output, revision, cache, unpack, nav_manifest):
-    """Bake the shipped WalkTo map terrain with the staged tui-play and verify it."""
+def ship_map_bundle(p, tool, output, revision, cache, unpack, nav_manifest):
+    """Bake the shipped map catalogue and terrain with the staged tui-play and verify both."""
     for label, path in (('--map-cache', cache), ('--map-unpack', unpack)):
         if not path.is_dir():
             p.error(f'{label} {path} is not a directory (the client cache the nav bundle '
@@ -57,41 +59,67 @@ def ship_map_terrain(p, tool, output, revision, cache, unpack, nav_manifest):
                             '--cache', str(cache), '--unpack', str(unpack)],
                            check=True, stdout=subprocess.PIPE, text=True)
     shipped = output / 'map' / revision
-    description = json.loads((shipped / SHIPPED_IMAGES_NAME).read_text())
-    if json.loads(baked.stdout.strip().splitlines()[-1]) != description:
-        p.error('tui-play --map-bundle printed another description than it wrote')
+    images = json.loads((shipped / SHIPPED_IMAGES_NAME).read_text())
+    catalogue = json.loads((shipped / SHIPPED_CATALOGUE_NAME).read_text())
+    if json.loads(baked.stdout.strip().splitlines()[-1]) != {'images': images,
+                                                             'catalogue': catalogue}:
+        p.error('tui-play --map-bundle printed other descriptions than it wrote')
     content_id = json.loads(nav_manifest.read_text()).get('content_id')
-    if description['identity']['content'] != content_id:
-        p.error('shipped map terrain was baked from another client cache than the nav bundle '
-                f'(content {description["identity"]["content"]}, nav {content_id})')
-    verify_map_terrain(p, output / 'map', revision, description)
-    return description
+    for what, description in (('terrain', images), ('catalogue', catalogue)):
+        if description['identity']['content'] != content_id:
+            p.error(f'shipped map {what} was baked from another client cache than the nav '
+                    f'bundle (content {description["identity"]["content"]}, nav {content_id})')
+    verify_map_bundle(p, output / 'map', revision, images, catalogue)
+    return images, catalogue
 
 
-def verify_map_terrain(p, map_dir, revision, description):
+def verify_map_bundle(p, map_dir, revision, images, catalogue):
     """Every shipped file against its receipt, and nothing else under map/."""
-    key = description['key']
-    images = map_dir / revision / 'images' / key
-    data = (images / 'manifest.json').read_bytes()
-    if (len(data) != description['manifest']['bytes']
-            or hashlib.sha256(data).hexdigest() != description['manifest']['sha256']):
+    key = images['key']
+    image_dir = map_dir / revision / 'images' / key
+    data = (image_dir / 'manifest.json').read_bytes()
+    if (len(data) != images['manifest']['bytes']
+            or hashlib.sha256(data).hexdigest() != images['manifest']['sha256']):
         p.error('shipped map manifest does not match its receipt')
     manifest = json.loads(data)
-    if manifest['identity'] != description['identity'] or manifest['key'] != key:
+    if manifest['identity'] != images['identity'] or manifest['key'] != key:
         p.error('shipped map manifest belongs to another image identity')
     expected = {f'{revision}/{SHIPPED_IMAGES_NAME}', f'{revision}/images/{key}/manifest.json'}
     total = 0
     for tile in manifest['tiles']:
         k = tile['key']
         relative = f"terrain/p{k['plane']}/l{k['lod']}/{k['x']}_{k['z']}.png"
-        body = (images / relative).read_bytes()
+        body = (image_dir / relative).read_bytes()
         if (len(body) != tile['payload']['bytes']
                 or hashlib.sha256(body).hexdigest() != tile['payload']['sha256']):
             p.error('shipped map tile does not match its receipt: ' + relative)
         expected.add(f'{revision}/images/{key}/{relative}')
         total += len(body)
-    if len(manifest['tiles']) != description['tiles'] or total != description['tile_bytes']:
+    if len(manifest['tiles']) != images['tiles'] or total != images['tile_bytes']:
         p.error('shipped map terrain does not match its description totals')
+    cat_key = catalogue['key']
+    catalogue_dir = map_dir / revision / 'catalogues' / cat_key
+    data = (catalogue_dir / 'manifest.json').read_bytes()
+    if (len(data) != catalogue['manifest']['bytes']
+            or hashlib.sha256(data).hexdigest() != catalogue['manifest']['sha256']):
+        p.error('shipped catalogue manifest does not match its receipt')
+    cat_manifest = json.loads(data)
+    if cat_manifest['identity'] != catalogue['identity'] or cat_manifest['key'] != cat_key:
+        p.error('shipped catalogue manifest belongs to another catalogue identity')
+    payload = (catalogue_dir / 'client-pois.json').read_bytes()
+    if (len(payload) != cat_manifest['payload']['bytes']
+            or hashlib.sha256(payload).hexdigest() != cat_manifest['payload']['sha256']):
+        p.error('shipped catalogue payload does not match its receipt')
+    pois = json.loads(payload)
+    if (pois['identity'] != catalogue['identity']
+            or len(pois['records']) != cat_manifest['record_count']):
+        p.error('shipped catalogue payload belongs to another catalogue identity')
+    if (cat_manifest['record_count'] != catalogue['records']
+            or cat_manifest['payload']['bytes'] != catalogue['payload_bytes']):
+        p.error('shipped map catalogue does not match its description totals')
+    expected |= {f'{revision}/{SHIPPED_CATALOGUE_NAME}',
+                 f'{revision}/catalogues/{cat_key}/manifest.json',
+                 f'{revision}/catalogues/{cat_key}/client-pois.json'}
     actual = {f.relative_to(map_dir).as_posix() for f in map_dir.rglob('*') if f.is_file()}
     if actual != expected:
         p.error('unexpected shipped map files: ' + ', '.join(sorted(actual ^ expected)[:5]))
@@ -192,11 +220,13 @@ def main():
         nav_out.mkdir(parents=True)
         for name in nav_names:
             shutil.copy2(nav / name, nav_out / name)
-        # The operator's 289 decision ships WalkTo terrain; a 274 package has none.
-        map_images = None
+        # The operator's 289 decision ships the WalkTo map catalogue and
+        # terrain; a 274 package has neither.
+        map_images = map_catalogue = None
         if a.revision == '289':
-            map_images = ship_map_terrain(p, output / ('tui-play' + suffix), output, a.revision,
-                                          map_cache, map_unpack, nav_out / '274bot.navpack.json')
+            map_images, map_catalogue = ship_map_bundle(
+                p, output / ('tui-play' + suffix), output, a.revision,
+                map_cache, map_unpack, nav_out / '274bot.navpack.json')
         for name in ('LICENSE', 'NOTICE.md', 'FIRST-START.md'):
             shutil.copy2(root / name, output / name)
         signed = []
@@ -235,6 +265,7 @@ def main():
                        status='signed-staging' if signed else 'unsigned-staging')
         if map_images:
             receipt['map_images'] = map_images
+            receipt['map_catalogue'] = map_catalogue
         receipt['files'] = {f.relative_to(output).as_posix(): {'sha256': digest(f),
                                                               'bytes': f.stat().st_size}
                             for f in sorted(output.rglob('*')) if f.is_file()}
@@ -245,7 +276,7 @@ def main():
                 'check': 'ok', 'platform': a.platform, 'revision': int(a.revision),
                 'files': len(receipt['files']),
                 'bytes': sum(row['bytes'] for row in receipt['files'].values()),
-                'map_images': map_images,
+                'map_images': map_images, 'map_catalogue': map_catalogue,
             }, indent=2))
         else:
             print(output)

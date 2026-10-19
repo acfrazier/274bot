@@ -21,8 +21,8 @@ use nav::map::cache::{
     ReadyImages as NavReadyImages, UnitKey, CHECKPOINT_SCHEMA,
 };
 use nav::map::formats::{
-    CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, ShippedImages, TileReceipt,
-    MAX_IMAGE_BYTES, MAX_IMAGE_TILES, MAX_JSON_BYTES, MAX_PNG_BYTES,
+    CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, ShippedCatalogue, ShippedImages,
+    TileReceipt, MAX_IMAGE_BYTES, MAX_IMAGE_TILES, MAX_JSON_BYTES, MAX_PNG_BYTES,
 };
 use nav::map::identity::{CatalogueIdentity, Digest, ImageIdentity, CATALOGUE_SCHEMA};
 use nav::map::raster::CHECKPOINT_BATCH_TILES;
@@ -3540,6 +3540,7 @@ struct MapBakeJob {
     cursor_is_shipped: bool,
     shipped_checked: bool,
     shipped_bundle: Option<ShippedImages>,
+    shipped_catalogue_bundle: Option<ShippedCatalogue>,
     local_bake_started: bool,
     writer: Option<BakeWriter>,
     cursor_output: Option<MapBakeCursorOutput>,
@@ -3599,6 +3600,7 @@ impl MapBakeJob {
             cursor_is_shipped: false,
             shipped_checked: false,
             shipped_bundle: None,
+            shipped_catalogue_bundle: None,
             local_bake_started: false,
             writer: None,
             cursor_output: None,
@@ -3645,7 +3647,7 @@ impl MapBakeJob {
             && self.demand.load(AtomicOrdering::Acquire) != DEMAND_BAKE_IMAGES
             && !real_directory(&self.ready_path)?
         {
-            self.ensure_shipped_bundle();
+            self.ensure_shipped_images_bundle();
             if self.shipped_bundle.is_none() {
                 return Ok(true);
             }
@@ -3785,6 +3787,7 @@ impl MapBakeJob {
             self.cursor_is_shipped = false;
             self.shipped_checked = false;
             self.shipped_bundle = None;
+            self.shipped_catalogue_bundle = None;
             self.after_census = MapBakeJobStage::OpenExisting;
         } else if let Some(writer) = &mut self.writer {
             // Other keys can change while this job yields. Its next write must
@@ -3835,7 +3838,7 @@ impl MapBakeJob {
         Ok(())
     }
 
-    fn ensure_shipped_bundle(&mut self) {
+    fn ensure_shipped_images_bundle(&mut self) {
         if self.shipped_checked {
             return;
         }
@@ -3843,7 +3846,18 @@ impl MapBakeJob {
         self.shipped_bundle = self
             .shipped
             .as_ref()
-            .and_then(|source| source.bundle(self.descriptor.image_identity()));
+            .and_then(|source| source.images_bundle(self.descriptor.image_identity()));
+    }
+
+    fn ensure_shipped_catalogue_bundle(&mut self) {
+        if self.shipped_checked {
+            return;
+        }
+        self.shipped_checked = true;
+        self.shipped_catalogue_bundle = self
+            .shipped
+            .as_ref()
+            .and_then(|source| source.catalogue_bundle(self.descriptor.catalogue_identity()));
     }
 
     fn ready_satisfies(&mut self, ready: &ReadyMap) -> bool {
@@ -3856,7 +3870,7 @@ impl MapBakeJob {
                 false
             }
             ArtifactKind::Images => {
-                self.ensure_shipped_bundle();
+                self.ensure_shipped_images_bundle();
                 self.shipped_bundle.is_none()
             }
         }
@@ -3867,32 +3881,52 @@ impl MapBakeJob {
             return Ok(true);
         }
         let partial_dir = Arc::clone(&self.request.partial_dir);
-        if self.input.artifact == ArtifactKind::Images && !self.local_bake_started {
-            self.ensure_shipped_bundle();
-            if let Some(bundle) = self.shipped_bundle.take() {
-                let Some(source) = &self.shipped else {
-                    return Err(MapCacheError::Map(MapError::Invalid(
-                        "shipped source absent",
-                    )));
-                };
-                self.cursor = Some(source.cursor(
-                    self.descriptor.image_identity(),
-                    bundle,
-                    Arc::clone(&partial_dir),
-                )?);
-                self.cursor_is_shipped = true;
-                return Ok(true);
+        if !self.local_bake_started {
+            match self.input.artifact {
+                ArtifactKind::Catalogue => {
+                    self.ensure_shipped_catalogue_bundle();
+                    if let Some(bundle) = self.shipped_catalogue_bundle.take() {
+                        let Some(source) = &self.shipped else {
+                            return Err(MapCacheError::Map(MapError::Invalid(
+                                "shipped source absent",
+                            )));
+                        };
+                        self.cursor = Some(
+                            source
+                                .catalogue_cursor(self.descriptor.catalogue_identity(), bundle)?,
+                        );
+                        self.cursor_is_shipped = true;
+                        return Ok(true);
+                    }
+                    self.local_bake_started = true;
+                }
+                ArtifactKind::Images => {
+                    self.ensure_shipped_images_bundle();
+                    if let Some(bundle) = self.shipped_bundle.take() {
+                        let Some(source) = &self.shipped else {
+                            return Err(MapCacheError::Map(MapError::Invalid(
+                                "shipped source absent",
+                            )));
+                        };
+                        self.cursor = Some(source.images_cursor(
+                            self.descriptor.image_identity(),
+                            bundle,
+                            Arc::clone(&partial_dir),
+                        )?);
+                        self.cursor_is_shipped = true;
+                        return Ok(true);
+                    }
+                    if self.demand.load(AtomicOrdering::Acquire) != DEMAND_BAKE_IMAGES {
+                        return Ok(false);
+                    }
+                    self.local_bake_started = true;
+                }
             }
-            if self.demand.load(AtomicOrdering::Acquire) != DEMAND_BAKE_IMAGES {
-                return Ok(false);
-            }
-            self.local_bake_started = true;
         }
         self.cursor = Some(self.producer.cursor(&self.request, partial_dir)?);
         self.cursor_is_shipped = false;
         Ok(true)
     }
-
     fn writer_usage(&self) -> Result<CacheUsage, MapCacheError> {
         let census = self
             .census_result
@@ -4358,14 +4392,26 @@ impl MapBakeJob {
                             return self.fail(error);
                         }
                         if let Some(source) = &self.shipped {
-                            if let Ok(key) = self.descriptor.image_key() {
-                                source.reject(key, &error);
+                            let (key, what) = match self.input.artifact {
+                                ArtifactKind::Catalogue => {
+                                    (self.descriptor.catalogue_key(), "catalogue")
+                                }
+                                ArtifactKind::Images => (self.descriptor.image_key(), "terrain"),
+                            };
+                            if let Ok(key) = key {
+                                source.reject(key, what, &error);
                             }
                         }
                         self.shipped_bundle = None;
+                        self.shipped_catalogue_bundle = None;
                         self.cursor = None;
                         self.cursor_is_shipped = false;
-                        if self.demand.load(AtomicOrdering::Acquire) == DEMAND_BAKE_IMAGES {
+                        // The catalogue derive needs no consent, so it falls
+                        // back at once. Terrain falls back only with consent;
+                        // without it the demand settles catalogue-only.
+                        if self.input.artifact == ArtifactKind::Catalogue
+                            || self.demand.load(AtomicOrdering::Acquire) == DEMAND_BAKE_IMAGES
+                        {
                             self.stage = MapBakeJobStage::PrepareCursor;
                         } else {
                             self.stage = MapBakeJobStage::OpenPublished;
@@ -4592,12 +4638,13 @@ impl MapDemandManager {
         Self::build(root, producer, None)
     }
 
-    /// A manager that installs terrain shipped under `shipped` for an image
-    /// identity that matches it exactly, instead of baking that terrain.
-    pub fn with_shipped_images(
+    /// A manager that installs map data shipped under `shipped` for a
+    /// catalogue or image identity that matches it exactly, instead of
+    /// deriving or baking that artifact locally.
+    pub fn with_shipped_map(
         root: MapCacheRoot,
         producer: Arc<dyn MapBakeProducer>,
-        shipped: ShippedMapImages,
+        shipped: ShippedMap,
     ) -> Self {
         Self::build(root, producer, Some(Arc::new(ShippedSource::new(shipped))))
     }
@@ -4631,7 +4678,7 @@ impl MapDemandManager {
 
     /// Published terrain imagery for `descriptor` (baked earlier, or shipped
     /// and installed), independent of the catalogue: a missing or stale
-    /// catalogue is derived cheaply by the worker, terrain is the expensive
+    /// catalogue is supplied cheaply by the worker, terrain is the expensive
     /// local bake. The returned value holds a shared lease, so capacity
     /// pruning cannot remove that terrain while it is retained.
     pub fn ready_images(
@@ -4649,7 +4696,7 @@ impl MapDemandManager {
         self.inner
             .shipped
             .as_ref()
-            .is_some_and(|shipped| shipped.bundle(descriptor.image_identity()).is_some())
+            .is_some_and(|shipped| shipped.images_bundle(descriptor.image_identity()).is_some())
     }
 
     fn input_for(
@@ -5540,7 +5587,7 @@ impl MapDemandHandle {
 
 mod shipped;
 use shipped::ShippedSource;
-pub use shipped::{ShippedMapImages, SHIPPED_IMAGES_NAME};
+pub use shipped::{ShippedMap, ShippedMapBundle, SHIPPED_CATALOGUE_NAME, SHIPPED_IMAGES_NAME};
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;

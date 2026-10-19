@@ -261,6 +261,57 @@ export async function tick(api) {{
     }
 }
 
+/// A queued bank selection keeps the gating facts of the frame that queued
+/// it. The next frame lends different facts and repeats the stale request,
+/// which is refused; the waiting request still holds frame A's facts.
+#[test]
+fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
+    let navs = navs(vec![bank("bank", 12, 12)]);
+    let world = Some(world(false));
+    let snapshot = GameSnapshot::new();
+    let mut frame_a = WorldState::empty();
+    frame_a.quests.insert("Frame A".into());
+    let mut frame_b = WorldState::empty();
+    frame_b.quests.insert("Frame B".into());
+    let select = vec![script::shim::InteractReq::SelectBank {
+        x: 0,
+        z: 0,
+        level: 0,
+        allow_wilderness: false,
+        use_mage_bank: false,
+        use_zanaris_bank: false,
+        request_id: 1,
+    }];
+    for state in [&frame_a, &frame_b] {
+        super::super::dispatch_script_interact_cached_scoped(
+            &mut HeldDriver,
+            &super::super::InteractContext {
+                snapshot: &snapshot,
+                obj_names: None,
+                here: Some((0, 0, 0)),
+                navs: &navs,
+                world: &world,
+                state: Some(state),
+                bank: None,
+                name: "test",
+                compatibility_scope: Some(api::identity::Scope::Slot(
+                    api::identity::SlotKey::from_incarnation(1).unwrap(),
+                )),
+                cache: &None,
+                obj_names_arc: &None,
+            },
+            select.clone(),
+        );
+    }
+    let all = navs.lock().unwrap();
+    let active = all["test"]
+        .bank_pick
+        .current
+        .as_ref()
+        .expect("a far routable bank queues selection work");
+    assert_eq!(*active.job.request.state, frame_a);
+}
+
 #[test]
 fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
     let canifis = NamedBank {
@@ -2199,7 +2250,7 @@ mod bank_pick_capture {
                 "test",
                 scope(),
                 &Some(world(false)),
-                Some(state),
+                Some(&state),
                 tile(0, 0),
                 FindOptions::default(),
                 7,
