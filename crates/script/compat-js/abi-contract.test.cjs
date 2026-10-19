@@ -159,6 +159,8 @@ test('the entity family is completely activated with both query refusal debts re
     });
     assert.ok(!contract.not_impl_debt.some(row =>
         row.selector === 'EntityQuery.inside' || row.selector === 'EntityQuery.nearestPreferLocal'));
+});
+
 test('inventory root and public module declarations expose exact consumer types', () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-inventory-consumer-'));
     try {
