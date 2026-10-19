@@ -373,7 +373,7 @@ export default class QueryBot extends LoopingBot {
                     .name('undefined').count()],
             invalid: invalid.map((row) => row.name),
             supplyCalls: supplies,
-            identity: [first === wrapped[3], results[1] === wrapped[5]],
+            identity: [first === wrapped[3], results[1] === wrapped[1]],
             order,
             callbackResult,
             early: [stopped, iteratorReturn, iteratorNext],
