@@ -227,9 +227,14 @@ impl HeadlessDriver {
         self.session.submit(command, targets, &mut surface)
     }
 
-    /// One headless tick: [`OperatorSession::poll`].
+    /// One headless tick: [`OperatorSession::poll`]. A queued Nav or
+    /// danger write that settled hands its durable walk view to the lent
+    /// model, as a write durable at submission does.
     pub fn poll(&mut self) {
         self.session.poll();
+        if let Some(view) = self.session.take_settled_walk_globals() {
+            self.models.walk_globals = view;
+        }
     }
 
     /// The report of `request`, while the book retains it.

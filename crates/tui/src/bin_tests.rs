@@ -31,6 +31,13 @@ mod map_fixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 
+/// Select `name` through the command seam, as the fleet's focus change does.
+fn select(session: &mut TuiSession, name: &str) {
+    session
+        .submit(OperatorCommand::Select, Targets::Profile(name))
+        .expect("select");
+}
+
 fn wait_script_state(play: &host_play::Play, name: &str, want: ScriptRunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while play_script_state(play, name) != want && Instant::now() < deadline {
@@ -1499,7 +1506,7 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
 fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
     let mut session = TuiSession::new(dummy_options());
     session.core.fleet_mut().add("test");
-    session.core.select("test");
+    select(&mut session, "test");
     let mut app = TuiApp::new("274bot headless");
     // The operator toggled to game chat while the old script painted.
     app.chat_data.show_game_chat = true;
@@ -1731,7 +1738,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     };
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    select(&mut session, "alice");
     session.core.set_play(Some(fixture.play(origin)));
     publish_map_walk_snapshot(&mut session.core, "alice", origin);
     let mut app = TuiApp::new("274bot headless");
@@ -1764,7 +1771,7 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add(slot);
-    session.core.select(slot);
+    select(&mut session, slot);
     let mut play = fixture.play(Tile {
         x: 0,
         z: 1,
@@ -1834,7 +1841,7 @@ fn map_walk_uses_core_slot_position_and_keeps_snapped_destination() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     let name = "tui-walk-receipt";
     session.core.fleet_mut().add(name);
-    session.core.select(name);
+    select(&mut session, name);
     let origin = Tile {
         x: 0,
         z: 1,
@@ -1882,7 +1889,7 @@ fn production_walk_uses_the_live_slot_origin_when_ui_position_is_missing() {
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     let name = "alice";
     session.core.fleet_mut().add(name);
-    session.core.select(name);
+    select(&mut session, name);
     let origin = Tile {
         x: 0,
         z: 1,
@@ -1937,7 +1944,7 @@ fn refused_no_origin_walk_does_not_arm_destination() {
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
     let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    select(&mut session, "alice");
     session.core.set_play(Some(fixture.play(Tile {
         x: 0,
         z: 0,
@@ -3177,9 +3184,10 @@ fn load_all_keeps_focus_when_others_log_in() {
     }
     install_vault(&mut session.core, vault);
     session.inject_play(empty_play());
-    let mut surface = HeadlessSurface::new();
-    session.core.load("alice", &mut surface);
-    session.core.select("alice");
+    session
+        .submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load");
+    select(&mut session, "alice");
     let mut app = TuiApp::new("tui");
     session.pump(&mut app);
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
@@ -3337,7 +3345,7 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
         .unwrap()
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    select(&mut session, "alice");
     session
         .core
         .stage_guardian(frontend_core::GuardianEdit::policy(
@@ -3402,7 +3410,7 @@ fn settings_popup_shows_unavailable_policy_refusal() {
     session.core.set_spawn_workers(false);
     lifecycle_vault("settings-policy-refusal").start_session(&mut session.core, empty_play());
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    select(&mut session, "alice");
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
     session.last_focused = Some("alice".into());
@@ -3481,9 +3489,10 @@ fn tui_with_profiles(iso: &IsolatedStores, names: &[&str]) -> (TuiSession, TuiAp
         iso.dir().join("js-scripts.json"),
         iso.dir().join("js-cache"),
     );
-    let mut surface = HeadlessSurface::new();
     for name in names {
-        session.core.load(name, &mut surface);
+        session
+            .submit(OperatorCommand::Load, Targets::Profile(name))
+            .expect("load");
     }
     let mut app = TuiApp::new("scripts");
     session.pump(&mut app);
@@ -4606,7 +4615,7 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
         .unwrap()
         .attach_arm("alice", Arc::clone(&alice));
     session.core.fleet_mut().add("alice");
-    session.core.select("alice");
+    select(&mut session, "alice");
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
     session.last_focused = Some("alice".into());

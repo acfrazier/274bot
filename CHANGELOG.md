@@ -504,11 +504,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
-- On a slow or busy disk, a preference change (a Nav config grant, danger
-  routing, a draw switch, the session log file, map bake, Quest Paths, a
-  notice's "Don't show again") is no longer reported as failed while it is
-  still being saved: it completes when the disk confirms the save, and only
-  a save that really fails is reported.
+- On a slow or busy disk, 274bot no longer reports a preference change as
+  failed while the disk still saves it. This applies to a Nav config grant,
+  danger routing, a draw switch, the session log file, map bake, Quest Paths
+  and a notice's "Don't show again". The Nav config grants, danger routing
+  and the session log file change when the disk confirms the save. When two
+  changes to one of these settings wait for the disk, the later change
+  applies. If you close 274bot before the disk confirms a change, 274bot can
+  lose that change or a part of it. Check the setting after the next start.
 
 #### Login
 

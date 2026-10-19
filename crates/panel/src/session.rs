@@ -2469,7 +2469,7 @@ impl Session {
     /// Attach the opt-in Debug catalog from the immutable server profile.
     /// Normal selected game data is deliberately not used as a fallback.
     pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, ProfileError> {
-        let profile = self.server_profile().ok_or(ProfileError::NotBound)?;
+        let profile = self.server_profile().ok_or_else(ProfileError::not_bound)?;
         profile.debug_catalog()
     }
 

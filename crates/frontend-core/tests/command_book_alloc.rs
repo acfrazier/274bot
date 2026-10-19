@@ -233,8 +233,20 @@ fn game_input_submitted_through_the_session_allocates_nothing_after_warm_up() {
     let mut surface = DeskSurface {
         desk: MapDesk::default(),
     };
-    session.load("alice", &mut surface);
-    session.select("alice");
+    session
+        .submit(
+            OperatorCommand::Load,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .expect("load");
+    session
+        .submit(
+            OperatorCommand::Select,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .expect("select");
     // A fresh channel, so its send numbers match the calibration's.
     let (sender, probe) = InputSender::probe();
     surface.desk.set_input_sender(Some(sender));

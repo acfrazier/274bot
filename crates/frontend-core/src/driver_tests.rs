@@ -355,6 +355,13 @@ fn preferences_file(d: &HeadlessDriver) -> serde_json::Map<String, serde_json::V
     serde_json::from_slice(&bytes).expect("the preferences file is JSON")
 }
 
+/// [`preferences_file`] while a write may still be landing: `None` until
+/// the file exists and parses.
+fn preferences_file_now(d: &HeadlessDriver) -> Option<serde_json::Value> {
+    let path = d.session().preferences().expect("bound preferences").path();
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
 #[test]
 fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
     let dir = scratch("unlock-wrong");
@@ -524,14 +531,9 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert!(crate::log_file::session_log_path().is_none());
 }
 
-/// T3.3 r4 (review finding 1): a preference write the disk holds past the
-/// bounded wait leaves its command pending, never `Failed`: the operator
-/// is not told a save failed that later lands. It settles `Done` when the
-/// write is durable, and the file and a fresh read then hold the value.
-#[test]
-fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
-    use crate::nav_prefs::NavPreference;
-    let mut d = driver("held-pref", &["alice"]);
+/// Hold the next file write of `d`'s local-state service (the busy disk)
+/// until the returned sender sends; later writes run at once.
+fn hold_first_write(d: &HeadlessDriver) -> std::sync::mpsc::Sender<()> {
     let (release, gate) = std::sync::mpsc::channel::<()>();
     let gate = std::sync::Mutex::new(gate);
     let first = std::sync::atomic::AtomicBool::new(true);
@@ -544,6 +546,20 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
                 let _ = gate.lock().unwrap().recv();
             }
         }));
+    release
+}
+
+/// T3.3 r4 (review finding 1): a preference write the disk holds past the
+/// bounded wait leaves its command pending, never `Failed`: the operator
+/// is not told a save failed that later lands. It settles `Done` when the
+/// write is durable, and the file and a fresh read then hold the value.
+/// T3.3 r5 (review finding 6): the driver's lent walk view then holds the
+/// value too, as after a write durable at submission.
+#[test]
+fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
+    use crate::nav_prefs::NavPreference;
+    let mut d = driver("held-pref", &["alice"]);
+    let release = hold_first_write(&d);
 
     let submitted = d
         .submit(
@@ -563,9 +579,14 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
         Some(false),
         "nothing is durable yet"
     );
+    assert!(!d.models().walk_globals().globals().allow_teleports());
 
     release.send(()).unwrap();
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert!(
+        d.models().walk_globals().globals().allow_teleports(),
+        "the lent walk view adopts the settled write"
+    );
     assert_eq!(
         preferences_file(&d)["nav"]["allow_teleports"],
         serde_json::Value::Bool(true)
@@ -578,6 +599,62 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
     assert_eq!(
         d.session().nav_preference(NavPreference::AllowTeleports),
         Some(true)
+    );
+}
+
+/// T3.3 r5 (review finding 5): the newest command for a setting wins. An
+/// older write the disk held settles after a newer command for the same
+/// setting was accepted and made durable; the running session keeps the
+/// newer value, as the file does.
+#[test]
+fn an_older_held_write_settling_late_does_not_undo_a_newer_command() {
+    use crate::nav_prefs::NavPreference;
+    let mut d = driver("newest-pref", &["alice"]);
+    assert!(
+        d.session().running_pause_script_on_manual_walk_abort(),
+        "the pause is on by default"
+    );
+    let release = hold_first_write(&d);
+
+    let older = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::PauseScriptOnManualWalkAbort, false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(terminal_app(&d, older.request()), None, "the write is held");
+
+    // The disk lets the older write land; the session has not polled it.
+    release.send(()).unwrap();
+    let start = std::time::Instant::now();
+    while preferences_file_now(&d).and_then(|file| {
+        file.get("nav")?
+            .get("pause_script_on_manual_walk_abort")?
+            .as_bool()
+    }) != Some(false)
+    {
+        assert!(
+            start.elapsed() < SETTLE_HANG_GUARD,
+            "the older write never landed: its writer hung"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let newer = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::PauseScriptOnManualWalkAbort, true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, newer.request()), Some(done()));
+    assert_eq!(settled_app(&mut d, older.request()), Some(done()));
+    assert!(
+        d.session().running_pause_script_on_manual_walk_abort(),
+        "the running session matches the newest command"
+    );
+    assert_eq!(
+        preferences_file(&d)["nav"]["pause_script_on_manual_walk_abort"],
+        serde_json::Value::Bool(true)
     );
 }
 

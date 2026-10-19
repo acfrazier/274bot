@@ -116,8 +116,20 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     session.set_bypass_asset_startup(true);
     session.start_for_test(vault, play);
     let mut surface = HeadlessSurface::new();
-    session.load("alice", &mut surface);
-    session.login("alice", &mut surface);
+    session
+        .submit(
+            OperatorCommand::Load,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
     let first = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| n.connected)
@@ -142,14 +154,26 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     let dirty = session.memory_status("alice").unwrap();
     let arm = session.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.wants_login(), "the dropped one-shot session is parked");
-    session.login("alice", &mut surface);
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
     let reconnect = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| n.connected)
     });
     let reconnected = session.memory_status("alice").unwrap();
 
-    session.logout("alice");
+    session
+        .submit(
+            OperatorCommand::Logout,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
     clean_logout.store(true, Ordering::Release);
     session.play_for_test().unwrap().wake("alice");
     // The slot projects `!connected` in the same frame it observes the exit,
@@ -163,7 +187,13 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     });
     let clean = session.memory_status("alice").unwrap();
     release_tx.send(()).unwrap();
-    session.login("alice", &mut surface);
+    session
+        .submit(
+            OperatorCommand::Login,
+            Targets::Profile("alice"),
+            &mut surface,
+        )
+        .unwrap();
     let relog = login_rx.recv_timeout(HANG_GUARD).unwrap();
     wait_for(&mut session, |s| {
         s.memory_status("alice").is_some_and(|n| !n.login_lowmem)

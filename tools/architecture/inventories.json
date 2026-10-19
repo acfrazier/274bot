@@ -1130,6 +1130,30 @@
       "reason": "Opaque catalog fill/import failure kind; Display preserves prior String wording and details stay private behind the newtype like ImportError."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/scripts/reload.rs|TranspileError",
+      "path": "crates/frontend-core/src/scripts/reload.rs",
+      "symbol": "TranspileError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of the card-transpile API (was String). Opaque: the cause enum and its script-layer sentence stay private, Display keeps the old wording; no Clone, no public field."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paths.rs|CatalogRootError",
+      "path": "crates/frontend-core/src/scripts/paths.rs",
+      "symbol": "CatalogRootError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of rs2b0t_root_checked (was String). Owns the script layer's sentence in a private field; Display keeps the old wording; no Clone, no public field."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paths.rs|ImportMarkerError",
+      "path": "crates/frontend-core/src/scripts/paths.rs",
+      "symbol": "ImportMarkerError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of the catalogue-import marker write and clear (was String). Owns the script layer's sentence in a private field; Display keeps the old wording; no Clone, no public field."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/session/commands.rs|Targets",
       "path": "crates/frontend-core/src/session/commands.rs",
       "symbol": "Targets",
@@ -1658,6 +1682,22 @@
       "reason": "T3.3 launch and frame seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileError",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of the server-profile API (was String). Opaque: the cause enum and host-play's sentence stay private, Display keeps the old wording; no Clone, no public field."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|PassphraseError",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "PassphraseError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of obtain_passphrase (was String). Owns host-play's sentence in a private field; Display keeps the old wording; no Clone, no public field."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapContext",
       "path": "crates/frontend-core/src/walk_map.rs",
       "symbol": "WalkMapContext",
@@ -2000,6 +2040,14 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bench.rs|BenchError",
+      "path": "crates/frontend-core/src/bench.rs",
+      "symbol": "BenchError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 r4/r5 typed error of the memory benchmark API (was String). Opaque: the failed step and host-play's sentence stay private, Display keeps the old wording; no Clone, no public field."
     },
     {
       "id": "seam_type|crates/frontend-core/src/process.rs|StartError",

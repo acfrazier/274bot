@@ -479,6 +479,25 @@ fn submit_capture_frame(session: &mut Session) -> Result<(), String> {
     Ok(())
 }
 
+/// Pause `name`'s script, or resume it when paused, through the command
+/// seam: the row the panel's Pause/Resume button submits for that member.
+fn toggle_pause(session: &mut Session, name: &str) {
+    let row = if session.core.script_paused(name) {
+        frontend_core::OperatorCommand::ResumeScript
+    } else {
+        frontend_core::OperatorCommand::PauseScript
+    };
+    session.submit(row, frontend_core::Targets::Profile(name));
+}
+
+/// Stop `name`'s script through the command seam.
+fn stop_script(session: &mut Session, name: &str) {
+    session.submit(
+        frontend_core::OperatorCommand::StopScript,
+        frontend_core::Targets::Profile(name),
+    );
+}
+
 fn send_click(session: &mut Session, button: i32, x: i32, y: i32) -> Result<(), String> {
     session.map_desk.begin_game_input_frame();
     stage_capture_event(session, InputEv::Move { x, y })?;
@@ -718,7 +737,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        session.core.toggle_pause(&name);
+        toggle_pause(&mut session, &name);
     }
     let after = wait_for_user_input(&mut session, &name)?;
     assert_correlated_user_input(&before, &after);
@@ -747,7 +766,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
     assert!(settled["script"]["recovering_anchor"].is_null());
     capture(&session, &dir, &stamp, "06-settled", &settled)?;
     println!("PASS panel pause={pause_owner} recovery={recovery} v2={v2} account={name} before={before} after={after} settled={settled}");
-    session.core.stop_script(&name);
+    stop_script(&mut session, &name);
     session.core.set_play(None);
     Ok(())
 }
@@ -967,7 +986,7 @@ fn run_pause_click_resume() -> Result<(), String> {
         "01-walking-before-pause",
         &before_pause_click,
     )?;
-    session.core.toggle_pause(&name);
+    toggle_pause(&mut session, &name);
     let paused = wait_for_pause_carry(&session, &name)?;
     assert_eq!(paused["script"]["walk_result"], serde_json::Value::Null);
     assert_eq!(paused["script"]["terminal_count"], 0);
@@ -1014,7 +1033,7 @@ fn run_pause_click_resume() -> Result<(), String> {
         &paused_click,
     )?;
 
-    session.core.toggle_pause(&name);
+    toggle_pause(&mut session, &name);
     let arrived = wait_for_walk_success(&mut session, &name)?;
     capture(
         &session,
@@ -1051,7 +1070,7 @@ fn run_pause_click_resume() -> Result<(), String> {
     // Grok's resume-then-click window: enqueue Resume, then send the actual
     // panel capture click without an intervening UI pump. The carried walk's
     // original request must receive one correlated UserInput terminal.
-    session.core.stop_script(&name);
+    stop_script(&mut session, &name);
     let second_initial = player_tile(&session, &name)?;
     start_walk(&session, &name)?;
     let before_resume_click = wait_for_armed(&mut session, &name, second_initial)?;
@@ -1062,10 +1081,10 @@ fn run_pause_click_resume() -> Result<(), String> {
         "06-second-walk-armed",
         &before_resume_click,
     )?;
-    session.core.toggle_pause(&name);
+    toggle_pause(&mut session, &name);
     let second_paused = wait_for_pause_carry(&session, &name)?;
     assert_eq!(second_paused["nav"]["carry"], true);
-    session.core.toggle_pause(&name);
+    toggle_pause(&mut session, &name);
     assert_eq!(
         session.core.script_state(&name),
         frontend_core::scripts::ScriptRunState::Running
@@ -1099,7 +1118,7 @@ fn run_pause_click_resume() -> Result<(), String> {
     println!(
         "PASS panel F2 account={name} paused_click={paused_click} arrived={arrived_settled} resume_click={after_resume_click} settled={after_resume_settled}"
     );
-    session.core.stop_script(&name);
+    stop_script(&mut session, &name);
     session.core.set_play(None);
     Ok(())
 }
@@ -1196,7 +1215,7 @@ fn run_group_capture() -> Result<(), String> {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        session.core.stop_script(member);
+        stop_script(&mut session, member);
     }
     session.select(&name);
     for (trial, x, y) in [
@@ -1428,7 +1447,7 @@ fn run_route_less_resilient(pause_owner: bool) {
             &paused,
         )
         .unwrap();
-        session.core.toggle_pause(&name);
+        toggle_pause(&mut session, &name);
     }
     let deadline = Instant::now() + TERMINAL_WAIT;
     let after = loop {

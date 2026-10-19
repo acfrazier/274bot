@@ -2147,6 +2147,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/app_frame_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/app_teardown_tests.rs",
       "owner": "T3"
     },
@@ -5412,6 +5416,10 @@
     },
     {
       "path": "crates/tui/src/bin.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/tui/src/bin_loop_tests.rs",
       "owner": "T3"
     },
     {

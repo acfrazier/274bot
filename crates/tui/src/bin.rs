@@ -47,8 +47,6 @@ use frontend_core::test_support::VaultFixture;
 use frontend_core::walk_map::{
     peek_walk_catalogue, WalkMapDemand, WalkMapJobState, WalkMapStage, WalkReadyCatalogue,
 };
-#[cfg(test)]
-use frontend_core::HeadlessSurface;
 use frontend_core::UiPreferences;
 use frontend_core::{
     load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, SubmitError,
