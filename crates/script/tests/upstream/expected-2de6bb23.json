@@ -543,38 +543,31 @@
       "cases": [
         {
           "name": " > GameMessages > mark starts at 0 and advances per record",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > sawSince only sees messages recorded after the mark",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > stateful patterns remain stable across repeated checks",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > identical repeated texts are distinct messages",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > ring caps at 64 but seq keeps climbing",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > CANT_REACH matches the live server line",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         },
         {
           "name": " > GameMessages > recent returns newest-first limited slice",
-          "status": "fail",
-          "reason": "Error: not impl: GameMessages.reset"
+          "status": "pass"
         }
       ]
     },
