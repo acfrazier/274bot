@@ -34,7 +34,7 @@ pub(crate) enum InvItemFieldInit {
     NullishMinusOne,
 }
 
-pub(crate) const INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
+pub(crate) static INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
     ("name", InvItemFieldInit::Copy),
     ("count", InvItemFieldInit::Copy),
     ("id", InvItemFieldInit::NullishZero),

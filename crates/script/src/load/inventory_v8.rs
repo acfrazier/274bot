@@ -128,7 +128,7 @@ fn inventory_item_init<'s>(
         let zero = cb::num(scope, 0.0);
         cb::ge(scope, slot, zero)?
     };
-    for (field, initialization) in crate::shim::INV_ITEM_FIELDS {
+    for &(field, initialization) in &crate::shim::INV_ITEM_FIELDS {
         let value = cb::get(scope, row, field)?;
         let value = match initialization {
             crate::shim::InvItemFieldInit::NullishZero if value.is_null_or_undefined() => {
