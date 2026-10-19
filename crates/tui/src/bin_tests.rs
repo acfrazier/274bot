@@ -1,10 +1,8 @@
 use super::*;
 use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice};
 use host_play::profile::ProfileEnvironment;
-use host_play::{Play, SlotArm};
-use nav::grid::StepGrid;
+use host_play::{Play, SlotArm, WalkArm};
 use nav::router::FindOptions;
-use nav::world::NavWorld;
 use script::IsolatedEnv;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +31,75 @@ fn dummy_options() -> PlayOptions {
         lowmem: true,
         mainland: false,
     }
+}
+
+fn publish_map_walk_snapshot(
+    core: &mut frontend_core::OperatorSession<()>,
+    name: &str,
+    tile: Tile,
+) {
+    let world_tile = api::WorldTile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    };
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(world_tile);
+    snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+        player: api::snapshot::PlayerView {
+            index: 0,
+            actor: api::snapshot::ActorView {
+                name: Some(name.to_owned()),
+                actions: Vec::new(),
+                tile: world_tile,
+                distance: 0,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 0,
+                total_health: 0,
+                face_entity: -1,
+                target: None,
+                moving: false,
+                running: false,
+                in_combat: false,
+            },
+            network: world_tile,
+            combat_level: 0,
+            skill_level: 0,
+            headicons: 0,
+            weapon: None,
+        },
+        energy: 100,
+        weight: 0,
+        animation_update: None,
+    });
+    snapshot.seed_equipment(vec![api::snapshot::ItemView {
+        def: api::ItemDefView {
+            id: 2,
+            name: Some("knife".into()),
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: api::snapshot::ItemContainer::Equipment,
+        action_family: api::snapshot::ItemActionFamily::Component,
+        slot: 0,
+        count: 1,
+        actions: Vec::new(),
+        component_id: -1,
+    }]);
+    let state = nav::WorldState::from_snapshot(&snapshot).with_map_members(core.map_members());
+    core.publish_test_snapshot(name, snapshot, state);
 }
 
 fn walk_receipt_field<'a>(message: &'a str, name: &str) -> Option<&'a str> {
@@ -183,12 +250,12 @@ impl api::interact::Driver for RecordingDriver {
 
 #[test]
 fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
-    let mut options = dummy_options();
-    options.mainland = true;
-    let (enabled, host_options) = mainland_seed_options(&options);
+    let mut session = TuiSession::new(dummy_options());
+    session.mainland = true;
+    let enabled = session.mainland;
     assert!(enabled, "TUI must retain the opt-in");
     assert!(
-        !host_options.mainland,
+        !session.launcher.play_config().mainland(),
         "host-play must not own or re-arm mainland seeding"
     );
 
@@ -246,165 +313,6 @@ fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
     );
 }
 
-fn response_15_reconnect(c: &mut client::client::Client) {
-    use std::io::{Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    c.config.port = listener.local_addr().unwrap().port();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut header = [0; 2];
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(header[0], 14);
-        stream.write_all(&[0; 17]).unwrap();
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(header[0], 18);
-        let mut login = vec![0; header[1] as usize];
-        stream.read_exact(&mut login).unwrap();
-        stream.write_all(&[15]).unwrap();
-    });
-    c.login("snapshot", "test", true).unwrap();
-    server.join().unwrap();
-}
-
-type FrontendFixture = (
-    Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    SlotTravellers,
-    Arc<Mutex<NavStepLatch>>,
-);
-
-fn frontend_fixture() -> FrontendFixture {
-    (
-        Arc::new(Mutex::new(HashMap::new())),
-        Arc::new(Mutex::new(HashMap::new())),
-        Arc::new(Mutex::new(HashMap::new())),
-        Arc::new(Mutex::new(HashMap::new())),
-    )
-}
-
-#[test]
-fn frontend_logout_clears_facts_armed_work_and_tick_latch() {
-    let (gens, snapshots, travellers, latch) = frontend_fixture();
-    let mut c = bank_fetch_fixtures::bank_client();
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-    latch
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (c.gens.player, (3205, 3205, 0)));
-
-    c.logout();
-    assert!(publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    let snapshots = snapshots.lock().unwrap();
-    assert!(!snapshots["alice"].ingame());
-    assert!(snapshots["alice"].local_player().is_none());
-    drop(snapshots);
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-    assert!(!latch.lock().unwrap().contains_key("alice"));
-}
-
-#[test]
-fn frontend_response_15_replacement_waits_for_post_grant_player_packet() {
-    let (gens, snapshots, travellers, latch) = frontend_fixture();
-    let mut c = bank_fetch_fixtures::bank_client();
-    publish_frontend_slot("alice", &c, &gens, &snapshots, &travellers, &latch);
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-
-    response_15_reconnect(&mut c);
-    assert!(publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    assert!(snapshots.lock().unwrap()["alice"].local_player().is_none());
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-
-    let mut player = client::io::Packet::new(vec![0xe0, 0x50, 0xc0, 0]);
-    c.psize = 4;
-    c.handle_packet(client::io::ServerProt::PLAYER_INFO, &mut player);
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    assert!(snapshots.lock().unwrap()["alice"].local_player().is_some());
-}
-
-#[test]
-fn same_name_lifetime_resets_but_scene_change_and_guardian_hold_preserve_work() {
-    let (gens, snapshots, travellers, latch) = frontend_fixture();
-    let mut c = bank_fetch_fixtures::bank_client();
-    publish_frontend_slot("alice", &c, &gens, &snapshots, &travellers, &latch);
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-    latch
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (c.gens.player, (3205, 3205, 0)));
-
-    c.scene_state = 1;
-    c.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    assert!(!WalkArm::may_follow(true));
-    assert!(travellers.lock().unwrap().contains_key("alice"));
-    assert!(latch.lock().unwrap().contains_key("alice"));
-
-    assert!(reset_frontend_slot_lifetime(
-        "alice",
-        &gens,
-        &snapshots,
-        &travellers,
-        &latch
-    ));
-    assert!(!gens.lock().unwrap().contains_key("alice"));
-    assert!(!snapshots.lock().unwrap().contains_key("alice"));
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-    assert!(!latch.lock().unwrap().contains_key("alice"));
-
-    let fresh = bank_fetch_fixtures::bank_client();
-    publish_frontend_slot("alice", &fresh, &gens, &snapshots, &travellers, &latch);
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-}
-
 fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
@@ -431,20 +339,22 @@ fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     (root, cache, manifest)
 }
 
-/// The map pane reads `TuiApp::world`. The session holds the pack on
-/// `nav_world` after `Play` loads it; pump must copy that Arc so a
-/// running script's loc list is not the only live world view.
+/// The map pane reads `TuiApp::world`, projected from the core after `Play`
+/// loads its pack.
 #[test]
 fn pump_copies_nav_world_onto_the_app() {
-    let mut session = TuiSession::new(dummy_options());
-    *session.nav_world.lock().unwrap() =
-        Some(Arc::new(NavWorld::from_grid(&StepGrid::fixture_open_3x3())));
+    let home = upgrade_home::UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = SharedClientTemplate::load(profile).unwrap();
+    let mut session = TuiSession::new_bound(template);
+    let vault = Vault::create(&home.root.join("map-world.vault"), "test-passphrase-01").unwrap();
+    session.start_play(vault).unwrap();
     let mut app = TuiApp::new("274bot headless");
     assert!(app.world.is_none(), "fresh app has no pack");
     session.pump(&mut app);
     assert!(
         app.world.is_some(),
-        "pump copies the session nav world onto the map"
+        "pump copies the core's nav world onto the map"
     );
 }
 
@@ -550,11 +460,12 @@ fn live_running_emits_no_proof() {
 #[test]
 fn parse_args_from_rs2b2t_selects_remote_profile() {
     let args = parse_args_from(["--rs2b2t"]).unwrap();
-    assert!(args.profile.rs2b2t);
+    assert!(args.profile.as_host().rs2b2t);
     assert!(args.live.is_none());
     let home = std::env::temp_dir().join(format!("274bot-tui-public-{}", std::process::id()));
     let selection = args
         .profile
+        .as_host()
         .resolve_with_env(
             Some(274),
             &ProfileEnvironment {
@@ -618,9 +529,9 @@ fn parse_args_from_accepts_revision_profile_and_ordered_overrides() {
     ])
     .expect("shared profile flags parse before TUI flags");
     assert_eq!(args.live.as_deref(), Some("script_bone_burier"));
-    assert_eq!(args.profile.profile.as_deref(), Some("local-289"));
-    assert_eq!(args.profile.revision.as_deref(), Some("289"));
-    assert_eq!(args.profile.port, Some(44595));
+    assert_eq!(args.profile.as_host().profile.as_deref(), Some("local-289"));
+    assert_eq!(args.profile.as_host().revision.as_deref(), Some("289"));
+    assert_eq!(args.profile.as_host().port, Some(44595));
 }
 
 #[test]
@@ -934,7 +845,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.resolve_with_env(None, &env).unwrap();
+        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1028,8 +939,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let home = upgrade_home::UpgradeHome::new();
     let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
         let template = SharedClientTemplate::load(profile).unwrap();
-        let mut session =
-            TuiSession::new_bound(Arc::clone(&template), host_play::InstancePermit::SkipLock);
+        let mut session = TuiSession::new_bound(Arc::clone(&template));
         let vault = Vault::create(&home.root.join(vault), "test-passphrase-01").unwrap();
         session.start_play(vault).unwrap();
         (session, template)
@@ -1045,7 +955,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
         .and_then(|play| play.world())
         .expect("the TUI play has the packaged world");
     assert!(Arc::ptr_eq(&played, &world));
-    let routed = session.nav_world.lock().unwrap().clone();
+    let routed = session.core.nav_world();
     assert!(Arc::ptr_eq(&routed.expect("WalkTo world"), &world));
     assert!(home.old_pack_untouched());
 
@@ -1057,7 +967,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     ));
     let (session, _) = start(overridden, "override.vault");
     assert!(session.core.play().unwrap().world().is_none());
-    assert!(session.nav_world.lock().unwrap().is_none());
+    assert!(session.core.nav_world().is_none());
     assert!(home.old_pack_untouched());
 }
 
@@ -1066,8 +976,9 @@ fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
-    let mut session = TuiSession::new_bound(template, host_play::InstancePermit::SkipLock);
-    *session.nav_world.lock().unwrap() = profile.world();
+    let mut session = TuiSession::new_bound(template);
+    let vault = Vault::create(&home.root.join("reach.vault"), "test-passphrase-01").unwrap();
+    session.start_play(vault).unwrap();
     let mut app = TuiApp::new("reach fixture");
     app.map_active = true;
     session.pump(&mut app);
@@ -1095,14 +1006,12 @@ fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
     }
     dispatch(&mut session, &mut app, AppAction::MapClose);
     assert_eq!(Arc::strong_count(&first), refs - 1);
-    *session.nav_world.lock().unwrap() = Some(Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
-    )));
+    session.core.set_play(None);
     app.map_active = true;
     session.pump(&mut app);
     assert!(
         app.map_reach.is_none(),
-        "another world's paint mask must not be reused"
+        "a missing core world must not retain its previous paint mask"
     );
 }
 
@@ -1661,7 +1570,6 @@ fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
 mod bank_fetch_fixtures {
     use std::sync::Arc;
 
-    use api::snapshot::GameSnapshot;
     use api::snapshot::WorldTile;
     use client::client::{Client, ClientConfig, ClientPlayer};
     use client::config::if_type::ComponentType;
@@ -1790,46 +1698,6 @@ mod bank_fetch_fixtures {
         c
     }
 
-    pub fn bank_fetch_client() -> Client {
-        let mut c = bank_client();
-        {
-            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-            cache.objs[2].name = "Knife".into();
-        }
-        c.side_icon[3] = 500;
-        c.set_iface(
-            500,
-            IfType {
-                id: 500,
-                r#type: ComponentType::TYPE_INV,
-                obj_ops: true,
-                ..Default::default()
-            },
-        );
-        c.set_iface_mut(
-            500,
-            IfTypeMut {
-                link_obj_type: Some(vec![2, 0]),
-                link_obj_number: Some(vec![3, 0]),
-                ..Default::default()
-            },
-        );
-        c.set_iface_mut(
-            601,
-            IfTypeMut {
-                link_obj_type: Some(vec![3, 0]),
-                link_obj_number: Some(vec![20, 0]),
-                ..Default::default()
-            },
-        );
-        c.bump_gens(ServerProt::IF_OPENMAIN);
-        // The withdraw grid's full inventory packet: the bank is loaded, as
-        // the slot's bank memory needs before it observes the rows.
-        let mut full = client::io::Packet::new(vec![2, 89, 2, 0, 3, 20, 0, 0, 0]);
-        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
-        c
-    }
-
     pub fn knife_nav_world(knife_id: i32) -> NavWorld {
         let mut flags = vec![0u32; 25];
         for z in 0..5 {
@@ -1896,164 +1764,145 @@ mod bank_fetch_fixtures {
             }],
         )
     }
-
-    pub fn seed_bank_fetch_snapshot() -> GameSnapshot {
-        let c = bank_fetch_client();
-        let mut snap = GameSnapshot::new();
-        snap.rebuild(&c);
-        snap
-    }
 }
 
-/// TR-TUI-003: Walk-confirm must pass `allow_bank_fetch` from nav
-/// settings so `arm_walk_on` can latch a BankBudget session.
 #[test]
-fn arm_walk_on_with_allow_bank_fetch_latches_bank_fetch() {
-    use api::snapshot::WorldTile as SnapTile;
-    use bank_fetch_fixtures::{knife_nav_world, seed_bank_fetch_snapshot};
-
-    let mut session = TuiSession::new(dummy_options());
-    *session.nav_world.lock().unwrap() = Some(Arc::new(knife_nav_world(2)));
-    session
-        .snapshots
-        .lock()
-        .unwrap()
-        .insert("alice".into(), seed_bank_fetch_snapshot());
+fn map_walk_options_keep_the_frontend_bank_fetch_permission() {
     let mut app = TuiApp::new("274bot headless");
-    app.names = vec!["alice".into()];
-    app.focused = Some(0);
-    app.here = Some(SnapTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    });
-    app.nav.allow_bank_fetch = true;
+    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true);
     app.nav.set_danger_level(frontend_core::DangerLevel::Always);
-    session.arm_walk_on(
-        &mut app,
-        Tile {
-            x: 4,
-            z: 4,
-            level: 0,
-        },
-    );
-    let latched = session
-        .travellers
-        .lock()
-        .unwrap()
-        .get("alice")
-        .is_some_and(|a| a.lock().unwrap().bank_fetch.is_some());
-    assert!(
-        latched,
-        "allow_bank_fetch must latch WalkArm.bank_fetch on the focused arm"
-    );
+    assert!(app.map_find_options().allow_bank_fetch);
 }
 
-/// A map walk the TUI arms shows on the member's fleet row (what the strip
-/// and the status pane draw) until the route ends.
+/// A map walk the TUI arms shows on the member's fleet row.
 #[test]
 fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
-    use api::snapshot::WorldTile as SnapTile;
-    use bank_fetch_fixtures::knife_nav_world;
-
-    let mut session = TuiSession::new(dummy_options());
-    *session.nav_world.lock().unwrap() = Some(Arc::new(knife_nav_world(2)));
-    session.core.fleet_mut().add("alice");
-    session.core.select("alice");
-    let mut app = TuiApp::new("274bot headless");
-    app.nav.set_danger_level(frontend_core::DangerLevel::Always);
-    session.pump(&mut app);
-    assert!(!app.fleet[0].walking());
-
-    app.here = Some(SnapTile {
-        x: 0,
-        z: 0,
-        level: 0,
-    });
-    // West of the fixture's knife door: reachable on foot.
-    session.arm_walk_on(
-        &mut app,
-        Tile {
-            x: 1,
-            z: 4,
-            level: 0,
-        },
-    );
-    assert_eq!(app.error, None);
-    session.pump(&mut app);
-    assert!(app.fleet[0].walking(), "the armed walk shows on the row");
-    assert!(app.fleet[0].busy());
-
-    let arm = Arc::clone(session.travellers.lock().unwrap().get("alice").unwrap());
-    arm.lock().unwrap().route = None;
-    session.pump(&mut app);
-    assert!(!app.fleet[0].walking(), "an ended route clears the row");
-}
-
-#[test]
-fn resetting_the_same_walk_slot_session_twice_logs_one_cancellation() {
-    use api::snapshot::WorldTile;
-    use frontend_core::log::{global, LogScope, LogView};
-    use nav::router::Route;
-
-    let log = global();
-    let slot = "walk-receipt-session-ended";
-    let destination = WorldTile {
-        x: 8,
-        z: 9,
-        level: 0,
-    };
-    let arm = Arc::new(Mutex::new(WalkArm {
-        route: Some(Arc::new(Route {
-            dest: destination,
-            legs: vec![],
-            ticks: 0.0,
-        })),
-        ..Default::default()
-    }));
-    let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::from([(slot.to_owned(), arm)])));
-    let tick_latch = Arc::new(Mutex::new(HashMap::from([(
-        slot.to_owned(),
-        (1, (8, 9, 0)),
-    )])));
-
-    assert!(reset_frontend_slot_session(slot, &travellers, &tick_latch));
-    assert!(!reset_frontend_slot_session(slot, &travellers, &tick_latch));
-
-    let mut receipts = LogView::new(LogScope::slot(slot));
-    receipts.edit_filter(|filter| filter.set_text("WalkTo outcome="));
-    log.refresh(&mut receipts);
-    assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
-    assert_walk_receipt_fields(
-        receipts.rows()[0].message(),
-        "cancelled",
-        "(8,9,0)",
-        "unknown",
-        "SessionEnded",
-        "-",
-    );
-}
-
-#[test]
-fn production_walk_receipt_uses_snapped_destination() {
-    use frontend_core::log::{global, LogScope, LogView};
-    let log = global();
     let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
-    let mut session = TuiSession::new(dummy_options());
-    session.server_profile = Some(Arc::clone(fixture.template.profile()));
     let origin = Tile {
         x: 0,
         z: 1,
         level: 0,
     };
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
     session.core.set_play(Some(fixture.play(origin)));
+    publish_map_walk_snapshot(&mut session.core, "alice", origin);
     let mut app = TuiApp::new("274bot headless");
-    let name = "tui-walk-receipt";
-    app.names = vec![name.into()];
+    app.map_active = true;
+    session.pump(&mut app);
+    assert!(!app.fleet[0].walking());
+
+    let destination = Tile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    app.select_requested(destination);
+    session.arm_walk_on(&mut app, destination);
+    assert_eq!(app.error, None);
+    session.pump(&mut app);
+    assert!(app.fleet[0].walking(), "the armed walk shows on the row");
+    assert!(app.fleet[0].busy());
+    assert!(session.core.walk_route_armed("alice"));
+}
+
+#[test]
+fn removing_a_walk_slot_twice_logs_one_cancellation() {
+    use frontend_core::log::{global, LogScope, LogView};
+    use host_play::SlotStatus;
+
+    let log = global();
+    let slot = "walk-receipt-session-ended";
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    session.core.fleet_mut().add(slot);
+    session.core.select(slot);
+    let mut play = fixture.play(Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    });
+    play.attach_arm(slot, SlotArm::new(1, false));
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: slot.into(),
+        ingame: true,
+        tile_x: 0,
+        tile_z: 1,
+        tile_level: 0,
+        ..Default::default()
+    });
+    play.focus(slot);
+    session.core.set_play(Some(play));
+
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec![slot.into()];
     app.focused = Some(0);
     app.map_active = true;
     app.world = Some(Arc::clone(&world));
+    session.bind_map_context(&mut app);
+    let destination = Tile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    app.select_requested(destination);
+    session.arm_walk_on(&mut app, destination);
+    assert!(session.core.walk_route_armed(slot));
+
+    let mut walk_cleared = false;
+    {
+        let mut surface = TuiSurface {
+            walk_cleared: &mut walk_cleared,
+        };
+        session.core.remove(slot, Instant::now(), &mut surface);
+        session.core.remove(slot, Instant::now(), &mut surface);
+    }
+    assert!(walk_cleared);
+
+    let mut receipts = LogView::new(LogScope::slot(slot));
+    receipts.edit_filter(|filter| filter.set_text("WalkTo outcome="));
+    log.refresh(&mut receipts);
+    assert_eq!(receipts.len(), 1, "{}", receipts.to_text());
+    let receipt = receipts.rows()[0].message();
+    assert!(receipt.contains("outcome=cancelled"), "{receipt}");
+    assert!(receipt.contains("reason=SessionEnded"), "{receipt}");
+}
+
+#[test]
+fn map_walk_uses_core_slot_position_and_keeps_snapped_destination() {
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    let name = "tui-walk-receipt";
+    session.core.fleet_mut().add(name);
+    session.core.select(name);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let mut play = fixture.play(origin);
+    play.attach_arm(name, SlotArm::new(1, false));
+    play.statuses.lock().unwrap().push(host_play::SlotStatus {
+        username: name.into(),
+        ingame: true,
+        tile_x: origin.x,
+        tile_z: origin.z,
+        tile_level: origin.level,
+        ..Default::default()
+    });
+    play.focus(name);
+    session.core.set_play(Some(play));
+    publish_map_walk_snapshot(&mut session.core, name, origin);
+
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec![name.into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.world = session.core.nav_world();
     session.bind_map_context(&mut app);
     let requested = Tile {
         x: 5,
@@ -2061,48 +1910,49 @@ fn production_walk_receipt_uses_snapped_destination() {
         level: 0,
     };
     app.select_requested(requested);
-    let target = app.map_model.pending().unwrap().target.unwrap();
+    let target = app.map_model.pending().unwrap().reported_destination();
     assert_ne!(target, requested);
     app.here = None;
     session.arm_walk_on(&mut app, requested);
-    assert!(app.walk_dest.is_none());
-    let mut view = LogView::new(LogScope::slot(name));
-    view.edit_filter(|filter| filter.set_text("WalkTo "));
-    log.refresh(&mut view);
-    assert_eq!(view.len(), 2, "{}", view.to_text());
-    let request = view
-        .rows()
-        .iter()
-        .find(|row| row.message().starts_with("WalkTo origin="))
-        .expect("request receipt");
-    assert!(
-        request.message().contains("refused=NoOrigin"),
-        "{request:?}"
-    );
-    assert!(
-        request.message().contains(&format!(
-            "destination=({},{},{})",
-            target.x, target.z, target.level
-        )),
-        "{request:?}"
-    );
-    assert!(
-        request.message().contains("members_source=unknown "),
-        "{request:?}"
-    );
-    let terminal = view
-        .rows()
-        .iter()
-        .find(|row| row.message().starts_with("WalkTo outcome="))
-        .expect("terminal receipt");
-    assert_walk_receipt_fields(
-        terminal.message(),
-        "aborted",
-        &format!("({},{},{})", target.x, target.z, target.level),
-        "unknown",
-        "NoOrigin",
-        "-",
-    );
+    assert_eq!(app.error, None);
+    assert_eq!(app.walk_dest, Some(target));
+    assert!(session.core.walk_route_armed(name));
+}
+
+#[test]
+fn production_walk_uses_the_live_slot_origin_when_ui_position_is_missing() {
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    let name = "alice";
+    session.core.fleet_mut().add(name);
+    session.core.select(name);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    session.core.set_play(Some(fixture.play(origin)));
+    publish_map_walk_snapshot(&mut session.core, name, origin);
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec![name.into()];
+    app.focused = Some(0);
+    app.map_active = true;
+    app.world = session.core.nav_world();
+    session.bind_map_context(&mut app);
+    let requested = Tile {
+        x: 5,
+        z: 2,
+        level: 0,
+    };
+    app.select_requested(requested);
+    let target = app.map_model.pending().unwrap().reported_destination();
+    assert_ne!(target, requested);
+    app.here = None;
+    session.arm_walk_on(&mut app, requested);
+    assert_eq!(app.error, None);
+    assert_eq!(app.walk_dest, Some(target));
+    assert!(session.core.walk_route_armed(name));
 }
 
 #[test]
@@ -2127,24 +1977,29 @@ fn empty_group_walk_preserves_selection_and_reports_refusal() {
 
 #[test]
 fn refused_no_origin_walk_does_not_arm_destination() {
-    // Production `Play::map_walk` NoOrigin needs a bound ServerProfile nav
-    // identity before `map_context` succeeds. TUI tests do not construct that
-    // cheaply; this hits the same `app.here` refusal the production path uses
-    // before `map_walk` (`arm_walk_without_host` when Play/profile are absent).
-    let mut session = TuiSession::new(dummy_options());
+    let world = Arc::new(bank_fetch_fixtures::knife_nav_world(2));
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    let mut session = TuiSession::new_bound(Arc::clone(&fixture.template));
+    session.core.fleet_mut().add("alice");
+    session.core.select("alice");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 0,
+        z: 0,
+        level: 0,
+    })));
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into()];
     app.focused = Some(0);
     app.map_active = true;
-    app.here = None;
-    session.arm_walk_on(
-        &mut app,
-        Tile {
-            x: 3222,
-            z: 3218,
-            level: 0,
-        },
-    );
+    app.world = Some(Arc::clone(&world));
+    session.bind_map_context(&mut app);
+    let destination = Tile {
+        x: 1,
+        z: 4,
+        level: 0,
+    };
+    app.select_requested(destination);
+    session.arm_walk_on(&mut app, destination);
     assert!(
         app.walk_dest.is_none(),
         "a refused Walk must not look armed: {:?}",

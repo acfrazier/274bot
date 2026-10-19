@@ -55,6 +55,8 @@ use OperatorCommand as C;
 const PUMP: &str = "pump: adopts owner results and refreshes projections; no operator decision";
 const RESULT: &str = "result consumption: takes settled owner results for display";
 const PROJECTION: &str = "projection copy into the front end's buffer; presentation";
+const MAP_DRAFT: &str =
+    "map selection/search is a draft; WalkTo/TeleportTo dispatch occurs only on confirmation";
 const FORMAT: &str = "pure formatting or parsing; no state";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
@@ -65,6 +67,8 @@ const PATH_READ: &str = "resolves an operator file location; no state change";
 const LOADOUT_DRAFT: &str = "draft mutation of the loadout form; persist is SaveLoadout";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
 const WRITER: &str = "the durable writer's entry: the caller's mirror and label name the row (credentials → SaveProfile / SetWorld, tutorial → MarkTutorialSkipped, render prefs → SetRaster)";
+const RELEASE_BUNDLE: &str =
+    "release packaging of the shipped map bundle; no interactive operator decision";
 
 /// Rows the contract keeps although no current entry point issues them.
 const NORMATIVE_ONLY: &[OperatorCommand] = &[C::SwitchWorld(1)];
@@ -98,6 +102,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     // group_walk.rs
     ("group_walk.rs::walk_marked", Row(C::GroupWalk)),
+    ("group_walk.rs::OperatorSession::confirm_marked_walk", Row(C::GroupWalk)),
     (
         "group_walk.rs::none_marked",
         Excluded("the report shown for a group walk with nothing marked; presentation"),
@@ -131,6 +136,10 @@ const CORE: &[(&str, Decision)] = &[
     ),
     // map_bake.rs
     (
+        "map_bake.rs::bake_shipped_map_bundle",
+        Excluded(RELEASE_BUNDLE),
+    ),
+    (
         "map_bake.rs::load_map_bake_choice",
         Excluded("reads the persisted choice"),
     ),
@@ -145,7 +154,6 @@ const CORE: &[(&str, Decision)] = &[
     ("map_bake.rs::MapBakeGate::accept", Row(C::BakeMapNow)),
     ("map_bake.rs::MapBakeGate::decline", Row(C::DeclineMapBake)),
     ("map_bake.rs::MapBakeGate::open_profile", Row(C::OpenMapDemand)),
-    ("map_bake.rs::MapBakeGate::open", Row(C::OpenMapDemand)),
     (
         "map_bake.rs::MapBakeGate::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
@@ -494,6 +502,34 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/paths.rs::clear_rs2b0t_import_at",
         Excluded("clears the deferral marker when a catalogue import settles; the decision was ImportCatalog"),
     ),
+    // launch.rs: the server-profile binding, instance lock and passphrase.
+    ("launch.rs::ProfileLauncher::configure", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bind", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bind_with", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::bump_generation", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::finish_preparation", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::install_validated", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::set_preparing", Excluded(STARTUP)),
+    ("launch.rs::ProfileLauncher::take_launch", Excluded(STARTUP)),
+    ("launch.rs::PlayConfig::set_mainland", Excluded(STARTUP)),
+    (
+        "launch.rs::Passphrase::clear",
+        Excluded("zeroes the typed passphrase buffer; presentation"),
+    ),
+    ("launch.rs::acquire_instance", Excluded(PROCESS)),
+    ("launch.rs::obtain_passphrase", Excluded(STARTUP)),
+    ("launch.rs::warn_legacy_passphrase_env", Excluded(PROCESS)),
+    ("launch.rs::reset_vault_file", Row(C::ResetVault)),
+    ("launch.rs::parse_profile_args", Excluded(FORMAT)),
+    ("launch.rs::is_removed_passphrase_flag", Excluded(FORMAT)),
+    ("launch.rs::removed_passphrase_flag_error", Excluded(FORMAT)),
+    ("launch.rs::debug_teleport_authorized", Excluded(FORMAT)),
+    ("launch.rs::default_scatter_tile_for", Excluded(FORMAT)),
+    ("process.rs::debug_enabled", Excluded(PROCESS)),
+    ("session.rs::OperatorSession::start_play", Row(C::UnlockVault)),
+    ("session.rs::OperatorSession::unlock_vault", Row(C::UnlockVault)),
+    ("slot_view.rs::StatusBuf::refresh", Excluded(PROJECTION)),
+    ("surface.rs::map_image_to_applet", Excluded(FORMAT)),
     // scripts/loadouts.rs: the operator loadout form.
     ("scripts/loadouts.rs::Loadouts::upsert", Excluded(LOADOUT_DRAFT)),
     ("scripts/loadouts.rs::Loadouts::replace_at", Excluded(LOADOUT_DRAFT)),
@@ -769,10 +805,6 @@ const CORE: &[(&str, Decision)] = &[
         "session.rs::OperatorSession::set_capacity_render",
         Row(C::SetRenderAll(true)),
     ),
-    (
-        "session.rs::OperatorSession::set_walk_arms",
-        Excluded("wiring: hands the front end's walk arms to the row projection"),
-    ),
     ("session.rs::OperatorSession::take_settled_starts", Excluded(RESULT)),
     ("session.rs::OperatorSession::select", Row(C::Select)),
     ("session.rs::OperatorSession::ensure_slot", Row(C::Load)),
@@ -780,6 +812,9 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::load", Row(C::Load)),
     ("session.rs::OperatorSession::load_all", Row(C::Load)),
     ("session.rs::OperatorSession::login", Row(C::Login)),
+    // session/map.rs: confirm consumes one staged map command.
+    ("session/map.rs::OperatorSession::confirm_walk", Row(C::WalkTo)),
+    ("session/map.rs::OperatorSession::confirm_teleport", Row(C::Teleport)),
     // session/commands.rs: the command seam (T3.3). The row is the literal
     // argument; surface calls are checked through their row names.
     ("session/commands.rs::OperatorSession::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
@@ -878,6 +913,28 @@ const CORE: &[(&str, Decision)] = &[
     ("views.rs::script_status_label", Excluded(FORMAT)),
     ("views.rs::script_status_reason", Excluded(FORMAT)),
     ("views.rs::script_status_rows", Excluded(FORMAT)),
+    // walk_map.rs: staged selection/view state and read-only projections.
+    ("walk_map.rs::WalkMap::bind", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::clear_selection", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::close", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::parse_coordinates", Excluded(FORMAT)),
+    ("walk_map.rs::WalkMap::recenter", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::select_poi", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::select_tile", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkMap::set_center", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_layers", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_plane", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkMap::set_scale", Excluded(PROJECTION)),
+    ("walk_map.rs::WalkSearch::clear", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::WalkSearch::update", Excluded(MAP_DRAFT)),
+    ("walk_map.rs::default_walk_nav_flags_path", Excluded(PATH_READ)),
+    ("walk_map.rs::display_walk_name_into", Excluded(FORMAT)),
+    ("walk_map.rs::observed_walk_services", Excluded(PROJECTION)),
+    ("walk_map.rs::peek_walk_catalogue", Excluded(ACCESSOR)),
+    ("walk_map.rs::reap_walk_map_demand", Excluded(PUMP)),
+    ("walk_map.rs::select_walk_route_source", Excluded(PROJECTION)),
+    ("walk_map.rs::validate_walk_search", Excluded(FORMAT)),
+    ("walk_map.rs::walk_teleport_authorized", Excluded(FORMAT)),
     // walk_permissions.rs
     (
         "walk_permissions.rs::WalkGlobalsView::persist_changed",
@@ -888,6 +945,10 @@ const CORE: &[(&str, Decision)] = &[
             ],
             "which walk global changed selects the row",
         ),
+    ),
+    (
+        "walk_permissions.rs::WalkGlobals::set_danger_level",
+        Row(C::SetDangerLevel(DangerLevel::Never)),
     ),
     ("walk_permissions.rs::danger_routing_held", Excluded(FORMAT)),
     ("walk_permissions.rs::danger_routing_label", Excluded(FORMAT)),
@@ -1155,6 +1216,16 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[C::EditProfileDraft(ProfileDraftField::Settings), C::AcknowledgeNotice],
             "the settings popup keys: stage a changed row for persist_settings and clear the quester notice",
+        ),
+    ),
+    (
+        "tui/settings.rs::SettingsPane::activate_value",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Settings),
+                C::SetDangerLevel(DangerLevel::Never),
+            ],
+            "the selected settings row stages profile settings or changes the shared walk danger policy",
         ),
     ),
     ("tui/input.rs::TuiApp::fleet_filter_key", Row(C::SetFleetFilter)),

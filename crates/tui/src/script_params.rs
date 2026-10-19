@@ -1011,16 +1011,11 @@ mod tests {
         let mut state = ParamsState {
             open: true,
             cursor: 0,
-            walk_permissions: frontend_core::WalkGlobalsView {
-                globals: host_play::WalkGlobals {
-                    allow_teleports: true,
-                    allow_wilderness: false,
-                    allow_bank_fetch: false,
-                    allow_danger_zones: false,
-                    survivable_routing: false,
-                },
-                ..Default::default()
-            },
+            walk_permissions: frontend_core::WalkGlobalsView::new(
+                frontend_core::WalkGlobals::new(true, false, false, false, false),
+                false,
+                false,
+            ),
             ..Default::default()
         };
         {
@@ -1072,16 +1067,11 @@ mod tests {
             "{text:?}"
         );
 
-        state.walk_permissions = frontend_core::WalkGlobalsView {
-            globals: host_play::WalkGlobals {
-                allow_teleports: false,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-                allow_danger_zones: false,
-                survivable_routing: false,
-            },
-            ..Default::default()
-        };
+        state.walk_permissions = frontend_core::WalkGlobalsView::new(
+            frontend_core::WalkGlobals::new(false, false, false, false, false),
+            false,
+            false,
+        );
         let outcome = {
             let mut pane = ParamsPane {
                 schema: SchemaRef::from_script(&schema),

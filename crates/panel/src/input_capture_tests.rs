@@ -1,6 +1,7 @@
 use client::client::GameShell;
 use dear_imgui_rs::Key;
-use host::InputEv;
+use frontend_core::surface::InputEv;
+use frontend_core::surface::InputSender;
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
@@ -11,13 +12,13 @@ use super::{
 
 struct KeyCapture {
     owner: KeyboardOwner,
-    tx: std::sync::mpsc::Sender<InputEv>,
-    rx: std::sync::mpsc::Receiver<InputEv>,
+    tx: InputSender,
+    rx: frontend_core::surface::InputProbe,
 }
 
 impl KeyCapture {
     fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = InputSender::probe();
         Self {
             owner: KeyboardOwner::default(),
             tx,
@@ -448,7 +449,7 @@ fn native_capture_leaves_numpad_punctuation_unqueued() {
 
 #[test]
 fn stream_capture_sends_move_then_down() {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = InputSender::probe();
     stream_capture(
         &Some(tx),
         0.0,
@@ -474,7 +475,7 @@ fn stream_capture_sends_move_then_down() {
 
 #[test]
 fn stream_capture_sends_right_up_and_key() {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = InputSender::probe();
     stream_capture(
         &Some(tx),
         0.0,
@@ -503,7 +504,7 @@ fn stream_capture_sends_right_up_and_key() {
 
 #[test]
 fn maybe_send_click_sends_when_tx_present() {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = InputSender::probe();
     maybe_send_click(&Some(tx), 0.0, 0.0, 765.0, 503.0);
     match rx.try_recv() {
         Ok(InputEv::Down { x, y, .. }) => assert_eq!((x, y), (0, 0)),
@@ -513,7 +514,7 @@ fn maybe_send_click_sends_when_tx_present() {
 
 #[test]
 fn maybe_send_click_outside_image_sends_nothing() {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = InputSender::probe();
     maybe_send_click(&Some(tx), -5.0, 10.0, 765.0, 503.0);
     assert!(rx.try_recv().is_err());
 }
@@ -577,7 +578,7 @@ fn stream_hovered_keys(
             );
         }
         stream_capture(
-            &Some(capture.tx.clone()),
+            &Some(capture.tx.duplicate()),
             0.0,
             0.0,
             765.0,
@@ -719,7 +720,7 @@ struct OwnershipProbe {
     game: [f32; 2],
     input: std::sync::Arc<host::SlotInput>,
     keyboard: KeyboardOwner,
-    tx: Option<std::sync::mpsc::Sender<InputEv>>,
+    tx: Option<InputSender>,
     shell: GameShell,
 }
 
@@ -730,8 +731,7 @@ impl OwnershipProbe {
         ctx.set_ini_filename(None::<String>).unwrap();
         let input = host::SlotInput::new();
         input.set_enabled(true);
-        let (tx, rx) = std::sync::mpsc::channel();
-        input.connect_rx(rx);
+        let tx = InputSender::connect(&input);
         let mut probe = Self {
             ctx,
             text: String::new(),
@@ -918,8 +918,7 @@ fn reconnecting_capture_for_same_slot_keeps_keys_on_current_receiver() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut probe = OwnershipProbe::new();
     probe.hold_arrow();
-    let (tx, rx) = std::sync::mpsc::channel();
-    probe.input.connect_rx(rx);
+    let tx = InputSender::connect(&probe.input);
     probe.tx = Some(tx);
     probe.ctx.io_mut().add_mouse_pos_event(probe.field);
     probe.key(NamedKey::ArrowLeft, false);
@@ -950,14 +949,12 @@ fn reselect_after_disabled_wake_does_not_lose_held_key_release() {
     );
 
     let bob = host::SlotInput::new();
-    let (bob_tx, bob_rx) = std::sync::mpsc::channel();
-    bob.connect_rx(bob_rx);
+    let bob_tx = InputSender::connect(&bob);
     bob.set_enabled(true);
     probe.tx = Some(bob_tx);
     probe.ownership_frame("bob"); // R3 queues alice's up after its wake
 
-    let (alice_tx, alice_rx) = std::sync::mpsc::channel();
-    probe.input.connect_rx(alice_rx); // reselect drops the old queued up
+    let alice_tx = InputSender::connect(&probe.input); // reselect drops the old queued up
     probe.input.set_enabled(true);
     probe.tx = Some(alice_tx);
     probe.key(NamedKey::ArrowLeft, false);
@@ -987,8 +984,7 @@ fn capture_reenable_after_disabled_wake_does_not_lose_held_key_release() {
     );
     probe.ownership_frame("game"); // R3 queues an up after the disabled drain
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    probe.input.connect_rx(rx); // capture_on replaces the undrained receiver
+    let tx = InputSender::connect(&probe.input); // capture_on replaces the undrained receiver
     probe.input.set_enabled(true);
     probe.tx = Some(tx);
     probe.key(NamedKey::ArrowLeft, false);

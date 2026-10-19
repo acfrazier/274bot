@@ -41,16 +41,17 @@ use dear_imgui_rs::{
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
     TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
-use host::debug_enabled;
-use host_play::progress::{
-    ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
+use frontend_core::launch::{
+    InstanceConflict, InstanceKind, InstancePermit, Passphrase, PreparationCompletion,
+    PreparationJob, ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
+    ValidationPending,
 };
+use frontend_core::process::debug_enabled;
 
 use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_stop_enabled, PanelWindow, ProfilePreparation,
-    ProfilePreparationCompletion, ProfilePreparationSteps, Session,
+    script_pause_enabled, script_stop_enabled, PanelWindow, Session,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title, native_applet,
@@ -221,45 +222,20 @@ enum Boot {
     /// The vault passphrase from the in-panel prompt or `--vault-pass-stdin`.
     /// Failure is non-fatal: the in-panel prompt covers typing. `Debug` never
     /// prints it.
-    Unlock { pass: vault::Secret },
+    Unlock { pass: Passphrase },
     /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
     Live(LiveBoot),
 }
 
-struct ProfilePrepareJob {
-    generation: u64,
-    task: script::preparation::PreparedTask<Result<Arc<host_play::SharedClientTemplate>, String>>,
-    progress: LatestProgress,
-}
-
 struct ProfileValidateJob {
-    generation: u64,
     boot: Boot,
-    task: script::preparation::PreparedTask<Result<host_play::ValidatedTemplate, String>>,
-    progress: LatestProgress,
-}
-struct ProfilePreparePending {
-    generation: u64,
-    preparation: Arc<ProfilePreparation>,
-    observer: ProfileProgressObserver,
-    progress: LatestProgress,
+    job: ValidationJob,
 }
 
 struct ProfileValidatePending {
-    generation: u64,
     boot: Boot,
-    template: Arc<host_play::SharedClientTemplate>,
-    observer: ProfileProgressObserver,
-    progress: LatestProgress,
+    pending: ValidationPending,
 }
-
-/// One capped process-profile reservation for captured inputs, decode scratch,
-/// and the prepared shared-client template.
-const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
-const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
-const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
-
-type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProgressPhase {
@@ -270,23 +246,12 @@ enum ProgressPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StartupProgressView {
     phase: ProgressPhase,
-    progress: ProfileProgress,
-}
-
-fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, LatestProgress) {
-    let latest = Arc::new(Mutex::new(Some(initial)));
-    let worker_latest = Arc::clone(&latest);
-    let observer = ProfileProgressObserver::new(move |progress| {
-        if let Ok(mut latest) = worker_latest.try_lock() {
-            *latest = Some(progress);
-        }
-    });
-    (observer, latest)
+    progress: ProgressView,
 }
 
 struct StartupPreparation {
-    prepare: Option<ProfilePrepareJob>,
-    prepare_pending: Option<ProfilePreparePending>,
+    prepare: Option<PreparationJob>,
+    prepare_pending: Option<ProfilePreparation>,
     validate: Option<ProfileValidateJob>,
     validate_pending: Option<ProfileValidatePending>,
     pending_boot: Option<Boot>,
@@ -314,40 +279,42 @@ impl StartupPreparation {
 }
 
 fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<StartupProgressView> {
-    let (phase, latest) = if let Some(job) = startup
+    let (phase, progress) = if let Some(job) = startup
         .validate
         .as_ref()
-        .filter(|job| job.generation == generation)
+        .filter(|job| job.job.generation() == generation)
     {
-        (ProgressPhase::FinalChecks, &job.progress)
+        (ProgressPhase::FinalChecks, job.job.progress())
     } else if let Some(pending) = startup
         .validate_pending
         .as_ref()
-        .filter(|pending| pending.generation == generation)
+        .filter(|pending| pending.pending.generation() == generation)
     {
-        (ProgressPhase::FinalChecks, &pending.progress)
+        (ProgressPhase::FinalChecks, pending.pending.progress())
     } else if let Some(job) = startup
         .prepare
         .as_ref()
-        .filter(|job| job.generation == generation)
+        .filter(|job| job.generation() == generation)
     {
-        (ProgressPhase::Preparing, &job.progress)
+        (ProgressPhase::Preparing, job.progress())
     } else {
         let pending = startup
             .prepare_pending
             .as_ref()
-            .filter(|pending| pending.generation == generation)?;
-        (ProgressPhase::Preparing, &pending.progress)
+            .filter(|pending| pending.generation() == generation)?;
+        (ProgressPhase::Preparing, pending.progress())
     };
-    let progress = latest.lock().ok()?.as_ref().copied()?;
-    Some(StartupProgressView { phase, progress })
+    Some(StartupProgressView {
+        phase,
+        progress: progress?,
+    })
 }
 
 /// The deferred boot for a [`run_panel`] call, derived from the run mode and
 /// the passphrase read from `--vault-pass-stdin` — pure, so the mapping is
 /// testable (the boot itself runs after GPU init; nothing here spawns or
 /// unlocks).
-fn boot_for(mode: &RunMode, vault_pass: Option<vault::Secret>) -> Option<Boot> {
+fn boot_for(mode: &RunMode, vault_pass: Option<Passphrase>) -> Option<Boot> {
     if mode.is_smoke() {
         return Some(Boot::Live(LiveBoot::Smoke));
     }
@@ -454,11 +421,11 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     if startup
         .prepare
         .as_ref()
-        .is_some_and(|job| job.generation != generation)
+        .is_some_and(|job| job.generation() != generation)
         || startup
             .prepare_pending
             .as_ref()
-            .is_some_and(|pending| pending.generation != generation)
+            .is_some_and(|pending| pending.generation() != generation)
     {
         startup.prepare = None;
         startup.prepare_pending = None;
@@ -469,23 +436,20 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let prepared = startup
         .prepare
         .as_ref()
-        .is_some_and(|job| job.task.is_finished());
+        .is_some_and(PreparationJob::is_finished);
     if prepared {
         let job = startup.prepare.take().expect("polled preparation job");
-        let result = job
-            .task
-            .join()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+        let job_generation = job.generation();
+        let result = job.join();
         match state
             .session
-            .finish_profile_preparation(job.generation, result)
+            .finish_profile_preparation(job_generation, result)
         {
-            ProfilePreparationCompletion::Installed | ProfilePreparationCompletion::Stale => {
+            PreparationCompletion::Installed | PreparationCompletion::Stale => {
                 startup.failed_generation = None;
             }
-            ProfilePreparationCompletion::Failed => {
-                startup.failed_generation = Some(job.generation);
+            PreparationCompletion::Failed => {
+                startup.failed_generation = Some(job_generation);
                 let fatal = startup
                     .pending_boot
                     .as_ref()
@@ -502,16 +466,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let validated = startup
         .validate
         .as_ref()
-        .is_some_and(|job| job.task.is_finished());
+        .is_some_and(|job| job.job.is_finished());
     if validated {
         let job = startup.validate.take().expect("polled validation job");
-        let result = job
-            .task
-            .join()
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+        let job_generation = job.job.generation();
+        let result = job.job.join();
         state.session.set_profile_preparing(false);
-        if job.generation != state.session.profile_generation() {
+        if job_generation != state.session.profile_generation() {
             return;
         }
         let fatal = boot_failure_is_fatal(&job.boot);
@@ -531,20 +492,10 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     {
         if startup.prepare_pending.is_none() {
             match state.session.profile_preparation() {
-                Ok((generation, preparation)) => {
-                    let (observer, progress) = progress_channel(ProfileProgress::steps(
-                        ProfileProgressStage::SelectingServerProfile,
-                        0,
-                        1,
-                    ));
+                Ok(preparation) => {
                     state.session.error = None;
                     state.session.set_profile_preparing(true);
-                    startup.prepare_pending = Some(ProfilePreparePending {
-                        generation,
-                        preparation: Arc::new(preparation),
-                        observer,
-                        progress,
-                    });
+                    startup.prepare_pending = Some(preparation);
                 }
                 Err(error) => {
                     startup.failed_generation = Some(generation);
@@ -558,47 +509,12 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         }
 
         if let Some(pending) = startup.prepare_pending.as_ref() {
-            let generation = pending.generation;
-            let preparation = Arc::clone(&pending.preparation);
-            let observer = pending.observer.clone();
-            let progress = Arc::clone(&pending.progress);
-            let input = script::preparation::PreparationInput::new(
-                generation,
-                PROFILE_PREPARATION_INPUT_BYTES,
-                PROFILE_PREPARATION_SCRATCH_BYTES,
-                PROFILE_PREPARATION_RESULT_BYTES,
-            );
-            match input {
-                Ok(input) => match script::preparation::submit_cooperative(
-                    script::preparation::PreparationKind::Profile,
-                    api::identity::Scope::Process,
-                    input,
-                    {
-                        let mut steps = ProfilePreparationSteps::new(preparation, observer);
-                        move |_| steps.step()
-                    },
-                ) {
-                    Ok(task) => {
-                        startup.prepare_pending = None;
-                        startup.prepare = Some(ProfilePrepareJob {
-                            generation,
-                            task,
-                            progress,
-                        });
-                    }
-                    Err(script::preparation::PreparationError::Refused(
-                        api::work::SubmissionRefusal::Full,
-                    )) => {}
-                    Err(error) => {
-                        startup.prepare_pending = None;
-                        startup.failed_generation = Some(generation);
-                        let fatal = startup
-                            .pending_boot
-                            .as_ref()
-                            .is_some_and(boot_failure_is_fatal);
-                        fail_startup(&mut state.session, fatal, error.to_string());
-                    }
-                },
+            match pending.submit() {
+                Ok(job) => {
+                    startup.prepare_pending = None;
+                    startup.prepare = Some(job);
+                }
+                Err(error) if error.is_full() => {}
                 Err(error) => {
                     startup.prepare_pending = None;
                     startup.failed_generation = Some(generation);
@@ -621,19 +537,11 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                let (observer, progress) = progress_channel(ProfileProgress::steps(
-                    ProfileProgressStage::FinalChecks,
-                    0,
-                    1,
-                ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
                 startup.validate_pending = Some(ProfileValidatePending {
-                    generation,
                     boot,
-                    template,
-                    observer,
-                    progress,
+                    pending: ValidationPending::new(generation, template),
                 });
             }
             Err(error) => fail_startup(&mut state.session, fatal, error),
@@ -641,47 +549,18 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     }
 
     if let Some(pending) = startup.validate_pending.as_ref() {
-        let generation = pending.generation;
-        let template = Arc::clone(&pending.template);
-        let observer = pending.observer.clone();
-        let progress = Arc::clone(&pending.progress);
-        let input = script::preparation::PreparationInput::new(
-            generation,
-            std::mem::size_of::<Arc<host_play::SharedClientTemplate>>(),
-            0,
-            std::mem::size_of::<host_play::ValidatedTemplate>(),
-        );
-        match input {
-            Ok(input) => match script::preparation::submit(
-                script::preparation::PreparationKind::Profile,
-                api::identity::Scope::Process,
-                input,
-                move |_| template.validate_for_play_with_progress(&observer),
-            ) {
-                Ok(task) => {
-                    let pending = startup
-                        .validate_pending
-                        .take()
-                        .expect("validation demand retained");
-                    startup.validate = Some(ProfileValidateJob {
-                        generation,
-                        boot: pending.boot,
-                        task,
-                        progress,
-                    });
-                }
-                Err(script::preparation::PreparationError::Refused(
-                    api::work::SubmissionRefusal::Full,
-                )) => {}
-                Err(error) => {
-                    let pending = startup
-                        .validate_pending
-                        .take()
-                        .expect("validation demand retained");
-                    let fatal = boot_failure_is_fatal(&pending.boot);
-                    fail_startup(&mut state.session, fatal, error.to_string());
-                }
-            },
+        match pending.pending.submit() {
+            Ok(job) => {
+                let pending = startup
+                    .validate_pending
+                    .take()
+                    .expect("validation demand retained");
+                startup.validate = Some(ProfileValidateJob {
+                    boot: pending.boot,
+                    job,
+                });
+            }
+            Err(error) if error.is_full() => {}
             Err(error) => {
                 let pending = startup
                     .validate_pending
@@ -837,10 +716,10 @@ pub enum RunMode {
     PrepareFixture(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PanelArgs {
     pub mode: RunMode,
-    pub profile: host_play::ProfileOptions,
+    pub profile: frontend_core::launch::ProfileArgs,
     /// Dedicated catalog_watch proof bridge; ordinary panel-play stays false.
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
@@ -871,8 +750,8 @@ pub fn parse_args(
 ) -> Result<PanelArgs, (i32, String)> {
     let (memory_override, args) = parse_memory_override(args)?;
     let (vault_pass_stdin, args) = parse_vault_pass_flags(args)?;
-    let (profile, rest) =
-        host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
+    let (profile, rest) = frontend_core::launch::parse_profile_args(args)
+        .map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
     let (external_ts, rest) = parse_external_ts(rest)?;
     let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
@@ -920,8 +799,11 @@ fn parse_vault_pass_flags(args: Vec<String>) -> Result<(bool, Vec<String>), (i32
     let mut from_stdin = false;
     let mut rest = Vec::with_capacity(args.len());
     for arg in args {
-        if host_play::passphrase::is_removed_flag(&arg) {
-            return Err((2, host_play::passphrase::removed_flag_error("panel-play")));
+        if frontend_core::launch::is_removed_passphrase_flag(&arg) {
+            return Err((
+                2,
+                frontend_core::launch::removed_passphrase_flag_error("panel-play"),
+            ));
         }
         if arg == "--vault-pass-stdin" {
             from_stdin = true;
@@ -1099,23 +981,25 @@ fn enqueue_manual_shot(state: &mut PanelState) {
         eprintln!("[panel] F12: no focused slot has a live snapshot");
         return;
     };
-    let json = {
-        let states = state.session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&focused) else {
+    let json = state.session.core.with_slot_snapshot(&focused, |snapshot| {
+        if !snapshot.ingame() || snapshot.tile().is_none() {
+            return Err(format!(
+                "focused slot {focused} has no live player snapshot"
+            ));
+        }
+        serde_json::to_string_pretty(snapshot)
+            .map_err(|error| format!("snapshot serialization failed: {error}"))
+    });
+    let json = match json {
+        None => {
             eprintln!("[panel] F12: focused slot {focused} has no live snapshot");
             return;
-        };
-        if !snapshot.ingame() || snapshot.tile().is_none() {
-            eprintln!("[panel] F12: focused slot {focused} has no live player snapshot");
+        }
+        Some(Err(error)) => {
+            eprintln!("[panel] F12: {error}");
             return;
         }
-        match serde_json::to_string_pretty(snapshot) {
-            Ok(json) => json,
-            Err(error) => {
-                eprintln!("[panel] F12: snapshot serialization failed: {error}");
-                return;
-            }
-        }
+        Some(Ok(json)) => json,
     };
     state
         .shot_state
@@ -1788,34 +1672,43 @@ struct LoadingText {
     caption: String,
 }
 
-fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText {
+fn loading_text(phase: ProgressPhase, progress: &ProgressView) -> LoadingText {
     const CELLS: u64 = 20;
-    let completed = progress.completed.min(progress.total);
-    let percent = if progress.total == 0 {
+    let completed = progress.completed().min(progress.total());
+    let percent = if progress.total() == 0 {
         100
     } else {
-        ((u128::from(completed) * 100) / u128::from(progress.total)) as u8
+        ((u128::from(completed) * 100) / u128::from(progress.total())) as u8
     };
     let filled = (u64::from(percent) * CELLS / 100) as usize;
-    let description = match (phase, progress.stage) {
-        (ProgressPhase::FinalChecks, ProfileProgressStage::FinalChecks) => {
-            ProfileProgressStage::FinalChecks.description().to_string()
+    let description = match (phase, progress.stage()) {
+        (ProgressPhase::FinalChecks, ProgressStage::FinalChecks) => {
+            ProgressStage::FinalChecks.description().to_string()
         }
         (ProgressPhase::FinalChecks, stage) => {
             format!("Final checks: {}", stage.description())
         }
         (ProgressPhase::Preparing, stage) => stage.description().to_string(),
     };
-    let caption = match progress.unit {
-        ProfileProgressUnit::Bytes => {
-            format!("{} of {} bytes checked", progress.completed, progress.total)
+    let caption = match progress.unit() {
+        ProgressUnit::Bytes => {
+            format!(
+                "{} of {} bytes checked",
+                progress.completed(),
+                progress.total()
+            )
         }
-        ProfileProgressUnit::Files => {
-            format!("{} of {} files checked", progress.completed, progress.total)
+        ProgressUnit::Files => {
+            format!(
+                "{} of {} files checked",
+                progress.completed(),
+                progress.total()
+            )
         }
-        ProfileProgressUnit::Steps => format!(
+        ProgressUnit::Steps => format!(
             "{} of {} steps complete",
-            progress.completed, progress.total
+            progress.completed(),
+            progress.total()
         ),
     };
     LoadingText {
@@ -1827,7 +1720,7 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
     }
 }
 
-fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
+fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProgressView) {
     let text = loading_text(phase, progress);
     ui.text_colored(ACCENT, &text.description);
     ui.text_colored(ACCENT, format!("[{}", text.filled));
@@ -1852,7 +1745,7 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             loading_banner(
                 ui,
                 ProgressPhase::Preparing,
-                &ProfileProgress::steps(ProfileProgressStage::SelectingServerProfile, 0, 1),
+                &ProgressView::steps(ProgressStage::SelectingServerProfile, 0, 1),
             );
         }
     } else if let Some(detail) = session.core.fleet_view().detail() {
@@ -2058,7 +1951,7 @@ fn submit_vault_pass(session: &mut Session, exists: bool) {
         !typed.trim().is_empty()
     };
     if usable {
-        let pass = vault::Secret::from(typed);
+        let pass = Passphrase::from(typed);
         session.request_unlock(pass);
         session.pass_scratch.clear();
     }
@@ -3368,11 +3261,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             if changed {
                 session.ui.nav = nav;
-                let after_permissions = frontend_core::WalkGlobalsView {
-                    globals: session.ui.nav.walk_globals(),
-                    script_scope_notice_ack: session.ui.nav.script_scope_notice_ack,
-                    survivable_routing_notice_ack: session.ui.nav.survivable_routing_notice_ack,
-                };
+                let after_permissions = frontend_core::WalkGlobalsView::new(
+                    session.ui.nav.walk_globals(),
+                    session.ui.nav.script_scope_notice_ack,
+                    session.ui.nav.survivable_routing_notice_ack,
+                );
                 session.route_through_zones =
                     after_permissions.danger_this_walk(session.route_through_zones);
                 if previous_pause_script_on_manual_walk_abort
@@ -4656,9 +4549,9 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
     }
     let mut world_changed = false;
     if let Some(worlds) = session
-        .server_profile
-        .as_ref()
-        .and_then(|p| p.public_worlds())
+        .launcher
+        .bound()
+        .and_then(|p| p.public_world_numbers())
     {
         let preview = session
             .profile_editor
@@ -4681,20 +4574,18 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
                     .world_mut() = None;
                 world_changed = true;
             }
-            for world in &worlds.worlds {
-                let label = format!("w{}", world.number);
+            for number in worlds {
+                let label = format!("w{number}");
                 if ui
                     .selectable_config(&label)
-                    .selected(
-                        session.profile_editor.draft().settings().world() == Some(world.number),
-                    )
+                    .selected(session.profile_editor.draft().settings().world() == Some(number))
                     .build()
                 {
                     *session
                         .profile_editor
                         .draft_mut()
                         .settings_mut()
-                        .world_mut() = Some(world.number);
+                        .world_mut() = Some(number);
                     world_changed = true;
                 }
             }
@@ -6468,7 +6359,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
 fn init_panel_running(
     args: &PanelArgs,
     shot_state: Arc<Mutex<crate::window::ShotState>>,
-    permit: host_play::InstancePermit,
+    permit: InstancePermit,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
     let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
     state.session.set_memory_override(args.memory_override);
@@ -6488,18 +6379,14 @@ fn init_panel_running(
         .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
-        .configure_profile(args.profile.clone())
+        .configure_profile(args.profile.duplicate())
         .map_err(window::PanelError::ServerProfile)?;
     let vault_pass = if args.vault_pass_stdin && matches!(args.mode, RunMode::Interactive) {
         let exists = state
             .session
             .default_vault_exists()
             .map_err(window::PanelError::ServerProfile)?;
-        match host_play::passphrase::obtain(
-            "panel-play",
-            true,
-            host_play::passphrase::Purpose::for_vault(exists),
-        ) {
+        match frontend_core::launch::obtain_passphrase("panel-play", true, exists) {
             Ok(pass) => Some(pass),
             Err(msg) => {
                 eprintln!("FAIL: {msg}");
@@ -6518,8 +6405,12 @@ fn init_panel_running(
             // Remote), so check the class of the profile it will bind.
             let class = state
                 .session
-                .resolve_profile()
-                .map(|profile| profile.profile_class());
+                .launcher
+                .configured_class(state.session.ui.server_revision)
+                .map(|class| match class {
+                    frontend_core::launch::ProfileClass::Local => host_play::ProfileClass::Local,
+                    frontend_core::launch::ProfileClass::Remote => host_play::ProfileClass::Remote,
+                });
             if let Err(error) = class.and_then(host_play::memory::require_live_benchmark) {
                 eprintln!("FAIL: {error}");
                 exit_after_work_shutdown(1);
@@ -6536,7 +6427,7 @@ fn init_panel_running(
 }
 
 /// `Some(true)` continue, `Some(false)` exit, `None` still open.
-fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Option<bool> {
+fn instance_conflict_choice(ui: &Ui, conflict: &InstanceConflict) -> Option<bool> {
     let mut open = true;
     let mut choice = None;
     ui.window("Another 274bot is running")
@@ -6548,7 +6439,7 @@ fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Opti
         )
         .build(|| {
             let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
-            ui.text_wrapped(host_play::instance_conflict_message(holder));
+            ui.text_wrapped(conflict.message());
             ui.spacing();
             let avail = ui.content_region_avail()[0];
             let (w, stack) = scaled_button_row_layout(ui, avail, 2);
@@ -6614,12 +6505,12 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
     let mut instance_prompt = None;
     let mut running = None;
-    match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, skip_lock) {
-        Ok(host_play::InstancePermitOutcome::Ready(permit)) => {
+    match frontend_core::launch::acquire_instance(InstanceKind::Panel, skip_lock) {
+        Ok(Ok(permit)) => {
             running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
         }
-        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
-            instance_prompt = Some(holder);
+        Ok(Err(conflict)) => {
+            instance_prompt = Some(conflict);
         }
         Err(e) => {
             eprintln!("panel: instance lock: {e}");
@@ -6661,7 +6552,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                         match init_panel_running(
                             &args,
                             Arc::clone(&shot_state),
-                            host_play::InstancePermit::skip(),
+                            InstancePermit::skip(),
                         ) {
                             Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                             Err(e) => {
@@ -6959,12 +6850,15 @@ fn pair_actor_capture_ready(state: &PanelState, actor: &str) -> Option<String> {
 }
 
 fn current_pair_actor_sidecar(session: &Session, actor: &str) -> Option<String> {
-    let states = session.nav_states.lock().unwrap();
-    let (snapshot, _) = states.get(actor)?;
-    if !snapshot.ingame() || snapshot.scene_state() != 2 {
-        return None;
-    }
-    actor_snapshot_json(actor, snapshot).ok()
+    session
+        .core
+        .with_slot_snapshot(actor, |snapshot| {
+            if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                return None;
+            }
+            actor_snapshot_json(actor, snapshot).ok()
+        })
+        .flatten()
 }
 
 fn record_presented_upload(

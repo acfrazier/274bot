@@ -152,8 +152,8 @@ impl LiveBoot {
                     last_announced: 0,
                     passed: false,
                     name: "stress50",
-                    host: session.play_options().host.clone(),
-                    port: session.play_options().port,
+                    host: session.play_options().host().to_string(),
+                    port: session.play_options().port(),
                 }))
             }
             LiveBoot::Stress50Full => {
@@ -163,8 +163,8 @@ impl LiveBoot {
                     last_announced: 0,
                     passed: false,
                     name: "stress50_full",
-                    host: session.play_options().host.clone(),
-                    port: session.play_options().port,
+                    host: session.play_options().host().to_string(),
+                    port: session.play_options().port(),
                 }))
             }
             LiveBoot::Script { name } => {
@@ -414,20 +414,20 @@ pub(super) fn enqueue_pair_terminal_shots(
     };
     let labels = pair_shot_labels(base_label, &a, &b);
     let requests = {
-        let states = session.nav_states.lock().unwrap();
         [&a, &b]
             .into_iter()
             .zip(labels.iter())
             .filter_map(|(name, label)| {
-                let (snapshot, _) = states.get(name)?;
-                if !snapshot.ingame() || snapshot.scene_state() != 2 {
-                    return None;
-                }
-                Some((
-                    label.clone(),
-                    name.to_string(),
-                    actor_snapshot_json(name, snapshot).ok()?,
-                ))
+                let json = session
+                    .core
+                    .with_slot_snapshot(name, |snapshot| {
+                        if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                            return None;
+                        }
+                        actor_snapshot_json(name, snapshot).ok()
+                    })
+                    .flatten()?;
+                Some((label.clone(), name.to_string(), json))
             })
             .collect::<Vec<_>>()
     };
@@ -453,16 +453,15 @@ pub(super) fn enqueue_external_terminal_shot(
         return;
     }
     let name = watch.account();
-    let json = {
-        let states = session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&name) else {
-            return;
-        };
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return;
-        }
-        actor_snapshot_json(&name, snapshot).ok()
-    };
+    let json = session
+        .core
+        .with_slot_snapshot(&name, |snapshot| {
+            if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                return None;
+            }
+            actor_snapshot_json(&name, snapshot).ok()
+        })
+        .flatten();
     let Some(json) = json else {
         return;
     };
@@ -487,14 +486,17 @@ pub(super) fn enqueue_fresh_terminal_shot(
         let actor = session
             .focused_name()
             .ok_or_else(|| "fresh terminal capture has no focused actor".to_string())?;
-        let states = session.nav_states.lock().unwrap();
-        let (snapshot, _) = states
-            .get(&actor)
-            .ok_or_else(|| "fresh terminal capture has no current snapshot".to_string())?;
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return Err("fresh terminal capture requires a current ingame scene-2 snapshot".into());
-        }
-        actor_snapshot_json(&actor, snapshot)
+        session
+            .core
+            .with_slot_snapshot(&actor, |snapshot| {
+                if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                    return Err(
+                        "fresh terminal capture requires a current ingame scene-2 snapshot".into(),
+                    );
+                }
+                actor_snapshot_json(&actor, snapshot)
+            })
+            .ok_or_else(|| "fresh terminal capture has no current snapshot".to_string())?
     })();
     let mut shots = shots.lock().unwrap();
     match current {
@@ -541,14 +543,17 @@ pub(super) fn enqueue_current_terminal_shot(
         let actor = session
             .focused_name()
             .ok_or_else(|| "native failure capture has no focused actor".to_string())?;
-        let states = session.nav_states.lock().unwrap();
-        let (snapshot, _) = states
-            .get(&actor)
-            .ok_or_else(|| "native failure capture has no current snapshot".to_string())?;
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return Err("native failure capture requires a current ingame scene-2 snapshot".into());
-        }
-        actor_snapshot_json(&actor, snapshot)
+        session
+            .core
+            .with_slot_snapshot(&actor, |snapshot| {
+                if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                    return Err(
+                        "native failure capture requires a current ingame scene-2 snapshot".into(),
+                    );
+                }
+                actor_snapshot_json(&actor, snapshot)
+            })
+            .ok_or_else(|| "native failure capture has no current snapshot".to_string())?
     })();
     let mut shots = shots.lock().unwrap();
     match current {
@@ -588,16 +593,15 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
     let Some(actor) = session.focused_name() else {
         return;
     };
-    let json = {
-        let states = session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&actor) else {
-            return;
-        };
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return;
-        }
-        actor_snapshot_json(&actor, snapshot).ok()
-    };
+    let json = session
+        .core
+        .with_slot_snapshot(&actor, |snapshot| {
+            if !snapshot.ingame() || snapshot.scene_state() != 2 {
+                return None;
+            }
+            actor_snapshot_json(&actor, snapshot).ok()
+        })
+        .flatten();
     if let Some(json) = json {
         shots.lock().unwrap().enqueue(label.to_string(), json);
     }

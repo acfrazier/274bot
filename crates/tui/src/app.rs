@@ -22,11 +22,11 @@ use ratatui::Frame;
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::quester_paths::QuesterPathsView;
 use frontend_core::scripts::{Loadouts, OwnedSchema, PaintFrame, ScriptChoice, ScriptRunState};
+use frontend_core::walk_map::{
+    display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
+};
 use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
-use host_play::walk_map::{
-    Catalogue, DisplayName, MapModel, ObservedService, Search, WalkSlotStatus,
-};
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
@@ -157,14 +157,14 @@ pub enum AppAction {
     ArmWalk(Tile),
     /// Group Walk-confirm: consume one destination plan for checked bots.
     MapWalkGroup,
-    /// WASD one-tile walk: queue a `host_play::WireCmd::Walk`.
+    /// WASD one-tile walk: a direct one-step move on the focused slot.
     WalkTile(Tile),
     /// Local debug teleport is intentionally a separate named action. The
     /// binary/host must authorize it; the TUI never treats a pin as proof.
     MapTeleport(Tile),
     /// Reload the shared Quester Path registry without starting a Path.
     ReloadPaths,
-    /// Chat modal advance: queue `WireCmd::Continue` / `Answer`.
+    /// Chat modal advance: Continue / Answer on the focused slot.
     Chat(ChatAction),
     /// MultiBox: load every vault profile and log every member in (after
     /// the scope confirmation).
@@ -376,7 +376,7 @@ pub struct TuiApp {
     pub map: MapView,
     /// Shared host selection/action model. The TUI owns only this one
     /// application view, never a model per bot.
-    pub map_model: MapModel,
+    pub map_model: WalkMap,
     pub map_active: bool,
     /// Search editor and bounded result indices into `map_pois`.
     pub map_search_open: bool,
@@ -386,13 +386,13 @@ pub struct TuiApp {
     /// The shared compact catalogue projection. It is application-owned,
     /// never copied into each bot slot.
     pub map_pois: Vec<PoiRecord>,
-    pub map_host_catalogue: Option<Arc<Catalogue>>,
-    map_search_index: Search,
+    pub map_catalogue: Option<Arc<WalkCatalogue>>,
+    map_search_index: WalkSearch,
     pub map_poi_sel: Option<usize>,
     pub map_catalogue_status: MapCatalogueStatus,
     pub map_coverage: String,
     /// Focused-bot observed NPC services while the map is open.
-    pub map_observed: Vec<ObservedService>,
+    pub map_observed: Vec<WalkObservedService>,
     /// Fleet Walk send: Focused vs Group checklist.
     pub walk_send: WalkSendState,
     /// The focused slot's observed world tile.
@@ -410,7 +410,7 @@ pub struct TuiApp {
     /// [`TuiApp::settings_dirty`] flips.
     pub settings: frontend_core::SettingsDraft,
     /// Editable settings buffer; durable reads are rendered from `walk_permissions`.
-    pub nav: host_play::WalkGlobals,
+    pub nav: frontend_core::WalkGlobals,
     /// Current durable projection shared with admission and inherited script rows.
     pub walk_permissions: WalkGlobalsView,
     /// Per-Map-open danger permission; never persisted.
@@ -540,7 +540,7 @@ impl TuiApp {
             world: None,
             map_reach: None,
             map: MapView::new(),
-            map_model: MapModel::default(),
+            map_model: WalkMap::new(),
             map_active: false,
             here: None,
             map_search_open: false,
@@ -548,8 +548,8 @@ impl TuiApp {
             map_search_results: Vec::new(),
             map_search_sel: 0,
             map_pois: Vec::new(),
-            map_host_catalogue: None,
-            map_search_index: Search::default(),
+            map_catalogue: None,
+            map_search_index: WalkSearch::default(),
             map_poi_sel: None,
             map_catalogue_status: MapCatalogueStatus::Inactive,
             map_coverage: "coverage: unavailable until Map is opened".into(),
@@ -559,7 +559,7 @@ impl TuiApp {
             walk_dest: None,
             chat: ChatState::default(),
             settings: frontend_core::SettingsDraft::default(),
-            nav: host_play::WalkGlobals::default(),
+            nav: frontend_core::WalkGlobals::default(),
             walk_permissions: WalkGlobalsView::default(),
             map_route_through_zones: false,
             script_scope_notice_ack: false,
@@ -646,17 +646,17 @@ impl TuiApp {
     /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
         let view = self.shared_preferences.as_ref().map_or(
-            WalkGlobalsView {
-                globals: self.nav,
-                script_scope_notice_ack: self.script_scope_notice_ack,
-                survivable_routing_notice_ack: self.survivable_routing_notice_ack,
-            },
+            WalkGlobalsView::new(
+                self.nav,
+                self.script_scope_notice_ack,
+                self.survivable_routing_notice_ack,
+            ),
             WalkGlobalsView::read,
         );
         self.walk_permissions = view;
-        self.nav = view.globals;
-        self.script_scope_notice_ack = view.script_scope_notice_ack;
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
+        self.nav = view.globals();
+        self.script_scope_notice_ack = view.script_scope_notice_ack();
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         if !view.danger_this_walk(true) {
             self.map_route_through_zones = false;
         }
@@ -795,7 +795,7 @@ impl TuiApp {
     }
 
     fn update_map_search(&mut self) {
-        if let Some(catalogue) = self.map_host_catalogue.clone() {
+        if let Some(catalogue) = self.map_catalogue.clone() {
             if self.map_search.is_empty() {
                 self.map_search_index.clear();
                 self.map_search_results.clear();
@@ -833,7 +833,7 @@ impl TuiApp {
                 _ => "·",
             }
         }
-        if let Some(catalogue) = &self.map_host_catalogue {
+        if let Some(catalogue) = &self.map_catalogue {
             let entry = catalogue.entry(index)?;
             let anchor = entry.anchor();
             return Some(format!(
@@ -846,10 +846,12 @@ impl TuiApp {
             ));
         }
         let poi = self.map_pois.get(index)?;
+        let mut name = String::with_capacity(poi.name.as_str().len());
+        display_walk_name_into(poi.name.as_str(), &mut name);
         Some(format!(
             "{} {} ({},{},{})",
             kind_glyph(poi.kind),
-            DisplayName::new(poi.name.as_str()),
+            name,
             poi.display.x as i32,
             poi.display.z as i32,
             poi.effective_plane
@@ -861,7 +863,7 @@ impl TuiApp {
             .here
             .map(|h| (h.x, h.z))
             .unwrap_or(crate::map::DEFAULT_CENTRE);
-        if let Some(catalogue) = self.map_host_catalogue.clone() {
+        if let Some(catalogue) = self.map_catalogue.clone() {
             if self.map_model.select_poi(&catalogue, index).is_ok() {
                 if let Some(entry) = catalogue.entry(index) {
                     let anchor = entry.anchor();
@@ -956,7 +958,7 @@ impl TuiApp {
                 }
                 return AppAction::MapWalkGroup;
             }
-            return AppAction::ArmWalk(pending.requested);
+            return AppAction::ArmWalk(pending.requested());
         }
         self.select_view_centre();
         AppAction::None
@@ -1012,7 +1014,7 @@ impl TuiApp {
                 level: h.level,
             });
         self.map_model.recenter(observed);
-        self.map.plane = self.map_model.plane;
+        self.map.plane = self.map_model.plane();
     }
 
     /// Group-walk rows: every member with its host eligibility. The fleet's
@@ -1091,9 +1093,9 @@ impl TuiApp {
         self.map_observed
             .iter()
             .map(|obs| ObservedMark {
-                x: obs.tile.x,
-                z: obs.tile.z,
-                level: obs.tile.level,
+                x: obs.tile().x,
+                z: obs.tile().z,
+                level: obs.tile().level,
             })
             .collect()
     }
@@ -1120,7 +1122,7 @@ impl TuiApp {
         self.map_model.close();
         self.map_poi_sel = None;
         self.map_pois.clear();
-        self.map_host_catalogue = None;
+        self.map_catalogue = None;
         self.map_search_index.clear();
         self.map_observed.clear();
         self.walk_send = WalkSendState::default();
@@ -1145,8 +1147,8 @@ impl TuiApp {
         self.update_map_search();
     }
 
-    /// Retain E's catalogue owner. Search/draw borrow it; no POI payload copy.
-    pub fn bind_host_catalogue(&mut self, catalogue: Arc<Catalogue>) {
+    /// Retain the frontend-owned catalogue; draw and search borrow it.
+    pub fn bind_walk_catalogue(&mut self, catalogue: Arc<WalkCatalogue>) {
         let messages: Vec<_> = catalogue.coverage_messages().collect();
         let coverage = if messages.is_empty() {
             format!(
@@ -1157,12 +1159,11 @@ impl TuiApp {
         } else {
             format!("coverage: {}", messages.join("; "))
         };
-        if let Some(ctx) = self.map_model.context() {
-            let mut next = ctx;
-            next.overlay = Some(catalogue.key());
-            self.map_model.bind(next);
+        if let Some(context) = self.map_model.context() {
+            self.map_model
+                .bind(context.with_overlay(Some(catalogue.key())));
         }
-        self.map_host_catalogue = Some(catalogue);
+        self.map_catalogue = Some(catalogue);
         self.map_pois.clear();
         self.map_coverage = coverage;
         self.map_catalogue_status = MapCatalogueStatus::Ready;
@@ -1173,7 +1174,7 @@ impl TuiApp {
         self.map_catalogue_status = MapCatalogueStatus::Unavailable;
         self.map_coverage = reason.into();
         self.map_pois.clear();
-        self.map_host_catalogue = None;
+        self.map_catalogue = None;
         self.map_search_index.clear();
         self.map_search_results.clear();
     }
@@ -1745,7 +1746,7 @@ impl TuiApp {
         self.draw_map_buttons(frame.buffer_mut(), button_area);
 
         let observed = self.observed_marks();
-        let catalogue = self.map_host_catalogue.clone();
+        let catalogue = self.map_catalogue.clone();
         let poi_count = catalogue
             .as_ref()
             .map(|c| c.entries().len())
@@ -1781,13 +1782,12 @@ impl TuiApp {
                     .iter()
                     .map(|row| {
                         let mark = if row.checked { "*" } else { " " };
-                        match row.status {
-                            WalkSlotStatus::Eligible(_) => {
-                                format!("{mark}{}", row.name())
-                            }
-                            WalkSlotStatus::Excluded(reason) => {
-                                format!("{mark}{} ({reason})", row.name())
-                            }
+                        if row.status.is_eligible() {
+                            format!("{mark}{}", row.name())
+                        } else if let Some(reason) = row.status.exclusion() {
+                            format!("{mark}{} ({})", row.name(), reason.as_str())
+                        } else {
+                            format!("{mark}{}", row.name())
                         }
                     })
                     .collect::<Vec<_>>()
@@ -1871,7 +1871,10 @@ impl TuiApp {
                 .map(|obs| {
                     format!(
                         "N {:?} ({},{},{})",
-                        obs.kind, obs.tile.x, obs.tile.z, obs.tile.level
+                        obs.kind(),
+                        obs.tile().x,
+                        obs.tile().z,
+                        obs.tile().level
                     )
                 })
                 .collect::<Vec<_>>()

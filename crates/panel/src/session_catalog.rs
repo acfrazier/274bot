@@ -16,12 +16,10 @@ fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
 
 impl Session {
     pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
-        match self.server_profile.as_ref() {
-            Some(profile) => Ok(profile.catalog_root().map(Path::to_path_buf)),
-            None if self.profile_options.is_some() => self
-                .resolve_profile()
-                .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
-            None => paths::rs2b0t_root_checked(),
+        if self.launcher.bound().is_some() || self.launcher.configured() {
+            self.launcher.catalog_root(self.ui.server_revision)
+        } else {
+            paths::rs2b0t_root_checked()
         }
     }
 

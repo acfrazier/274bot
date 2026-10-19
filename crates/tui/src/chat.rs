@@ -6,7 +6,7 @@
 //! (`continue_dialog`) or answers the focused choice (`answer_choice`) to
 //! unstick NPC chat the guardian is not handling. The send hook is a
 //! `FnMut(ChatAction)` like the map's walk hook — nothing is queued until
-//! `tui-play` wires it to [`host_play::WireCmd`].
+//! `tui-play` wires it to the core's chat accessors.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -371,7 +371,7 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
 
     /// A click inside the pane: an option row answers that choice, any
     /// other row continues the dialog. Paint-showing clicks hit advertised
-    /// buttons instead of `WireCmd`. `area` is the pane's buffer rect;
+    /// buttons instead of the chat accessors. `area` is the pane's buffer rect;
     /// `(col, row)` is the click's buffer position.
     pub fn on_click(&mut self, area: Rect, col: u16, row: u16) -> ChatAction {
         if !area.contains(Position::new(col, row)) {

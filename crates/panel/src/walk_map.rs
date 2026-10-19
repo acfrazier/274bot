@@ -26,9 +26,10 @@ use nav::tile::Tile;
 use nav::transport::WildernessZone;
 use nav::world::NavWorld;
 
+use frontend_core::walk_map::{
+    display_walk_name_into, WalkCatalogue, WalkObservedService, WalkReadyImages, WalkSearch,
+};
 use frontend_core::WalkMapDecodeController;
-use host_play::map_cache::ReadyImages;
-use host_play::walk_map::{display_name_into, Catalogue, ObservedService, Search};
 
 #[cfg(test)]
 use nav::map::MapError;
@@ -119,9 +120,9 @@ pub struct WalkMapRenderer {
     generation: u64,
     open: bool,
     fixtures: fixtures::Store,
-    ready: Option<Arc<ReadyImages>>,
-    catalogue: Option<Arc<Catalogue>>,
-    observed: Vec<ObservedService>,
+    ready: Option<Arc<WalkReadyImages>>,
+    catalogue: Option<Arc<WalkCatalogue>>,
+    observed: Vec<WalkObservedService>,
     slots: Vec<TerrainSlot>,
     overlay_gpu: Option<OverlayGpu>,
     overlay_cpu: Option<Vec<u8>>,
@@ -152,7 +153,7 @@ pub struct WalkMapRenderer {
     nav_identity: Digest,
     world_geom: Option<(i32, i32, u32, u32)>,
     pub search: String,
-    pub(crate) catalogue_search: Search,
+    pub(crate) catalogue_search: WalkSearch,
     status: String,
     phase: MapPhase,
     last_vtx: i32,
@@ -228,7 +229,7 @@ impl WalkMapRenderer {
             nav_identity: Digest([0; 32]),
             world_geom: None,
             search: String::new(),
-            catalogue_search: Search::default(),
+            catalogue_search: WalkSearch::default(),
             status: String::from(CACHE_UNBOUND),
             phase: MapPhase::Pending,
             last_vtx: 0,
@@ -247,14 +248,14 @@ impl WalkMapRenderer {
     pub fn max_lod(&self) -> u8 {
         self.ready
             .as_ref()
-            .map(|ready| ready.manifest().max_lod)
+            .map(|ready| ready.max_lod())
             .unwrap_or(self.fixtures.max_lod)
     }
 
     pub fn identity(&self) -> ImageIdentity {
         self.ready
             .as_ref()
-            .map(|ready| ready.manifest().identity)
+            .map(|ready| ready.image_identity())
             .unwrap_or(self.fixtures.identity)
     }
 
@@ -262,12 +263,12 @@ impl WalkMapRenderer {
         self.ready.is_some() || !self.fixtures.is_empty()
     }
 
-    pub fn bind_ready_images(&mut self, images: Arc<ReadyImages>) {
-        let identity = images.manifest().identity;
+    pub fn bind_ready_images(&mut self, images: Arc<WalkReadyImages>) {
+        let identity = images.image_identity();
         let changed = self
             .ready
             .as_ref()
-            .is_none_or(|ready| ready.manifest().identity != identity);
+            .is_none_or(|ready| ready.image_identity() != identity);
         self.ready = Some(images);
         if changed {
             for slot in self.slots.drain(..) {
@@ -281,11 +282,11 @@ impl WalkMapRenderer {
         }
     }
 
-    pub fn bind_catalogue(&mut self, catalogue: Option<Arc<Catalogue>>) {
+    pub fn bind_catalogue(&mut self, catalogue: Option<Arc<WalkCatalogue>>) {
         self.catalogue = catalogue;
     }
 
-    pub fn set_observed(&mut self, observed: Vec<ObservedService>) {
+    pub fn set_observed(&mut self, observed: Vec<WalkObservedService>) {
         self.observed = observed;
     }
 
@@ -715,13 +716,14 @@ impl WalkMapRenderer {
             }
         }
         for service in &self.observed {
-            if service.tile.level != i32::from(view.plane) {
+            let tile = service.tile();
+            if tile.level != i32::from(view.plane) {
                 continue;
             }
             if !mark(
-                f64::from(service.tile.x) + 0.5,
-                f64::from(service.tile.z) + 0.5,
-                service.kind,
+                f64::from(tile.x) + 0.5,
+                f64::from(tile.z) + 0.5,
+                service.kind(),
             ) {
                 break;
             }
@@ -999,7 +1001,7 @@ impl WalkMapRenderer {
     fn read_tile_png(
         &mut self,
         key: TileKey,
-    ) -> Result<Option<Arc<[u8]>>, host_play::map_cache::MapCacheError> {
+    ) -> Result<Option<Arc<[u8]>>, frontend_core::walk_map::WalkMapCacheError> {
         #[cfg(test)]
         {
             self.tile_read_count += 1;
@@ -1050,7 +1052,7 @@ impl WalkMapRenderer {
         visible: bool,
         vis: VisibleTiles,
         gpu: &mut Option<&mut dyn FrameGpu>,
-        error: &host_play::map_cache::MapCacheError,
+        error: &frontend_core::walk_map::WalkMapCacheError,
     ) {
         if self.unreadable_warned.insert(key) {
             api::host_log!(
@@ -1760,7 +1762,7 @@ fn push_map_label(
         return;
     }
     let off = names.len();
-    display_name_into(name, names);
+    display_walk_name_into(name, names);
     let len = names.len() - off;
     if len == 0 {
         return;
@@ -1895,7 +1897,10 @@ pub fn phys_footprint_bytes() -> Option<u64> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        host_play::current_resident_bytes()
+        match frontend_core::resources::probe_process() {
+            frontend_core::resources::ProcessProbe::Sampled { resident, .. } => resident,
+            _ => None,
+        }
     }
 }
 

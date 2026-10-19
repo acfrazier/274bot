@@ -9,6 +9,11 @@
 //! that is marked more than once, or whose profile is gone, is still counted
 //! once.
 
+use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
+use crate::selection::{profile_rows, MarkedSelection};
+use crate::session::OperatorSession;
+
+use crate::walk_map::{WalkActionError, WalkMap, WalkMapContext};
 use host_play::walk_map::{
     ActionError, MapContext, MapWalkPlan, WalkRequest, WalkSlotOutcomeKind, WalkSlotRequest,
 };
@@ -16,10 +21,6 @@ use host_play::{WalkArms, WorldMembersFact};
 use nav::router::FindOptions;
 use nav::tile::Tile;
 use nav::WorldState;
-
-use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
-use crate::selection::{profile_rows, MarkedSelection};
-use crate::session::OperatorSession;
 
 const LABEL: &str = "Walk marked";
 const DONE: &str = "walking";
@@ -76,13 +77,19 @@ pub struct MarkedWalk<'a> {
 }
 
 impl<'a> MarkedWalk<'a> {
-    /// A consumed walk request.
-    pub fn new(
-        prepared: Result<(MapContext, MapWalkPlan), ActionError>,
-        destination: Option<Tile>,
+    pub(crate) fn new(
+        map: &mut WalkMap,
+        context: WalkMapContext,
         options: FindOptions,
         arms: &'a WalkArms,
     ) -> Self {
+        let destination = map
+            .pending()
+            .map(|selection| selection.reported_destination());
+        let prepared = map
+            .confirm_walk_plan(context, options)
+            .map(|plan| (context.to_host(), plan))
+            .map_err(WalkActionError::into_host);
         Self {
             prepared,
             destination,
@@ -184,6 +191,16 @@ pub fn walk_marked<Io>(
         })
         .collect();
     let report = play.map_walk_group(plan, &context, &requests, walk.arms);
+    let mut walking = false;
+    for outcome in &report.outcomes {
+        if let WalkSlotOutcomeKind::Walking = &outcome.kind {
+            core.frames().clear_step_latch(&outcome.name);
+            walking = true;
+        }
+    }
+    if walking {
+        let _ = core.frames().take_walk_clear();
+    }
     let legacy_zones_unavailable = report.legacy_zones_unavailable;
     rows.extend(
         report
@@ -214,6 +231,27 @@ pub fn walk_marked<Io>(
             }),
     );
     BulkReport::new(LABEL, DONE, rows, None)
+}
+
+impl<Io> OperatorSession<Io> {
+    /// Consume one map destination and walk every marked profile using its
+    /// own observed world state, bank rows, and risk inputs.
+    pub fn confirm_marked_walk(
+        &self,
+        selection: &MarkedSelection,
+        map: &mut WalkMap,
+        context: WalkMapContext,
+        options: FindOptions,
+    ) -> BulkReport {
+        let walk = MarkedWalk::new(map, context, options, self.walk_arms());
+        walk_marked(selection, self, walk, |name| {
+            WalkInputs::new(
+                self.walk_state(Some(name)),
+                self.bank_rows(name),
+                self.walk_risk_input(Some(name)),
+            )
+        })
+    }
 }
 
 #[cfg(test)]

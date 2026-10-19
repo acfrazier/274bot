@@ -1092,7 +1092,7 @@ impl<Io> SlotSurface for Detached<Io> {
         unreachable!("submit_detached refuses every row that attaches a slot")
     }
 
-    fn lifetime_reset(&mut self, _name: &str) {
+    fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {
         unreachable!("submit_detached refuses every row that resets a slot lifetime")
     }
 
