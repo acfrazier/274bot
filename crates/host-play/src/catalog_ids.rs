@@ -55,6 +55,10 @@ pub const LUMBRIDGE_DOOR_STAND: (i32, i32, i32) = (3208, 3212, 0);
 pub const LUMBRIDGE_GATE: (i32, i32, i32) = (3213, 3261, 0);
 pub const LUMBRIDGE_GATE_STAND: (i32, i32, i32) = (3213, 3260, 0);
 pub const GNOME_START: (i32, i32, i32) = (2474, 3436, 0);
+// The radius cell starts the script here, 11 tiles north of the Log balance
+// (2474,3435), so `searchRadius` 10 must leave the first obstacle alone
+// (scenario `GNOME_RADIUS_WITNESS_TILE`, agility.rs).
+pub const GNOME_RADIUS_START: (i32, i32, i32) = (2474, 3446, 0);
 pub const GNOME_AFTER_LOG: (i32, i32, i32) = (2474, 3429, 0);
 pub const GNOME_GROUND_RETURN: (i32, i32, i32) = (2487, 3420, 0);
 pub const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
