@@ -1,4 +1,8 @@
-use script::isolate_fb::{encode_snapshot, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+#![cfg(feature = "load")]
+
+use script::isolate_fb::{
+    encode_snapshot, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -59,7 +63,8 @@ unsafe impl GlobalAlloc for CountingAllocator {
             ALLOCATION_EVENTS.fetch_add(1, Ordering::Relaxed);
             ALLOCATED_BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
             if new_size >= layout.size() {
-                let bytes = LIVE_BYTES.fetch_add((new_size - layout.size()) as u64, Ordering::Relaxed)
+                let bytes = LIVE_BYTES
+                    .fetch_add((new_size - layout.size()) as u64, Ordering::Relaxed)
                     + (new_size - layout.size()) as u64;
                 update_peak(&PEAK_BYTES, bytes);
             } else {
@@ -96,7 +101,6 @@ fn allocator_counts_allocation_lifetimes() {
     let after = totals();
     assert_eq!(after.live_blocks, before.live_blocks);
     assert_eq!(after.live_bytes, before.live_bytes);
-
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -543,8 +547,13 @@ export default class QueryBot extends LoopingBot {
 }
 "#;
 
-fn actor_snapshot<'a>(tick: u64, npcs: &'a [SceneEntityInput<'a>], locs: &'a [SceneEntityInput<'a>],
-    players: &'a [SceneEntityInput<'a>], ground: &'a [SceneEntityInput<'a>]) -> SnapshotInput<'a> {
+fn actor_snapshot<'a>(
+    tick: u64,
+    npcs: &'a [SceneEntityInput<'a>],
+    locs: &'a [SceneEntityInput<'a>],
+    players: &'a [SceneEntityInput<'a>],
+    ground: &'a [SceneEntityInput<'a>],
+) -> SnapshotInput<'a> {
     let mut snapshot = empty_snapshot(tick);
     snapshot.npcs = npcs;
     snapshot.locs = locs;
@@ -554,7 +563,8 @@ fn actor_snapshot<'a>(tick: u64, npcs: &'a [SceneEntityInput<'a>], locs: &'a [Sc
 }
 
 fn allocation_tick(iso: &LoadIsolate, tick: u64, iterations: u32) -> (serde_json::Value, Metrics) {
-    iso.probe(&format!("globalThis.__queryIterations = {iterations}")).unwrap();
+    iso.probe(&format!("globalThis.__queryIterations = {iterations}"))
+        .unwrap();
     let mut snapshot = empty_snapshot(tick);
     let actions = ["Attack".to_string()];
     let npcs = [entity(1, 9, Some("Goblin"), 3201, 3201, 0, 1, &actions)];
@@ -583,8 +593,16 @@ export default class AllocationBot extends LoopingBot {
 #[test]
 fn complete_entities_and_query_contract_on_served_isolates() {
     allocator_counts_allocation_lifetimes();
-    let npc_actions = ["hidden".to_string(), "Attack".to_string(), "Talk-to".to_string()];
-    let loc_actions = ["hidden".to_string(), "Open".to_string(), "Search".to_string()];
+    let npc_actions = [
+        "hidden".to_string(),
+        "Attack".to_string(),
+        "Talk-to".to_string(),
+    ];
+    let loc_actions = [
+        "hidden".to_string(),
+        "Open".to_string(),
+        "Search".to_string(),
+    ];
     let player_actions = ["hidden".to_string(), "Trade".to_string()];
     let ground_actions = ["hidden".to_string(), "Take".to_string()];
     let mut npc = entity(7, 9, Some("Goblin"), 3201, 3202, 0, 1, &npc_actions);
@@ -608,7 +626,16 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     player.target_kind = 2;
     player.target_index = 2;
     let players = [player];
-    let ground = [entity(3, 200, Some("Bones"), 3200, 3202, 0, 2, &ground_actions)];
+    let ground = [entity(
+        3,
+        200,
+        Some("Bones"),
+        3200,
+        3202,
+        0,
+        2,
+        &ground_actions,
+    )];
     let snapshot = actor_snapshot(1, &npcs, &locs, &players, &ground);
 
     let iso = LoadIsolate::spawn(ENTITY_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -618,63 +645,116 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     assert_eq!(probe["roots"], serde_json::json!([2, 1, 2]));
     assert_eq!(probe["wrapped"], serde_json::json!([true, true, true]));
     assert_eq!(probe["npc"][0], "Goblin");
-    assert_eq!(probe["npc"][1..7], serde_json::json!([9, 7, true, 5, 8, 2])[..]);
+    assert_eq!(
+        probe["npc"][1..7],
+        serde_json::json!([9, 7, true, 5, 8, 2])[..]
+    );
     assert_eq!(probe["npc"][7..9], serde_json::json!([3201, 3202])[..]);
     assert_eq!(probe["npc"][9], 1);
     assert_eq!(probe["npc"][10], serde_json::json!(["Attack", "Talk-to"]));
     assert_eq!(probe["npc"][11..13], serde_json::json!([3199, 3200])[..]);
     assert_eq!(probe["targetVariants"], serde_json::json!([false, true]));
-    assert_eq!(probe["loc"][0..6], serde_json::json!(
-        ["Door", 100, 3200, 3201, 1, ["Open", "Search"]]
-    )[..]);
-    assert_eq!(probe["player"][0..4], serde_json::json!(["alice", 2, true, 42])[..]);
+    assert_eq!(
+        probe["loc"][0..6],
+        serde_json::json!(["Door", 100, 3200, 3201, 1, ["Open", "Search"]])[..]
+    );
+    assert_eq!(
+        probe["player"][0..4],
+        serde_json::json!(["alice", 2, true, 42])[..]
+    );
     assert_eq!(probe["player"][8], true);
-    assert_eq!(probe["ground"][0..7], serde_json::json!(
-        ["Bones", 200, 1, 3200, 3202, 2, ["Take"]]
-    )[..]);
-    assert_eq!(probe["partial"], serde_json::json!([null, null, null, [], 0]));
-    assert_eq!(probe["partialOther"], serde_json::json!([
-        null, null, 0, [],
-        null, null, 0, [],
-        null, null, 1, 0, [],
-    ]));
-    assert_eq!(probe["support"], serde_json::json!(
-        ["Talk-to", true, false, true]
-    ));
-    assert_eq!(probe["queueResults"], serde_json::json!([true, true, true, true]));
+    assert_eq!(
+        probe["ground"][0..7],
+        serde_json::json!(["Bones", 200, 1, 3200, 3202, 2, ["Take"]])[..]
+    );
+    assert_eq!(
+        probe["partial"],
+        serde_json::json!([null, null, null, [], 0])
+    );
+    assert_eq!(
+        probe["partialOther"],
+        serde_json::json!([null, null, 0, [], null, null, 0, [], null, null, 1, 0, [],])
+    );
+    assert_eq!(
+        probe["support"],
+        serde_json::json!(["Talk-to", true, false, true])
+    );
+    assert_eq!(
+        probe["queueResults"],
+        serde_json::json!([true, true, true, true])
+    );
     assert_eq!(probe["nearest"], serde_json::json!([9, 9]));
     assert_eq!(probe["firstIdentity"], true);
     assert_eq!(probe["queryMethods"], serde_json::json!([2, true, true]));
     let interactions = iso.drain_interacts();
-    assert_eq!(interactions, vec![
-        InteractReq::Npc { name: "Goblin".into(), action: "Attack".into(), index: Some(7) },
-        InteractReq::Loc { x: 3200, z: 3201, level: 0, action: "Open".into(), id: Some(100) },
-        InteractReq::Player { name: "alice".into(), action: "Trade".into() },
-        InteractReq::Obj { x: 3200, z: 3202, level: 0, name: Some("Bones".into()), action: "Take".into() },
-    ]);
+    assert_eq!(
+        interactions,
+        vec![
+            InteractReq::Npc {
+                name: "Goblin".into(),
+                action: "Attack".into(),
+                index: Some(7)
+            },
+            InteractReq::Loc {
+                x: 3200,
+                z: 3201,
+                level: 0,
+                action: "Open".into(),
+                id: Some(100)
+            },
+            InteractReq::Player {
+                name: "alice".into(),
+                action: "Trade".into()
+            },
+            InteractReq::Obj {
+                x: 3200,
+                z: 3202,
+                level: 0,
+                name: Some("Bones".into()),
+                action: "Take".into()
+            },
+        ]
+    );
     iso.join();
 
-    let query_iso = LoadIsolate::spawn(QUERY_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let query_iso =
+        LoadIsolate::spawn(QUERY_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     assert_eq!(query_iso.probe("1").unwrap(), serde_json::json!(1));
     let query_probe = tick(&query_iso, &empty_snapshot(1));
     assert_eq!(query_probe["chain"][0], serde_json::json!([1, 2, 3]));
     assert_eq!(query_probe["chain"][1], 1);
     assert_eq!(query_probe["chain"][2], 2);
-    assert_eq!(query_probe["chain"][3..8], serde_json::json!([null, false, 0, null, null])[..]);
-    assert_eq!(query_probe["nameEdges"], serde_json::json!([false, true, true, 1]));
+    assert_eq!(
+        query_probe["chain"][3..8],
+        serde_json::json!([null, false, 0, null, null])[..]
+    );
+    assert_eq!(
+        query_probe["nameEdges"],
+        serde_json::json!([false, true, true, 1])
+    );
     assert_eq!(query_probe["invalid"], serde_json::json!(["partial"]));
     assert_eq!(query_probe["supplyCalls"], 3);
     assert_eq!(query_probe["identity"], serde_json::json!([true, true]));
     assert_eq!(query_probe["callbackResult"], true);
-    assert_eq!(query_probe["callbackErrors"], serde_json::json!([true, true, true, true, true]));
+    assert_eq!(
+        query_probe["callbackErrors"],
+        serde_json::json!([true, true, true, true, true])
+    );
     assert_eq!(query_probe["early"][0], true);
     assert_eq!(query_probe["early"][1], 1);
     assert_eq!(query_probe["early"][2], 1);
-    assert_eq!(query_probe["overrides"], serde_json::json!([true, 1, true, true]));
-    assert_eq!(query_probe["radii"], serde_json::json!(
-        ["near", "near", "near", "near", "near"]
-    ));
-    assert_eq!(query_probe["actionPositions"], serde_json::json!([3, ["Attack"]]));
+    assert_eq!(
+        query_probe["overrides"],
+        serde_json::json!([true, 1, true, true])
+    );
+    assert_eq!(
+        query_probe["radii"],
+        serde_json::json!(["near", "near", "near", "near", "near"])
+    );
+    assert_eq!(
+        query_probe["actionPositions"],
+        serde_json::json!([3, ["Attack"]])
+    );
     assert_eq!(
         query_probe["mutable"],
         serde_json::json!(["tie", ["far:1", "near:1", "tie:1", "tie:2", "near:2"]])
@@ -690,7 +770,8 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     assert_eq!(order.iter().filter(|value| *value == "get-x").count(), 2);
     query_iso.join();
 
-    let allocation_iso = LoadIsolate::spawn(ALLOCATION_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let allocation_iso =
+        LoadIsolate::spawn(ALLOCATION_API.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     assert_eq!(allocation_iso.probe("1").unwrap(), serde_json::json!(1));
     let (_, cold_control) = allocation_tick(&allocation_iso, 1, 0);
     let (cold_probe, cold_query) = allocation_tick(&allocation_iso, 2, 1);
@@ -725,12 +806,34 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     let warm_excess = excess(warmed_query, warmed_control);
     let cold_query_excess = excess(cold_query, cold_control);
     eprintln!("entity query allocation metrics: cold_control={cold_control:?}; cold_first_touch={cold_query:?}; cold_query_excess={cold_query_excess:?}; warm_control={warmed_control:?}; warm_excess={warm_excess:?}");
-    assert!(cold_query.count_total <= 3, "cold entity callback allocation events: {cold_query:?}");
-    assert!(cold_query.count_current <= 3, "cold entity callback retained blocks: {cold_query:?}");
-    assert!(cold_query.count_max <= 3, "cold entity callback peak blocks: {cold_query:?}");
-    assert!(cold_query.bytes_total <= 336, "cold entity callback allocation bytes: {cold_query:?}");
-    assert!(cold_query.bytes_current <= 336, "cold entity callback retained bytes: {cold_query:?}");
-    assert!(cold_query.bytes_max <= 336, "cold entity callback peak bytes: {cold_query:?}");
-    assert_eq!(warm_excess, Metrics::default(), "warmed query callbacks added Rust allocations over the control");
+    assert!(
+        cold_query.count_total <= 3,
+        "cold entity callback allocation events: {cold_query:?}"
+    );
+    assert!(
+        cold_query.count_current <= 3,
+        "cold entity callback retained blocks: {cold_query:?}"
+    );
+    assert!(
+        cold_query.count_max <= 3,
+        "cold entity callback peak blocks: {cold_query:?}"
+    );
+    assert!(
+        cold_query.bytes_total <= 336,
+        "cold entity callback allocation bytes: {cold_query:?}"
+    );
+    assert!(
+        cold_query.bytes_current <= 336,
+        "cold entity callback retained bytes: {cold_query:?}"
+    );
+    assert!(
+        cold_query.bytes_max <= 336,
+        "cold entity callback peak bytes: {cold_query:?}"
+    );
+    assert_eq!(
+        warm_excess,
+        Metrics::default(),
+        "warmed query callbacks added Rust allocations over the control"
+    );
     allocation_iso.join();
 }
