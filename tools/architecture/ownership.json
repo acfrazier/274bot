@@ -5075,6 +5075,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/t2_gathering_family.rs",
       "owner": "T2"
     },

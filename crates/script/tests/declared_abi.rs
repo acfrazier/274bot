@@ -637,7 +637,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
     assert_eq!(contract["activation_state"], "partially-activated");
     assert_eq!(
         contract["active_families"],
-        serde_json::json!(["bank", "gathering", "skills", "world-primitives"])
+        serde_json::json!(["bank", "cow", "gathering", "skills", "world-primitives"])
     );
 
     let family_rows = graph["families"].as_array().expect("family rows");
