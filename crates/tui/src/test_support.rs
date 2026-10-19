@@ -100,3 +100,28 @@ pub fn find(rows: &[String], needle: &str) -> Option<(u16, u16)> {
 pub fn text(rows: &[String]) -> String {
     rows.join("\n")
 }
+
+/// Write a private-state fixture, usually a preferences file, with mode
+/// 0600 whatever the process umask. A plain write creates the file 0664
+/// under umask 0002, and the product reader refuses a group- or
+/// world-writable preferences file. The TUI has no `vault` dependency, so
+/// the mode is set here, before any read.
+pub fn write_private_fixture(
+    path: impl AsRef<std::path::Path>,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}

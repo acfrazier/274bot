@@ -2434,8 +2434,11 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     let path = frontend_core::scripts::paths::bot_home()
         .join(".274bot")
         .join("panel-ui.json");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, r#"{"last_focus":"alice","map_bake":"always"}"#).unwrap();
+    crate::test_support::write_private_fixture(
+        &path,
+        r#"{"last_focus":"alice","map_bake":"always"}"#,
+    )
+    .unwrap();
     let mut session = TuiSession::new(dummy_options());
     assert_eq!(
         session.map_desk.bake_gate().choice(),
@@ -2716,8 +2719,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     let path = frontend_core::scripts::paths::bot_home()
         .join(".274bot")
         .join("panel-ui.json");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(
+    crate::test_support::write_private_fixture(
         &path,
         r#"{"capture":false,"nav":{"pause_script_on_manual_walk_abort":false,"show_special_areas":true}}"#,
     )
@@ -2980,8 +2982,7 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     let prefs_path = frontend_core::scripts::paths::bot_home()
         .join(".274bot")
         .join("panel-ui.json");
-    std::fs::create_dir_all(prefs_path.parent().unwrap()).unwrap();
-    std::fs::write(
+    crate::test_support::write_private_fixture(
         &prefs_path,
         serde_json::to_vec(&serde_json::json!({
             "quester_paths": {
