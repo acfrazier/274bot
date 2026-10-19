@@ -349,7 +349,7 @@ it cannot register.
 Match `--profile` and the engine ports to the revision (274: `:43594`/`:80`;
 289: `:44594`/`:1080`).
 
-The nav pack is format v16 (magic `274V`); `decode` rejects v15 and older as
+The nav pack is format v17 (magic `274V`); `decode` rejects v16 and older as
 `BadVersion`. A new executable does not rewrite an existing override pack, so
 rebake override packs with `nav-pack` after updating.
 

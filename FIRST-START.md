@@ -118,7 +118,7 @@ canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
 build-time nav revision should match the world you play. `nav-pack` stays
 for custom bakes: `cargo run -p nav --bin nav-pack` over the content maps
 tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
-version byte **16**; v15 and older are `BadVersion` and must be rebaked).
+version byte **17**; v16 and older are `BadVersion` and must be rebaked).
 Details: [docs/api/nav.md](docs/api/nav.md).
 
 Catalog scripts (optional): set **`$RS2B0T`** or pass `--catalog` to an

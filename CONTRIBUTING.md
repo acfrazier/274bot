@@ -44,7 +44,7 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
   engine checkout's `engine/` folder (or set it once under `[env]` in
   `~/.cargo/config.toml`); set `BOT_NAV_BUILD=skip` to build without bundling. The
   `nav-pack` CLI stays for custom bakes (`$NAV_PACK` or
-  `~/.274bot/274bot.navpack`, magic `274V`, version byte **16**; v15 and older
+  `~/.274bot/274bot.navpack`, magic `274V`, version byte **17**; v16 and older
   are `BadVersion`). Details:
   [docs/api/nav.md](docs/api/nav.md).
 
