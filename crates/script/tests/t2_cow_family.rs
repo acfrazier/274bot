@@ -55,8 +55,7 @@ export default class CowProbe extends LoopingBot {
 "#;
 
 fn selected_data() -> Arc<SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289)
-        .expect("R289 selected game data")
+    api::game_data::for_revision(client::io::ClientRevision::R289).expect("R289 selected game data")
 }
 
 fn selected_banks(data: &SelectedGameData) -> NamedBankFacts {
