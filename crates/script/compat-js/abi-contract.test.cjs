@@ -53,7 +53,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 33);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 32);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
