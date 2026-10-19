@@ -6,6 +6,7 @@
 use api::snapshot::WorldTile;
 use std::borrow::Cow;
 use std::convert::Infallible;
+use std::ops::ControlFlow;
 
 pub(crate) const DEFAULT_BOOTH_NAME: &str = "Bank booth";
 pub(crate) const DEFAULT_BOOTH_OP: &str = "Use-quickly";
@@ -121,6 +122,116 @@ impl Nearest {
     }
 }
 
+/// Pool access stays with its owner: borrowed native rows or observable V8
+/// methods/getters. The driver below alone selects the pool and ranks rows.
+pub(crate) trait Resolver {
+    type Pool;
+    type Row;
+    type Error;
+
+    fn pool(&mut self, local_only: bool) -> Result<Self::Pool, Self::Error>;
+    fn first(&mut self, pool: &mut Self::Pool) -> Result<Option<(Self::Row, f64)>, Self::Error>;
+    /// Visit one candidate, retaining it only if the shared rank prefers it.
+    /// This lets V8 release the iteration's temporary handles before returning.
+    fn next(
+        &mut self,
+        pool: &mut Self::Pool,
+        prefer: impl FnOnce(f64) -> bool,
+    ) -> Result<ControlFlow<(), Option<Self::Row>>, Self::Error>;
+    fn find_named(&mut self) -> Result<Option<Self::Row>, Self::Error>;
+}
+
+pub(crate) fn resolve_with<R: Resolver>(
+    mode: Resolution,
+    resolver: &mut R,
+) -> Result<Option<R::Row>, R::Error> {
+    match mode {
+        Resolution::Freeform => Ok(None),
+        Resolution::Named => resolver.find_named(),
+        Resolution::Closest | Resolution::Auto => {
+            let mut pool = resolver.pool(mode == Resolution::Auto)?;
+            let Some((mut best, distance)) = resolver.first(&mut pool)? else {
+                return Ok(None);
+            };
+            let mut rank = Nearest::new(distance);
+            while let ControlFlow::Continue(candidate) =
+                resolver.next(&mut pool, |distance| rank.consider(distance))?
+            {
+                if let Some(row) = candidate {
+                    best = row;
+                }
+            }
+            Ok(Some(best))
+        }
+    }
+}
+
+struct NativePool<'a, T> {
+    rows: std::slice::Iter<'a, T>,
+    local_only: bool,
+}
+
+struct NativeResolver<'a, 's, T> {
+    setting: &'s str,
+    start: WorldTile,
+    rows: &'a [T],
+}
+
+impl<'a, T: Location> NativeResolver<'a, '_, T> {
+    fn candidate(&self, pool: &mut NativePool<'a, T>) -> Option<&'a T> {
+        pool.rows
+            .find(|row| !pool.local_only || same_map_square(self.start, row.spot()))
+    }
+}
+
+impl<'a, T: Location> Resolver for NativeResolver<'a, '_, T> {
+    type Pool = NativePool<'a, T>;
+    type Row = &'a T;
+    type Error = Infallible;
+
+    fn pool(&mut self, local_only: bool) -> Result<Self::Pool, Self::Error> {
+        Ok(NativePool {
+            rows: self.rows.iter(),
+            local_only,
+        })
+    }
+
+    fn first(&mut self, pool: &mut Self::Pool) -> Result<Option<(Self::Row, f64)>, Self::Error> {
+        Ok(self
+            .candidate(pool)
+            .map(|row| (row, distance(self.start, row.spot()))))
+    }
+
+    fn next(
+        &mut self,
+        pool: &mut Self::Pool,
+        prefer: impl FnOnce(f64) -> bool,
+    ) -> Result<ControlFlow<(), Option<Self::Row>>, Self::Error> {
+        let Some(row) = self.candidate(pool) else {
+            return Ok(ControlFlow::Break(()));
+        };
+        Ok(ControlFlow::Continue(
+            prefer(distance(self.start, row.spot())).then_some(row),
+        ))
+    }
+
+    fn find_named(&mut self) -> Result<Option<Self::Row>, Self::Error> {
+        let normalized = if self.setting.is_ascii() {
+            Cow::Borrowed(self.setting)
+        } else {
+            lowercase(self.setting)
+        };
+        Ok(self.rows.iter().find(|row| {
+            let name = row.name();
+            if name.is_ascii() {
+                name.eq_ignore_ascii_case(&normalized)
+            } else {
+                lowercase(name).eq_ignore_ascii_case(&normalized)
+            }
+        }))
+    }
+}
+
 fn distance(from: WorldTile, to: WorldTile) -> f64 {
     distance_delta(
         f64::from(to.x) - f64::from(from.x),
@@ -139,37 +250,15 @@ pub fn resolve<'a, T: Location>(setting: &str, start: WorldTile, rows: &'a [T]) 
     } else {
         resolution(|alias| setting.eq_ignore_ascii_case(alias))
     };
-    match mode {
-        Resolution::Freeform => None,
-        mode @ (Resolution::Closest | Resolution::Auto) => {
-            let mut candidates = rows
-                .iter()
-                .filter(|row| mode != Resolution::Auto || same_map_square(start, row.spot()));
-            let mut best = candidates.next()?;
-            let mut rank = Nearest::new(distance(start, best.spot()));
-            for row in candidates {
-                if rank.consider(distance(start, row.spot())) {
-                    best = row;
-                }
-            }
-            Some(best)
-        }
-        Resolution::Named => {
-            let normalized = if setting.is_ascii() {
-                Cow::Borrowed(setting)
-            } else {
-                lowercase(setting)
-            };
-            rows.iter().find(|row| {
-                let name = row.name();
-                if name.is_ascii() {
-                    name.eq_ignore_ascii_case(&normalized)
-                } else {
-                    lowercase(name).eq_ignore_ascii_case(&normalized)
-                }
-            })
-        }
-    }
+    resolve_with(
+        mode,
+        &mut NativeResolver {
+            setting,
+            start,
+            rows,
+        },
+    )
+    .unwrap_or_else(|never| match never {})
 }
 
 fn lowercase(value: &str) -> Cow<'_, str> {
@@ -336,5 +425,70 @@ mod tests {
         println!("Gathering typed core cold={cold:?}; warm1000={warm:?}");
         assert_eq!(cold, allocation_counter::AllocationInfo::default());
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    #[test]
+    fn typed_driver_reads_only_the_selected_pool_or_name_path() {
+        use std::cell::RefCell;
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Read {
+            Name(&'static str),
+            Spot(&'static str),
+        }
+        struct Observed<'a> {
+            row: Row,
+            reads: &'a RefCell<Vec<Read>>,
+        }
+        impl Location for Observed<'_> {
+            fn name(&self) -> &str {
+                self.reads.borrow_mut().push(Read::Name(self.row.name));
+                self.row.name
+            }
+            fn spot(&self) -> WorldTile {
+                self.reads.borrow_mut().push(Read::Spot(self.row.name));
+                self.row.spot
+            }
+        }
+        let reads = RefCell::new(Vec::new());
+        let rows = [
+            row("Remote", 64, 10, 0),
+            row("Local", 60, 10, 0),
+            row("Other plane", 63, 10, 1),
+        ]
+        .map(|row| Observed { row, reads: &reads });
+        let start = tile(63, 10, 0);
+        assert!(resolve("Use Start Position", start, &rows).is_none());
+        assert!(reads.borrow().is_empty());
+        assert!(std::ptr::eq(
+            resolve("Local", start, &rows).unwrap(),
+            &rows[1]
+        ));
+        assert_eq!(reads.take(), [Read::Name("Remote"), Read::Name("Local")]);
+        assert!(std::ptr::eq(
+            resolve("Use Closest", start, &rows).unwrap(),
+            &rows[2]
+        ));
+        assert_eq!(
+            reads.take(),
+            [
+                Read::Spot("Remote"),
+                Read::Spot("Local"),
+                Read::Spot("Other plane")
+            ]
+        );
+        assert!(std::ptr::eq(
+            resolve("Auto", start, &rows).unwrap(),
+            &rows[1]
+        ));
+        assert_eq!(
+            reads.take(),
+            [
+                Read::Spot("Remote"),
+                Read::Spot("Local"),
+                Read::Spot("Local"),
+                Read::Spot("Other plane")
+            ]
+        );
     }
 }
