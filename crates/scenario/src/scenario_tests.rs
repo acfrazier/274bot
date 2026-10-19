@@ -4741,7 +4741,7 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
     let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("searchRadius").and_then(Value::as_f64),
-        Some(8.0)
+        Some(10.0)
     );
 
     let flax = get("flax_picker").expect("flax_picker");
