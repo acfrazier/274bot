@@ -12,6 +12,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Cooking location options and name lookups now run in Rust over the existing
+  bank-bound catalog. Curated surfaces, unlock callbacks and returned object
+  identities keep their existing behavior.
+- The runecrafting compatibility catalog is materialized directly from the Rust
+  route roster. Its names, order, default rune and real Tile values are unchanged;
+  the unused posted content-page copy has been removed.
+- Cow location, toll, bootstrap and loot-leash helpers are admitted as a complete
+  Rust-backed compatibility family. Catalog order, selected-bank bindings,
+  object identities and existing behavior are unchanged.
+- Skills lookups and HP fraction calculations now run in Rust over the
+  already-posted stats rows. Compatibility names, row ordering, missing-skill
+  errors and boosted levels keep their existing behavior.
 - World Tile copying, translation, equality, text conversion and posted-coordinate
   validation now run in Rust. Area sampling returns a real Tile in the same native
   call. Existing geometry bounds, plane rules and caller-visible values stay the

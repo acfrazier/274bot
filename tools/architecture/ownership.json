@@ -3531,6 +3531,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/rune_routes_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/runtime_bridge.rs",
       "owner": "T1"
     },
@@ -3548,6 +3552,10 @@
     },
     {
       "path": "crates/script/src/load/shop_ops_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/skills_v8.rs",
       "owner": "T2"
     },
     {
@@ -5060,6 +5068,22 @@
     },
     {
       "path": "crates/script/tests/supply_helpers.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_cooking_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_runecrafting_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_skills_family.rs",
       "owner": "T2"
     },
     {

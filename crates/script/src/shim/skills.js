@@ -1,47 +1,24 @@
-// Our Skills module: reads posted stats rows. Missing members throw `not impl`.
-import { notImpl, proxy, snap } from '../../shim/_kernel.js';
-
-const stats = () => snap().stats || [];
-
-function mustStat(name, op) {
-    const i = stats().findIndex(
-        (row) => row && typeof row.name === 'string' && row.name.toLowerCase() === String(name).toLowerCase(),
-    );
-    if (i === -1) throw notImpl(op);
-    const row = stats()[i];
-    if (!row) throw notImpl(op);
-    return row;
-}
+// Skills preserves the compat surface while Rust reads the already-posted stats.
+import { notImpl } from '../../shim/_kernel.js';
 
 export const Skills = new Proxy(
     {
         index(name) {
-            const wanted = String(name).toLowerCase();
-            return stats().findIndex(
-                (row) => row && typeof row.name === 'string' && row.name.toLowerCase() === wanted,
-            );
+            return globalThis.__rs2b0t_skills(0, name);
         },
         xp(name) {
-            const row = mustStat(name, 'Skills.xp');
-            if (typeof row.xp !== 'number') throw notImpl('Skills.xp');
-            return row.xp;
+            return globalThis.__rs2b0t_skills(1, name);
         },
         // Unboosted / max HP — posted `base`.
         level(name) {
-            const row = mustStat(name, 'Skills.level');
-            if (typeof row.base !== 'number') throw notImpl('Skills.level');
-            return row.base;
+            return globalThis.__rs2b0t_skills(2, name);
         },
         // Current / boosted — posted `effective`.
         effective(name) {
-            const row = mustStat(name, 'Skills.effective');
-            if (typeof row.effective !== 'number') throw notImpl('Skills.effective');
-            return row.effective;
+            return globalThis.__rs2b0t_skills(3, name);
         },
         hpFraction() {
-            const base = Skills.level('hitpoints');
-            if (base <= 0) throw notImpl('Skills.hpFraction');
-            return Skills.effective('hitpoints') / base;
+            return globalThis.__rs2b0t_skills(4, Skills);
         },
     },
     {
