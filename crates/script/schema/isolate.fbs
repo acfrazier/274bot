@@ -898,7 +898,7 @@ table Interact {
   index: int = null; // NPC index, or the radius for walk-near.
   component_id: int = null;
   bank_generation: ulong = null;
-  bank_item_id: int = null;
+  bank_item_id: int = null; // Also the deposit's selected bank-side item id.
   lands_as_id: int = null;
   source_item_id: int = null;
   source_item_slot: int = null;

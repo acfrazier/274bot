@@ -3319,3 +3319,415 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
     }
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
+
+// Behavioural oracle tests for the combat bank cells: the real catalog
+// scenario is driven from its StartScript step on with a synthetic client
+// whose observations change tick by tick. Each cell has one correct sequence
+// that passes and one bad sequence per named behaviour; a bad sequence is the
+// correct one with only that behaviour changed, and must fail at the step
+// that watches it.
+
+const ORACLE_STRENGTH_STAT: usize = 2;
+const ORACLE_COINS_ID: i32 = 995;
+
+/// What one cell's driver does differently from the correct sequence.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Flaw {
+    Correct,
+    /// The supply event never happens: no looted bones reach the pack
+    /// (hill giant, ardy fighter) or the carried Lobsters never run out
+    /// (green dragon).
+    NoSupplyEvent,
+    /// The bot reaches an open bank, but the loot is not in it.
+    NotDeposited,
+    /// The bot never reaches the bank: no bank window, no deposit/restock.
+    OutboundStall,
+    /// The bot banks but never comes back near the field.
+    ReturnStall,
+    /// The Strength XP is gained before the return, none after it.
+    StaleXp,
+    /// The death line is posted after Start, then recovery proceeds.
+    DiedAfterStart,
+    /// The death line is in the chat before Start; nothing dies afterwards.
+    DeathLineBeforeStart,
+}
+
+struct OracleCell {
+    name: &'static str,
+    field: WorldTile,
+    bank: WorldTile,
+    /// Pack when the card starts.
+    carried: &'static [(i32, i32)],
+    /// Pack once the supply event has happened.
+    supplied: &'static [(i32, i32)],
+    /// Bank rows at the booth on the correct trip.
+    bank_rows: &'static [(i32, i32)],
+    /// Pack after the bank visit on the correct trip.
+    restocked: &'static [(i32, i32)],
+    /// Item the correct trip deposits (and that the `NotDeposited` bad trip
+    /// keeps in the pack), if the cell has a deposit.
+    deposited: Option<(i32, i32)>,
+    supply_step: &'static str,
+    /// The first step that needs the bank trip (deposit, or restock).
+    visit_step: &'static str,
+    return_step: &'static str,
+    xp_step: &'static str,
+}
+
+const HILL_ORACLE: OracleCell = OracleCell {
+    name: "hill_giant_bank",
+    field: WorldTile {
+        x: 3110,
+        z: 9832,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 3185,
+        z: 3436,
+        level: 0,
+    },
+    carried: &[(333, 8)],
+    supplied: &[(333, 8), (532, 1)],
+    bank_rows: &[(532, 1)],
+    restocked: &[(333, 12)],
+    deposited: Some((532, 1)),
+    supply_step: "watch the first looted Giant drop in pack before the bank trip",
+    visit_step: "watch the trip's looted drop enter a fresh Varrock West bank",
+    return_step: "watch return to the giant pit after banking",
+    xp_step: "watch fresh Strength XP after the bank return",
+};
+
+/// The same trip when the card takes the Giant's Limpwurt root first: it is
+/// in HillGiant's default loot list beside the Big bones, so it ends the
+/// one-slot trip just as well (`r3a-hill_giant_bank`).
+const HILL_LIMPWURT_ORACLE: OracleCell = OracleCell {
+    supplied: &[(333, 8), (225, 1)],
+    bank_rows: &[(225, 1)],
+    deposited: Some((225, 1)),
+    ..HILL_ORACLE
+};
+
+const ARDY_ORACLE: OracleCell = OracleCell {
+    name: "ardy_fighter_bank",
+    field: WorldTile {
+        x: 2661,
+        z: 3306,
+        level: 0,
+    },
+    bank: ARDY_FIGHT_BANK,
+    carried: &[],
+    supplied: &[(526, 1)],
+    bank_rows: &[(526, 1)],
+    restocked: &[],
+    deposited: Some((526, 1)),
+    supply_step: "watch the Guard's looted Bones in pack before the bank trip",
+    visit_step: "watch a Guard drop enter a fresh East Ardougne bank",
+    return_step: "watch return to the market anchor after banking",
+    xp_step: "watch fresh Strength XP after the bank return",
+};
+
+const GREEN_ORACLE: OracleCell = OracleCell {
+    name: "green_dragon_bank",
+    field: WorldTile {
+        x: 3096,
+        z: 3814,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 3096,
+        z: 3494,
+        level: 0,
+    },
+    carried: &[(379, 12)],
+    supplied: &[],
+    bank_rows: &[(379, 100)],
+    restocked: &[(379, 20)],
+    deposited: None,
+    supply_step: "watch the carried Lobsters run out before the bank trip",
+    visit_step: "watch the restock of Lobster to the card's foodWithdraw 20",
+    return_step: "watch return to the dragon field after banking",
+    xp_step: "watch fresh Strength XP after the bank return",
+};
+
+fn oracle_settle(runner: &mut ScenarioRunner, c: &mut Client, ticks: usize) {
+    for _ in 0..ticks {
+        tick_dirty(runner, c, false);
+    }
+}
+
+fn oracle_gain_strength(c: &mut Client) {
+    c.stat_xp[ORACLE_STRENGTH_STAT] += 4;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+}
+
+/// Open a withdraw window whose full contents are `rows`, the way the server
+/// does: modal open, then a full inventory update for the grid component.
+fn oracle_open_bank(c: &mut Client, rows: &[(i32, i32)]) {
+    use client::io::Packet;
+    c.set_iface(
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0; 8]),
+            link_obj_number: Some(vec![0; 8]),
+            ..Default::default()
+        },
+    );
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut Packet::new(vec![2, 88]));
+    let mut full = vec![2, 89, rows.len() as u8];
+    for &(id, count) in rows {
+        let stored = id + 1;
+        full.extend([(stored >> 8) as u8, (stored & 0xff) as u8, count as u8]);
+    }
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut Packet::new(full));
+}
+
+fn oracle_close_bank(c: &mut Client) {
+    c.main_modal_id = -1;
+    c.bump_gens(ServerProt::IF_CLOSE);
+}
+
+/// Tick until the run ends or the largest budget in the scenario has been
+/// spent with a margin, and return the status.
+fn oracle_finish(runner: &mut ScenarioRunner, c: &mut Client) -> RunnerStatus {
+    let cap = runner
+        .scenario
+        .steps
+        .iter()
+        .map(|step| step.wait.budget_ticks)
+        .max()
+        .unwrap()
+        + 5;
+    for _ in 0..cap {
+        if matches!(
+            runner.status(),
+            RunnerStatus::Passed | RunnerStatus::Failed(_)
+        ) {
+            break;
+        }
+        tick_dirty(runner, c, false);
+    }
+    runner.status()
+}
+
+/// The correct observation sequence for `cell`, with only `flaw` changed.
+fn oracle_drive(cell: &OracleCell, flaw: Flaw) -> RunnerStatus {
+    let (mut runner, mut c) = from_start(cell.name);
+    set_inv(&mut c, cell.carried);
+    if flaw == Flaw::DeathLineBeforeStart {
+        push_system_chat(&mut c, crate::random_episode::DEATH_MESSAGE);
+    }
+    oracle_settle(&mut runner, &mut c, 2);
+    if flaw == Flaw::DiedAfterStart {
+        push_system_chat(&mut c, crate::random_episode::DEATH_MESSAGE);
+    }
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    if flaw != Flaw::NoSupplyEvent {
+        set_inv(&mut c, cell.supplied);
+    }
+    oracle_settle(&mut runner, &mut c, 2);
+    if flaw != Flaw::OutboundStall {
+        set_world_tile(&mut c, cell.bank);
+        let rows: &[(i32, i32)] = if flaw == Flaw::NotDeposited {
+            &[(ORACLE_COINS_ID, 100)]
+        } else {
+            cell.bank_rows
+        };
+        oracle_open_bank(&mut c, rows);
+        let mut pack = cell.restocked.to_vec();
+        if let (Flaw::NotDeposited, Some(kept)) = (flaw, cell.deposited) {
+            pack.push(kept);
+        }
+        set_inv(&mut c, &pack);
+        oracle_settle(&mut runner, &mut c, 3);
+        oracle_close_bank(&mut c);
+        oracle_settle(&mut runner, &mut c, 2);
+    }
+    if flaw == Flaw::StaleXp {
+        oracle_gain_strength(&mut c);
+    }
+    if flaw != Flaw::ReturnStall {
+        set_world_tile(&mut c, cell.field);
+    }
+    oracle_settle(&mut runner, &mut c, 2);
+    if flaw != Flaw::StaleXp {
+        oracle_gain_strength(&mut c);
+    }
+    oracle_finish(&mut runner, &mut c)
+}
+
+fn oracle_assert_fails_at(cell: &OracleCell, flaw: Flaw, step: &str) {
+    let budget = from_start(cell.name)
+        .0
+        .scenario
+        .steps
+        .iter()
+        .find(|candidate| candidate.name == step)
+        .unwrap_or_else(|| panic!("{}: no step named {step:?}", cell.name))
+        .wait
+        .budget_ticks;
+    match oracle_drive(cell, flaw) {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains(step),
+                "{} {flaw:?} must fail at {step:?}: {msg}",
+                cell.name
+            );
+            assert!(
+                msg.contains(&format!("not seen within {budget} ticks")),
+                "{} {flaw:?} must exhaust the step's own {budget}-tick budget: {msg}",
+                cell.name
+            );
+        }
+        other => panic!(
+            "{} {flaw:?} must fail at {step:?}, got {other:?}",
+            cell.name
+        ),
+    }
+}
+
+fn oracle_assert_passes(cell: &OracleCell, flaw: Flaw) {
+    assert_eq!(
+        oracle_drive(cell, flaw),
+        RunnerStatus::Passed,
+        "{} {flaw:?}",
+        cell.name
+    );
+}
+
+#[test]
+fn hill_giant_bank_oracle_passes_the_full_trip() {
+    oracle_assert_passes(&HILL_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn hill_giant_bank_oracle_passes_a_limpwurt_first_trip() {
+    oracle_assert_passes(&HILL_LIMPWURT_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_a_limpwurt_kept_in_the_pack() {
+    oracle_assert_fails_at(
+        &HILL_LIMPWURT_ORACLE,
+        Flaw::NotDeposited,
+        HILL_LIMPWURT_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_xp_without_looted_bones() {
+    oracle_assert_fails_at(&HILL_ORACLE, Flaw::NoSupplyEvent, HILL_ORACLE.supply_step);
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_loot_without_deposit() {
+    oracle_assert_fails_at(&HILL_ORACLE, Flaw::NotDeposited, HILL_ORACLE.visit_step);
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(&HILL_ORACLE, Flaw::OutboundStall, HILL_ORACLE.visit_step);
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(&HILL_ORACLE, Flaw::ReturnStall, HILL_ORACLE.return_step);
+}
+
+#[test]
+fn hill_giant_bank_oracle_rejects_xp_gained_only_before_the_return() {
+    oracle_assert_fails_at(&HILL_ORACLE, Flaw::StaleXp, HILL_ORACLE.xp_step);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_passes_the_full_trip() {
+    oracle_assert_passes(&ARDY_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_rejects_xp_without_looted_bones() {
+    oracle_assert_fails_at(&ARDY_ORACLE, Flaw::NoSupplyEvent, ARDY_ORACLE.supply_step);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_rejects_loot_without_deposit() {
+    oracle_assert_fails_at(&ARDY_ORACLE, Flaw::NotDeposited, ARDY_ORACLE.visit_step);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(&ARDY_ORACLE, Flaw::OutboundStall, ARDY_ORACLE.visit_step);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(&ARDY_ORACLE, Flaw::ReturnStall, ARDY_ORACLE.return_step);
+}
+
+#[test]
+fn ardy_fighter_bank_oracle_rejects_xp_gained_only_before_the_return() {
+    oracle_assert_fails_at(&ARDY_ORACLE, Flaw::StaleXp, ARDY_ORACLE.xp_step);
+}
+
+#[test]
+fn green_dragon_bank_oracle_passes_the_full_trip() {
+    oracle_assert_passes(&GREEN_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn green_dragon_bank_oracle_rejects_food_that_never_runs_out() {
+    oracle_assert_fails_at(&GREEN_ORACLE, Flaw::NoSupplyEvent, GREEN_ORACLE.supply_step);
+}
+
+#[test]
+fn green_dragon_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(&GREEN_ORACLE, Flaw::OutboundStall, GREEN_ORACLE.visit_step);
+}
+
+#[test]
+fn green_dragon_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(&GREEN_ORACLE, Flaw::ReturnStall, GREEN_ORACLE.return_step);
+}
+
+#[test]
+fn green_dragon_bank_oracle_rejects_xp_gained_only_before_the_return() {
+    oracle_assert_fails_at(&GREEN_ORACLE, Flaw::StaleXp, GREEN_ORACLE.xp_step);
+}
+
+#[test]
+fn green_dragon_bank_oracle_rejects_death_then_full_recovery() {
+    // The recovery (restock, close, return, fresh XP) is the correct trip, so
+    // without the death line this exact sequence passes.
+    match oracle_drive(&GREEN_ORACLE, Flaw::DiedAfterStart) {
+        RunnerStatus::Failed(msg) => assert!(
+            msg.contains("died"),
+            "a death after Start must fail the run by name: {msg}"
+        ),
+        other => panic!("a death after Start must fail the run, got {other:?}"),
+    }
+}
+
+#[test]
+fn green_dragon_bank_oracle_ignores_a_death_line_from_before_start() {
+    oracle_assert_passes(&GREEN_ORACLE, Flaw::DeathLineBeforeStart);
+}

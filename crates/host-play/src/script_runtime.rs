@@ -13,6 +13,15 @@ pub(crate) use bank::BankPickWorkObservation;
 pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     bank::poll_bank_pick(navs, name, Instant::now());
 }
+#[cfg(test)]
+pub(super) fn dispatch_observed_bank_op_for_test(
+    driver: &mut dyn Driver,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    req: &script::shim::InteractReq,
+) -> Option<script::slot::PendingBankOp> {
+    dispatch_observed_bank_op(driver, snapshot, obj_names, None, req)
+}
 #[path = "script_nav.rs"]
 mod script_nav;
 pub(crate) use script_nav::pump_route_work;

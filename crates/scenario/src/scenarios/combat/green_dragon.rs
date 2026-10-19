@@ -559,9 +559,16 @@ fn prepare_safe_empty_food_escape_before_hostile_teleport(scenario: &mut Scenari
     );
 }
 
-/// GreenDragon BankRun to Edgeville: food-gone / pack-full trip deposits
-/// bones or hide, restocks lobster to `foodWithdraw` 20, and walks back
-/// past the wilderness ditch.
+/// GreenDragon's food-gone BankRun to Edgeville at the unprepared 40-stat
+/// profile: the card eats its twelve Lobsters, walks to Edgeville, restocks
+/// Lobster to `foodWithdraw` 20 and walks back past the wilderness ditch.
+///
+/// This profile does not kill a 75-HP green dragon before its food is gone:
+/// Engine A 2026-10-19 (`FIX-024/combat-bank/diagA1`, `diagA2`) measured the
+/// last Lobster eaten 270 dirties after the first hit with no kill, so the
+/// first trip deposits nothing. A deposit of bones or hide on this trip
+/// would be a chance outcome; the prepared siblings own the earned-kill
+/// deposit. The watches below follow the trip the profile always makes.
 pub(crate) fn green_dragon_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "green_dragon_bank",
@@ -581,10 +588,10 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
         24,
         &[
             (
-                "watch dragon bones or hide enter a fresh Edgeville bank",
-                Proof::BankItemIdAny {
-                    ids: &GREEN_DRAGON_BANK_DEPOSIT,
-                    count: 1,
+                "watch the carried Lobsters run out before the bank trip",
+                Proof::ItemIdAtMost {
+                    id: LOBSTER_ID,
+                    count: 0,
                 },
             ),
             (
@@ -613,6 +620,23 @@ pub(crate) fn green_dragon_bank_scenario() -> Scenario {
             ),
         ],
     );
+    scenario.settings.deadline = GREEN_DRAGON_BANK_DEADLINE;
+    // A death drops the pack and respawns the bot with its kept items; a
+    // later restock, return and fresh XP would then pass as this trip
+    // (`FIX-024/combat-bank/fixB2` died with eight Lobsters left).
+    scenario.settings.fail_on_death = true;
+    for step in &mut scenario.steps {
+        match step.name {
+            "watch the carried Lobsters run out before the bank trip" => {
+                step.wait.budget_ticks = GREEN_DRAGON_BANK_FOOD_WATCH_TICKS;
+            }
+            "watch the restock of Lobster to the card's foodWithdraw 20"
+            | "watch return to the dragon field after banking" => {
+                step.wait.budget_ticks = GREEN_DRAGON_BANK_ROUTE_WATCH_TICKS;
+            }
+            _ => {}
+        }
+    }
     wear_shield_before_hostile_teleport(&mut scenario);
     scenario
 }
@@ -920,6 +944,25 @@ const VARROCK_TELE_LAW: i32 = 3;
 const VARROCK_TELE_AIR: i32 = 9;
 const VARROCK_TELE_FIRE: i32 = 3;
 const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
+/// Food leg of `green_dragon_bank`, in runner dirty increments from the first
+/// hit to the last Lobster eaten. Engine A 2026-10-19 measured 270
+/// (`FIX-024/combat-bank/diagA2`) and 208 (`fixB1`); `diagA1` ate nine of
+/// twelve in the first 150. Rounded up to 400 so fewer dragon hits still end
+/// the leg, while a bot that stops fighting (and so stops eating) still
+/// fails it.
+const GREEN_DRAGON_BANK_FOOD_WATCH_TICKS: u32 = 400;
+/// Each foot leg between the field `(3096, 3814)` and the Edgeville booth
+/// `(3096, 3494)` is 320 Chebyshev tiles. At the bank-cell calibration of
+/// 1.25 dirty increments per tile plus the 7.5-dirty booth component
+/// (`rock_crab.rs`), `320 * 1.25 + 7.5 = 407.5`, rounded to 420. Measured:
+/// 220 and 246 to the restock, about 325 and 330 back (`diagA2`, `fixB1`;
+/// the card runs part of each leg).
+const GREEN_DRAGON_BANK_ROUTE_WATCH_TICKS: u32 = 420;
+/// Two 320-tile walks at 0.6 seconds per tile take 384 seconds, the food leg
+/// took 45 to 60 seconds and seed/Start about 20 (`diagA2`, `fixB1`): 464
+/// seconds, rounded to 540 to keep the booth, close and fresh-XP watches
+/// inside the cell.
+const GREEN_DRAGON_BANK_DEADLINE: Duration = Duration::from_secs(540);
 const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
