@@ -204,19 +204,16 @@ fn type_block<'a>(src: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
-/// `HostHandle.interact` is the queue `Bank`/`Banking` push onto: the bank
-/// shim queues `walk-nearest-bank` to reach a stand and `withdraw-load` to
-/// fill the pack (`bank.js`, `periodic_bank.js`). A union without them types
-/// a queue narrower than the one the isolate drains. `inspect-ack` stays off
-/// it: that ack is the isolate→host reply, never a script request.
+/// The author queue keeps public v2 bank requests. The native seat owns their
+/// work. The isolate's consume-only inspect acknowledgement stays private.
 #[test]
-fn interact_union_publishes_the_banked_queue_ops() {
+fn interact_union_publishes_only_live_bank_queue_ops() {
     let src = render_host_js_dts();
     let union = type_block(&src, "InteractReq");
     assert!(union.contains("| { op: 'walk-nearest-bank'}"), "{union}");
     assert!(
         union.contains("| { op: 'withdraw-load'; name: string; bank_generation: number}"),
-        "{union}"
+        "the public v2 load request keeps its documented fields: {union}"
     );
     assert!(
         !union.contains("inspect-ack"),

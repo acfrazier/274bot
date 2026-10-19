@@ -120,6 +120,7 @@ impl BankPickState {
             && left.target_count == right.target_count
             && left.walk_generation.is_some() == right.walk_generation.is_some()
             && left.native.is_some() == right.native.is_some()
+            && left.allow_air_fallback() == right.allow_air_fallback()
             && left.order.len() == right.order.len()
             && left
                 .order
@@ -233,6 +234,7 @@ impl BankPickState {
 struct NativePickContext {
     authority: HostAuthority,
     evidence: EvidenceStamp,
+    allow_air_fallback: bool,
 }
 
 struct BankCandidate {
@@ -706,7 +708,7 @@ impl CooperativeBankPickJob {
                     fallback: Box::default(),
                     options,
                     avoid: Box::default(),
-                    max_settles: NODE_BUDGET,
+                    max_settles: self.job.request.target_budget(),
                 }
             }
             BankPickSearchKind::Single => unreachable!("single searches have no target array"),
@@ -1249,7 +1251,7 @@ impl BankPickRequest {
                     fallback_capacity: 0,
                     options,
                     avoid_capacity: 0,
-                    max_settles: NODE_BUDGET,
+                    max_settles: self.target_budget(),
                 },
             ));
         }
@@ -1409,6 +1411,20 @@ impl BankPickJob {
 }
 
 impl BankPickRequest {
+    fn allow_air_fallback(&self) -> bool {
+        self.native
+            .as_ref()
+            .is_some_and(|native| native.allow_air_fallback)
+    }
+
+    fn target_budget(&self) -> usize {
+        if self.allow_air_fallback() {
+            BANK_TARGET_BUDGET
+        } else {
+            NODE_BUDGET
+        }
+    }
+
     fn first(&self) -> Option<usize> {
         self.order.first().map(|candidate| candidate.index)
     }
@@ -1467,11 +1483,20 @@ impl BankPickRequest {
         if bank_index == u16::MAX {
             return native_no_candidate();
         }
+        if kind == PickKind::AirFallback && self.allow_air_fallback() {
+            return SelectedBank {
+                bank_index,
+                access_tile: self.facts.banks()[index].air_tile(),
+                kind: NativePickKind::AirFallback,
+                access: None,
+            };
+        }
         let Some((tiles, access)) = candidate.access.as_ref() else {
             return native_no_candidate();
         };
         let access_tile = match (kind, access_tile) {
             (PickKind::Reachable, Some(tile)) if tiles.contains(&tile) => tile,
+            (PickKind::NearShortcut, None) if self.allow_air_fallback() => self.route_target(index),
             (PickKind::AirFallback, None) => self.route_target(index),
             _ => return native_no_candidate(),
         };
@@ -1753,16 +1778,19 @@ fn bank_candidates(
                 || native
                     .explicit_bank
                     .is_some_and(|explicit| usize::from(explicit) != index)
-                || !facts.banks()[index].routable
+                || (!facts.banks()[index].routable && !native.allow_air_fallback)
             {
                 continue;
             }
-            if let Some(access) = native_bank_access(world, facts.banks()[index]) {
-                target_count = target_count.saturating_add(access.0.len());
-                order.push(BankCandidate {
-                    index,
-                    access: Some(access),
-                });
+            let access = facts.banks()[index]
+                .routable
+                .then(|| native_bank_access(world, facts.banks()[index]))
+                .flatten();
+            if let Some((tiles, _)) = &access {
+                target_count = target_count.saturating_add(tiles.len());
+            }
+            if access.is_some() || native.allow_air_fallback {
+                order.push(BankCandidate { index, access });
             }
         }
     } else {
@@ -1783,9 +1811,11 @@ fn bank_candidates(
             });
         }
     }
-    order.sort_by_key(|candidate| {
-        bank_air_distance(from, facts.banks()[candidate.index].air_tile())
-    });
+    if !native.is_some_and(|native| native.allow_air_fallback) {
+        order.sort_by_key(|candidate| {
+            bank_air_distance(from, facts.banks()[candidate.index].air_tile())
+        });
+    }
     BankCandidates {
         order,
         target_count,
@@ -1859,43 +1889,7 @@ pub(super) fn queue_native_bank_pick_scoped(
     );
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Forwards one `SelectBank` request's values, the slot's fishing level and its navigation handles to `queue_bank`."
-)]
-pub(super) fn queue_bank_pick_scoped(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
-    name: &str,
-    scope: Scope,
-    world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
-    from: WorldTile,
-    allow_wilderness: bool,
-    request_id: u64,
-    preferences: BankPreferences,
-    fishing_base: Option<i32>,
-) {
-    queue_bank(
-        navs,
-        name,
-        scope,
-        world,
-        state,
-        from,
-        FindOptions {
-            allow_wilderness,
-            ..Default::default()
-        },
-        request_id,
-        preferences,
-        fishing_base,
-        false,
-        None,
-    );
-}
-
-/// The raw native verb keeps native option defaults. Compatibility callers
-/// use select-only then their own walk, so they retain their explicit options.
+/// The raw native walk-nearest-bank verb keeps native option defaults.
 pub(super) fn queue_bank_walk_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -2077,6 +2071,7 @@ fn queue_bank(
     let native = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,
+        allow_air_fallback: native.request.allow_air_fallback,
     });
     let request = make_bank_pick_request(
         request_id,
@@ -2090,28 +2085,39 @@ fn queue_bank(
         walk_generation,
         native,
     );
-    let near = request.native.is_none()
-        && first.is_some_and(|index| near_bank(from, request.route_target(index)));
+    let near_index = if request.allow_air_fallback() {
+        request
+            .order
+            .iter()
+            .find(|candidate| candidate.access.is_some())
+            .map(|candidate| candidate.index)
+    } else {
+        first
+    };
+    let near = (request.native.is_none() || request.allow_air_fallback())
+        && near_index.is_some_and(|index| near_bank(from, request.route_target(index)));
     let deadline = (!near).then_some(queued_at + BANK_SELECTION_WINDOW);
     let job = BankPickJob {
         generation,
         request,
         deadline,
     };
-    let inline_kind = if first.is_none() || (job.request.native.is_some() && target_count == 0) {
+    let native_without_targets =
+        job.request.native.is_some() && !job.request.allow_air_fallback() && target_count == 0;
+    let inline_kind = if first.is_none() || native_without_targets {
         Some(PickKind::NoCandidate)
     } else if near && !walking {
         Some(PickKind::NearShortcut)
-    } else if target_count == 0 && !walking && job.request.native.is_none() {
+    } else if target_count == 0 && !walking {
         Some(PickKind::AirFallback)
     } else {
         None
     };
     if let Some(kind) = inline_kind {
-        let index = if job.request.native.is_some() && target_count == 0 {
-            None
-        } else {
-            first
+        let index = match kind {
+            PickKind::NoCandidate => None,
+            PickKind::NearShortcut => near_index,
+            _ => first,
         };
         bot.bank_pick.pending_inline =
             Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
@@ -2524,7 +2530,9 @@ fn expire_bank_pick_deadline(
             let scope = active.scope;
             let index = job.request.first();
             let kind = if index.is_none()
-                || (job.request.native.is_some() && job.request.target_count == 0)
+                || (job.request.native.is_some()
+                    && !job.request.allow_air_fallback()
+                    && job.request.target_count == 0)
             {
                 PickKind::NoCandidate
             } else {

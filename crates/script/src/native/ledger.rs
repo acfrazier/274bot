@@ -413,6 +413,8 @@ impl SceneFence {
 }
 
 impl TickBudget {
+    const MAX_TRANSITIONS: u8 = 32;
+
     pub fn observe(&mut self, tick: u64) {
         if self.tick != Some(tick) {
             self.tick = Some(tick);
@@ -440,8 +442,13 @@ impl TickBudget {
         self.scene.entered_scene()
     }
 
+    #[cfg(feature = "load")]
+    pub(super) fn transition_available(&self) -> bool {
+        self.transitions < Self::MAX_TRANSITIONS
+    }
+
     pub fn transition(&mut self) -> bool {
-        if self.transitions == 32 {
+        if self.transitions == Self::MAX_TRANSITIONS {
             return false;
         }
         self.transitions += 1;

@@ -54,7 +54,7 @@
     "selector": "Bank.depositAllExcept",
     "add": true,
     "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-    "runtime": "crates/script/src/shim/bank.js:86",
+    "runtime": "crates/script/src/shim/bank.js:68",
     "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;"
   },
   {
@@ -63,7 +63,7 @@
     "selector": "Bank.openNearestWorld",
     "add": true,
     "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-    "runtime": "crates/script/src/shim/bank.js:135",
+    "runtime": "crates/script/src/shim/bank.js:117",
     "declaration": "openNearestWorld(): Promise<boolean>;"
   },
   {
@@ -71,7 +71,7 @@
     "module": "api/bank/Banking.js",
     "selector": "Banking.bankNearest",
     "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
-    "runtime": "crates/script/src/shim/banking.js:129",
+    "runtime": "crates/script/src/shim/banking.js:110",
     "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;"
   },
   {

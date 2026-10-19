@@ -727,6 +727,32 @@ fn a_watchdog_recovery_hold_freezes_the_active_clock() {
     );
 }
 
+#[test]
+fn operator_pause_and_guardian_hold_freeze_the_native_waiter_clock() {
+    for held in [false, true] {
+        let (mut slot, _) = receiver(45 + u64::from(held), SettingsApply::Applied);
+        slot.sync_compiled_clue(false);
+        assert!(slot.native_runtime.clock.is_eligible());
+        if held {
+            slot.sync_compiled_clue(true);
+        } else {
+            slot.pause();
+        }
+        assert!(!slot.native_runtime.clock.is_eligible());
+        let now = Instant::now();
+        assert_eq!(
+            slot.native_runtime.clock.now(now + Duration::from_secs(60)),
+            slot.native_runtime.clock.now(now),
+            "pause and hold cannot spend the Select core's active-time bound"
+        );
+        if !held {
+            slot.resume();
+        }
+        slot.sync_compiled_clue(false);
+        assert!(slot.native_runtime.clock.is_eligible());
+    }
+}
+
 struct Park;
 impl crate::native::NativeMachine for Park {
     type Args = ();
@@ -1425,23 +1451,54 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
-    fn measure_prepared() -> (Arc<PreparedConfig>, allocation_counter::AllocationInfo) {
-        FamilyPreparation::run(|families| {
+    fn measure_prepared(
+        incarnation: u64,
+    ) -> (
+        CompiledRun,
+        Arc<Mutex<RetainedMemory>>,
+        allocation_counter::AllocationInfo,
+    ) {
+        FamilyPreparation::run(move |families| {
             let selected = selected();
+            let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
-                pin: selected.selected_pin().unwrap(),
-                selected,
+                pin: Arc::clone(&pin),
+                selected: Arc::clone(&selected),
                 banks: Arc::default(),
                 families,
             };
             let mut prepared = None;
+            let mut retained = None;
             let info = allocation_counter::measure(|| {
-                prepared = Some(
-                    (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(SettingsBag::new()))
-                        .unwrap(),
-                );
+                let mut bag = SettingsBag::new();
+                bag.insert("disposition".into(), serde_json::json!("Power"));
+                bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+                let config = (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(bag)).unwrap();
+                let run = RunKey {
+                    slot: incarnation,
+                    run: 1,
+                    session: 0,
+                };
+                let mut memory = RetainedMemory::default();
+                let script =
+                    (crate::gatherer::CARD.create)(run, Arc::clone(&config), &mut memory).unwrap();
+                retained = Some(Arc::new(Mutex::new(memory)));
+                prepared = Some(CompiledRun {
+                    script: ScriptOwner(Some(script)),
+                    config,
+                    pending: None,
+                    run,
+                    selected,
+                    pin,
+                    output: Output {
+                        account: Some("gatherer-lifecycle".into()),
+                        ..Default::default()
+                    },
+                    actions: NativeActions { _private: () },
+                    pending_registry: None,
+                });
             });
-            (prepared.unwrap(), info)
+            (prepared.unwrap(), retained.unwrap(), info)
         })
         .unwrap()
         .join()
@@ -1453,7 +1510,7 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
                 * std::mem::size_of::<crate::native::HostAction>()
     }
     let snapshot = gatherer_snapshot();
-    let (cold_prepared, cold) = measure_prepared();
+    let (cold_prepared, cold_retained, cold) = measure_prepared(91);
     let mut warm = gatherer_slot(92);
     // The first park can grow parking_lot's process-global table.
     // Warm this thread before charging only the Gatherer and its seat.
@@ -1473,11 +1530,19 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
         );
         shared_slot = Some(slot);
     });
-    let (prepared, preparation) = measure_prepared();
+    let (prepared, retained, preparation) = measure_prepared(93);
     let prepare_bytes = preparation.bytes_current;
     let mut measured = None;
+    // Charge preparation on its owning worker and installation on this thread.
+    // Polling the preparation broker inside this measurement can free worker-
+    // allocated handoff values here, making its thread-local net timing-dependent.
     let main = allocation_counter::measure(|| {
-        let mut slot = gatherer_slot(93);
+        let mut slot = SlotScript::new();
+        slot.bind_incarnation(93);
+        slot.control_generation = prepared.run.run;
+        slot.retained = Some(retained);
+        slot.want_run = true;
+        slot.install_compiled(prepared);
         let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
         accept_gatherer_drop_actions(&mut slot, actions, tick, None);
         measured = Some(slot);
@@ -1516,8 +1581,8 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     );
     measured.as_mut().unwrap().stop();
     warm.stop();
-    drop(prepared);
     drop(cold_prepared);
+    drop(cold_retained);
     drop(shared_slot);
 }
 

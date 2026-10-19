@@ -1,9 +1,9 @@
 //! Current machine-hook ABI characterization, independent of the `load` feature.
 //!
-//! This is a path × value-use description of the native machines as they run today, not an
-//! activation plan or a seat scheduler. §28 keeps the §25 axes and the V5-07 value corrections,
-//! but replaces the seat transition rules. The only future-path notes below are unapproved
-//! possibilities recorded for existing discrepancies; they do not select or activate a path.
+//! This is the path × value-use contract of the current machine hooks. §28 keeps the §25
+//! axes and the V5-07 value corrections, but replaces the seat transition rules. Bank hooks
+//! use these same rows at native-seat prompts. The only future-path notes below record
+//! unapproved possibilities for existing discrepancies; they do not select a new path.
 //!
 //! The callback paths have different Promise and throw behavior:
 //!
@@ -22,8 +22,8 @@
 //! ops are placed at their queue position, then a `Step::Call` runs and a tick-step checkpoint
 //! can settle its Promise. A kick has no checkpoint and polls on the next drive. Current sources:
 //! `machine.rs:1293-1296,1313-1318,1357-1370`; `load/machine_v8.rs:257-307`;
-//! `hunt.rs:583-584,610-612,798-821`. This does not assert seat-side `last_seq`, lineage,
-//! Decide/carry, or child-before-parent scheduling: those are not active in this in-isolate machine host.
+//! `hunt.rs:583-584,610-612,798-821`. The table does not itself specify seat-side `last_seq`,
+//! lineage, Decide/carry, or child-before-parent scheduling.
 //!
 //! The `families` arrays below name concrete registered `Family::NAME` values that expose each
 //! callback key. In families which share one hook list (notably Hunt), an entry describes the
@@ -421,7 +421,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493",
+        "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs",
     ),
     hook(
         &["death_recovery"],
@@ -440,7 +440,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462",
+        "$TS/api/bank/Bank.ts:322-334; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs",
     ),
     hook(
         &["bank_nearest", "periodic_bank"],
@@ -449,7 +449,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493",
+        "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs",
     ),
     hook(
         &["bank_withdraw_to", "bank_close_confirm"],
@@ -485,7 +485,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524,529-536",
+        "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs",
     ),
     hook(
         &["periodic_bank"],
@@ -494,7 +494,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/periodic_bank.rs:486-493,525-532",
+        "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs",
     ),
     hook(
         &["periodic_bank"],
@@ -503,7 +503,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/periodic_bank.rs:486-493,533-537",
+        "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs",
     ),
     hook(
         &["reach-entity-op"],
@@ -612,7 +612,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/periodic_bank.rs:474-493,512-517",
+        "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs",
     ),
     hook(
         SYNC_LOG_FAMILIES,
@@ -621,7 +621,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
@@ -630,7 +630,16 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/periodic_bank.rs:380-410",
+        "$TS/api/bank/Banking.ts:299-307; $S/slot/bank.rs; $S/bank/seat_open.rs",
+    ),
+    hook(
+        &["bank_wait"],
+        "log",
+        "Bank.waitReady synchronous item-snapshot notification",
+        HookPath::CallSync,
+        HookValue::Ignored,
+        NO_DISCREPANCY,
+        "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs",
     ),
     hook(
         &["partner-trade"],
