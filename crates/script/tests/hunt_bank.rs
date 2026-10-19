@@ -42,6 +42,7 @@ fn row(id: i32, count: i32, name: &str, slot: i32, has_slot: bool) -> BankRow {
         slot,
         has_slot,
         ops: vec![],
+        noted: false,
     }
 }
 
@@ -853,4 +854,77 @@ fn empty_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: Default::default(),
     }
+}
+
+fn noted_row(id: i32, count: i32, name: &str) -> BankRow {
+    let mut item = row(id, count, name, 0, false);
+    item.noted = true;
+    item
+}
+
+/// The potion-restock shape (live `jive_dragons_potion_restock`): the pack
+/// holds noted food and a part-used flask the card's keep list does not
+/// keep. The deposit stage must deposit both — noted items deposit even
+/// though the food name is kept (frozen `depositLoot` matches notes by
+/// id), and the partial dose deposits because only the full flask form is
+/// in `keepExtra` — after which the flask stage draws the full form.
+#[test]
+fn noted_food_and_partial_flask_deposit_then_full_flask_draws() {
+    reset();
+    let mut obs = at(booth());
+    obs.bank_side = vec![
+        noted_row(380, 20, "Lobster"),
+        row(149, 1, "Super attack(1)", 1, false),
+    ];
+    obs.bank = vec![
+        row(379, 40, "Lobster", 0, false),
+        row(145, 2, "Super attack(3)", 1, false),
+    ];
+    obs.equipment = vec![row(1540, 1, "Dragonfire shield", 0, true)];
+    let token = begin();
+    let proj = site(json!({
+        "keyItem": null,
+        "foodName": "Lobster",
+        "style": "melee",
+        "foodWant": 0,
+        "keepExtra": ["Super attack(3)"],
+        "flasks": [{
+            "flask": "Super attack(3)",
+            "doses": ["Super attack(4)", "Super attack(3)", "Super attack(2)", "Super attack(1)"],
+            "want": 1,
+        }],
+    }));
+    let step = reach_open(token, &proj, obs.clone());
+    assert_eq!(kind(&step), "deposit", "noted food deposits first: {step}");
+    assert_eq!(step["name"], "Lobster", "{step}");
+
+    let mut proved = open_loaded(obs);
+    proved.bank_side = vec![row(149, 1, "Super attack(1)", 1, false)];
+    proved.bank_op_result = true;
+    proved.bank_op_result_seq = 3;
+    set_observation(proved.clone());
+    let step = call(token, proj.clone(), Some(json!({ "queued": true })));
+    assert_eq!(kind(&step), "deposit", "partial flask deposits next: {step}");
+    assert_eq!(step["name"], "Super attack(1)", "{step}");
+
+    proved.bank_side.clear();
+    proved.bank_op_result_seq = 5;
+    set_observation(proved);
+    let mut kinds = Vec::new();
+    let mut drew_full = false;
+    for _ in 0..16 {
+        let step = call(token, proj.clone(), Some(json!({ "queued": true })));
+        kinds.push(format!("{}:{}", kind(&step), step["name"].as_str().unwrap_or("")));
+        if kind(&step) == "withdraw" && step["name"] == "Super attack(3)" {
+            drew_full = true;
+            break;
+        }
+        if kind(&step) == "yield" {
+            break;
+        }
+    }
+    assert!(
+        drew_full,
+        "flask stage draws the full form after the partial deposits: {kinds:?}"
+    );
 }

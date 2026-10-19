@@ -62,6 +62,16 @@ pub(super) enum KeyArm {
     Nameless,
 }
 
+/// One deposit-leftover name the ready check watches for. `noted_only`
+/// marks a name whose unnoted form is kept (frozen `depositLoot` deposits
+/// every noted item by id even when its name is kept): only a noted row
+/// still held blocks readiness, so restocked unnoted food does not.
+#[derive(Clone, Debug)]
+pub(super) struct Junk {
+    pub(super) name: String,
+    pub(super) noted_only: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Plan {
     pub(super) key: KeyArm,
@@ -71,7 +81,7 @@ pub(super) struct Plan {
     pub(super) needs_shield: bool,
     pub(super) food_seen: bool,
     pub(super) food_owed: bool,
-    pub(super) junk: Vec<String>,
+    pub(super) junk: Vec<Junk>,
 }
 pub(super) fn opt_i32(input: &Value, key: &str) -> Option<i32> {
     input
@@ -389,10 +399,10 @@ pub(super) fn keep_names(proj: &BankProj, obs: &BankObservation) -> Vec<String> 
             keep.push(name.clone());
         }
     }
-    for flask in &proj.flasks {
-        keep.push(flask.name.clone());
-        keep.extend(flask.doses.iter().cloned());
-    }
+    // Flask dose forms are not kept here: the card's own `keepExtra` names
+    // the dose forms it keeps (frozen `potionKeepNames`), so a part-used
+    // flask the card does not keep deposits and the flask stage draws the
+    // full form. Keeping every dose form here would strand the partial.
     keep
 }
 
@@ -407,13 +417,27 @@ pub(super) fn capture_plan(proj: &BankProj, obs: &BankObservation) -> Plan {
         Some(item) => classify_key(obs, item),
     };
     let keep = keep_names(proj, obs);
-    let mut junk = Vec::new();
+    let mut junk: Vec<Junk> = Vec::new();
     for row in &obs.bank_side {
         if row.name.is_empty() || row.count <= 0 {
             continue;
         }
-        if !kept(&keep, &row.name) && !junk.iter().any(|name: &String| eq_name(name, &row.name)) {
-            junk.push(row.name.clone());
+        // Frozen `depositLoot`: noted items deposit by id even when the
+        // name is kept; everything not kept deposits by name.
+        let is_kept = kept(&keep, &row.name);
+        if !row.noted && is_kept {
+            continue;
+        }
+        let noted_only = row.noted && is_kept;
+        match junk
+            .iter_mut()
+            .find(|entry| eq_name(&entry.name, &row.name))
+        {
+            Some(entry) => entry.noted_only &= noted_only,
+            None => junk.push(Junk {
+                name: row.name.clone(),
+                noted_only,
+            }),
         }
     }
     let seen_food = food_seen(obs, &forms);

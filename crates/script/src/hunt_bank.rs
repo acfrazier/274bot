@@ -47,6 +47,7 @@ pub struct BankRow {
     pub slot: i32,
     pub has_slot: bool,
     pub ops: Vec<String>,
+    pub noted: bool,
 }
 
 /// The hunt's cloned row behind the kernel's row interface, so its
@@ -543,8 +544,10 @@ fn held_name(obs: &BankObservation, name: &str) -> bool {
 }
 
 fn food_count(obs: &BankObservation, forms: &[String]) -> i32 {
+    // Frozen `foodCount` counts edible food only (`isEdibleFood` rejects
+    // noted rows): a noted stack must not satisfy the food stage.
     slotted(obs)
-        .filter(|row| is_food_name(&row.name, forms))
+        .filter(|row| !row.noted && is_food_name(&row.name, forms))
         .map(|row| row.count.max(1))
         .sum()
 }
@@ -1015,7 +1018,9 @@ fn deposit(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             if row.name.is_empty() {
                 return Some(rt.yield_value(false));
             }
-            if !kept(&keep, &row.name)
+            // Noted rows deposit even when the name is kept (frozen
+            // `depositLoot` matches notes by id before the keep list).
+            if (row.noted || !kept(&keep, &row.name))
                 && !names.iter().any(|name: &String| eq_name(name, &row.name))
             {
                 names.push(row.name.clone());
@@ -1621,8 +1626,8 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     let food_here = obs
         .bank_side
         .iter()
-        .any(|row| row.count > 0 && is_food_name(&row.name, &forms))
-        || slotted(&obs).any(|row| is_food_name(&row.name, &forms));
+        .any(|row| row.count > 0 && !row.noted && is_food_name(&row.name, &forms))
+        || slotted(&obs).any(|row| !row.noted && is_food_name(&row.name, &forms));
     if fraction >= proj.heal_to || !food_here && rt.heal_attempts == 0 {
         rt.heal_done = true;
         rt.stage = Stage::Topup;
@@ -1643,7 +1648,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         return None;
     }
     let Some(row) = slotted(&obs)
-        .find(|row| is_food_name(&row.name, &forms))
+        .find(|row| !row.noted && is_food_name(&row.name, &forms))
         .cloned()
     else {
         rt.heal_done = true;
@@ -1762,8 +1767,10 @@ fn ready_with(rt: &BankRuntime, proj: &BankProj, obs: &BankObservation) -> bool 
     if plan.food_owed && food_count(obs, &forms) == 0 {
         return false;
     }
-    for name in &plan.junk {
-        if slotted_has_name(obs, name) {
+    for junk in &plan.junk {
+        let held = slotted(obs)
+            .any(|row| eq_name(&row.name, &junk.name) && (!junk.noted_only || row.noted));
+        if held {
             return false;
         }
     }
@@ -1987,7 +1994,7 @@ fn ack_heal(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
             1.0
         };
         let more = fraction < proj.heal_to
-            && slotted(&obs).any(|row| is_food_name(&row.name, &forms))
+            && slotted(&obs).any(|row| !row.noted && is_food_name(&row.name, &forms))
             && rt.heal_attempts < HEAL_BITES
             && rt.heal_misses < HEAL_MISSES;
         rt.phase = Phase::Work;
@@ -2073,6 +2080,7 @@ impl BankRow {
             slot,
             has_slot: row.slot.is_some() && slot >= 0,
             ops: observed::strings(&row.ops),
+            noted: row.noted,
         }
     }
 
@@ -2083,6 +2091,7 @@ impl BankRow {
             name: Some(self.name.into()),
             slot: self.has_slot.then_some(self.slot),
             ops: observed::ops_of(&self.ops),
+            noted: self.noted,
             ..ItemRow::default()
         }
     }
@@ -2319,6 +2328,7 @@ mod tests {
             slot: 0,
             has_slot: true,
             ops: ops.iter().map(|op| op.to_string()).collect(),
+            noted: false,
         }
     }
 
