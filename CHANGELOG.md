@@ -361,6 +361,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Fixed during development
 
+#### Scripts
+
+- A v2 `withdraw-load` request now completes with `false` if a later bank
+  operation replaces it, its start fails, or a session boundary cancels it.
+  Its result sequence stays unchanged across session boundaries without
+  pending work and resets only for a fresh script runtime.
+
 #### Navigation
 
 - Planning a bank trip for route supplies is fast again from places such as

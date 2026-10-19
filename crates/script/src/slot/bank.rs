@@ -244,12 +244,17 @@ impl BankSeat {
     }
 
     fn clear_work(&mut self) {
+        for row in &self.rows {
+            if row.v2_generation.is_some() {
+                self.withdraw_load_result.0 = self.withdraw_load_result.0.wrapping_add(1);
+                self.withdraw_load_result.1 = false;
+            }
+        }
         self.rows.clear();
         self.values.clear();
         self.action_owner = None;
         self.note = None;
         self.selection.invalidate();
-        self.withdraw_load_result = (0, false);
     }
 }
 
@@ -629,6 +634,7 @@ impl SlotScript {
     pub(super) fn bank_runtime_boundary(&mut self) {
         if let Some(bank) = &mut self.bank {
             bank.clear_work();
+            bank.withdraw_load_result = (0, false);
         }
     }
 
@@ -640,7 +646,8 @@ impl SlotScript {
             })
     }
 
-    /// Latest public v2 load result. The sequence changes only at completion.
+    /// Latest public v2 load result. The sequence advances once per completion
+    /// and resets only when a fresh runtime starts.
     pub fn withdraw_load_result(&self) -> (u64, bool) {
         self.bank
             .as_ref()
@@ -666,6 +673,16 @@ impl SlotScript {
             NativeKind::BankPlan,
             false,
         );
+        self.apply_v2_withdraw_load_admission(id, name, bank_generation, admission)
+    }
+
+    fn apply_v2_withdraw_load_admission(
+        &mut self,
+        id: RequestId,
+        name: String,
+        bank_generation: u64,
+        admission: Result<Admission, crate::native::seat::SeatError>,
+    ) -> Option<crate::shim::InteractReq> {
         match admission {
             Ok(Admission::Admitted) => {
                 let mut request = BankSeatArgs::new(BankSeatOperation::WithdrawLoad);
@@ -691,9 +708,13 @@ impl SlotScript {
                 bank.withdraw_load_result.1 = false;
             }
             Ok(Admission::Duplicate) => unreachable!("host request ids are unique"),
-            Err(error) => self
-                .pending_logs
-                .push(format!("v2 bank start refused: {error:?}")),
+            Err(error) => {
+                let bank = self.bank.get_or_insert_with(Default::default);
+                bank.withdraw_load_result.0 = bank.withdraw_load_result.0.wrapping_add(1);
+                bank.withdraw_load_result.1 = false;
+                self.pending_logs
+                    .push(format!("v2 bank start refused: {error:?}"));
+            }
         }
         None
     }
@@ -720,8 +741,13 @@ impl SlotScript {
         let (Some(bank), Some(seat)) = (self.bank.as_mut(), self.seat.as_ref()) else {
             return;
         };
+        let result = &mut bank.withdraw_load_result;
         bank.rows.retain(|row| {
             let live = seat.lookup(row.id) == api::script_contract::AuthorityStatus::Live;
+            if !live && row.v2_generation.is_some() {
+                result.0 = result.0.wrapping_add(1);
+                result.1 = false;
+            }
             if !live && bank.action_owner == Some(row.id) {
                 bank.action_owner = None;
             }
@@ -954,6 +980,30 @@ impl SlotScript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_v2_admission_completes_false_once_without_a_bank_row() {
+        let mut slot = SlotScript::new();
+        assert!(slot
+            .apply_v2_withdraw_load_admission(
+                RequestId::isolate(1).unwrap(),
+                "Lobster".to_owned(),
+                1,
+                Err(crate::native::seat::SeatError::SequenceExhausted),
+            )
+            .is_none());
+        assert_eq!(slot.withdraw_load_result(), (1, false));
+        assert!(slot.bank.as_ref().unwrap().rows.is_empty());
+        slot.stop_cancelled_bank_work();
+        slot.bank_session_boundary(false);
+        assert_eq!(slot.withdraw_load_result(), (1, false));
+        assert_eq!(
+            slot.pending_logs,
+            ["v2 bank start refused: SequenceExhausted"]
+        );
+        slot.bank_runtime_boundary();
+        assert_eq!(slot.withdraw_load_result(), (0, false));
+    }
 
     fn selected(kind: PickKind, bank_index: u16) -> SelectedBank {
         SelectedBank {
