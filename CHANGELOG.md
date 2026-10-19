@@ -42,9 +42,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   through the same native operation, with the caller's bank generation.
   Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
   byte limit, without changing the operation's result.
-- Entity wrappers and snapshot-first queries are admitted on the native boundary,
-  including area and player-preferred nearest filters. Public classes, aliases,
-  module helpers, and interaction queue behavior remain unchanged.
+- Entity wrappers and queries run on the native boundary, including area and
+  player-preferred nearest filters. Production collections select and rank from
+  the decoded Rust scene, paired with the original public row objects only after
+  successful snapshot publication. Wrapper getters still read their public
+  `snap`, while `fromSnapshots` keeps caller-supplied rows and callbacks.
+  Public classes, aliases, module helpers and interaction queues are unchanged.
 - Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
   `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.

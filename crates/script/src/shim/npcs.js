@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy } from '../../shim/_kernel.js';
+import { queue, proxy } from '../../shim/_kernel.js';
 
 export class Npc {
     constructor(row) {
@@ -49,11 +49,11 @@ export class Npc {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return globalThis.__rs2b0t_entities_v8(29 /* npc.targetsMe */, this, snap);
+        return globalThis.__rs2b0t_entities_v8(29 /* npc.targetsMe */, this);
     }
 
     targetsAnotherPlayer() {
-        return globalThis.__rs2b0t_entities_v8(30 /* npc.targetsAnotherPlayer */, this, snap);
+        return globalThis.__rs2b0t_entities_v8(30 /* npc.targetsAnotherPlayer */, this);
     }
 
     tile() {
@@ -69,7 +69,7 @@ export class Npc {
     }
 
     valid() {
-        return globalThis.__rs2b0t_entities_v8(34 /* npc.valid */, this, snap);
+        return globalThis.__rs2b0t_entities_v8(34 /* npc.valid */, this);
     }
 
     interact(action) {
@@ -79,13 +79,10 @@ export class Npc {
 
 export const Npcs = proxy('Npcs', {
     query() {
-        return EntityQuery.fromSnapshots(
-            () => snap().npcs || [],
-            (s) => new Npc(s),
-        );
+        return globalThis.__rs2b0t_entities_v8(58 /* native query */, 0, EntityQuery, Npc);
     },
     all() {
-        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, snap, 0, Npc);
+        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, 0, Npc);
     },
     nearest(count = 1) {
         return globalThis.__rs2b0t_entities_v8(6 /* npcs.nearest */, Npcs, count);

@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy } from '../../shim/_kernel.js';
+import { queue, proxy } from '../../shim/_kernel.js';
 
 export class Player {
     constructor(row) {
@@ -28,7 +28,7 @@ export class Player {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return globalThis.__rs2b0t_entities_v8(46 /* player.targetsMe */, this, snap);
+        return globalThis.__rs2b0t_entities_v8(46 /* player.targetsMe */, this);
     }
 
     tile() {
@@ -50,12 +50,9 @@ export class Player {
 
 export const Players = proxy('Players', {
     query() {
-        return EntityQuery.fromSnapshots(
-            () => snap().players || [],
-            (s) => new Player(s),
-        );
+        return globalThis.__rs2b0t_entities_v8(58 /* native query */, 1, EntityQuery, Player);
     },
     all() {
-        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, snap, 1, Player);
+        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, 1, Player);
     },
 });
