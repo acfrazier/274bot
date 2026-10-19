@@ -261,10 +261,8 @@ export async function tick(api) {{
     }
 }
 
-/// A queued bank selection keeps the gating facts of the frame that queued
-/// it. The next frame lends different facts and repeats the stale request,
-/// which is refused; the waiting request still holds frame A's facts.
-/// Probe the shared queue directly, without reviving the retired SelectBank wire.
+/// Dispatch borrows each frame's gating facts. A queued bank selection keeps
+/// frame A's facts when the next frame lends different facts and repeats the walk.
 #[test]
 fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
     let navs = navs(vec![bank("bank", 12, 12)]);
@@ -274,20 +272,25 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
     let mut frame_b = WorldState::empty();
     frame_b.quests.insert("Frame B".into());
     let scope = api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap());
+    let mut driver = HeldDriver;
+    let snapshot = GameSnapshot::new();
     for state in [&frame_a, &frame_b] {
-        queue_bank(
-            &navs,
-            "test",
-            scope,
-            &world,
-            Some(state),
-            tile(0, 0),
-            FindOptions::default(),
-            1,
-            BankPreferences::default(),
-            None,
-            false,
-            None,
+        super::super::dispatch_script_interact_cached_scoped(
+            &mut driver,
+            &super::super::InteractContext {
+                snapshot: &snapshot,
+                obj_names: None,
+                here: Some((0, 0, 0)),
+                navs: &navs,
+                world: &world,
+                state: Some(state),
+                bank: None,
+                name: "test",
+                compatibility_scope: Some(scope),
+                cache: &None,
+                obj_names_arc: &None,
+            },
+            vec![script::shim::InteractReq::WalkNearestBank],
         );
     }
     let all = navs.lock().unwrap();

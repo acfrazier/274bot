@@ -612,7 +612,6 @@ where
                     abort_script_walk(navs, name);
                 }
             }
-
             InteractReq::WalkNearestBank => {
                 if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
                     wrote |= super::bank::queue_bank_walk_scoped(

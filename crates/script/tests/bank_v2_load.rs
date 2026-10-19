@@ -15,9 +15,8 @@ use script::LoadShape;
 use serde_json::json;
 
 fn runner(stale: bool) -> BankSlot {
-    BankSlot::new(
-        format!(
-            r#"
+    with_source(format!(
+        r#"
 export const apiVersion = 2;
 export function tick(api) {{
     if (!globalThis.started) {{
@@ -31,9 +30,14 @@ export function tick(api) {{
             result: api.snapshot.withdraw_load_result }};
     }}
 }}
-"#,
-            u8::from(stale)
-        ),
+        "#,
+        u8::from(stale)
+    ))
+}
+
+fn with_source(source: impl Into<String>) -> BankSlot {
+    BankSlot::new(
+        source,
         LoadShape::NativeTick,
         None,
         Arc::new(NamedBankFacts::empty()),
@@ -166,4 +170,110 @@ fn public_v2_withdraw_load_rejects_a_generation_change_while_waiting() {
         runner.probe("globalThis.completion").unwrap(),
         json!({"seq": 1, "result": false})
     );
+}
+
+fn replacement_runner(second: &str) -> BankSlot {
+    with_source(format!(
+        r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+export const apiVersion = 2;
+export function tick(api) {{
+    globalThis.completions ??= [];
+    if (api.snapshot.withdraw_load_result_seq > globalThis.completions.length) {{
+        globalThis.completions.push({{ seq: api.snapshot.withdraw_load_result_seq,
+            result: api.snapshot.withdraw_load_result }});
+    }}
+    if (!globalThis.started) {{
+        globalThis.started = true;
+        api.request({{ op: 'withdraw-load', name: 'Lobster',
+            bank_generation: api.snapshot.bank_generation }});
+    }} else if (globalThis.replace && !globalThis.second) {{
+        globalThis.second = true;
+        {second}
+    }}
+}}
+"#
+    ))
+}
+
+#[test]
+fn public_v2_withdraw_load_superseded_by_bank_call_completes_false_once() {
+    let mut runner = replacement_runner(
+        "Bank.withdrawLoad('Lobster').then(value => { globalThis.bankResult = value; });",
+    );
+    assert_eq!(step(&mut runner, 1, false, 1).len(), 1);
+    assert_eq!(runner.slot.withdraw_load_result(), (0, false));
+    runner.probe("globalThis.replace = true").unwrap();
+    assert_eq!(step(&mut runner, 2, false, 1).len(), 1);
+    assert_eq!(runner.slot.withdraw_load_result(), (1, false));
+    assert!(step(&mut runner, 3, false, 1).is_empty());
+    assert_eq!(
+        runner.probe("globalThis.completions").unwrap(),
+        json!([{"seq": 1, "result": false}])
+    );
+    assert!(step(&mut runner, 4, true, 1).is_empty());
+    assert!(step(&mut runner, 5, true, 1).is_empty());
+    assert_eq!(runner.probe("globalThis.bankResult").unwrap(), json!(true));
+    assert_eq!(runner.slot.withdraw_load_result(), (1, false));
+}
+
+#[test]
+fn public_v2_withdraw_load_replacement_completes_each_request_once() {
+    let mut runner = replacement_runner(
+        "api.request({ op: 'withdraw-load', name: 'Lobster',
+            bank_generation: api.snapshot.bank_generation });",
+    );
+    assert_eq!(step(&mut runner, 1, false, 1).len(), 1);
+    runner.probe("globalThis.replace = true").unwrap();
+    assert_eq!(step(&mut runner, 2, false, 1).len(), 1);
+    assert_eq!(runner.slot.withdraw_load_result(), (1, false));
+    assert!(step(&mut runner, 3, false, 1).is_empty());
+    assert_eq!(
+        runner.probe("globalThis.completions").unwrap(),
+        json!([{"seq": 1, "result": false}])
+    );
+    assert!(step(&mut runner, 4, true, 1).is_empty());
+    assert_eq!(runner.slot.withdraw_load_result(), (2, true));
+    assert!(step(&mut runner, 5, true, 1).is_empty());
+    assert_eq!(
+        runner.probe("globalThis.completions").unwrap(),
+        json!([{"seq": 1, "result": false}, {"seq": 2, "result": true}])
+    );
+    assert_eq!(runner.slot.withdraw_load_result(), (2, true));
+}
+
+#[test]
+fn public_v2_withdraw_load_session_boundary_preserves_the_last_completion() {
+    let mut runner = runner(false);
+    assert_eq!(step(&mut runner, 1, false, 1).len(), 1);
+    assert!(step(&mut runner, 2, true, 1).is_empty());
+    assert_eq!(runner.slot.withdraw_load_result(), (1, true));
+    runner.reset_session_work();
+    assert_eq!(runner.slot.withdraw_load_result(), (1, true));
+    assert!(step(&mut runner, 3, true, 2).is_empty());
+    assert_eq!(runner.slot.withdraw_load_result(), (1, true));
+    assert_eq!(
+        runner.probe("globalThis.completion").unwrap(),
+        json!({"seq": 1, "result": true})
+    );
+}
+
+#[test]
+fn public_v2_withdraw_load_session_boundary_aborts_one_request_without_resetting() {
+    let mut runner = replacement_runner(
+        "api.request({ op: 'withdraw-load', name: 'Lobster',
+            bank_generation: api.snapshot.bank_generation });",
+    );
+    assert_eq!(step(&mut runner, 1, false, 1).len(), 1);
+    assert!(step(&mut runner, 2, true, 1).is_empty());
+    assert_eq!(runner.slot.withdraw_load_result(), (1, true));
+    runner.probe("globalThis.replace = true").unwrap();
+    assert_eq!(step(&mut runner, 3, false, 1).len(), 1);
+    assert_eq!(runner.slot.withdraw_load_result(), (1, true));
+    runner.reset_session_work();
+    assert_eq!(runner.slot.withdraw_load_result(), (2, false));
+    runner.reset_session_work();
+    assert_eq!(runner.slot.withdraw_load_result(), (2, false));
+    assert!(step(&mut runner, 4, true, 2).is_empty());
+    assert_eq!(runner.slot.withdraw_load_result(), (2, false));
 }

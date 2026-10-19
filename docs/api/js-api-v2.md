@@ -94,8 +94,12 @@ Completion is the next snapshots' seq/result fields, not a Promise.
   inventory slots through the native seat's `WithdrawLoad` operation.
   Completion changes `snapshot.withdraw_load_result_seq` and publishes
   `snapshot.withdraw_load_result`. A stale generation completes with `false`
-  and sends no further bank action. The awaited `Bank.withdrawLoad(name)`
-  uses the same operation and captures the current session in Rust.
+  and sends no further bank action. A later bank operation that replaces the
+  request, a failed start, or a session boundary that cancels it also completes
+  with `false`. The sequence stays unchanged across session boundaries without
+  pending work and resets only for a fresh script runtime.
+  The awaited `Bank.withdrawLoad(name)` uses the same operation and captures
+  the current session in Rust.
 - `puzzle-move` clicks one piece of the posted board. It takes the posted
   row's own `id`, `slot` and `component` plus
   `snapshot.puzzle_board_generation`. The host re-resolves that exact row on
