@@ -7,7 +7,11 @@ use crate::game_data::{
 };
 use serde_json::{json, Value};
 
+mod cache;
 mod catalog;
+mod wire;
+
+pub(crate) use cache::{cached, cached_identity, prepare};
 pub use catalog::{QuestCatalog, QuestFacts, QuestKind, StageFacts, StartLocation, Transmission};
 
 pub const IDENTITY_UNAVAILABLE: &str = "family-unavailable:quest_identity";
