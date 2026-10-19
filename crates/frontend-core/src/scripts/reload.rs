@@ -1721,7 +1721,6 @@ impl Scripts {
             .map(|preparation| (preparation.demand.kind, preparation.demand.tallied))
     }
 
-    #[cfg(test)]
     pub(super) fn cancel_all_start_preparations(&mut self) -> Vec<(String, StartKind, bool)> {
         self.async_work
             .starts

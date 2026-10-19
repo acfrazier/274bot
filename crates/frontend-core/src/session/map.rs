@@ -11,13 +11,14 @@ use crate::command::{
     CommandFailure, Completion, FailureKind, OperatorCommand, Rejection, SkipReason, Subject,
 };
 use crate::launch::BoundProfile;
+use crate::map_bake::MapBakeGate;
 use crate::surface::{InputEv, InputSender};
 use crate::walk_map::{
     observed_walk_services, RouteProjectionView, WalkActionError, WalkActionKind, WalkCatalogue,
     WalkExclude, WalkMap, WalkMapContext, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState,
     WalkObservedService, WalkReadyCatalogue, WalkSlotStatus,
 };
-use crate::{MapBakeGate, OperatorSession};
+use crate::OperatorSession;
 
 impl<Io> OperatorSession<Io> {
     /// Bind the map to a navigation identity, catalogue overlay and current
@@ -259,7 +260,7 @@ struct StagedMapAction {
 
 struct StagedDebugCommand {
     command: String,
-    snapshot: Option<Vec<(crate::ProfileIdentity, String)>>,
+    snapshot: Option<Vec<(crate::selection::ProfileIdentity, String)>>,
 }
 
 struct StagedMapDemand {
@@ -469,7 +470,7 @@ impl<Io> OperatorSession<Io> {
         use super::commands::Applied;
 
         let command = row.command();
-        let application = command.subject() == crate::command::SubjectKind::Application;
+        let application = matches!(targets, super::commands::Targets::Application);
         let names = if application {
             if !self.app_admitted(request) {
                 return;
@@ -490,7 +491,7 @@ impl<Io> OperatorSession<Io> {
                 self.settle_app(request, command, refused, submitted);
             } else {
                 for name in names {
-                    self.settle_member(request, command, &name, clone_applied(&refused), submitted);
+                    self.settle_member(request, command, &name, refused.clone(), submitted);
                 }
             }
             return;
@@ -519,14 +520,13 @@ impl<Io> OperatorSession<Io> {
                         )
                     }
                 }
-                MapRow::WalkTo
-                | MapRow::GroupWalk
-                | MapRow::Teleport
-                | MapRow::DebugCommand
-                | MapRow::GameInput => Applied::Rejected(
-                    Rejection::NotApplicable,
-                    Some("profile row has application scope".into()),
-                ),
+                MapRow::WalkTo => self.walk_to(desk, &names, targets),
+                MapRow::GroupWalk | MapRow::Teleport | MapRow::DebugCommand | MapRow::GameInput => {
+                    Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("profile row has application scope".into()),
+                    )
+                }
             };
             self.settle_app(request, command, applied, submitted);
             return;
@@ -536,7 +536,7 @@ impl<Io> OperatorSession<Io> {
             MapRow::WalkTo => {
                 let applied = self.walk_to(desk, &names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, clone_applied(&applied), submitted);
+                    self.settle_member(request, command, &name, applied.clone(), submitted);
                 }
             }
             MapRow::GroupWalk => {
@@ -546,24 +546,16 @@ impl<Io> OperatorSession<Io> {
                         Some("marked rows unavailable".into()),
                     );
                     for name in names {
-                        self.settle_member(
-                            request,
-                            command,
-                            &name,
-                            clone_applied(&refused),
-                            submitted,
-                        );
+                        self.settle_member(request, command, &name, refused.clone(), submitted);
                     }
                     return;
                 };
-                self.group_walk(
-                    desk, selection, &names, targets, request, command, submitted,
-                );
+                self.group_walk(desk, selection, &names, targets, request, submitted);
             }
             MapRow::Teleport => {
                 let applied = self.teleport(desk, &names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, clone_applied(&applied), submitted);
+                    self.settle_member(request, command, &name, applied.clone(), submitted);
                 }
             }
             MapRow::DebugCommand => {
@@ -634,13 +626,7 @@ impl<Io> OperatorSession<Io> {
                         |_| Applied::Done,
                     );
                     for name in names {
-                        self.settle_member(
-                            request,
-                            command,
-                            &name,
-                            clone_applied(&applied),
-                            submitted,
-                        );
+                        self.settle_member(request, command, &name, applied.clone(), submitted);
                     }
                 } else {
                     for name in names {
@@ -657,7 +643,7 @@ impl<Io> OperatorSession<Io> {
             MapRow::GameInput => {
                 let applied = self.game_input(desk, &names, targets);
                 for name in names {
-                    self.settle_member(request, command, &name, clone_applied(&applied), submitted);
+                    self.settle_member(request, command, &name, applied.clone(), submitted);
                 }
             }
             MapRow::OpenDemand | MapRow::ReleaseDemand | MapRow::BakeNow | MapRow::DeclineBake => {
@@ -681,18 +667,18 @@ impl<Io> OperatorSession<Io> {
         targets: super::commands::Targets<'_>,
     ) -> super::commands::Applied {
         use super::commands::Applied;
-        if !matches!(
-            targets,
-            super::commands::Targets::Profile(_) | super::commands::Targets::Selected
-        ) || names.len() != 1
-        {
-            return Applied::Rejected(Rejection::NotApplicable, None);
-        }
+        let name = match (targets, names) {
+            (super::commands::Targets::Profile(_) | super::commands::Targets::Selected, [name]) => {
+                Some(name.as_str())
+            }
+            (super::commands::Targets::Application, []) => None,
+            _ => return Applied::Rejected(Rejection::NotApplicable, None),
+        };
         let Some(staged) = desk.walk.take() else {
             return Applied::Rejected(Rejection::NotStaged, None);
         };
         let planned = staged.destination;
-        match self.confirm_walk(staged, &names[0]) {
+        match self.confirm_walk(staged, name) {
             Ok(destination) => {
                 desk.walk_dest = Some(destination);
                 Applied::Done
@@ -701,7 +687,11 @@ impl<Io> OperatorSession<Io> {
                 if error.kind() == crate::walk_map::WalkActionErrorKind::NoPath {
                     desk.walk_dest = planned;
                 }
-                walk_action_applied(error)
+                if name.is_none() {
+                    Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
+                } else {
+                    walk_action_applied(error)
+                }
             }
         }
     }
@@ -713,10 +703,10 @@ impl<Io> OperatorSession<Io> {
         names: &[String],
         targets: super::commands::Targets<'_>,
         request: RequestId,
-        command: OperatorCommand,
         submitted: &mut super::commands::Submitted,
     ) {
         use super::commands::Applied;
+        let command = OperatorCommand::GroupWalk;
         if !matches!(targets, super::commands::Targets::Marked) {
             for name in names {
                 self.settle_member(
@@ -936,7 +926,11 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    fn confirm_walk(&self, staged: StagedMapAction, name: &str) -> Result<Tile, WalkActionError> {
+    fn confirm_walk(
+        &self,
+        staged: StagedMapAction,
+        name: Option<&str>,
+    ) -> Result<Tile, WalkActionError> {
         use host_play::walk_map::WalkRequest;
 
         let play = self.play.as_ref();
@@ -946,14 +940,16 @@ impl<Io> OperatorSession<Io> {
             .map_or(&host_play::WorldMembersFact::Unknown, |profile| {
                 profile.world_members()
             });
-        let origin = self.walk_origin(name);
-        let state = self.walk_state(Some(name));
+        let origin = name.and_then(|name| self.walk_origin(name));
+        let state = self.walk_state(name);
         let map_members = state.map_members;
-        let bank = self.bank_rows(name);
-        let input = self.walk_risk_input(Some(name));
+        let bank = name.map_or_else(nav::bank_fetch::BankRows::default, |name| {
+            self.bank_rows(name)
+        });
+        let input = self.walk_risk_input(name);
         let mut command_destination = None;
         let result = WalkRequest {
-            slot: Some(name),
+            slot: name,
             origin,
             destination: staged.destination,
             options: staged.options,
@@ -977,7 +973,9 @@ impl<Io> OperatorSession<Io> {
             Ok(_) => {
                 let destination =
                     command_destination.expect("successful map walk consumed a map command");
-                self.frames.clear_step_latch(name);
+                if let Some(name) = name {
+                    self.frames.clear_step_latch(name);
+                }
                 let _ = self.frames.take_walk_clear();
                 Ok(destination)
             }
@@ -999,19 +997,6 @@ impl<Io> OperatorSession<Io> {
         play.map_teleport(command, &staged.context.to_host())
             .map(|()| destination)
             .map_err(WalkActionError::from_host)
-    }
-}
-
-fn clone_applied(applied: &super::commands::Applied) -> super::commands::Applied {
-    use super::commands::Applied;
-    match applied {
-        Applied::Done => Applied::Done,
-        Applied::Skipped(reason) => Applied::Skipped(reason.clone()),
-        Applied::Rejected(reason, detail) => Applied::Rejected(reason.clone(), detail.clone()),
-        Applied::Failed(kind, detail) => Applied::Failed(kind.clone(), detail.clone()),
-        Applied::Operation(operation) => Applied::Operation(operation.clone()),
-        Applied::Later => Applied::Later,
-        Applied::NotAdmitted => Applied::NotAdmitted,
     }
 }
 

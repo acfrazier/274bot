@@ -78,7 +78,7 @@ pub enum Notice {
 /// The panel's draw policy: the saved draw switches and the run-only full
 /// rate. A front end reads it to mirror the switches onto its renderer; it
 /// changes only through [`OperatorCommand::SetDraw`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DrawPolicy {
     capture: bool,
     sidecar_50: bool,

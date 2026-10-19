@@ -3,7 +3,8 @@
 //! and the play launch ([`OperatorSession::stage_vault_unlock`],
 //! [`OperatorSession::stage_vault_create`]) or the file to reset
 //! ([`OperatorSession::stage_vault_reset`]); the row opens, creates or
-//! deletes the vault and starts the play session.
+//! deletes the vault and starts the play session with the submitting
+//! surface's per-frame client work ([`SlotSurface::frame_hook`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use api::identity::RequestId;
 use super::commands::{Applied, Submitted};
 use crate::command::{FailureKind, OperatorCommand, Rejection};
 use crate::launch::{Passphrase, PlayLaunch, UnlockStage};
+use crate::surface::SlotSurface;
 use crate::OperatorSession;
 
 /// One vault row.
@@ -36,13 +38,12 @@ impl VaultRow {
 /// What the next vault row commits.
 pub(crate) enum StagedVault {
     /// Open (Unlock) or first-run create (Create) the vault at `path` with
-    /// `passphrase`, then start the play `launch` describes with `hook` as
-    /// the front end's per-frame client work.
+    /// `passphrase`, then start the play `launch` describes with the
+    /// surface's [`SlotSurface::frame_hook`] as the per-frame client work.
     Open {
         path: PathBuf,
         passphrase: Passphrase,
         launch: PlayLaunch,
-        hook: Arc<dyn crate::frames::FrameHook>,
         create: bool,
     },
     /// Delete the locked vault file at `path`.
@@ -52,37 +53,24 @@ pub(crate) enum StagedVault {
 impl<Io> OperatorSession<Io> {
     /// Stage the next [`OperatorCommand::UnlockVault`]: open the existing
     /// vault at `path` with `passphrase` (copied into a zeroed-on-drop
-    /// buffer) and start `launch` with `hook`.
-    pub fn stage_vault_unlock(
-        &mut self,
-        path: PathBuf,
-        passphrase: &str,
-        launch: PlayLaunch,
-        hook: Arc<dyn crate::frames::FrameHook>,
-    ) {
+    /// buffer) and start `launch` with the submitting surface's frame hook.
+    pub fn stage_vault_unlock(&mut self, path: PathBuf, passphrase: &str, launch: PlayLaunch) {
         self.commands.stage_vault(StagedVault::Open {
             path,
             passphrase: Passphrase::from(passphrase),
             launch,
-            hook,
             create: false,
         });
     }
 
     /// Stage the next [`OperatorCommand::CreateVault`]: create the vault at
-    /// `path` with `passphrase` and start `launch` with `hook`.
-    pub fn stage_vault_create(
-        &mut self,
-        path: PathBuf,
-        passphrase: &str,
-        launch: PlayLaunch,
-        hook: Arc<dyn crate::frames::FrameHook>,
-    ) {
+    /// `path` with `passphrase` and start `launch` with the submitting
+    /// surface's frame hook.
+    pub fn stage_vault_create(&mut self, path: PathBuf, passphrase: &str, launch: PlayLaunch) {
         self.commands.stage_vault(StagedVault::Open {
             path,
             passphrase: Passphrase::from(passphrase),
             launch,
-            hook,
             create: true,
         });
     }
@@ -93,24 +81,30 @@ impl<Io> OperatorSession<Io> {
         self.commands.stage_vault(StagedVault::Reset { path });
     }
 
-    pub(super) fn vault_row(
+    pub(super) fn vault_row<S: SlotSurface<Io = Io>>(
         &mut self,
         row: VaultRow,
         request: RequestId,
         admitted: bool,
+        surface: &mut S,
         submitted: &mut Submitted,
     ) {
         let command = row.command();
         let staged = self.commands.take_vault();
         let applied = if admitted {
-            self.dispatch_vault(row, staged)
+            self.dispatch_vault(row, staged, surface)
         } else {
             Applied::NotAdmitted
         };
         self.settle_app(request, command, applied, submitted);
     }
 
-    fn dispatch_vault(&mut self, row: VaultRow, staged: Option<StagedVault>) -> Applied {
+    fn dispatch_vault<S: SlotSurface<Io = Io>>(
+        &mut self,
+        row: VaultRow,
+        staged: Option<StagedVault>,
+        surface: &mut S,
+    ) -> Applied {
         match (row, staged) {
             (
                 VaultRow::Unlock | VaultRow::Create,
@@ -118,7 +112,6 @@ impl<Io> OperatorSession<Io> {
                     path,
                     passphrase,
                     launch,
-                    hook,
                     create,
                 }),
             ) => {
@@ -149,6 +142,9 @@ impl<Io> OperatorSession<Io> {
                     }
                     _ => {}
                 }
+                let hook = surface
+                    .frame_hook()
+                    .unwrap_or_else(|| Arc::new(crate::frames::NoClientWork));
                 match self.unlock_vault(&path, passphrase.as_str(), launch, hook) {
                     Ok(()) => Applied::Done,
                     Err(error) => match error.stage() {

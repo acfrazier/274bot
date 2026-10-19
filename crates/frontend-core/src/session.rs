@@ -10,7 +10,7 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -342,6 +342,23 @@ impl StartSettled {
 #[derive(PartialEq)]
 pub struct ArmMirror(ArmMirrorKind);
 
+/// A script assignment command's profile write after it settles.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScriptAssignmentWrite {
+    op: OperationId,
+    result: SettingsResult,
+}
+
+impl ScriptAssignmentWrite {
+    pub(crate) fn op(&self) -> OperationId {
+        self.op
+    }
+
+    pub(crate) fn result(&self) -> &SettingsResult {
+        &self.result
+    }
+}
+
 impl std::fmt::Debug for ArmMirror {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.0, f)
@@ -350,8 +367,10 @@ impl std::fmt::Debug for ArmMirror {
 
 #[derive(Debug, PartialEq)]
 enum ArmMirrorKind {
-    /// Nothing live changes (assignments, tutorial flag, render prefs).
+    /// No live effect.
     None,
+    /// Signals the script coordinator after the profile assignment is durable.
+    ScriptAssignment,
     AutoLogin(bool),
     Guardian {
         random_events: bool,
@@ -391,6 +410,10 @@ enum ArmMirrorKind {
 impl ArmMirror {
     pub fn none() -> Self {
         Self(ArmMirrorKind::None)
+    }
+
+    pub(crate) fn script_assignment() -> Self {
+        Self(ArmMirrorKind::ScriptAssignment)
     }
 
     pub fn auto_login(on: bool) -> Self {
@@ -443,15 +466,17 @@ impl ArmMirror {
 
     /// Whether this mirror, on a later write committed together with
     /// `earlier`'s, sets the same setting, so `earlier` need not settle or
-    /// reach the slot on its own. Parameters replace the same card's, and a
-    /// profile save an earlier save's handshake settings and partner: the
-    /// later edit captured the current run, if any.
+    /// reach the slot on its own. Parameters replace the same card's, a
+    /// later assignment replaces an earlier assignment, and a profile save
+    /// replaces earlier handshake settings and partner: the later edit
+    /// captured the current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
         match (&self.0, &earlier.0) {
             (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
             | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
             | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
-            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_)) => true,
+            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_))
+            | (ArmMirrorKind::ScriptAssignment, ArmMirrorKind::ScriptAssignment) => true,
             (
                 ArmMirrorKind::RandomEventPolicy { event: later, .. },
                 ArmMirrorKind::RandomEventPolicy { event, .. },
@@ -598,6 +623,8 @@ pub struct OperatorSession<Io> {
     saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
+    /// Command-backed script assignment writes, drained by the script coordinator.
+    script_assignment_writes: VecDeque<ScriptAssignmentWrite>,
     /// Load Starts whose setup has not settled, by slot.
     starts: HashMap<String, OperationId>,
     settled_starts: Vec<StartSettled>,
@@ -694,6 +721,7 @@ impl<Io> OperatorSession<Io> {
             write_failures: Vec::new(),
             saves: SaveBook::default(),
             settings_writes: Vec::new(),
+            script_assignment_writes: VecDeque::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
             spawn_workers: true,
@@ -2948,6 +2976,10 @@ impl<Io> OperatorSession<Io> {
         std::mem::take(&mut self.settings_writes)
     }
 
+    pub(crate) fn take_script_assignment_write(&mut self) -> Option<ScriptAssignmentWrite> {
+        self.script_assignment_writes.pop_front()
+    }
+
     /// Wait for every queued profile write and settle it. For startup and
     /// harness boundaries only: it blocks on disk I/O, so frame paths use
     /// [`Self::poll`] instead.
@@ -3000,6 +3032,7 @@ impl<Io> OperatorSession<Io> {
             return;
         }
         let member = pending.member;
+        let script_assignment = matches!(&pending.mirror.0, ArmMirrorKind::ScriptAssignment);
         let settings = matches!(
             &pending.mirror.0,
             ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
@@ -3120,7 +3153,13 @@ impl<Io> OperatorSession<Io> {
                 SettingsResult::Superseded
             }
         };
-        if settings {
+        if script_assignment {
+            self.script_assignment_writes
+                .push_back(ScriptAssignmentWrite {
+                    op: written.op,
+                    result,
+                });
+        } else if settings {
             self.settings_writes
                 .push(SettingsWrite::new(written.op, member, result));
         }
@@ -3150,6 +3189,7 @@ impl<Io> OperatorSession<Io> {
         };
         match mirror.0 {
             ArmMirrorKind::None => {}
+            ArmMirrorKind::ScriptAssignment => {}
             ArmMirrorKind::AutoLogin(on) => {
                 if let Some(arm) = play.arm(name) {
                     arm.set_auto_login(on);

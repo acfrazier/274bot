@@ -82,7 +82,7 @@ impl Session {
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
     /// clone root, or honour a prior defer.
     pub fn on_script_browse_open(&mut self) {
-        if self.scripts.catalog_filled() {
+        if self.scripts.catalog_filled() || self.rs2b0t_browse_prompted {
             return;
         }
         let selected = match self.catalog_root() {
@@ -101,9 +101,7 @@ impl Session {
             self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             return;
         }
-        self.scripts
-            .stage_catalog_action(CatalogActionKind::Fill, None, self.rs2b0t_path_file());
-        self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
+        self.rs2b0t_browse_prompted = true;
         if paths::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
             return;
         }

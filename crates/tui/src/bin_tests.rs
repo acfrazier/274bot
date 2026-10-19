@@ -1,4 +1,6 @@
 use super::*;
+use crate::bin::seam::Seam;
+
 use frontend_core::scripts::{
     CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
 };
@@ -1801,6 +1803,7 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
             walk_cleared: &mut walk_cleared,
             map_desk: &mut session.map_desk,
             models: frontend_core::Models::none(),
+            frame_hook: None,
         };
         session.core.remove(slot, Instant::now(), &mut surface);
         session.core.remove(slot, Instant::now(), &mut surface);
@@ -2400,18 +2403,10 @@ fn tui_live_mode_does_not_show_or_persist_background_notice() {
 fn tui_notice_uses_shared_ack_file() {
     let iso = IsolatedStores::enter("tui-shared-ack");
     let mut session = TuiSession::new(dummy_options());
-    let app = pump_two_slots(&mut session);
+    let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
-    session
-        .core
-        .submit_detached(
-            frontend_core::OperatorCommand::AcknowledgeNotice,
-            frontend_core::Targets::Application,
-        )
-        .unwrap();
-    let mut app = TuiApp::new("tui");
-    app.names = vec!["alice".into(), "bob".into()];
-    app.focused = Some(0);
+    dispatch(&mut session, &mut app, AppAction::AckBackground);
+
     session.expire_ack_cache();
     session.pump(&mut app);
     assert!(app.background_notice.is_none());
@@ -2714,7 +2709,8 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     .unwrap();
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(session.preferences.share());
+    Seam::restore_preferences(&mut app, session.preferences.share());
+
     assert!(!app.pause_script_on_manual_walk_abort);
 
     app.pause_script_on_manual_walk_abort = true;
@@ -2757,7 +2753,8 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     let iso = IsolatedStores::enter("tui-walk-globals-commands");
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
-    app.restore_preferences(session.preferences.share());
+    Seam::restore_preferences(&mut app, session.preferences.share());
+
     app.settings_state.open = true;
     let enter = settings_key(crossterm::event::KeyCode::Enter);
     app.settings_state.row = 5;
@@ -2891,6 +2888,8 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
 #[test]
 fn dismissing_the_paths_notice_clears_it_through_the_acknowledge_command() {
     let iso = IsolatedStores::enter("tui-paths-notice-command");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.share());
@@ -2908,6 +2907,8 @@ fn dismissing_the_paths_notice_clears_it_through_the_acknowledge_command() {
 #[test]
 fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let iso = IsolatedStores::enter("tui-quester-paths-save-failure");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.share());
@@ -2943,6 +2944,8 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
 #[test]
 fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     let iso = IsolatedStores::enter("tui-quester-paths-startup");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+
     let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
     for (id, name) in [("cook", "Folder Cook"), ("fresh-draft", "Fresh Draft")] {
@@ -3755,10 +3758,12 @@ fn settings_popup_stays_bound_to_its_profile_across_focus_change() {
     session.pump(&mut app);
     assert!(app.settings_state.open, "settings opens");
     // Toggle random events off: the draft belongs to alice.
-    app.on_key(crossterm::event::KeyEvent::new(
+    let edit = app.on_key(crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Enter,
         crossterm::event::KeyModifiers::NONE,
     ));
+    dispatch(&mut session, &mut app, edit);
+
     assert!(!app.settings.random_events(), "the toggle edits the draft");
     // Switch focus to bob: the popup stays open on alice's draft, titled
     // with the profile it is bound to.
@@ -4036,6 +4041,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
         let (x, y) = cell_of(&screen, "settings: random: no profile alice")
             .unwrap_or_else(|| panic!("{w}x{h}: the refusal shows"));
         assert!(x == left && y > top, "{w}x{h}: inside the popup");
+
         assert_eq!(screen[(x, y)].fg, ratatui::style::Color::Red, "{w}x{h}");
         assert_eq!(
             cell_of(&screen, frontend_core::NOTHING_SAVED),

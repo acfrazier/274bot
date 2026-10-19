@@ -350,6 +350,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   the draw switches, the Nav config grants, session log, map bake, Quest
   Paths, marks, the filter, the vault and Quit. Each action returns a typed
   report.
+- Fleet Assign & restart reports its paced Starts through completion, after
+  the assignment is durable.
 - Saved draw preferences (capture input, sidecar and focused 50 fps), the
   render-all and background-bots acknowledgements, the map-bake choice and
   the session log file are written only when you change them. Saving the

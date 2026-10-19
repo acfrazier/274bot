@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
-use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsError};
+use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsErrorKind};
 use host_play::local_state::{LocalStateService, StateRoot};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
@@ -136,7 +136,7 @@ pub(crate) fn save_store_patiently(store: &mut Loadouts) {
             Ok(()) => return,
             Err(error)
                 if (error.to_string().contains("not durable within")
-                    || matches!(error, LoadoutsError::Conflict(_)))
+                    || error.kind() == LoadoutsErrorKind::Conflict)
                     && start.elapsed() < std::time::Duration::from_secs(60) =>
             {
                 std::thread::yield_now();

@@ -91,7 +91,7 @@ pub enum SubmitError {
 /// What a row's dispatch did with one member: the member's terminal, or
 /// who settles it later. Every arm of the dispatch returns one; nothing
 /// settles a member by default.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Applied {
     /// The effect holds.
     Done,
@@ -118,8 +118,8 @@ pub struct Submitted {
     operation: Option<OperationId>,
     removal: Option<Removal>,
     added: usize,
-    bulk: Option<crate::BulkReport>,
-    marked: Option<crate::MarkedCommandReport>,
+    bulk: Option<crate::bulk::BulkReport>,
+    marked: Option<crate::marked::MarkedCommandReport>,
 }
 
 impl Submitted {
@@ -146,29 +146,29 @@ impl Submitted {
 
     /// The per-row report of a bulk or marked command (Start all, the
     /// Fleet window's marked actions), for the front end's report line.
-    pub fn bulk(&self) -> Option<&crate::BulkReport> {
+    pub fn bulk(&self) -> Option<&crate::bulk::BulkReport> {
         self.bulk.as_ref()
     }
 
     /// Take the bulk report.
-    pub fn take_bulk(&mut self) -> Option<crate::BulkReport> {
+    pub fn take_bulk(&mut self) -> Option<crate::bulk::BulkReport> {
         self.bulk.take()
     }
 
-    pub(crate) fn set_bulk(&mut self, bulk: crate::BulkReport) {
+    pub(crate) fn set_bulk(&mut self, bulk: crate::bulk::BulkReport) {
         self.bulk = Some(bulk);
     }
     /// The exact marked command's per-profile admission report.
-    pub fn marked(&self) -> Option<&crate::MarkedCommandReport> {
+    pub fn marked(&self) -> Option<&crate::marked::MarkedCommandReport> {
         self.marked.as_ref()
     }
 
     /// Take the marked command's per-profile admission report.
-    pub fn take_marked(&mut self) -> Option<crate::MarkedCommandReport> {
+    pub fn take_marked(&mut self) -> Option<crate::marked::MarkedCommandReport> {
         self.marked.take()
     }
 
-    pub(crate) fn set_marked(&mut self, marked: crate::MarkedCommandReport) {
+    pub(crate) fn set_marked(&mut self, marked: crate::marked::MarkedCommandReport) {
         self.marked = Some(marked);
     }
 }
@@ -543,8 +543,11 @@ impl<Io> OperatorSession<Io> {
     ) -> Result<(), SubmitError> {
         let mut names = std::mem::take(&mut self.commands.names);
         names.clear();
+        let application_target = matches!(targets, Targets::Application);
         match (command.subject(), targets) {
             (SubjectKind::Application, Targets::Application) => {}
+            (SubjectKind::Profile, Targets::Application)
+                if command.accepts_subject(SubjectKind::Application) => {}
             (SubjectKind::Application, _) | (SubjectKind::Profile, Targets::Application) => {
                 self.commands.names = names;
                 return Err(SubmitError::WrongTargets(command));
@@ -576,7 +579,7 @@ impl<Io> OperatorSession<Io> {
         }
         let mut targets = std::mem::take(&mut self.commands.targets);
         targets.clear();
-        if command.subject() == SubjectKind::Application {
+        if command.subject() == SubjectKind::Application || application_target {
             targets.push((Subject::Application, Scope::Process));
         } else {
             for name in &names {
@@ -804,6 +807,29 @@ impl<Io> OperatorSession<Io> {
                     // run owner reports the slot idle.
                     (Targets::Profile(_) | Targets::Selected, [name]) => {
                         submitted.operation = Some(self.stop_script(name));
+                    }
+                    (Targets::Everyone, _) => {
+                        let operation = {
+                            let mut models = surface.models();
+                            if let Some(scripts) = models.scripts.as_deref_mut() {
+                                scripts.stop_all_with_receipt(self).1
+                            } else {
+                                Some(self.stop_scripts(&names).0)
+                            }
+                        };
+                        if let Some(operation) = operation {
+                            submitted.operation = Some(operation);
+                        } else {
+                            for name in &names {
+                                self.settle_member(
+                                    request,
+                                    command,
+                                    name,
+                                    Applied::Skipped(SkipReason::NotReady),
+                                    submitted,
+                                );
+                            }
+                        }
                     }
                     (_, []) => {}
                     _ => submitted.operation = Some(self.stop_scripts(&names).0),
@@ -1134,7 +1160,7 @@ impl<Io> OperatorSession<Io> {
                     if let Some(form_save) = models.form_save.as_deref_mut() {
                         match &result {
                             Ok(op) => form_save.submitted(self, *op, Some(&name), &name),
-                            Err(reason) => form_save.refused(reason.clone()),
+                            Err(reason) => form_save.refused(format!("settings: {reason}")),
                         }
                     }
                     self.owner_result(request, command, &name, result);
@@ -1183,18 +1209,21 @@ impl<Io> OperatorSession<Io> {
                 super::vault_rows::VaultRow::Unlock,
                 request,
                 application_admitted,
+                surface,
                 submitted,
             ),
             OperatorCommand::CreateVault => self.vault_row(
                 super::vault_rows::VaultRow::Create,
                 request,
                 application_admitted,
+                surface,
                 submitted,
             ),
             OperatorCommand::ResetVault => self.vault_row(
                 super::vault_rows::VaultRow::Reset,
                 request,
                 application_admitted,
+                surface,
                 submitted,
             ),
             // --- Fleet view, marks, MultiBox ---
@@ -1659,7 +1688,7 @@ impl<Io> OperatorSession<Io> {
                     .map(|name| crate::BulkRow::new(name, crate::BulkOutcome::Done)),
             );
         }
-        submitted.set_bulk(crate::BulkReport::new(
+        submitted.set_bulk(crate::bulk::BulkReport::new(
             "Log in marked",
             "logging in",
             rows,
@@ -1708,7 +1737,7 @@ impl<Io> OperatorSession<Io> {
                     .map(|name| crate::BulkRow::new(name, crate::BulkOutcome::Done)),
             );
         }
-        submitted.set_bulk(crate::BulkReport::new(
+        submitted.set_bulk(crate::bulk::BulkReport::new(
             "Log out marked",
             "logging out",
             rows,
@@ -2116,6 +2145,8 @@ const fn needs_surface(command: OperatorCommand) -> bool {
             | OperatorCommand::RelogNow
             | OperatorCommand::Remove
             | OperatorCommand::SetDraw(..)
+            | OperatorCommand::UnlockVault
+            | OperatorCommand::CreateVault
     )
 }
 

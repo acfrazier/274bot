@@ -391,8 +391,10 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     assert_eq!(terminal_app(&d, reset.request()), Some(done()));
     assert!(!vault.is_file(), "ResetVault deleted the locked vault file");
 
-    let mut open = driver_in(&scratch("reset-vault-open"), &["bob"]);
-    let path = open.session().preferences().expect("prefs").path();
+    let open_dir = scratch("reset-vault-open");
+    let mut open = driver_in(&open_dir, &["bob"]);
+    let path = open_dir.join("vault");
+    assert!(path.is_file(), "the open vault's file exists");
     open.session_mut().stage_vault_reset(path.clone());
     let refused = open
         .submit(OperatorCommand::ResetVault, Targets::Application)

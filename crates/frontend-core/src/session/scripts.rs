@@ -10,7 +10,7 @@ use crate::command::{
     CardKind, FailureKind, OperatorCommand, Rejection, SkipReason, Subject, SubjectKind,
 };
 use crate::scripts::{
-    AssignmentCommandResult, CatalogActionKind, PaintInput, ParameterCommit, ParameterEditKey,
+    AssignmentCommandResult, CatalogActionKind, PaintAction, ParameterCommit, ParameterEditKey,
     PendingApplicationWait, ScriptChoice, Scripts, StagedSetting, SyncCommandInput,
 };
 use crate::selection::MarkedSelection;
@@ -182,7 +182,7 @@ impl<Io> OperatorSession<Io> {
                     request,
                     &name,
                     start_root.as_deref(),
-                    cancel_reason.as_deref(),
+                    cancel_reason,
                 )
             };
             if marked_target && marked_assignment_label(row).is_some() {
@@ -286,8 +286,7 @@ fn dispatch_application<Io>(
             };
             let Some(root) = action.root.as_deref() else {
                 if action.kind == CatalogActionKind::Fill {
-                    scripts.mark_catalog_filled();
-                    return Applied::Done;
+                    return Applied::Skipped(SkipReason::NotReady);
                 }
                 return Applied::Rejected(
                     Rejection::NotApplicable,
@@ -501,11 +500,11 @@ fn dispatch_profile<Io>(
             if core.play().is_none() {
                 return Applied::Rejected(Rejection::NoHost, None);
             }
-            match input {
-                PaintInput::Click { id, generation } => {
+            match input.0 {
+                PaintAction::Click { id, generation } => {
                     core.script_paint_click(profile, &id, generation)
                 }
-                PaintInput::Select {
+                PaintAction::Select {
                     key,
                     name,
                     generation,
@@ -542,16 +541,6 @@ fn start_profile<Io>(
     if scripts.start_queue_place(profile).is_some() || scripts.has_start_preparation(profile) {
         register_start_command(core, scripts, request, profile);
         return Applied::Later;
-    }
-    match core
-        .play()
-        .map_or(script::RunState::Idle, |play| play.script_state(profile))
-    {
-        script::RunState::Starting
-        | script::RunState::Running
-        | script::RunState::Paused
-        | script::RunState::Stopping => return Applied::Skipped(SkipReason::AlreadyActive),
-        script::RunState::Idle | script::RunState::Error => {}
     }
     match scripts.start_selected(core, profile, None, catalog_root) {
         Ok(Some(operation)) => Applied::Operation(operation),
@@ -590,6 +579,9 @@ fn start_group_member<Io>(
     if accepted {
         register_start_command(core, scripts, request, profile);
         return Applied::Later;
+    }
+    if core.play().is_none() {
+        return Applied::Skipped(SkipReason::NotReady);
     }
     match core
         .play()
@@ -668,12 +660,14 @@ fn assign_profile<Io>(
     let subject = Subject::Profile(core.profile_identity_or_synthetic(profile));
     match scripts.dispatch_assignment_command(
         core,
-        request,
-        subject,
-        profile.to_owned(),
-        selection,
-        catalog_root,
-        restart,
+        crate::scripts::PendingAssignmentWrite {
+            request,
+            subject,
+            profile: profile.to_owned(),
+            selection,
+            catalog_root,
+            restart,
+        },
     ) {
         AssignmentCommandResult::Done => Applied::Done,
         AssignmentCommandResult::Operation(operation) => Applied::Operation(operation),

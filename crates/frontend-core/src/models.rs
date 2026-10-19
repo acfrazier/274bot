@@ -13,13 +13,15 @@
 //! then refused with [`crate::command::Rejection::NoModel`].
 
 use crate::fleet::FleetFilter;
+use crate::profile_editor::ProfileEditor;
 use crate::profile_form::ProfileFormSave;
+use crate::quester_paths::QuesterPathsController;
 use crate::rs2b0t_import::ProfileImport;
 use crate::scripts::{LoadoutForm, Scripts};
 use crate::selection::MarkedSelection;
 use crate::session::map::MapDesk;
 use crate::session::prefs::DrawPolicy;
-use crate::{ProfileEditor, QuesterPathsController, WalkGlobalsView};
+use crate::walk_permissions::WalkGlobalsView;
 
 /// The models lent for one command. Build it with [`Models::none`] and the
 /// `with_*` methods from the front end's own fields.

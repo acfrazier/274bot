@@ -247,24 +247,9 @@ fn with_marked_bob(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
 }
 
 fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
-    // A filled catalog: Browse/Load never raise the first-use import prompt.
-    state.session.scripts.stage_catalog_action(
-        frontend_core::scripts::CatalogActionKind::Fill,
-        None,
-        frontend_core::scripts::paths::rs2b0t_path_file(),
-    );
-    let submitted = state
-        .session
-        .submit_script_command(
-            frontend_core::OperatorCommand::ImportCatalog,
-            frontend_core::Targets::Application,
-        )
-        .expect("catalog fill row is submitted");
-    assert!(state
-        .session
-        .core
-        .command_failure(submitted.request())
-        .is_none());
+    // The first-use catalog prompt was already answered this session:
+    // Browse/Load never raise it again.
+    state.session.rs2b0t_browse_prompted = true;
     state
         .session
         .ui

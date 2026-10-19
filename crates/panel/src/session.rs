@@ -246,6 +246,9 @@ struct PanelSurface<'a> {
     memory_override: Option<bool>,
     map_desk: &'a mut frontend_core::MapDesk,
     models: frontend_core::Models<'a>,
+    /// The panel's per-frame client work, lent only to the vault rows
+    /// that start the play.
+    frame_hook: Option<Arc<dyn frontend_core::frames::FrameHook>>,
 }
 
 impl SlotSurface for PanelSurface<'_> {
@@ -316,6 +319,10 @@ impl SlotSurface for PanelSurface<'_> {
             DrawSwitch::FocusedFullRate => focus.focused_50 = on,
             DrawSwitch::LiveFullRate => focus.live_full_rate = on,
         }
+    }
+
+    fn frame_hook(&mut self) -> Option<Arc<dyn frontend_core::frames::FrameHook>> {
+        self.frame_hook.take()
     }
 }
 
@@ -1027,6 +1034,9 @@ pub struct Session {
     pub rs2b0t_catalog_open: bool,
     /// Show **Not now** (first-run only; later Import catalog… does not defer).
     pub rs2b0t_catalog_defer_ok: bool,
+    /// Browse already asked for a clone root this session (no root known):
+    /// a later Browse only brings its window forward.
+    pub(crate) rs2b0t_browse_prompted: bool,
     /// Current directory in the rs2b0t folder picker.
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
@@ -1476,6 +1486,7 @@ impl Session {
             script_dialog_sort_desc: false,
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_defer_ok: false,
+            rs2b0t_browse_prompted: false,
             rs2b0t_catalog_dir: crate::script_picker::default_load_browse_dir(None),
             browse_category_filter: None,
             script_prefs_open: false,
@@ -2274,14 +2285,15 @@ impl Session {
         let launch = self.launcher.take_launch().keeping_world_state();
         let row = if path.is_file() {
             self.core
-                .stage_vault_unlock(path.to_path_buf(), pass, launch, hook);
+                .stage_vault_unlock(path.to_path_buf(), pass, launch);
             OperatorCommand::UnlockVault
         } else {
             self.core
-                .stage_vault_create(path.to_path_buf(), pass, launch, hook);
+                .stage_vault_create(path.to_path_buf(), pass, launch);
             OperatorCommand::CreateVault
         };
         let (core, mut surface) = self.core_and_surface();
+        surface.frame_hook = Some(hook);
         let submitted = core
             .submit(row, Targets::Application, &mut surface)
             .map_err(|error| (UnlockStage::Vault, error.to_string()))?;
@@ -3102,6 +3114,7 @@ impl Session {
                     .with_walk_globals(&mut self.walk_permissions)
                     .with_fleet_filter(&mut self.fleet_filter)
                     .with_draw(&mut self.draw),
+                frame_hook: None,
             },
         )
     }
@@ -3969,7 +3982,9 @@ impl Session {
             .and_then(|name| self.core.walk_slot_status(name).origin());
         self.map_desk
             .stage_walk_to(&mut self.map_model, context, origin, options);
-        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let targets = name
+            .as_deref()
+            .map_or(Targets::Application, Targets::Profile);
         let Some(submitted) = self.submit(OperatorCommand::WalkTo, targets) else {
             return false;
         };

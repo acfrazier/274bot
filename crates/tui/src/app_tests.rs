@@ -585,7 +585,12 @@ fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
 
 #[test]
 fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes() {
+    let _iso = frontend_core::test_support::IsolatedStores::enter("tui-quest-paths-settings");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+
     for (width, height) in [(80, 24), (120, 40)] {
+        let mut seam = Seam::new();
+
         let mut app = crate::test_support::fleet_app(&["alice"]);
         app.show_screen(Screen::Overview);
         assert_eq!(app.on_key(ch('o')), AppAction::None);
@@ -607,7 +612,11 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             "the off-by-default folder gate stays visible at {width}x{height}: {rows:?}"
         );
         assert!(!app.quester_paths.enabled(), "folder Paths start disabled");
-        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        let action = app.on_key(key(KeyCode::Enter));
+        assert_eq!(action, AppAction::DismissPathsNotice);
+        seam.apply(&mut app, action);
+        seam.pump(&mut app);
+
         assert!(app.quester_paths.enabled(), "the gate toggles on");
 
         app.on_key(key(KeyCode::Down));
@@ -625,11 +634,15 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
         for character in selected_folder.chars() {
             app.on_key(ch(character));
         }
+        let action = app.on_key(key(KeyCode::Enter));
         assert_eq!(
-            app.on_key(key(KeyCode::Enter)),
-            AppAction::None,
+            action,
+            AppAction::DismissPathsNotice,
             "Enter commits the editable folder field"
         );
+        seam.apply(&mut app, action);
+        seam.pump(&mut app);
+
         assert_eq!(
             app.quester_paths.folder(),
             std::path::PathBuf::from(selected_folder)
@@ -641,12 +654,15 @@ fn quest_paths_settings_are_reachable_editable_and_reload_routes_at_common_sizes
             text(&rows).contains(frontend_core::quester_paths::RELOAD_PATHS_LABEL),
             "Reload Paths stays visible at {width}x{height}: {rows:?}"
         );
+        let action = app.on_key(key(KeyCode::Enter));
         assert_eq!(
-            app.on_key(key(KeyCode::Enter)),
+            action,
             AppAction::ReloadPaths,
             "the settings command routes reload without starting a Path"
         );
+        seam.apply(&mut app, action);
     }
+    frontend_core::test_support::scripts::reset_quester_registry();
 }
 
 #[test]
@@ -896,7 +912,8 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     let loadouts = Loadouts::default();
     let mut app = open_map_world();
-    app.restore_preferences(preferences.share());
+    Seam::restore_preferences(&mut app, preferences.share());
+
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));
     let schema = TestSchema::setting(
         "allow_danger_zones",
