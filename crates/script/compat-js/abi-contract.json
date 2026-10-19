@@ -13712,28 +13712,6 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl:query:inside",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.inside",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:108",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:query:nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:112",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:api/combat/hunting/combat.js:Fight.hasChaseTarget",
       "module": "api/combat/hunting/combat.js",
       "selector": "Fight.hasChaseTarget",
@@ -23678,26 +23656,6 @@
       "overlay_id": "not-impl:hunting:withdrawTo"
     },
     {
-      "family_id": "entities",
-      "member": "inside",
-      "selector": "EntityQuery.inside",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:108",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "overlay_id": "not-impl:query:inside"
-    },
-    {
-      "family_id": "entities",
-      "member": "nearestPreferLocal",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:112",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "overlay_id": "not-impl:query:nearestPreferLocal"
-    },
-    {
       "family_id": "hunt",
       "member": "hasChaseTarget",
       "selector": "Fight.hasChaseTarget",
@@ -25425,6 +25383,7 @@
     "bank",
     "cooking",
     "cow",
+    "entities",
     "gathering",
     "runecrafting",
     "skills",
@@ -25597,7 +25556,7 @@
       "type_aliases": 0,
       "name_aliases": 1,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "events",
