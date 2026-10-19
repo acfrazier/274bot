@@ -24,6 +24,7 @@ const contractText = fs.readFileSync(path.join(here, 'abi-contract.json'), 'utf8
 const predecessorText = fs.readFileSync(path.join(here, 'family-predecessors.json'), 'utf8');
 const contract = JSON.parse(contractText);
 const predecessors = JSON.parse(predecessorText);
+const currentIndex = fs.readFileSync(path.join(here, 'index.d.ts'), 'utf8');
 const registry = JSON.parse(fs.readFileSync(path.join(here, 'modules.json'), 'utf8'));
 const shimSources = Object.fromEntries(registry.map(entry => [
     entry.shim,
@@ -40,7 +41,7 @@ const navFamilies = frozenRoot ? deriveNavFamilies({
 }) : null;
 
 test('the generated ABI contract and family graph are complete', () => {
-    validateArtifacts(contract, predecessors, navFamilies);
+    validateArtifacts(contract, predecessors, navFamilies, currentIndex);
     const nav = new Set(predecessors.families.filter(row => row.nav_consuming).map(row => row.family_id));
     assert.deepEqual(
         [...nav].sort(),
@@ -49,18 +50,86 @@ test('the generated ABI contract and family graph are complete', () => {
     );
 });
 
-test('only the complete bank family is activated', () => {
+test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
+    assert.equal(predecessors.families.length, 41);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 37);
+    for (const [familyId, modules] of [
+        ['magic', ['api/magic/Autocast.js']],
+        ['prayer', ['api/prayer/Prayer.js']],
+        ['catalog-data', ['data/dropdb.js', 'data/herbs.js', 'data/itemdb.js', 'data/shopdb.js', 'data/spelldb.js']],
+    ]) {
+        const family = predecessors.families.find(row => row.family_id === familyId);
+        assert.ok(family, familyId);
+        assert.equal(family.nav_consuming, false);
+        assert.equal(family.activation_state, 'not-activated');
+        assert.deepEqual(family.predecessors, ['F0', 'T1.3', 'T2.1']);
+        assert.deepEqual(
+            contract.typed_modules.filter(row => row.family_id === familyId).map(row => row.module),
+            modules,
+        );
+    }
+    assert.deepEqual(
+        contract.typed_modules.map(row => row.module).sort(),
+        ['@rs2b0t/api', ...registry.map(row => row.module)].sort(),
+    );
+});
+
+test('every typed module requires a family predecessor row', () => {
+    for (const module of contract.typed_modules) {
+        const drift = structuredClone(predecessors);
+        drift.families = drift.families.filter(row => row.family_id !== module.family_id);
+        assert.throws(
+            () => validateArtifacts(contract, drift, navFamilies, currentIndex),
+            /Missing family predecessor classification for typed module/,
+            module.module,
+        );
+    }
+});
+
+test('the typed declaration AST rejects omitted module family rows', () => {
+    for (const module of contract.typed_modules) {
+        const drift = structuredClone(contract);
+        drift.typed_modules = drift.typed_modules.filter(row => row.module !== module.module);
+        assert.throws(
+            () => validateArtifacts(drift, predecessors, navFamilies, currentIndex),
+            /Missing typed module family row/,
+            module.module,
+        );
+    }
+});
+
+test('typed module classification rejects duplicate and incorrect family rows', () => {
+    const duplicate = structuredClone(contract);
+    duplicate.typed_modules.push(duplicate.typed_modules[0]);
+    assert.throws(() => validateArtifacts(duplicate, predecessors, navFamilies), /Duplicate typed module family row/);
+    const incorrect = structuredClone(contract);
+    incorrect.typed_modules.find(row => row.module === 'api/magic/Autocast.js').family_id = 'combat';
+    assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
+});
+
+test('only complete bank, cow, skills and world-primitives families are activated', () => {
     assert.equal(contract.activation_state, 'partially-activated');
-    assert.deepEqual(contract.active_families, ['bank']);
+    assert.deepEqual(contract.active_families, ['bank', 'cow', 'skills', 'world-primitives']);
     for (const family of predecessors.families) {
         assert.equal(
             family.activation_state,
-            family.family_id === 'bank' ? 'activated' : 'not-activated',
+            contract.active_families.includes(family.family_id) ? 'activated' : 'not-activated',
             family.family_id,
         );
     }
     assert.ok(!contract.not_impl_debt.some(row => row.selector === 'nearestUsableBank'));
     assert.equal(nativeFamilyFamilies.get('bank_wait'), 'bank');
+});
+
+test('an activated family cannot lose its complete-unit graph state', () => {
+    for (const familyId of contract.active_families) {
+        const drift = structuredClone(predecessors);
+        drift.families.find(row => row.family_id === familyId).activation_state = 'not-activated';
+        assert.throws(
+            () => validateArtifacts(contract, drift, navFamilies),
+            new RegExp(`Unexpected activation state for family ${familyId}`),
+        );
+    }
 });
 
 test('a declared-only runtime member roots its implementation for nav scanning', () => {

@@ -12,6 +12,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Cow location, toll, bootstrap and loot-leash helpers are admitted as a complete
+  Rust-backed compatibility family. Catalog order, selected-bank bindings,
+  object identities and existing behavior are unchanged.
+- Skills lookups and HP fraction calculations now run in Rust over the
+  already-posted stats rows. Compatibility names, row ordering, missing-skill
+  errors and boosted levels keep their existing behavior.
+- World Tile copying, translation, equality, text conversion and posted-coordinate
+  validation now run in Rust. Area sampling returns a real Tile in the same native
+  call. Existing geometry bounds, plane rules and caller-visible values stay the
+  same.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
@@ -324,6 +334,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   surface-specific.
 - Render-all draws up to 128 clients at once. A client past that shows
   "renderer refused: render head cap of 128 is full" in its own tile.
+- Clients without a drawn view retain less render scratch memory. Hiding a view
+  releases that scratch, and showing it again keeps the same game connection.
 
 ### TUI
 
@@ -368,6 +380,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 #### Scripts
 
+- The compatibility family table now includes magic, prayer, and selected-content
+  data modules. Generation rejects a typed module without a family row.
+  This corrects coverage reporting and does not activate new behavior.
 - A v2 `withdraw-load` request now completes with `false` if a later bank
   operation replaces it, its start fails, or a session boundary cancels it.
   Its result sequence stays unchanged across session boundaries without

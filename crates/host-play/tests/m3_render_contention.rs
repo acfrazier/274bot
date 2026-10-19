@@ -257,10 +257,11 @@ fn world_census(client: &client::client::Client) -> Value {
         "overlay_pending": client.world.overlay_pending,
         "share_light_pending": client.world.share_light_pending,
         "draw": client.draw,
+        "dynamic_sprite_storage_bytes": client.world.dynamic_sprite_storage_bytes(),
     })
 }
 
-/// Fixed per-world allocations made at `World::new`, whatever is loaded.
+/// Fixed world and head draw-scratch sizes, separated by their actual owner.
 fn static_world_bytes() -> Value {
     use client::core::world::{MAX_DYNAMIC_SPRITES, MAX_OCCLUDERS, OCCLUDER_LEVELS};
     use client::dash3d::occlude::Occlude;
@@ -268,8 +269,10 @@ fn static_world_bytes() -> Value {
     let side = BuildArea::SIZE as usize + 1;
     json!({
         "occluders": OCCLUDER_LEVELS * MAX_OCCLUDERS * std::mem::size_of::<Option<Occlude>>(),
-        "occlusion_cycle_zeroed": OCCLUDER_LEVELS * side * side * std::mem::size_of::<i32>(),
-        "dynamic_sprite_slots": MAX_DYNAMIC_SPRITES * std::mem::size_of::<Option<usize>>(),
+        "occlusion_cycle_zeroed": 0,
+        "dynamic_sprite_slots": 0,
+        "head_occlusion_cycle_bytes": OCCLUDER_LEVELS * side * side * std::mem::size_of::<i32>(),
+        "dynamic_sprite_capacity_max_bytes": MAX_DYNAMIC_SPRITES * std::mem::size_of::<Option<usize>>(),
         "square_size": std::mem::size_of::<client::dash3d::square::Square>(),
     })
 }
@@ -688,7 +691,7 @@ fn live_m3_render_contention() {
     }
 
     // T4.2: live head detach and reattach on the logged-in sessions.
-    let reattach = live_reattach(&play, &heads, &draw, warmup);
+    let reattach = live_reattach(&play, &heads, &draw, warmup, &census);
     std::fs::write(
         out.join(format!("{backend}-n{n}-reattach.json")),
         serde_json::to_string_pretty(&reattach).unwrap(),
@@ -713,7 +716,13 @@ fn live_m3_render_contention() {
 /// head: its mailbox stops accepting frames and nothing paints. Draw on
 /// attaches a new generation of the same slot over the same connection and
 /// login: the stream epoch is unchanged and its byte counters keep growing.
-fn live_reattach(play: &Play, heads: &[HeadProbe], draw: &AtomicBool, settle: Duration) -> Value {
+fn live_reattach(
+    play: &Play,
+    heads: &[HeadProbe],
+    draw: &AtomicBool,
+    settle: Duration,
+    census: &Census,
+) -> Value {
     let session = |name: &str| {
         play.statuses()
             .into_iter()
@@ -739,6 +748,13 @@ fn live_reattach(play: &Play, heads: &[HeadProbe], draw: &AtomicBool, settle: Du
         .zip(&paints_off)
         .map(|(h, &paints)| h.mailbox.generation() - paints)
         .collect();
+    let worlds_detached = census.run("detached", heads.len());
+    assert!(
+        worlds_detached
+            .iter()
+            .all(|world| world["dynamic_sprite_storage_bytes"] == 0),
+        "detached worlds release transient draw-sprite storage"
+    );
 
     draw.store(true, Relaxed);
     let reattach_from = Instant::now();
@@ -756,6 +772,7 @@ fn live_reattach(play: &Play, heads: &[HeadProbe], draw: &AtomicBool, settle: Du
     }
     let repainted_after_s = reattach_from.elapsed().as_secs_f64();
     thread::sleep(Duration::from_secs(1));
+    let worlds_reattached = census.run("reattached", heads.len());
 
     let mut rows = Vec::new();
     for ((head, (first, status)), &detached) in heads.iter().zip(&before).zip(&detached) {
@@ -814,6 +831,8 @@ fn live_reattach(play: &Play, heads: &[HeadProbe], draw: &AtomicBool, settle: Du
     json!({
         "painted_while_detached": painted_while_off,
         "repainted_after_s": repainted_after_s,
+        "worlds_detached": worlds_detached,
+        "worlds_reattached": worlds_reattached,
         "heads": rows,
     })
 }

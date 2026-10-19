@@ -311,6 +311,14 @@ unchanged manifest; compression does not change selected-content identities.
 | `random/maze.rs` | maze graph, route, and phase | port of the frozen maze logic |
 | `random/maze/layout.rs` | static maze layout data | copied layout rows |
 
+Render-only scratch follows the draw-head lifetime (T4.3 shed). The client's
+`RenderWorld` owns the per-frame occlusion cache. The world creates its bounded
+dynamic draw-sprite list only on first use and releases it during draw-off
+cleanup. Attach reconstructs a head over the same Client and connection.
+Ground stamps and simulation observation generations remain on the world.
+An attached head still preserves its last 3D scene while `scene_state == 1`.
+The synchronous GPU workspace wait remains a T4.4 limitation.
+
 ### nav
 
 | module | owns (one reason to change) | notes |

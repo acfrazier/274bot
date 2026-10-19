@@ -5,6 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const BASE_PREDECESSORS = ['F0', 'T1.3', 'T2.1'];
+const ACTIVE_FAMILIES = ['bank', 'cow', 'skills', 'world-primitives'];
 // These nav values are expected assertions only; generated classifications
 // come from frozen import graphs and native backend source evidence.
 const SECTION_FAMILIES = new Map([
@@ -951,6 +952,21 @@ function currentRootExports(indexText) {
     return names;
 }
 
+function typedModuleFamilies(indexText, navFamilies = null) {
+    const source = parseSource(indexText, 'generated-index.d.ts');
+    const modules = new Map();
+    for (const statement of source.statements) {
+        if (!ts.isModuleDeclaration(statement)) continue;
+        const ambientName = nodeName(statement.name, source);
+        const module = ambientName?.startsWith('*') ? ambientName.slice(1) : ambientName;
+        if (!statement.body || !ts.isModuleBlock(statement.body)) fail(`Malformed generated ABI module ${module}`);
+        if (modules.has(module)) fail(`Duplicate typed module family row for ${module}`);
+        const policy = classifyModule(module, navFamilies);
+        modules.set(module, { module, family_id: policy.id, nav_consuming: policy.nav });
+    }
+    return [...modules.values()].sort((a, b) => a.module.localeCompare(b.module));
+}
+
 function moduleSymbolIndex(indexText, registry) {
     const source = parseSource(indexText, 'generated-index.d.ts');
     const registered = new Set(registry.map(entry => entry.module));
@@ -1170,6 +1186,11 @@ function buildArtifacts({
     const frozen = parseSource(frozenIndex, 'packages/rs2b0t-api/index.d.ts');
     const sourceRecords = declarations(frozen, printer);
     const moduleSymbols = moduleSymbolIndex(currentIndex, registry);
+    const typedModules = typedModuleFamilies(currentIndex, navFamilies);
+    const typedModuleNames = new Set(typedModules.map(row => row.module));
+    for (const entry of registry) {
+        if (!typedModuleNames.has(entry.module)) fail(`Served ABI module has no typed declaration: ${entry.module}`);
+    }
     const nameMap = rootNameMaps(rootSource, sourceRecords, registry, moduleSymbols, navFamilies);
     const sourceRuntimeNames = runtimeExports(frozenRuntimeIndex, 'packages/rs2b0t-api/index.js');
     const sourceRecordNames = new Set(sourceRecords.filter(record => record.runtime).map(record => record.name));
@@ -1224,6 +1245,7 @@ function buildArtifacts({
     const callbacks = callbackFamilyRows(callbackSnapshot, nativeFamilyFamilies, navFamilies);
 
     const counts = new Map();
+    for (const row of typedModules) addCounts(counts, row.family_id, navFamilies);
     for (const record of sourceRecords) {
         const row = addCounts(counts, record.family_id, navFamilies);
         row.declarations++;
@@ -1254,9 +1276,9 @@ function buildArtifacts({
         return {
             family_id: row.family_id,
             nav_consuming: row.nav_consuming,
-            activation_unit: row.family_id === 'bank' ? 'I-family(bank)' : `I-family(${row.family_id})`,
+            activation_unit: `I-family(${row.family_id})`,
             activation_endpoint: row.family_id === 'bank' ? 'T2.3' : 'T2.rest',
-            activation_state: row.family_id === 'bank' ? 'activated' : 'not-activated',
+            activation_state: ACTIVE_FAMILIES.includes(row.family_id) ? 'activated' : 'not-activated',
             canonical_endpoint_predecessors: row.family_id === 'bank'
                 ? ['F0', 'T1.3', 'T2.2', 'T5.1']
                 : predecessors,
@@ -1285,10 +1307,11 @@ function buildArtifacts({
         },
         declarations: sourceRecords,
         compatibility_name_maps: nameMap.rows,
+        typed_modules: typedModules,
         overlays: classifiedOverlays,
         callbacks,
         not_impl_debt: debt,
-        active_families: ['bank'],
+        active_families: ACTIVE_FAMILIES,
         family_counts: familyCounts,
     };
     const predecessors = {
@@ -1298,23 +1321,41 @@ function buildArtifacts({
         base_predecessors: BASE_PREDECESSORS,
         families: familyPredecessors,
     };
-    validateArtifacts(contract, predecessors, navFamilies);
+    validateArtifacts(contract, predecessors, navFamilies, currentIndex);
     return {
         'abi-contract.json': `${JSON.stringify(contract, null, 2)}\n`,
         'family-predecessors.json': `${JSON.stringify(predecessors, null, 2)}\n`,
     };
 }
 
-function validateArtifacts(contract, predecessors, navFamilies = null) {
+function validateArtifacts(contract, predecessors, navFamilies = null, currentIndex = null) {
     if (contract.activation_state !== 'partially-activated' ||
-        JSON.stringify(contract.active_families) !== JSON.stringify(['bank'])) {
-        fail('T2.3 activates exactly the bank family');
+        JSON.stringify(contract.active_families) !== JSON.stringify(ACTIVE_FAMILIES)) {
+        fail('Activated families must match the complete family units');
     }
     const familyIds = new Set(predecessors.families.map(row => row.family_id));
     if (familyIds.size !== predecessors.families.length) fail('Duplicate family predecessor row');
     const checkFamily = (row, where) => {
         if (!row.family_id || !familyIds.has(row.family_id)) fail(`Missing family predecessor classification for ${where}`);
     };
+    if (!Array.isArray(contract.typed_modules)) fail('Missing typed module family inventory');
+    const typedModules = new Map();
+    for (const row of contract.typed_modules) {
+        checkFamily(row, `typed module ${row.module}`);
+        if (typedModules.has(row.module)) fail(`Duplicate typed module family row for ${row.module}`);
+        const policy = classifyModule(row.module, navFamilies);
+        if (row.family_id !== policy.id || row.nav_consuming !== policy.nav) {
+            fail(`Typed module family classification disagrees with policy for ${row.module}`);
+        }
+        typedModules.set(row.module, row);
+    }
+    if (currentIndex !== null) {
+        const expectedModules = typedModuleFamilies(currentIndex, navFamilies);
+        for (const row of expectedModules) {
+            if (!typedModules.has(row.module)) fail(`Missing typed module family row for ${row.module}`);
+        }
+        if (expectedModules.length !== typedModules.size) fail('Unexpected typed module family row');
+    }
     for (const declaration of contract.declarations) {
         checkFamily(declaration, declaration.name);
         for (const member of declaration.members) {
@@ -1327,7 +1368,7 @@ function validateArtifacts(contract, predecessors, navFamilies = null) {
         for (const row of contract[collection]) checkFamily(row, row.selector || row.member || row.public_name || collection);
     }
     for (const family of predecessors.families) {
-        const expectedState = family.family_id === 'bank' ? 'activated' : 'not-activated';
+        const expectedState = ACTIVE_FAMILIES.includes(family.family_id) ? 'activated' : 'not-activated';
         if (family.activation_state !== expectedState) fail(`Unexpected activation state for family ${family.family_id}`);
         for (const required of BASE_PREDECESSORS) {
             if (!family.predecessors.includes(required)) fail(`Family ${family.family_id} is missing predecessor ${required}`);
