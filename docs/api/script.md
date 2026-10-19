@@ -1787,6 +1787,21 @@ flight settles false (a deposit loop does nothing).
   and the bank session generation moved on, within `timeoutMs` (4 s when
   omitted). A reopened or logged-out session is false.
 
+## Entity wrappers and queries (compat v1)
+
+`Npcs`, `Locs`, `Players` and `GroundItems` select and rank from the decoded
+Rust scene. Native filters do not read the mutable public snapshot arrays.
+The adapter pairs each category with its original row objects after the whole
+snapshot materializes successfully. Omitted delta pages keep their last pair.
+A failed materialization cannot publish new native facts to those queries.
+
+Wrappers retain the original public `snap` object. Their getters observe edits
+to that object, as the compatibility API requires. Such edits do not change
+production selection, built-in filters, nearest ranking, validity or targeting.
+`EntityQuery.fromSnapshots` remains caller-driven and preserves supplier,
+wrapper, predicate, getter, public-override and thrown-value behavior.
+Interactions keep the existing selected-identity checks and host queue.
+
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in the

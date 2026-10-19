@@ -2268,6 +2268,7 @@ fn tick_loop(
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
+                super::super::entity_pages::reset(&mut runtime);
                 if let Err(e) = super::super::chatbox_v8::reset_session(&mut runtime) {
                     let _ = out.send(ThreadMsg::Log(format!("chatbox reset: {e}")));
                 }
