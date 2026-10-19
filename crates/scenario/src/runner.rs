@@ -444,6 +444,9 @@ pub struct ScenarioRunner {
     random_event: Option<RandomEventEpisode>,
     /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
     protect_window: Option<ProtectWindowObservation>,
+    /// Newest chat sequence at StartScript when the scenario sets
+    /// `fail_on_death`: a later death message fails the run at once.
+    death_chat_baseline: Option<i32>,
     /// StartScript has begun: paint published before it cannot belong to
     /// this run's card.
     script_started: bool,
@@ -553,6 +556,7 @@ impl ScenarioRunner {
             stall_combat: None,
             random_event: None,
             protect_window: None,
+            death_chat_baseline: None,
             script_started: false,
             receipt_prefixes,
             script_receipts: Vec::new(),
@@ -992,6 +996,21 @@ impl ScenarioRunner {
                 ));
                 return;
             }
+            if self.death_chat_baseline.is_some_and(|baseline| {
+                crate::proof::fresh_chat_contains(
+                    &self.snapshot,
+                    baseline,
+                    crate::random_episode::DEATH_MESSAGE,
+                )
+            }) {
+                self.finish_fail(&format!(
+                    "step {} ({}): the bot died after Start at {:?}",
+                    self.step + 1,
+                    self.current_step().name,
+                    self.snapshot.tile()
+                ));
+                return;
+            }
             let (arm, budget) = {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
@@ -1206,6 +1225,11 @@ impl ScenarioRunner {
             if let Some(seeded) = protect_window_seed(&self.scenario) {
                 self.protect_window = Some(ProtectWindowObservation::new(seeded));
             }
+            self.death_chat_baseline = self
+                .scenario
+                .settings
+                .fail_on_death
+                .then(|| crate::tutorial::chat_baseline(&self.snapshot));
             // Several skills can advance before their sequential watches
             // begin (a catching Guard can die before the first cake is stolen).
             // Seed XP is excluded; fresh return-trip watches stay step-local.

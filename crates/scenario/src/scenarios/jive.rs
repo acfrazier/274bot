@@ -1104,6 +1104,151 @@ pub(crate) fn jive_dragons_potion_restock_scenario() -> Scenario {
     )
 }
 
+/// The potion-restock bank trip with edible Lobsters beside the noted ones
+/// (`FIX-024-COMBAT-BANK-R3`): three edible Lobsters are given before the
+/// twenty notes, so the edible row comes first on the bank side. The trip
+/// must deposit only the noted row (bank 20 + 20 = 40), keep the three
+/// edible Lobsters and withdraw two more to `foodWithdraw` 5 (bank 38). A
+/// name-only deposit takes the edible row instead (bank 23, then 18 after a
+/// five-Lobster withdraw) and keeps the notes. The edible food means the
+/// card's food check does not start the trip: the Bronze sword waits in the
+/// bank, and the melee card banks for its missing weapon (frozen
+/// `JiveDragons.ts` `needStyleSupplies`, `BankRun.validate`).
+pub(crate) fn jive_dragons_mixed_food_restock_scenario() -> Scenario {
+    let bank = FALADOR_WEST_BANK;
+    let mut cmds: Vec<String> = vec!["~clearinv".to_string(), "~clearbank".to_string()];
+    cmds.extend([
+        "givebank lobster 20".to_string(),
+        "givebank dusty_key 1".to_string(),
+        "givebank bronze_sword 1".to_string(),
+        "givebank 3dose2attack 2".to_string(),
+        "givebank 3dose2strength 2".to_string(),
+        "givebank 3dose2defense 2".to_string(),
+        "give antidragonbreathshield 1".to_string(),
+        "give 1dose2attack 1".to_string(),
+        "give 2dose2strength 1".to_string(),
+        "give 3dose2defense 1".to_string(),
+        "give lobster 3".to_string(),
+        "give cert_lobster 20".to_string(),
+        tele_args(bank.level, bank.x, bank.z),
+    ]);
+    let mut steps = script_live_seed_steps();
+    steps.push(jive_seed(
+        "seed edible and noted lobsters in pack, the sword and fresh supers in the Falador West bank",
+        cmds,
+        Proof::ArrivedNear {
+            x: bank.x,
+            z: bank.z,
+            level: bank.level,
+            radius: 6,
+        },
+    ));
+    steps.extend([
+        bank_fletcher_watch(
+            "acknowledge twenty noted lobsters in pack before Start",
+            Proof::ItemId {
+                id: NOTED_LOBSTER_ID,
+                count: 20,
+            },
+        ),
+        bank_fletcher_watch(
+            "acknowledge three edible lobsters in pack before Start",
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 3,
+            },
+        ),
+        bank_fletcher_watch(
+            "confirm no more than three edible lobsters in pack before Start",
+            Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 3,
+            },
+        ),
+    ]);
+    steps.push(wear_combat_item_step(
+        "wear and acknowledge the dragonfire shield before Start",
+        DRAGONFIRE_SHIELD_ID,
+    ));
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the twenty lobster seed bank",
+        Proof::BankItemId {
+            id: LOBSTER_ID,
+            count: 20,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the bronze sword in the seed bank",
+        Proof::BankItemId {
+            id: BRONZE_SWORD_ID,
+            count: 1,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "confirm no more than twenty lobsters in the seed bank",
+        Proof::BankItemIdAtMost {
+            id: LOBSTER_ID,
+            count: 20,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    steps.extend([
+        jive_watch(
+            "watch the noted deposit leave at least thirty-eight lobsters in the open bank",
+            Proof::BankItemId {
+                id: LOBSTER_ID,
+                count: 38,
+            },
+            450,
+        ),
+        jive_watch(
+            "watch the noted lobsters leave the pack",
+            Proof::ItemIdAtMost {
+                id: NOTED_LOBSTER_ID,
+                count: 0,
+            },
+            150,
+        ),
+        jive_watch(
+            "watch five edible lobsters held",
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 5,
+            },
+            150,
+        ),
+        jive_watch(
+            "watch the open bank hold at most thirty-eight lobsters after the withdraw",
+            Proof::BankItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 38,
+            },
+            150,
+        ),
+        jive_watch(
+            "watch the bronze sword worn after the trip",
+            Proof::EquipmentId {
+                id: BRONZE_SWORD_ID,
+            },
+            300,
+        ),
+    ]);
+    // The same at-booth restock as `jive_dragons_potion_restock`.
+    jive_scenario(
+        "jive_dragons_mixed_food_restock",
+        "JiveDragons",
+        steps,
+        Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 5,
+        },
+        Duration::from_secs(300),
+        JIVE_DRAGONS_POTION_INJECT,
+        combat_fixture_loadouts("GreenDragon"),
+    )
+}
+
 const JIVE_DRAGONS_POTION_INJECT: &[ScriptSettingInject] = &[
     inj_str("loadout", JIVE_FOOD_LOADOUT),
     inj_str("site", "taverley-blue"),

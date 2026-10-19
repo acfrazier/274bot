@@ -32,7 +32,7 @@ pub const SKILL_EVENT_PATCH: &str =
 /// `[label,please_finish]`): the cheat did not run; send it again.
 const BUSY_REPLY: &str = "Please finish what you are doing first.";
 /// `player/scripts/death.rs2:27`.
-const DEATH_MESSAGE: &str = "Oh dear you are dead!";
+pub(crate) const DEATH_MESSAGE: &str = "Oh dear you are dead!";
 /// Genie lamp (`macro_genilamp`), the Guardian's `LAMP_OBJ`.
 const LAMP_ID: i32 = 2528;
 /// Strange box (`macro_cube`), the Guardian's `STRANGE_BOX_OBJ`.
