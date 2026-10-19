@@ -534,7 +534,7 @@ mod tests {
     use ratatui::Terminal;
 
     use api::snapshot::{ChatLineView, ChatOptionView};
-    use frontend_core::scripts::PaintFrame;
+    use frontend_core::test_support::paint::TestPaint;
 
     use super::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 
@@ -744,16 +744,8 @@ mod tests {
     #[test]
     fn script_paint_replaces_the_ring_until_toggled() {
         let lines = vec![line("a game chat line")];
-        let paint = script::shim::ScriptPaint {
-            title: Some("BoneBurier — digging".into()),
-            accent: None,
-            lines: vec!["Runtime: 1.2m | Buried: 3".into()],
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        };
-        let paint = PaintFrame::from_script(paint);
+        let paint =
+            TestPaint::new(Some("BoneBurier — digging"), &["Runtime: 1.2m | Buried: 3"]).frame();
         let view = ChatView {
             lines: &lines,
             modal_texts: &[],
@@ -787,25 +779,13 @@ mod tests {
         );
     }
 
-    fn paint_with_button() -> script::shim::ScriptPaint {
-        script::shim::ScriptPaint {
-            title: Some("NatureCrafter".into()),
-            accent: None,
-            lines: vec!["status".into()],
-            buttons: vec![script::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        }
+    fn paint_with_button() -> TestPaint {
+        TestPaint::new(Some("NatureCrafter"), &["status"]).with_button("gobank", "Go bank")
     }
 
     #[test]
     fn paint_digit_and_enter_dispatch_paint_button() {
-        let paint = paint_with_button();
-        let paint = PaintFrame::from_script(paint);
+        let paint = paint_with_button().frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
@@ -835,11 +815,10 @@ mod tests {
     #[test]
     fn paint_modal_still_wins_over_paint_buttons() {
         let mut paint = paint_with_button();
-        paint
-            .lines
-            .extend(["second row".into(), "third row".into()]);
+        paint.push_line("second row");
+        paint.push_line("third row");
         let texts = vec!["The stranger waits.".into()];
-        let paint = PaintFrame::from_script(paint);
+        let paint = paint.frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &texts,
@@ -872,19 +851,12 @@ mod tests {
 
     #[test]
     fn paint_click_rejects_rows_above_wrapped_button_and_hits_rendered_row() {
-        let paint = script::shim::ScriptPaint {
-            title: Some("NatureCrafter".into()),
-            accent: None,
-            lines: vec!["a status row long enough to wrap in this compact pane".into()],
-            buttons: vec![script::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        };
-        let paint = PaintFrame::from_script(paint);
+        let paint = TestPaint::new(
+            Some("NatureCrafter"),
+            &["a status row long enough to wrap in this compact pane"],
+        )
+        .with_button("gobank", "Go bank")
+        .frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
@@ -945,18 +917,10 @@ mod tests {
 
     #[test]
     fn paint_chrome_click_dispatches_advertised_strip_select() {
-        let paint = script::shim::ScriptPaint {
-            generation: 4,
-            strip: Some(script::shim::PaintChromeBand {
-                id: "k".into(),
-                names: vec!["Statistics".into(), "Options".into()],
-                selected: "Statistics".into(),
-                ..Default::default()
-            }),
-            lines: vec!["Overview".into()],
-            ..Default::default()
-        };
-        let paint = PaintFrame::from_script(paint);
+        let paint = TestPaint::new(None, &["Overview"])
+            .with_generation(4)
+            .with_strip("k", &["Statistics", "Options"], "Statistics", None, None)
+            .frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
@@ -976,35 +940,18 @@ mod tests {
         assert_eq!(sent.len(), 1);
     }
 
-    fn typical_jive_paint() -> script::shim::ScriptPaint {
-        script::shim::ScriptPaint {
-            generation: 1,
-            strip: Some(script::shim::PaintChromeBand {
-                id: "k".into(),
-                names: vec!["Statistics".into(), "Options".into()],
-                selected: "Statistics".into(),
-                ..Default::default()
-            }),
-            rail: Some(script::shim::PaintChromeBand {
-                id: "k".into(),
-                names: vec!["Overview".into(), "Supplies".into()],
-                selected: "Overview".into(),
-                ..Default::default()
-            }),
-            footer: Some("Jive scripts".into()),
-            lines: vec!["Runtime: 5m".into()],
-            buttons: vec![script::shim::ScriptPaintButton {
-                id: "go".into(),
-                label: "Go bank".into(),
-            }],
-            ..Default::default()
-        }
+    fn typical_jive_paint() -> TestPaint {
+        TestPaint::new(None, &["Runtime: 5m"])
+            .with_generation(1)
+            .with_strip("k", &["Statistics", "Options"], "Statistics", None, None)
+            .with_rail("k", &["Overview", "Supplies"], "Overview")
+            .with_footer("Jive scripts")
+            .with_button("go", "Go bank")
     }
 
     #[test]
     fn paint_layout_footer_row_sits_below_buttons_not_on_body() {
-        let paint = typical_jive_paint();
-        let paint = PaintFrame::from_script(paint);
+        let paint = typical_jive_paint().frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &[],
@@ -1032,8 +979,7 @@ mod tests {
 
     #[test]
     fn paint_layout_cramped_height_omits_buttons_without_phantom_hits() {
-        let paint = typical_jive_paint();
-        let paint = PaintFrame::from_script(paint);
+        let paint = typical_jive_paint().frame();
         let view = ChatView {
             lines: &[],
             modal_texts: &[],

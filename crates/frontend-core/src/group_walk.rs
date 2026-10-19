@@ -59,6 +59,7 @@ impl WalkInputs {
     }
 
     /// Risk admission input for this bot.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn risk_input(&self) -> &host_play::admission::RiskInput {
         &self.risk_input
     }

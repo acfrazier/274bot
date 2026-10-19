@@ -2176,6 +2176,126 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 live harness seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/mod.rs|IsolatedStores",
+      "path": "crates/frontend-core/src/test_support/mod.rs",
+      "symbol": "IsolatedStores",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/mod.rs|VaultFixture",
+      "path": "crates/frontend-core/src/test_support/mod.rs",
+      "symbol": "VaultFixture",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/mod.rs|FixtureProfile",
+      "path": "crates/frontend-core/src/test_support/mod.rs",
+      "symbol": "FixtureProfile",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/paint.rs|TestPaint",
+      "path": "crates/frontend-core/src/test_support/paint.rs",
+      "symbol": "TestPaint",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/paint.rs|CaptionRaster",
+      "path": "crates/frontend-core/src/test_support/paint.rs",
+      "symbol": "CaptionRaster",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|Assignment",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "Assignment",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|LoadedCardSnapshot",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "LoadedCardSnapshot",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|TestLibrary",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "TestLibrary",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|TestSchema",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "TestSchema",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|TestStore",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "TestStore",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|NativeStatus",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "NativeStatus",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|SaturatedAdmission",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "SaturatedAdmission",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/scripts.rs|NativeSnapshot",
+      "path": "crates/frontend-core/src/test_support/scripts.rs",
+      "symbol": "NativeSnapshot",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/session.rs|AssignmentSnapshot",
+      "path": "crates/frontend-core/src/test_support/session.rs",
+      "symbol": "AssignmentSnapshot",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/test_support/session.rs|SettingsFixture",
+      "path": "crates/frontend-core/src/test_support/session.rs",
+      "symbol": "SettingsFixture",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     }
   ],
   "violations": [],

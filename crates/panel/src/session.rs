@@ -57,23 +57,6 @@ use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
 use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
 
-#[cfg(test)]
-/// Load one exact in-tree example by canonical-path identity.
-fn load_live_example_card(
-    js: &mut script::JsLibrary,
-    file_name: &str,
-) -> Result<script::JsCard, String> {
-    let path = script::live_example_path(file_name)
-        .ok_or_else(|| format!("no in-tree example {file_name}"))?;
-    let loaded = js
-        .load(&path)
-        .map_err(|error| format!("load {file_name}: {error}"))?;
-    let identity = loaded.identity_id();
-    js.get(script::ScriptSource::File, &identity)
-        .cloned()
-        .ok_or_else(|| format!("file example {file_name} missing after identity load"))
-}
-
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
@@ -1006,8 +989,6 @@ pub struct Session {
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all).
     pub scripts: frontend_core::Scripts,
-    #[cfg(test)]
-    pub(crate) scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(CardSource, String)>,
     pub(crate) transpile_armed: bool,
@@ -1357,7 +1338,7 @@ impl Session {
     /// load without a decision. Harness boots pass [`InstancePermit::SkipLock`].
     pub fn with_instance(instance: frontend_core::launch::InstancePermit) -> Self {
         #[cfg(test)]
-        script::IsolatedEnv::ensure_thread();
+        frontend_core::test_support::IsolatedStores::ensure_thread();
         // The composition root: the one place that resolves HOME for state.
         // The process local-state service opened here is the one writer of
         // the operator preferences and loadouts for everything below, and
@@ -1479,8 +1460,6 @@ impl Session {
             ui,
             script_sel: None,
             scripts,
-            #[cfg(test)]
-            scenario: Arc::new(Mutex::new(None)),
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -1810,7 +1789,7 @@ impl Session {
     /// Delete `path` while locked. Refuses if a vault is open so a running
     /// session cannot clobber the file. Forgotten-password recovery.
     pub fn reset_vault_at(&mut self, path: &Path) -> bool {
-        if self.core.vault().is_some() {
+        if self.core.vault_open() {
             self.error = Some("reset vault: unlock / close the session first".into());
             return false;
         }
@@ -2032,7 +2011,6 @@ impl Session {
         self.core.live_runner().clear();
         #[cfg(test)]
         {
-            self.scenario.lock().unwrap().take();
             self.catalog_core_watch.lock().unwrap().take();
             self.paired_core_watch.lock().unwrap().take();
             self.external_core_watch.lock().unwrap().take();
@@ -2157,8 +2135,6 @@ impl Session {
 
         let fixture_loadouts = scenario.fixture_loadouts();
         let fleet_cards = scenario.fleet_cards(names)?;
-        #[cfg(test)]
-        let test_world = self.core.play().and_then(|play| play.world());
         let play_config = self.launcher.play_config();
         let budget = frontend_core::live::budget_s_from_env();
         let runner = self.core.live_scenario_runner(
@@ -2169,37 +2145,8 @@ impl Session {
             budget,
         );
 
-        #[cfg(test)]
-        let test_scenario = {
-            let mode = match self.fixture_mode {
-                frontend_core::live::FixtureMode::Default => scenario::FixtureMode::Default,
-                frontend_core::live::FixtureMode::Prepare => scenario::FixtureMode::Prepare,
-                frontend_core::live::FixtureMode::RunPrepared => scenario::FixtureMode::RunPrepared,
-            };
-            scenario::try_get(&scenario_name)
-                .ok()
-                .flatten()
-                .and_then(|scenario| scenario::apply_fixture_mode(scenario, mode).ok())
-        };
         self.core.live_runner().install(runner);
         self.live_script_stop_wait_started = None;
-        #[cfg(test)]
-        {
-            let mut test_runner = test_scenario
-                .map(|scenario| scenario::ScenarioRunner::with_world(scenario, test_world));
-            if let Some(runner) = test_runner.as_mut() {
-                runner.set_tick_speed_endpoint(play_config.host(), play_config.port());
-                runner.set_live_names(names);
-                if let Some(play) = self.core.play() {
-                    runner.set_map_members(play.map_members());
-                    runner.set_obj_names(play.obj_names());
-                }
-                if let Some(budget) = budget {
-                    runner.set_deadline(budget);
-                }
-            }
-            *self.scenario.lock().unwrap() = test_runner;
-        }
 
         if let Some(fleet) = fleet_start {
             self.fill_live_catalog()?;
@@ -4386,28 +4333,24 @@ mod fleet_hold_tests {
 
     #[test]
     fn fleet_copy_hold_keeps_external_loader_start_pending_without_failure() {
-        let iso = script::IsolatedEnv::enter("panel-external-loader-copy-hold");
-        let path = iso.dir.join("BoneBurier.ts");
+        let iso =
+            frontend_core::test_support::IsolatedStores::enter("panel-external-loader-copy-hold");
+        let path = iso.dir().join("BoneBurier.ts");
         std::fs::copy(default_frozen_source(), &path).unwrap();
         let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
         session.persist_ui = false;
-        session.scripts.set_js(script::JsLibrary::with_cache(
-            iso.dir.join("js-scripts.json"),
-            iso.dir.join("js-cache"),
-        ));
-        let mut play = host_play::run_with_io(
-            &host_play::PlayOptions {
-                host: "127.0.0.1".into(),
-                transport: client::Transport::Tcp,
-                port: 43594,
-                cache_dir: "/tmp".into(),
-                lowmem: true,
-                mainland: false,
-            },
-            vec![],
-            |_| (None, None),
-            |_, _, _| {},
+        session.scripts.use_library_at(
+            iso.dir().join("js-scripts.json"),
+            iso.dir().join("js-cache"),
         );
+        let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        });
         play.attach_arm("alice", host_play::SlotArm::new(1, false));
         session.core.set_play(Some(play));
         session.core.fleet_mut().add("alice");
@@ -4416,8 +4359,7 @@ mod fleet_hold_tests {
         assert_eq!(session.error, None);
         let card = session
             .scripts
-            .js()
-            .get(script::ScriptSource::File, &path.display().to_string())
+            .card(CardSource::File, &path.display().to_string())
             .unwrap();
         let watch = ExternalWatch::default();
         watch.configure("alice", path.clone(), FROZEN_SHA256.into());
@@ -4426,10 +4368,10 @@ mod fleet_hold_tests {
         watch.note_prereq_passed();
         watch.note_load(
             1,
-            &card.name,
-            &card.path,
+            card.name(),
+            card.path(),
             &card.identity_key(),
-            &card.sha256,
+            card.sha256(),
             true,
             false,
         );
@@ -4437,7 +4379,7 @@ mod fleet_hold_tests {
         session.install_external_core_watch(Some(watch.clone()));
         let hold = session
             .core
-            .play()
+            .play_for_test()
             .unwrap()
             .hold_script_starts("waiting for settings copy confirmation".into());
         for _ in 0..3 {

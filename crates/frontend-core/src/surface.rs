@@ -224,6 +224,15 @@ pub fn map_image_to_applet(
     host::map_image_to_applet(local_x, local_y, image_w, image_h)
 }
 
+/// Run the process render pump at `now` and return when it next needs to
+/// run. The headed front end calls it on every loop turn and wakes by the
+/// returned instant, so a render grant whose head stopped consuming expires
+/// on time even when no frame is drawn. It never renders on the caller's
+/// thread.
+pub fn pump_render(now: std::time::Instant) -> Option<std::time::Instant> {
+    host::render_head::pump(now).map(|deadline| deadline.instant())
+}
+
 impl InputEv {
     #[cfg(any(test, feature = "test-support"))]
     fn from_host(event: host::InputEv) -> Self {

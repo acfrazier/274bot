@@ -25,6 +25,7 @@ use crate::window::RedrawMode;
 use client::io::Packet;
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
 use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
+use frontend_core::test_support::live::tick_scenario_runner_for_test;
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
 
@@ -126,39 +127,17 @@ fn live_exit_child(mode: &str) -> std::process::Output {
 }
 
 fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
-    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
-
-    let fail_scenario = Scenario {
-        name: "live_failure_exit",
-        seed: Seed {
-            profiles: vec![("alice", "password")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "unmet proof after scripted action",
-            kind: StepKind::Perform {
-                send: Box::new(|_, _| true),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 999 },
-                budget_ticks: 1,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 999 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(fail_scenario);
-    runner.set_scene_settle(Duration::ZERO);
+    let mut runner =
+        frontend_core::test_support::live::failing_runner_for_test("live_failure_exit", None);
     let mut client = script_client();
-    runner.tick(&mut client);
-    assert!(matches!(runner.status(), scenario::RunnerStatus::Failed(_)));
+    tick_scenario_runner_for_test(&mut runner, &mut client);
 
     let mut session = crate::session::Session::new();
-    session
-        .core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    session.core.live_runner().install(runner);
+    assert_eq!(
+        session.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Failed)
+    );
     let mut live = LiveScript {
         name: "script_live_failure".into(),
         passed: false,
@@ -237,38 +216,17 @@ fn status_rows_render_only_meaningful_values_for_the_selected_phase() {
 /// status card; a slot with no script shows neither row.
 #[test]
 fn a_parked_quester_shows_its_phase_and_reason_on_the_status_card() {
-    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-
     let _guard = crate::test_support::imgui_context_guard();
-    let status = ScriptStatus {
-        run: api::selected::RunKey {
-            slot: 1,
-            run: 2,
-            session: 3,
-        },
-        card: script::CompiledId("Quester"),
-        phase: NativePhase::Working,
-        active_settings: 1,
-        pending_settings: None,
-        fields: Arc::from([
-            StatusField {
-                key: "action_state",
-                label: "Action",
-                value: StatusValue::Text(Arc::from("blocked")),
-            },
-            StatusField {
-                key: "block_reason",
-                label: "Blocked",
-                value: StatusValue::Text(Arc::from("no step for stage")),
-            },
-        ]),
-        failure: None,
-    };
+    let status = frontend_core::test_support::scripts::NativeStatus::working(
+        frontend_core::scripts::CompiledCardId::lookup("Quester").unwrap(),
+    )
+    .with_text_field("action_state", "Action", "blocked")
+    .with_text_field("block_reason", "Blocked", "no step for stage");
     let mut parked = frontend_core::SlotDetail::default();
     parked.row_mut().set_phase(frontend_core::Phase::Ready);
     parked.row_mut().set_script(ScriptRunState::Running);
     parked.set_state("ingame scene 2");
-    let parked = parked.with_native_status(Some(Arc::new(status)));
+    let parked = status.attach_to(parked);
     let shown = draw_status_detail(&parked, "—", "lowmem");
     assert!(
         shown.contains("script") && shown.contains("blocked"),
@@ -716,46 +674,6 @@ fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvir
     (root, options, env)
 }
 
-fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !task.is_finished() {
-        assert!(
-            Instant::now() < deadline,
-            "WorkAdmission preparation did not settle"
-        );
-        thread::yield_now();
-    }
-}
-
-fn saturate_work_admission() -> Vec<script::preparation::PreparedTask<()>> {
-    let input = script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap();
-    let mut tasks = Vec::new();
-    loop {
-        match script::preparation::submit(
-            script::preparation::PreparationKind::Profile,
-            api::identity::Scope::Process,
-            input,
-            |_| (),
-        ) {
-            Ok(task) => {
-                tasks.push(task);
-                assert!(
-                    tasks.len() <= 64,
-                    "WorkAdmission accepted more jobs than its fixed bound"
-                );
-            }
-            Err(script::preparation::PreparationError::Refused(
-                api::work::SubmissionRefusal::Full,
-            )) => break,
-            Err(error) => panic!("could not occupy WorkAdmission: {error}"),
-        }
-    }
-    for task in &tasks {
-        wait_for_preparation(task);
-    }
-    tasks
-}
-
 fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -822,8 +740,8 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
     }
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
-    assert!(state.session.core.vault().is_some());
-    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.vault_open());
+    assert!(state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
     assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
 }
@@ -836,8 +754,8 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     assert!(state.session.profile_bound());
     let validation = startup.validate.take().expect("final validation job");
     assert!(state.session.profile_preparing());
-    assert!(state.session.core.vault().is_none());
-    assert!(state.session.core.play().is_none());
+    assert!(!state.session.core.vault_open());
+    assert!(!state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
     let deadline = Instant::now() + Duration::from_secs(60);
     while !validation.job.is_finished() {
@@ -865,7 +783,7 @@ fn profile_selection_retries_after_work_admission_is_full() {
         .unwrap();
     let generation = state.session.profile_generation();
     let mut startup = StartupPreparation::new(None);
-    let full = saturate_work_admission();
+    let full = frontend_core::test_support::scripts::saturate_work_admission();
 
     drive_startup(&mut state, &mut startup);
     assert!(
@@ -894,7 +812,7 @@ fn profile_validation_retries_after_work_admission_is_full() {
         pass: "prepared-pass".into(),
     });
     let generation = state.session.profile_generation();
-    let full = saturate_work_admission();
+    let full = frontend_core::test_support::scripts::saturate_work_admission();
 
     drive_startup(&mut state, &mut startup);
     assert!(
@@ -910,8 +828,8 @@ fn profile_validation_retries_after_work_admission_is_full() {
 
     drop(full);
     settle_startup(&mut state, &mut startup);
-    assert!(state.session.core.vault().is_some());
-    assert!(state.session.core.play().is_some());
+    assert!(state.session.core.vault_open());
+    assert!(state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
     assert!(startup_progress(&startup, generation).is_none());
 }
@@ -1002,8 +920,8 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     assert!(startup_progress(&startup, generation).is_none());
     assert!(!state.session.profile_preparing());
     assert!(!state.session.profile_bound());
-    assert!(state.session.core.vault().is_none());
-    assert!(state.session.core.play().is_none());
+    assert!(!state.session.core.vault_open());
+    assert!(!state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
     assert_eq!(
         state.session.error.as_deref(),
@@ -1088,30 +1006,26 @@ fn edit_parameters_enabled_for_operator_bag() {
 #[test]
 fn loadout_combo_lists_store_names() {
     use api::loadout::Loadout;
-    use script::{resolve_setting_options, LoadoutsStore, SettingDef};
 
-    let mut store = LoadoutsStore::default();
-    store.upsert(Loadout::new("guard"));
-    store.upsert(Loadout::new("stall"));
-    let def = SettingDef {
-        id: "loadout".into(),
-        ty: "string".into(),
-        default: None,
-        label: None,
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: Some("loadouts".into()),
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    };
+    let mut loadouts = frontend_core::scripts::Loadouts::default();
+    loadouts.upsert(Loadout::new("guard"));
+    loadouts.upsert(Loadout::new("stall"));
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "loadout",
+        "string",
+        None,
+        None,
+        &[],
+    );
+    schema.set_options_from("loadouts");
+    let options = frontend_core::scripts::resolve_parameter_options(
+        schema.schema_ref().get("loadout").unwrap(),
+        &serde_json::Map::new(),
+        &loadouts,
+        None,
+    );
     assert_eq!(
-        resolve_setting_options(&def, &store, None),
+        options.values(),
         vec!["guard".to_string(), "stall".to_string()]
     );
 }
@@ -1978,11 +1892,23 @@ fn parse_args_run_prepared_requires_script_live() {
     let js = parse_args(["--prepare-fixture", "bone_burier_v2_js"], None).unwrap();
     assert_eq!(js.mode, RunMode::PrepareFixture("bone_burier_v2_js".into()));
     assert_eq!(
-        scenario::fixture_preset_for("bone_burier_v2_ts").unwrap(),
+        frontend_core::test_support::live::scenario("bone_burier_v2_ts")
+            .unwrap()
+            .fixture_preset()
+            .unwrap(),
         "bone_burier_v2"
     );
-    assert_eq!(scenario::fixture_preset_for("thiever").unwrap(), "thiever");
-    assert!(scenario::fixture_preset_for("bone_burier").is_err());
+    assert_eq!(
+        frontend_core::test_support::live::scenario("thiever")
+            .unwrap()
+            .fixture_preset()
+            .unwrap(),
+        "thiever"
+    );
+    assert!(frontend_core::test_support::live::scenario("bone_burier")
+        .unwrap()
+        .fixture_preset()
+        .is_err());
 }
 
 #[test]
@@ -1991,7 +1917,7 @@ fn parse_live_args_accepts_external_loader_without_scenario_catalog() {
         parse_live_args(["--live", "script_external_loader"], None),
         Ok(RunMode::Live("script_external_loader".into()))
     );
-    assert!(scenario::get("external_loader").is_none());
+    assert!(frontend_core::test_support::live::scenario("external_loader").is_none());
 }
 
 #[test]
@@ -2012,7 +1938,7 @@ fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
         AirObservation, FlaxObservation, PairCase, PairWatch, StartBarrier, AIR_RUINS, FLAX_FIELD,
         FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
     };
-    use scenario::StepKind;
+    // Scenario metadata is read through frontend-core's borrowed view.
 
     for (cli, case, card, mode_a, mode_b) in [
         (
@@ -2044,21 +1970,20 @@ fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
         );
         let name = cli.strip_prefix("script_").unwrap();
         assert_eq!(PairCase::parse(name).unwrap(), case);
-        let scenario = scenario::get(name).unwrap();
-        assert_eq!(scenario.seed.profiles.len(), 2);
-        assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
-        assert_eq!(scenario.settings.start_script, Some(card));
-        assert_eq!(scenario.companions.len(), 1);
-        assert_eq!(scenario.companions[0].profile, 1);
-        assert!(scenario
-            .steps
-            .iter()
-            .any(|step| matches!(step.kind, StepKind::StartScript)));
-
+        let cell = frontend_core::test_support::live::scenario(name).unwrap();
+        let view = cell.view();
+        assert_eq!(view.profile_count(), 2);
+        let usernames = view.seed_usernames().collect::<Vec<_>>();
+        assert_ne!(usernames[0], usernames[1]);
+        assert_eq!(view.start_script(), Some(card));
+        assert_eq!(view.companion_count(), 1);
+        assert!(view.has_start_script_step());
         let a = "alice";
         let b = "bob";
-        let bag_a = host_play::paired_core::pair_settings(case, &[], 0, a, b).unwrap();
-        let bag_b = host_play::paired_core::pair_settings(case, &[], 1, b, a).unwrap();
+        let bag_a =
+            frontend_core::test_support::live::pair_settings_without_schema(case, 0, a, b).unwrap();
+        let bag_b =
+            frontend_core::test_support::live::pair_settings_without_schema(case, 1, b, a).unwrap();
         assert_eq!(bag_a.get("mode").and_then(|v| v.as_str()), Some(mode_a));
         assert_eq!(bag_b.get("mode").and_then(|v| v.as_str()), Some(mode_b));
         let screen_a = client::util::JString::to_screen_name(a);
@@ -2151,22 +2076,28 @@ fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
         "{cli} must resolve as a headed pair_watch live name"
     );
     assert_eq!(PairCase::parse("duel_arena").unwrap(), PairCase::Duel);
-    let scenario = scenario::get("duel_arena").unwrap();
-    assert_eq!(scenario.seed.profiles.len(), 2);
-    assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
-    assert_eq!(
-        scenario.settings.start_script,
-        Some(PairCase::Duel.card_name())
-    );
-    assert_eq!(scenario.companions.len(), 1);
-    assert!(scenario
-        .steps
-        .iter()
-        .any(|step| matches!(step.kind, StepKind::StartScript)));
-    let bag_a =
-        host_play::paired_core::pair_settings(PairCase::Duel, &[], 0, "alice", "bob").unwrap();
-    let bag_b =
-        host_play::paired_core::pair_settings(PairCase::Duel, &[], 1, "bob", "alice").unwrap();
+    let cell = frontend_core::test_support::live::scenario("duel_arena").unwrap();
+    let view = cell.view();
+    assert_eq!(view.profile_count(), 2);
+    let usernames = view.seed_usernames().collect::<Vec<_>>();
+    assert_ne!(usernames[0], usernames[1]);
+    assert_eq!(view.start_script(), Some(PairCase::Duel.card_name()));
+    assert_eq!(view.companion_count(), 1);
+    assert!(view.has_start_script_step());
+    let bag_a = frontend_core::test_support::live::pair_settings_without_schema(
+        PairCase::Duel,
+        0,
+        "alice",
+        "bob",
+    )
+    .unwrap();
+    let bag_b = frontend_core::test_support::live::pair_settings_without_schema(
+        PairCase::Duel,
+        1,
+        "bob",
+        "alice",
+    )
+    .unwrap();
     assert!(bag_a.get("partner").is_none());
     assert!(bag_b.get("partner").is_none());
     let watch = PairWatch::default();
@@ -2275,7 +2206,10 @@ fn manual_shot_label_is_stamped_and_stays_normalized() {
     assert_eq!(label, "manual-2026-08-25T00-00-00");
     // The label is already in the 377 safe alphabet: the file name
     // normalizes to itself (the write path applies `safe_label`).
-    assert_eq!(scenario::shot::safe_label(&label), label);
+    assert_eq!(
+        frontend_core::test_support::live::safe_shot_label(&label),
+        label
+    );
 }
 
 #[test]
@@ -2299,10 +2233,10 @@ fn manual_shot_rejects_an_empty_published_snapshot() {
 }
 
 /// A synthetic client that has already seeded: ingame, scene 2, a
-/// mainland build base, and bumped family gens (same trick as the
-/// scenario crate's own tests — no live server).
+/// mainland build base, and bumped family gens (same trick as the live
+/// runner's own tests — no live server).
 fn script_client() -> client::client::Client {
-    let mut c = host::prepare_client(
+    let mut c = client::client::Client::from_shared(
         client::client::ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -2310,11 +2244,11 @@ fn script_client() -> client::client::Client {
             members: true,
             lowmem: true,
         },
-        1,
-        std::sync::Arc::new(client::config::Cache::default()),
-        std::sync::Arc::new(vec![]),
+        Arc::new(client::config::Cache::default()),
+        Arc::new(vec![]),
         Vec::new(),
     );
+    c.login_uid = 1;
     c.ingame = true;
     c.scene_state = 2;
     c.map_build_base_x = 3200;
@@ -2332,49 +2266,25 @@ fn script_client() -> client::client::Client {
 
 #[test]
 fn live_script_tick_holds_pass_until_clean_script_stop() {
-    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
-
     let mut s = crate::session::Session::new();
-    let pass = Scenario {
-        name: "bone_stop",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "energy",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    c.runenergy = 5;
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 5 },
-                budget_ticks: 5,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 5 },
-        companions: vec![],
-        settings: ScenarioSettings {
-            wait_script_stop: Some("confirmed loaded current-generation bank exhaustion"),
-            ..Default::default()
-        },
-    };
-    let mut runner = ScenarioRunner::new(pass);
-    runner.set_scene_settle(Duration::ZERO);
-    let mut c = script_client();
-    runner.tick(&mut c);
-    c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-    runner.tick(&mut c);
-    assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+    let mut runner = frontend_core::test_support::live::passing_runner_for_test(
+        "bone_stop",
+        None,
+        Some("confirmed loaded current-generation bank exhaustion"),
+    );
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    s.core.live_runner().install(runner);
     assert_eq!(
-        runner.wait_script_stop(),
+        s.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Passed)
+    );
+    assert_eq!(
+        s.core.live_runner().wait_script_stop(),
         Some("confirmed loaded current-generation bank exhaustion")
     );
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
     let mut live = LiveScript {
         name: "script_bone_stop".into(),
         passed: false,
@@ -2522,48 +2432,17 @@ fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
 /// FAIL returns the message the caller turns into exit 1.
 #[test]
 fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
-    use scenario::{
-        Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
-    };
-
     let mut s = crate::session::Session::new();
-    // A runnable micro-scenario: the send sets run energy, the arm
-    // waits for it, the proof asserts it.
-    let pass = Scenario {
-        name: "t",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "energy",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    c.runenergy = 5;
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 5 },
-                budget_ticks: 5,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 5 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(pass);
-    runner.set_scene_settle(Duration::ZERO);
-    {
-        let mut c = script_client();
-        runner.tick(&mut c);
-        c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-        runner.tick(&mut c);
-    }
-    assert_eq!(runner.status(), RunnerStatus::Passed);
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let mut runner = frontend_core::test_support::live::passing_runner_for_test("t", None, None);
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    s.core.live_runner().install(runner);
+    assert_eq!(
+        s.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Passed)
+    );
     let mut live = LiveScript {
         name: "script_t".into(),
         passed: false,
@@ -2735,36 +2614,14 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     assert!(failed_soak.failed.is_some());
 
     // FAIL: a never-satisfiable arm within a 1-tick budget.
-    let fail_scenario = Scenario {
-        name: "f",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "never",
-            kind: StepKind::Perform {
-                send: Box::new(|_, _| true),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 999 },
-                budget_ticks: 1,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 999 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(fail_scenario);
-    runner.set_scene_settle(Duration::ZERO);
-    {
-        let mut c = script_client();
-        runner.tick(&mut c);
-    }
-    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let mut runner = frontend_core::test_support::live::failing_runner_for_test("f", None);
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    s.core.live_runner().install(runner);
+    assert_eq!(
+        s.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Failed)
+    );
     let mut live = LiveScript {
         name: "script_f".into(),
         passed: false,
@@ -2791,41 +2648,16 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
 /// after `pump_shots` ran), the write frame returns the message.
 #[test]
 fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
-    use scenario::{
-        Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
-    };
     let mut s = crate::session::Session::new();
-    let fail_scenario = Scenario {
-        name: "f",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "never",
-            kind: StepKind::Perform {
-                send: Box::new(|_, _| true),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 999 },
-                budget_ticks: 1,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 999 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(fail_scenario);
-    runner.set_scene_settle(Duration::ZERO);
-    runner.set_terminal_shot("t-fail");
-    {
-        let mut c = script_client();
-        runner.tick(&mut c);
-    }
-    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let mut runner =
+        frontend_core::test_support::live::failing_runner_for_test("f", Some("t-fail"));
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    s.core.live_runner().install(runner);
+    assert_eq!(
+        s.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Failed)
+    );
     let mut live = LiveScript {
         name: "nav_full".into(),
         passed: false,
@@ -2857,46 +2689,18 @@ fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
 /// latches `passed` so the caller exits 0.
 #[test]
 fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
-    use scenario::{
-        Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
-    };
     let mut s = crate::session::Session::new();
-    let pass = Scenario {
-        name: "t",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "energy",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    c.runenergy = 5;
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 5 },
-                budget_ticks: 5,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 5 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(pass);
-    runner.set_scene_settle(Duration::ZERO);
-    runner.set_terminal_shot("t-pass");
-    {
-        let mut c = script_client();
-        runner.tick(&mut c);
-        c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-        runner.tick(&mut c);
-    }
-    assert_eq!(runner.status(), RunnerStatus::Passed);
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let mut runner =
+        frontend_core::test_support::live::passing_runner_for_test("t", Some("t-pass"), None);
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    s.core.live_runner().install(runner);
+    assert_eq!(
+        s.core.live_runner().status(),
+        Some(frontend_core::live::RunnerStatus::Passed)
+    );
     let mut live = LiveScript {
         name: "script_t".into(),
         passed: false,
@@ -3057,24 +2861,9 @@ fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
 
 #[test]
 fn native_failure_receipt_uses_inner_scenario_identity() {
-    let evidence = scenario::Evidence {
-        scenario: "thiever".into(),
-        outcome: "PASS",
-        predicate: "stat(16)>=0".into(),
-        ticks: 1,
-        elapsed_ms: 2,
-        message: None,
-        tile: None,
-        inv: Vec::new(),
-        stat: None,
-        chat: Vec::new(),
-        receipt: None,
-        protect_window: None,
-        random_event: None,
-        scene: 2,
-    };
+    let evidence_scenario = "thiever";
     assert_eq!(
-        script_failure_scenario("script_thiever", Some(&evidence)),
+        script_failure_scenario("script_thiever", Some(evidence_scenario)),
         "thiever"
     );
     assert_eq!(script_failure_scenario("script_thiever", None), "thiever");
@@ -3085,12 +2874,13 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
     use std::collections::HashSet;
 
     let mut s = crate::session::Session::new();
-    let scenario = scenario::get("nature_crafter_air").expect("paired cell");
-    let mut runner = scenario::ScenarioRunner::new(scenario);
-    runner.set_live_names(&["alice".into(), "bob".into()]);
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let cell =
+        frontend_core::test_support::live::scenario("nature_crafter_air").expect("paired cell");
+    frontend_core::test_support::live::install_scenario_for_test(
+        s.core.live_runner(),
+        cell,
+        &["alice".to_string(), "bob".to_string()],
+    );
 
     let watch = host_play::paired_core::PairWatch::default();
     watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
@@ -3199,8 +2989,8 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
 
 fn dummy_slot() -> crate::session::SlotIo {
     crate::session::SlotIo {
-        input: host::SlotInput::new(),
-        pixels: host::FrameBuf::new(),
+        input: frontend_core::surface::SlotInput::new(),
+        pixels: frontend_core::surface::FrameBuf::new(),
     }
 }
 
@@ -3408,12 +3198,13 @@ fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
 #[test]
 fn pair_deadline_fails_remaining_queued_actors() {
     let s = crate::session::Session::new();
-    let scenario = scenario::get("nature_crafter_air").expect("paired cell");
-    let mut runner = scenario::ScenarioRunner::new(scenario);
-    runner.set_live_names(&["alice".into(), "bob".into()]);
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(runner);
+    let cell =
+        frontend_core::test_support::live::scenario("nature_crafter_air").expect("paired cell");
+    frontend_core::test_support::live::install_scenario_for_test(
+        s.core.live_runner(),
+        cell,
+        &["alice".to_string(), "bob".to_string()],
+    );
     let watch = host_play::paired_core::PairWatch::default();
     watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
     s.install_paired_core_watch(Some(watch));
@@ -3474,41 +3265,16 @@ fn record_presented_upload_ignores_a_failed_take_after_focus_switch() {
     assert_eq!(last, Some(("bob".into(), 4)));
 }
 
-fn passed_prereq_runner() -> scenario::ScenarioRunner {
-    use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
-    let pass = Scenario {
-        name: "t",
-        seed: Seed {
-            profiles: vec![("test", "test")],
-            mainland: false,
-        },
-        steps: vec![Step {
-            name: "energy",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    c.runenergy = 5;
-                    true
-                }),
-            },
-            wait: Wait {
-                arm: Proof::Stat { id: 16, min: 5 },
-                budget_ticks: 5,
-            },
-        }],
-        proof: Proof::Stat { id: 16, min: 5 },
-        companions: vec![],
-        settings: ScenarioSettings::default(),
-    };
-    let mut runner = ScenarioRunner::new(pass);
-    runner.set_scene_settle(Duration::ZERO);
-    runner.set_terminal_shot(host_play::external_loader::PREREQ_SHOT);
-    {
-        let mut c = script_client();
-        runner.tick(&mut c);
-        c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-        runner.tick(&mut c);
-    }
-    assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
+fn passed_prereq_runner() -> frontend_core::live::Runner {
+    let mut runner = frontend_core::test_support::live::passing_runner_for_test(
+        "t",
+        Some(host_play::external_loader::PREREQ_SHOT),
+        None,
+    );
+    let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
     runner
 }
 
@@ -3565,9 +3331,7 @@ fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalW
 
 fn alice_scene2_session() -> crate::session::Session {
     let mut s = crate::session::Session::new();
-    s.core
-        .live_runner()
-        .install_scenario_runner_for_test(passed_prereq_runner());
+    s.core.live_runner().install(passed_prereq_runner());
     let mut client = script_client();
     let mut player = client::dash3d::ClientPlayer::at(20, 20);
     player.name = Some("Alice".into());
@@ -3944,22 +3708,25 @@ fn parameters_and_script_prefs_share_show_parameters_rail() {
 #[test]
 fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     let _guard = crate::test_support::imgui_context_guard();
-    let iso = script::IsolatedEnv::enter("browse-scard-assert");
-    let path = iso.dir.join("trade_bot.js");
+    let iso = frontend_core::test_support::IsolatedStores::enter("browse-scard-assert");
+    let path = iso.dir().join("trade_bot.js");
     std::fs::write(
         &path,
         "export default class TradeBot extends LoopingBot { loop() {} }\n",
     )
     .unwrap();
     let mut s = crate::session::Session::new();
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
+    s.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
     s.load_js(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
-        s.scripts.js().cards()[0].description,
+        s.scripts
+            .card_snapshot(CardSource::File, "trade_bot")
+            .unwrap()
+            .description(),
         "",
         "File cards have no registry description — this is the abort path"
     );
@@ -3999,18 +3766,12 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("chooser-switch-focused");
     let mut session = crate::session::Session::new();
-    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
     for (name, pass, uid) in [("Hans", "hpass", 43), ("aindniK", "kpass", 42)] {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: pass.into(),
-                uid,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, pass).uid(uid));
     }
-    session.core.set_vault(Some(vault));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
     session.begin_edit_profile(Some("Hans"));
     let mut ctx = crate::test_support::imgui_context();
     chooser_frame(&mut ctx, &mut session);
@@ -4107,36 +3868,25 @@ fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str)
 fn memory_notice_gets_its_own_readable_popup_row() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("memory-popup-layout");
-    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
-    vault
-        .upsert(vault::Profile {
-            username: "alice".into(),
-            password: "pw".into(),
-            uid: 1,
-            settings: vault::ProfileSettings::default(),
-        })
-        .unwrap();
-    let play = host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    );
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    vault.put(frontend_core::test_support::FixtureProfile::new("alice", "pw").uid(1));
+    let play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
     let mut session = crate::session::Session::new();
     session.core.set_spawn_workers(false);
-    session.core.start(vault, play);
+    vault.start_session(&mut session.core, play);
     assert!(session.load("alice"));
     session.select("alice");
     session
         .core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -4549,19 +4299,16 @@ impl ProfilesUi {
         window_size: [f32; 2],
     ) -> Self {
         let dir = TestDir::new(label);
-        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        let mut vault = frontend_core::test_support::VaultFixture::create(
+            &dir.join("vault"),
+            "test-passphrase-01",
+        );
         for &(username, password, uid) in profiles {
             vault
-                .upsert(vault::Profile {
-                    username: username.into(),
-                    password: password.into(),
-                    uid,
-                    settings: vault::ProfileSettings::default(),
-                })
-                .unwrap();
+                .put(frontend_core::test_support::FixtureProfile::new(username, password).uid(uid));
         }
         let mut session = crate::session::Session::new();
-        session.core.set_vault(Some(vault));
+        frontend_core::test_support::session::install_vault(&mut session.core, vault);
         session.wall.chooser_open = true;
         let mut ctx = crate::test_support::imgui_context();
         let drawn = DrawnText::default();
@@ -4823,10 +4570,18 @@ impl ProfilesUi {
 
     /// The vault on disk as `(username, uid, password)`, by username.
     fn disk(&self) -> Vec<(String, i32, String)> {
-        let vault = vault::Vault::unlock(&self.dir.join("vault"), "test-passphrase-01").unwrap();
+        let vault = frontend_core::test_support::VaultFixture::unlock(
+            &self.dir.join("vault"),
+            "test-passphrase-01",
+        );
         let mut rows: Vec<_> = vault
-            .profiles()
-            .map(|p| (p.username.clone(), p.uid, p.password.to_string()))
+            .usernames()
+            .into_iter()
+            .map(|username| {
+                let profile = vault.profile(&username).expect("stored fixture profile");
+                let password = profile.draft().password_for_test().to_string();
+                (username, profile.uid(), password)
+            })
             .collect();
         rows.sort();
         rows
@@ -5284,7 +5039,7 @@ fn discarding_a_pending_save_to_delete_its_profile_reports_only_on_the_banner() 
         "neither the save nor the delete landed"
     );
     assert!(
-        ui.session.core.vault().unwrap().get("alice").is_some(),
+        ui.session.core.profile("alice").is_some(),
         "alice is back in the list"
     );
 }
@@ -6015,18 +5770,12 @@ fn render_all_ok_applies_for_this_launch_only() {
 fn fleet_test_session(names: &[&str]) -> (crate::session::Session, TestDir) {
     let dir = TestDir::new("fleet-layout");
     let mut session = crate::session::Session::new();
-    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
     for (i, name) in names.iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: (*name).into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
-    session.core.set_vault(Some(vault));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
     session.fleet_open = true;
     (session, dir)
 }

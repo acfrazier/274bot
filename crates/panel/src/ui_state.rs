@@ -763,7 +763,7 @@ mod tests {
         let p = session.preferences.path();
         assert!(p.ends_with(".274bot/panel-ui.json"), "got {}", p.display());
         assert!(
-            p.starts_with(script::bot_home()),
+            p.starts_with(frontend_core::scripts::paths::bot_home()),
             "the file sits under the thread's home, got {}",
             p.display()
         );

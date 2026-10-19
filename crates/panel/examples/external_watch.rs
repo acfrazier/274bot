@@ -12,17 +12,20 @@ fn main() {
     };
     let allowed = matches!(
         args.mode,
-        panel::RunMode::Live(ref name) if name == host_play::external_loader::LIVE_NAME
+        panel::RunMode::Live(ref name) if name == frontend_core::live::external_loader_live_name()
     );
     if !allowed {
         eprintln!(
             "FAIL: external_watch requires --live {}",
-            host_play::external_loader::LIVE_NAME
+            frontend_core::live::external_loader_live_name()
         );
         std::process::exit(1);
     }
     args.external_core = true;
-    let _stores = script::IsolatedEnv::enter(&format!("external-watch-{}", std::process::id()));
+    let _stores = frontend_core::test_support::IsolatedStores::enter(&format!(
+        "external-watch-{}",
+        std::process::id()
+    ));
     if let Err(error) = panel::run_panel(args) {
         eprintln!("FAIL: external_watch: {error}");
         std::process::exit(1);

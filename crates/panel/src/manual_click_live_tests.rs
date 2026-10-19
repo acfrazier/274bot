@@ -284,11 +284,13 @@ fn prepare_session_n(
         },
     ))?;
     session.bind_profile()?;
-    let mut scenario =
-        scenario::get("render_smoke").ok_or("render_smoke scenario is unavailable")?;
-    scenario.seed.mainland = true;
-    scenario.seed.profiles.resize(count, ("test2", "test2"));
-    session.live_prepare_script(scenario)?;
+    let cell = frontend_core::test_support::live::scenario_with_profiles_for_test(
+        "render_smoke",
+        count,
+        true,
+        ("test2", "test2"),
+    )?;
+    session.live_prepare_script(cell)?;
     session.set_capture(true);
     session.set_renderer(true);
 
@@ -342,7 +344,7 @@ fn prepare_session_n(
 fn current_probe(session: &Session, name: &str) -> Result<serde_json::Value, String> {
     let mut proof = session
         .core
-        .play()
+        .play_for_test()
         .ok_or("Play disappeared")?
         .manual_click_live_probe(name);
     let tile = player_tile(session, name)?;
@@ -399,21 +401,18 @@ fn start_walk(session: &Session, name: &str) -> Result<(), String> {
     let here = player_tile(session, name)?;
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(host_play::Play::world)
         .ok_or("live navigation world is unavailable")?;
     let destination = reachable_destination(&world, here)?;
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_start_load(
-            name,
-            walk_source(destination),
-            script::LoadShape::CompatClass,
-            None,
-            vec![],
-        )?;
+    frontend_core::test_support::scripts::play_start_load(
+        &session.core,
+        name,
+        walk_source(destination),
+        frontend_core::scripts::LoadShape::CompatClass,
+        None,
+        vec![],
+    )?;
     Ok(())
 }
 
@@ -570,20 +569,29 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
     let initial = player_tile(&session, &name)?;
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(host_play::Play::world)
         .ok_or("live navigation world")?;
     let destination = reachable_destination(&world, initial)?;
     let (source, shape) = if v2 {
-        (v2_walk_source(destination), script::LoadShape::NativeTick)
+        (
+            v2_walk_source(destination),
+            frontend_core::scripts::LoadShape::NativeTick,
+        )
     } else {
-        (walk_source(destination), script::LoadShape::CompatClass)
+        (
+            walk_source(destination),
+            frontend_core::scripts::LoadShape::CompatClass,
+        )
     };
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_start_load(&name, source, shape, None, vec![])?;
+    frontend_core::test_support::scripts::play_start_load(
+        &session.core,
+        &name,
+        source,
+        shape,
+        None,
+        vec![],
+    )?;
     let before = wait_for_armed(&mut session, &name, initial)?;
     let (stamp, dir) = prepare_evidence(
         &inputs,
@@ -629,7 +637,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
             let here = player_tile(&session, &name)?;
             session
                 .core
-                .play()
+                .play_for_test()
                 .ok_or("Play disappeared")?
                 .manual_click_live_age_gameplay(
                     &name,
@@ -688,11 +696,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        session
-            .core
-            .play()
-            .ok_or("Play disappeared")?
-            .script_resume(&name);
+        session.core.toggle_pause(&name);
     }
     let after = wait_for_user_input(&mut session, &name)?;
     assert_correlated_user_input(&before, &after);
@@ -721,9 +725,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
     assert!(settled["script"]["recovering_anchor"].is_null());
     capture(&session, &dir, &stamp, "06-settled", &settled)?;
     println!("PASS panel pause={pause_owner} recovery={recovery} v2={v2} account={name} before={before} after={after} settled={settled}");
-    if let Some(play) = session.core.play() {
-        play.script_stop(&name);
-    }
+    session.core.stop_script(&name);
     session.core.set_play(None);
     Ok(())
 }
@@ -947,11 +949,7 @@ fn run_pause_click_resume() -> Result<(), String> {
         "01-walking-before-pause",
         &before_pause_click,
     )?;
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_pause(&name);
+    session.core.toggle_pause(&name);
     let paused = wait_for_pause_carry(&session, &name)?;
     assert_eq!(paused["script"]["walk_result"], serde_json::Value::Null);
     assert_eq!(paused["script"]["terminal_count"], 0);
@@ -998,11 +996,7 @@ fn run_pause_click_resume() -> Result<(), String> {
         &paused_click,
     )?;
 
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_resume(&name);
+    session.core.toggle_pause(&name);
     let arrived = wait_for_walk_success(&mut session, &name)?;
     capture(
         &session,
@@ -1039,9 +1033,7 @@ fn run_pause_click_resume() -> Result<(), String> {
     // Grok's resume-then-click window: enqueue Resume, then send the actual
     // panel capture click without an intervening UI pump. The carried walk's
     // original request must receive one correlated UserInput terminal.
-    if let Some(play) = session.core.play() {
-        play.script_stop(&name);
-    }
+    session.core.stop_script(&name);
     let second_initial = player_tile(&session, &name)?;
     start_walk(&session, &name)?;
     let before_resume_click = wait_for_armed(&mut session, &name, second_initial)?;
@@ -1052,25 +1044,13 @@ fn run_pause_click_resume() -> Result<(), String> {
         "06-second-walk-armed",
         &before_resume_click,
     )?;
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_pause(&name);
+    session.core.toggle_pause(&name);
     let second_paused = wait_for_pause_carry(&session, &name)?;
     assert_eq!(second_paused["nav"]["carry"], true);
-    session
-        .core
-        .play()
-        .ok_or("Play disappeared")?
-        .script_resume(&name);
+    session.core.toggle_pause(&name);
     assert_eq!(
-        session
-            .core
-            .play()
-            .ok_or("Play disappeared")?
-            .script_state(&name),
-        script::RunState::Running
+        session.core.script_state(&name),
+        frontend_core::scripts::ScriptRunState::Running
     );
     send_minimap_click(&session)?;
     let after_resume_click = wait_for_user_input(&mut session, &name)?;
@@ -1101,9 +1081,7 @@ fn run_pause_click_resume() -> Result<(), String> {
     println!(
         "PASS panel F2 account={name} paused_click={paused_click} arrived={arrived_settled} resume_click={after_resume_click} settled={after_resume_settled}"
     );
-    if let Some(play) = session.core.play() {
-        play.script_stop(&name);
-    }
+    session.core.stop_script(&name);
     session.core.set_play(None);
     Ok(())
 }
@@ -1156,7 +1134,7 @@ fn run_group_capture() -> Result<(), String> {
         .to_string();
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(host_play::Play::world)
         .ok_or("live navigation world")?;
     let (stamp, dir) = prepare_evidence(&inputs, "panel-group", &name)?;
@@ -1169,17 +1147,14 @@ fn run_group_capture() -> Result<(), String> {
         let destination = session
             .select_picker_tile(&world, here)
             .ok_or("standable group fixture tile")?;
-        session
-            .core
-            .play()
-            .ok_or("Play disappeared")?
-            .script_start_load(
-                member,
-                walk_source(destination),
-                script::LoadShape::CompatClass,
-                None,
-                vec![],
-            )?;
+        frontend_core::test_support::scripts::play_start_load(
+            &session.core,
+            member,
+            walk_source(destination),
+            frontend_core::scripts::LoadShape::CompatClass,
+            None,
+            vec![],
+        )?;
         let deadline = Instant::now() + WALK_WAIT;
         loop {
             session.pump_status();
@@ -1203,11 +1178,7 @@ fn run_group_capture() -> Result<(), String> {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        session
-            .core
-            .play()
-            .ok_or("Play disappeared")?
-            .script_stop(member);
+        session.core.stop_script(member);
     }
     session.select(&name);
     for (trial, x, y) in [
@@ -1349,7 +1320,7 @@ fn run_route_less_resilient(pause_owner: bool) {
     let here = player_tile(&session, &name).unwrap();
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(host_play::Play::world)
         .unwrap();
     // A real blocked terrain target makes the normal baked → scene ladder
@@ -1369,18 +1340,15 @@ fn run_route_less_resilient(pause_owner: bool) {
             })
         })
         .expect("a blocked terrain tile near the seeded scene");
-    session
-        .core
-        .play()
-        .unwrap()
-        .script_start_load(
-            &name,
-            traversal_source(destination, "walkResilient"),
-            script::LoadShape::CompatClass,
-            None,
-            vec![],
-        )
-        .unwrap();
+    frontend_core::test_support::scripts::play_start_load(
+        &session.core,
+        &name,
+        traversal_source(destination, "walkResilient"),
+        frontend_core::scripts::LoadShape::CompatClass,
+        None,
+        vec![],
+    )
+    .unwrap();
     let scenario = if pause_owner {
         "panel-route-less-resilient-pause-resume"
     } else {
@@ -1442,7 +1410,7 @@ fn run_route_less_resilient(pause_owner: bool) {
             &paused,
         )
         .unwrap();
-        session.core.play().unwrap().script_resume(&name);
+        session.core.toggle_pause(&name);
     }
     let deadline = Instant::now() + TERMINAL_WAIT;
     let after = loop {
@@ -1517,18 +1485,6 @@ fn live_manual_click_panel_route_less_resilient_pause_resume() {
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
-    fn active_skill(status: &script::native::ScriptStatus) -> String {
-        status
-            .fields
-            .iter()
-            .find(|field| field.key == "skill")
-            .and_then(|field| match &field.value {
-                script::native::StatusValue::Text(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .expect("Gatherer skill status")
-    }
-
     let inputs = live_inputs().unwrap();
     let (mut session, source) = prepare_session_n(&inputs, false, 2).unwrap();
     let target = session
@@ -1539,7 +1495,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         .username()
         .to_string();
     let id = CompiledCardId::lookup("Gatherer").unwrap();
-    let target_uid = session.core.vault().unwrap().get(&target).unwrap().uid;
+    let target_uid = session.core.profile(&target).unwrap().uid();
     session
         .fleet_selection
         .set(frontend_core::ProfileIdentity::uid(target_uid), true);
@@ -1583,12 +1539,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let deadline = Instant::now() + Duration::from_secs(30);
     let fishing = loop {
         session.pump_status();
-        if let Some(status) = session
-            .core
-            .play()
-            .and_then(|play| play.script_native_status(&target))
+        if let Some(status) =
+            frontend_core::test_support::scripts::NativeSnapshot::capture(&session.core, &target)
         {
-            if active_skill(&status) == "Fishing" {
+            if status.text_field("skill") == Some("Fishing") {
                 break status;
             }
         }
@@ -1599,7 +1553,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         );
         std::thread::sleep(Duration::from_millis(20));
     };
-    assert_eq!(active_skill(&fishing), "Fishing");
+    assert_eq!(fishing.text_field("skill"), Some("Fishing"));
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
@@ -1612,12 +1566,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let deadline = Instant::now() + Duration::from_secs(30);
     let source_fishing = loop {
         session.pump_status();
-        if let Some(status) = session
-            .core
-            .play()
-            .and_then(|play| play.script_native_status(&source))
+        if let Some(status) =
+            frontend_core::test_support::scripts::NativeSnapshot::capture(&session.core, &source)
         {
-            if active_skill(&status) == "Fishing" {
+            if status.text_field("skill") == Some("Fishing") {
                 break status;
             }
         }
@@ -1628,7 +1580,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         );
         std::thread::sleep(Duration::from_millis(20));
     };
-    assert_eq!(active_skill(&source_fishing), "Fishing");
+    assert_eq!(source_fishing.text_field("skill"), Some("Fishing"));
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
@@ -1656,12 +1608,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let deadline = Instant::now() + Duration::from_secs(30);
     let source_restarted = loop {
         session.pump_status();
-        if let Some(status) = session
-            .core
-            .play()
-            .and_then(|play| play.script_native_status(&source))
+        if let Some(status) =
+            frontend_core::test_support::scripts::NativeSnapshot::capture(&session.core, &source)
         {
-            if active_skill(&status) == "Mining" {
+            if status.text_field("skill") == Some("Mining") {
                 break status;
             }
         }
@@ -1672,7 +1622,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         );
         std::thread::sleep(Duration::from_millis(20));
     };
-    assert_eq!(active_skill(&source_restarted), "Mining");
+    assert_eq!(source_restarted.text_field("skill"), Some("Mining"));
     session.fleet_prepare_apply_settings();
     session.apply_settings_sync();
     session.core.flush_writes();
@@ -1690,12 +1640,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         .scripts
         .compiled_bag(&session.core, &target, id)
         .unwrap();
-    let status = session
-        .core
-        .play()
-        .and_then(|play| play.script_native_status(&target))
-        .expect("running Gatherer status after sync");
-    let live_skill = active_skill(&status);
+    let status =
+        frontend_core::test_support::scripts::NativeSnapshot::capture(&session.core, &target)
+            .expect("running Gatherer status after sync");
+    let live_skill = status.text_field("skill").expect("Gatherer skill status");
     assert_eq!(saved_count, 1);
     assert_eq!(restart_required, 1);
     assert_eq!(saved["skill"], "Mining");
@@ -1716,12 +1664,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let deadline = Instant::now() + Duration::from_secs(30);
     let restarted = loop {
         session.pump_status();
-        if let Some(status) = session
-            .core
-            .play()
-            .and_then(|play| play.script_native_status(&target))
+        if let Some(status) =
+            frontend_core::test_support::scripts::NativeSnapshot::capture(&session.core, &target)
         {
-            if active_skill(&status) == "Mining" {
+            if status.text_field("skill") == Some("Mining") {
                 break status;
             }
         }
@@ -1735,22 +1681,21 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     assert!(!session
         .scripts
         .restart_required_for(&target, &ScriptChoice::compiled(id)));
-    assert_eq!(active_skill(&source_restarted), "Mining");
-
+    assert_eq!(source_restarted.text_field("skill"), Some("Mining"));
     let proof = serde_json::json!({
         "source": source,
         "target": target,
-        "first_active_skill": active_skill(&fishing),
+        "first_active_skill": fishing.text_field("skill").unwrap(),
         "saved_skill_after_sync": saved["skill"],
         "live_skill_before_restart": live_skill,
-        "live_skill_after_restart": active_skill(&restarted),
-        "source_active_skill_after_restart": active_skill(&source_restarted),
+        "live_skill_after_restart": restarted.text_field("skill").unwrap(),
+        "source_active_skill_after_restart": source_restarted.text_field("skill").unwrap(),
         "restart_required": restart_required,
         "sync_summary": sync_summary,
-        "active_settings_revision": status.active_settings,
-        "pending_settings_revision": status.pending_settings,
-        "restarted_active_settings_revision": restarted.active_settings,
-        "restarted_pending_settings_revision": restarted.pending_settings,
+        "active_settings_revision": status.active_settings(),
+        "pending_settings_revision": status.pending_settings(),
+        "restarted_active_settings_revision": restarted.active_settings(),
+        "restarted_pending_settings_revision": restarted.pending_settings(),
     });
     fs::write(
         inputs

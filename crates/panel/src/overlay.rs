@@ -259,28 +259,18 @@ mod tests {
                 .renderer_has_textures(),
         );
         let ui = ctx.frame();
-        let head = |blocker| {
-            QueuePlace::of(&host_play::SlotStatus {
-                queue_position: 1,
-                queue_total: 4,
-                queue_blocker: Some(blocker),
-                ..host_play::SlotStatus::default()
-            })
-        };
+        let head_handshake = frontend_core::test_support::session::queue_head_handshake(1, 4);
+        let head_cooldown = frontend_core::test_support::session::queue_head_server_hold_at(
+            1,
+            4,
+            std::time::Instant::now() + std::time::Duration::from_secs(20),
+        );
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-head-test").build(|| {
-            overlay.frame(
-                ui,
-                head(host::login_queue::AdmitBlocker::Handshake),
-                [10.0, 10.0],
-                [90.0, 90.0],
-            );
+            overlay.frame(ui, Some(head_handshake), [10.0, 10.0], [90.0, 90.0]);
             assert_eq!(overlay.card.lines[2], "0 bots in front");
             assert_eq!(overlay.card.lines[3], "another bot is logging in");
-            let cooldown = head(host::login_queue::AdmitBlocker::ServerHold {
-                until: std::time::Instant::now() + std::time::Duration::from_secs(20),
-            });
-            overlay.frame(ui, cooldown, [10.0, 10.0], [90.0, 90.0]);
+            overlay.frame(ui, Some(head_cooldown), [10.0, 10.0], [90.0, 90.0]);
             assert_eq!(
                 overlay.card.lines[3],
                 "server: too many login attempts, next try in 20 s"
@@ -298,14 +288,13 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let start = Instant::now();
-        let head = QueuePlace::of(&host_play::SlotStatus {
-            queue_position: 1,
-            queue_total: 3,
-            queue_blocker: Some(host::login_queue::AdmitBlocker::ServerHold {
-                until: start + Duration::from_secs(20),
-            }),
-            ..host_play::SlotStatus::default()
-        });
+        let head = Some(
+            frontend_core::test_support::session::queue_head_server_hold_at(
+                1,
+                3,
+                start + Duration::from_secs(20),
+            ),
+        );
         let behind = place(2, 3);
         let mut cards = QueueCards::default();
         let lines = |cards: &mut QueueCards, name, queue, now| {

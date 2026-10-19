@@ -17,6 +17,7 @@ pub struct Scenario(Box<scenario::Scenario>);
 pub struct ScenarioView<'a> {
     name: &'a str,
     profile_count: usize,
+    seed_profiles: &'a [(&'static str, &'static str)],
     mainland: bool,
     renderer: bool,
     only_render_selected: bool,
@@ -29,6 +30,8 @@ pub struct ScenarioView<'a> {
     fleet_start: Option<FleetStart>,
     wait_script_stop: Option<&'a str>,
     inject_companion_as: Option<&'a str>,
+    companion_count: usize,
+    has_start_script_step: bool,
     nav: ScenarioNav,
 }
 
@@ -396,6 +399,19 @@ impl StartPlan {
             id.to_script(),
             bag,
         )])
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Runner {
+    /// Wrap a scenario runner a test built and drove itself.
+    pub(crate) fn from_scenario_runner(runner: scenario::ScenarioRunner) -> Self {
+        Self(Box::new(runner))
+    }
+
+    /// The wrapped scenario runner, for test fixtures that drive it.
+    pub(crate) fn scenario_runner_mut(&mut self) -> &mut scenario::ScenarioRunner {
+        &mut self.0
     }
 }
 
@@ -1318,6 +1334,25 @@ impl RunnerHandle {
         Self(std::sync::Arc::clone(&self.0))
     }
 
+    /// The installed runner's deadline (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn deadline_for_test(&self) -> Option<Duration> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .runner
+            .as_ref()
+            .map(scenario::ScenarioRunner::deadline)
+    }
+
+    /// Hold the runner lock while the guard lives (lock-order tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn lock_for_test(&self) -> impl Drop + '_ {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Borrow the scenario route and aim for one named slot during projection.
     pub fn with_route_for<R>(
         &self,
@@ -1580,6 +1615,7 @@ impl Scenario {
         ScenarioView {
             name: scenario.name,
             profile_count: scenario.seed.profiles.len(),
+            seed_profiles: &scenario.seed.profiles,
             mainland: scenario.seed.mainland,
             renderer: settings.renderer,
             only_render_selected: settings.only_render_selected,
@@ -1595,6 +1631,11 @@ impl Scenario {
             }),
             wait_script_stop: settings.wait_script_stop,
             inject_companion_as: settings.inject_companion_as,
+            companion_count: scenario.companions.len(),
+            has_start_script_step: scenario
+                .steps
+                .iter()
+                .any(|step| matches!(step.kind, scenario::StepKind::StartScript)),
             nav: ScenarioNav {
                 allow_teleports: settings.nav.allow_teleports,
                 allow_wilderness: settings.nav.allow_wilderness,
@@ -1774,6 +1815,21 @@ impl ScenarioView<'_> {
 
     pub fn inject_companion_as(&self) -> Option<&str> {
         self.inject_companion_as
+    }
+
+    /// The seeded profiles' usernames, in seed order.
+    pub fn seed_usernames(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.seed_profiles.iter().map(|(username, _)| *username)
+    }
+
+    /// How many companion slots the scenario drives beside its seed.
+    pub fn companion_count(&self) -> usize {
+        self.companion_count
+    }
+
+    /// Whether a step starts the scenario's script.
+    pub fn has_start_script_step(&self) -> bool {
+        self.has_start_script_step
     }
 
     pub fn nav(&self) -> ScenarioNav {

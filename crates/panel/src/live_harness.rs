@@ -794,18 +794,13 @@ pub(super) fn soak_capture_tick(
 }
 
 #[cfg(test)]
-pub(super) fn script_failure_scenario(
-    live_name: &str,
-    evidence: Option<&scenario::Evidence>,
-) -> String {
-    evidence
-        .map(|evidence| evidence.scenario.clone())
-        .unwrap_or_else(|| {
-            live_name
-                .strip_prefix("script_")
-                .unwrap_or(live_name)
-                .to_string()
-        })
+pub(super) fn script_failure_scenario(live_name: &str, evidence_scenario: Option<&str>) -> String {
+    evidence_scenario.map(str::to_owned).unwrap_or_else(|| {
+        live_name
+            .strip_prefix("script_")
+            .unwrap_or(live_name)
+            .to_string()
+    })
 }
 
 /// Headed script watch: mirror the shared frontend-core runner each frame.

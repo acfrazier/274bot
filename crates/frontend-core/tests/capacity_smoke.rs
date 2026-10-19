@@ -128,7 +128,7 @@ fn allowed_cpus() -> String {
 }
 
 fn ingame(session: &OperatorSession<()>) -> usize {
-    session.play().map_or(0, |play| {
+    session.play_for_test().map_or(0, |play| {
         play.statuses
             .lock()
             .unwrap()
@@ -142,7 +142,7 @@ fn ingame(session: &OperatorSession<()>) -> usize {
 /// reads them: per bot, the late services (600 ms or more), the max and
 /// the p95, each list lowest to highest.
 fn service_delays(session: &OperatorSession<()>) -> String {
-    let Some(play) = session.play() else {
+    let Some(play) = session.play_for_test() else {
         return "no play".into();
     };
     let bots = play.capacity().service_delays(Instant::now());
@@ -244,7 +244,7 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     .expect("play");
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
     session.set_capacity_render(RenderPolicyLabel::Headless);
-    session.start(vault, play);
+    session.start_for_test(vault, play);
 
     let login_deadline = Instant::now() + Duration::from_secs(180);
     loop {

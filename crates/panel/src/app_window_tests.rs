@@ -185,11 +185,11 @@ fn assert_no_start(session: &Session, step: &str) {
             "{step}: nothing may start a script"
         );
     }
-    if let Some(play) = session.core.play() {
+    if session.core.has_play() {
         for name in session.core.slots().keys() {
             assert_eq!(
-                play.script_state(name),
-                script::RunState::Idle,
+                session.core.script_state(name),
+                frontend_core::scripts::ScriptRunState::Idle,
                 "{step}: {name}'s script stays idle"
             );
         }
@@ -225,18 +225,12 @@ fn no_opener(_: &Ui, _: &mut PanelState) {}
 
 fn add_vault(state: &mut PanelState) {
     let dir = TestDir::new("opener-focus-vault");
-    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
     for (i, name) in ["alice", "bob"].into_iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
-    state.session.core.set_vault(Some(vault));
+    frontend_core::test_support::session::install_vault(&mut state.session.core, vault);
 }
 
 fn with_vault(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
@@ -608,7 +602,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("multibox-unlock-real-input");
     let path = dir.join("vault");
-    let mut vault = vault::Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut vault = frontend_core::test_support::VaultFixture::create(&path, "test-passphrase-01");
     for (uid, (name, kind, card)) in [
         ("alice", "catalog", "Thiever"),
         ("bob", "compiled", "Gatherer"),
@@ -616,23 +610,12 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     .into_iter()
     .enumerate()
     {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: "pw".into(),
-                uid: uid as i32 + 1,
-                settings: vault::ProfileSettings {
-                    auto_login: true,
-                    script_assignment: Some(vault::ScriptAssignment {
-                        source_kind: kind.into(),
-                        identity: card.into(),
-                        display_name: card.into(),
-                        unavailable: None,
-                    }),
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
+        vault.put(
+            frontend_core::test_support::FixtureProfile::new(name, "pw")
+                .uid(uid as i32 + 1)
+                .auto_login(true)
+                .script_assignment(kind, card, card),
+        );
     }
     drop(vault);
     crate::ui_state::save(
@@ -671,7 +654,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     step(&mut ctx, &mut state, press("MultiBox"));
     let s = &state.session;
     assert!(s.multibox && s.wall.chooser_open, "MultiBox opens Profiles");
-    assert!(s.core.vault().is_none() && s.core.slots().is_empty());
+    assert!(!s.core.vault_open() && s.core.slots().is_empty());
     assert_no_start(s, "MultiBox while locked");
 
     // The unlock prompt in Profiles: type, click, then the startup pump's
@@ -698,7 +681,13 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     step(&mut ctx, &mut state, FrameInput::default());
     let s = &state.session;
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
-    assert!(s.core.play().unwrap().arm("alice").unwrap().wants_login());
+    assert!(s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
     assert!(
         s.core.fleet().contains("alice"),
         "the unlocked bot is on the rail"

@@ -104,7 +104,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
         .unwrap();
     let mut session: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
     session.set_bypass_asset_startup(true);
-    session.start(vault, play);
+    session.start_for_test(vault, play);
     let mut surface = HeadlessSurface::new();
     session.load("alice", &mut surface);
     session.login("alice", &mut surface);
@@ -125,7 +125,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
         })
     });
     let dirty = session.memory_status("alice").unwrap();
-    let arm = session.play().unwrap().arm("alice").unwrap();
+    let arm = session.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.wants_login(), "the dropped one-shot session is parked");
     session.login("alice", &mut surface);
     let reconnect = login_rx.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -136,7 +136,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
 
     session.logout("alice");
     clean_logout.store(true, Ordering::Release);
-    session.play().unwrap().wake("alice");
+    session.play_for_test().unwrap().wake("alice");
     // The slot projects `!connected` in the same frame it observes the exit,
     // but the clean/dirty boundary (`login_applies_memory`) settles on the
     // next probe. Waiting on `!connected` alone catches the first projection
@@ -155,7 +155,7 @@ fn dirty_drop_notice_and_explicit_login_preserve_mode_until_clean_logout() {
     });
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
-    session.play_mut().unwrap().stop_slot("alice");
+    session.play_mut_for_test().unwrap().stop_slot("alice");
     server.join().unwrap();
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();

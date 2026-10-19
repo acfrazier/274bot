@@ -4,9 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
 use frontend_core::scripts::{
-    CardRuntime, CardSource, Loadouts, OwnedSchema, PaintFrame, SchemaRef, ScriptChoice,
-    ScriptRunState,
+    CardRuntime, CardSource, CompiledCardId, Loadouts, OwnedSchema, ScriptChoice, ScriptRunState,
 };
+use frontend_core::test_support::paint::TestPaint;
+use frontend_core::test_support::scripts::{NativeStatus, TestSchema};
 use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
 use nav::tile::Tile;
@@ -265,23 +266,16 @@ fn line(text: &str) -> ChatLineView {
     }
 }
 
-fn nature_crafter_paint() -> script::shim::ScriptPaint {
-    script::shim::ScriptPaint {
-        title: Some("NatureCrafter — Air — runner — restocking at the bank".into()),
-        accent: None,
-        lines: vec![
-            "Runtime: 1m | Mode: Runner | To: paintproof".into(),
-            "Deliveries: 0 | Ess sent: 0 | Coins: 0".into(),
-            "Pack ess: 0 | noted: 0 | unnoted: 0".into(),
+fn nature_crafter_paint() -> TestPaint {
+    TestPaint::new(
+        Some("NatureCrafter — Air — runner — restocking at the bank"),
+        &[
+            "Runtime: 1m | Mode: Runner | To: paintproof",
+            "Deliveries: 0 | Ess sent: 0 | Coins: 0",
+            "Pack ess: 0 | noted: 0 | unnoted: 0",
         ],
-        buttons: vec![script::shim::ScriptPaintButton {
-            id: "gobank".into(),
-            label: "Go bank".into(),
-        }],
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }
+    )
+    .with_button("gobank", "Go bank")
 }
 
 /// A one-bot app on the Script tab (keyboard on the tab).
@@ -299,30 +293,14 @@ fn params_overlay_text(app: &mut TuiApp, loadouts: &Loadouts) -> String {
     text(&crate::test_support::rows(terminal.backend().buffer()))
 }
 
-fn owned_schema(schema: &[script::SettingDef]) -> OwnedSchema {
+fn owned_schema(schema: &TestSchema) -> OwnedSchema {
     let mut owned = OwnedSchema::default();
-    owned.copy_from(SchemaRef::from_script(schema));
+    owned.copy_from(schema.schema_ref());
     owned
 }
 
-fn thiever_schema() -> Vec<script::SettingDef> {
-    vec![script::SettingDef {
-        id: "target".into(),
-        ty: "string".into(),
-        default: Some("Man".into()),
-        label: None,
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }]
+fn thiever_schema() -> TestSchema {
+    TestSchema::setting("target", "string", Some("Man"), None, &[])
 }
 
 /// Boot shows the fleet and never requests catalogue work.
@@ -347,37 +325,14 @@ fn boot_draws_the_fleet_without_map_demand() {
 /// the status card at both common sizes; a slot with no script shows neither.
 #[test]
 fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
-    use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-
     let mut app = crate::test_support::fleet_app(&["alice"]);
     app.show_screen(Screen::Overview);
     let mut detail = crate::test_support::ready_detail("alice");
     detail.row_mut().set_script(ScriptRunState::Running);
-    let status = ScriptStatus {
-        run: api::selected::RunKey {
-            slot: 1,
-            run: 2,
-            session: 3,
-        },
-        card: script::CompiledId("Quester"),
-        phase: NativePhase::Working,
-        active_settings: 1,
-        pending_settings: None,
-        fields: Arc::from([
-            StatusField {
-                key: "action_state",
-                label: "Action",
-                value: StatusValue::Text(Arc::from("blocked")),
-            },
-            StatusField {
-                key: "block_reason",
-                label: "Blocked",
-                value: StatusValue::Text(Arc::from("no step for stage")),
-            },
-        ]),
-        failure: None,
-    };
-    app.detail = Some(detail.with_native_status(Some(Arc::new(status))));
+    let status = NativeStatus::working(CompiledCardId::QUESTER)
+        .with_text_field("action_state", "Action", "blocked")
+        .with_text_field("block_reason", "Blocked", "no step for stage");
+    app.detail = Some(status.attach_to(detail));
     for (width, height) in [(120, 40), (80, 24)] {
         let all = text(&draw(&mut app, width, height));
         assert!(all.contains("script: blocked"), "{width}x{height}: {all}");
@@ -563,18 +518,11 @@ fn chat_tab_answers_options_on_space() {
 #[test]
 fn paint_showing_digit_routes_to_paint_button_not_wire() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
-        title: Some("NatureCrafter".into()),
-        accent: None,
-        lines: vec!["status".into()],
-        buttons: vec![script::shim::ScriptPaintButton {
-            id: "gobank".into(),
-            label: "Go bank".into(),
-        }],
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }));
+    app.chat_data.script_paint = Some(
+        TestPaint::new(Some("NatureCrafter"), &["status"])
+            .with_button("gobank", "Go bank")
+            .frame(),
+    );
     app.show_screen(Screen::Chat);
     assert_eq!(
         app.on_key(ch('1')),
@@ -593,7 +541,7 @@ fn paint_showing_digit_routes_to_paint_button_not_wire() {
 #[test]
 fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(PaintFrame::from_script(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(nature_crafter_paint().frame());
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 140, 40);
 
@@ -626,7 +574,7 @@ fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
 #[test]
 fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
     let mut app = TuiApp::new("274bot headless");
-    app.chat_data.script_paint = Some(PaintFrame::from_script(nature_crafter_paint()));
+    app.chat_data.script_paint = Some(nature_crafter_paint().frame());
     app.show_screen(Screen::Chat);
     let rows = draw(&mut app, 48, 18);
     let (button_col, button_row) = find(&rows, "[1] Go bank")
@@ -947,13 +895,15 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     let mut app = open_map_world();
     app.restore_preferences(preferences.share());
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));
-    let mut schema = thiever_schema();
-    schema[0].id = "allow_danger_zones".into();
-    schema[0].ty = "boolean".into();
-    schema[0].label = Some("Danger routing".into());
-    schema[0].default = Some("false".into());
+    let schema = TestSchema::setting(
+        "allow_danger_zones",
+        "boolean",
+        Some("false"),
+        Some("Danger routing"),
+        &[],
+    );
     app.params_schema = owned_schema(&schema);
-    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     app.params_state.open = false;
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
 
@@ -1549,23 +1499,13 @@ fn script_params_click_and_space_toggle_persist_bool() {
     std::fs::create_dir_all(&dir).unwrap();
     let loadouts = Loadouts::default();
     let mut commits: Vec<(String, serde_json::Value)> = Vec::new();
-    let schema = vec![script::SettingDef {
-        id: "buryBones".into(),
-        ty: "boolean".into(),
-        default: Some("true".into()),
-        label: Some("Bury bones".into()),
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }];
+    let schema = TestSchema::setting(
+        "buryBones",
+        "boolean",
+        Some("true"),
+        Some("Bury bones"),
+        &[],
+    );
     let mut app = script_app();
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "ChickenKiller"));
     app.params_schema = owned_schema(&schema);
@@ -1576,7 +1516,7 @@ fn script_params_click_and_space_toggle_persist_bool() {
         AppAction::ScriptParams,
         "[Params] opens the popup"
     );
-    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     assert!(app.params_state.open);
     let mut commit = |id: &str, value: serde_json::Value, _current: Option<serde_json::Value>| {
         commits.push((id.to_string(), value));
@@ -1624,27 +1564,11 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
         commits.push((id.to_string(), value));
         Ok(())
     };
-    let schema = vec![script::SettingDef {
-        id: "alchs".into(),
-        ty: "number".into(),
-        default: Some("27".into()),
-        label: Some("Alchs per trip".into()),
-        min: None,
-        max: None,
-        step: None,
-        options: Vec::new(),
-        option_labels: Vec::new(),
-        group: None,
-        show_if: None,
-        options_from: None,
-        csv_toggle: None,
-        help: None,
-        item_option_spec: None,
-    }];
+    let schema = TestSchema::setting("alchs", "number", Some("27"), Some("Alchs per trip"), &[]);
     let mut app = script_app();
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Alcher"));
     app.params_schema = owned_schema(&schema);
-    app.open_script_params(script::merge_bag(&schema, &serde_json::Map::new(), None));
+    app.open_script_params(schema.merged_bag(&serde_json::Map::new(), None));
     assert!(app.params_state.open);
     assert_eq!(
         app.on_key(ch('q')),
@@ -1691,15 +1615,14 @@ fn script_params_numeric_edit_persists_and_global_keys_stay_consumed() {
 fn chat_tab_shows_script_paint_instead_of_the_game_chat() {
     let mut app = TuiApp::new("274bot headless");
     app.chat_data.lines = vec![line("last game chat line")];
-    app.chat_data.script_paint = Some(PaintFrame::from_script(script::shim::ScriptPaint {
-        title: Some("BoneBurier — digging".into()),
-        accent: Some("#f3e6a2".into()),
-        lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
-        buttons: Vec::new(),
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    }));
+    app.chat_data.script_paint = Some(
+        TestPaint::new(
+            Some("BoneBurier — digging"),
+            &["Runtime: 1.2m | Buried: 3", ""],
+        )
+        .with_accent("#f3e6a2")
+        .frame(),
+    );
     app.show_screen(Screen::Chat);
     let all = text(&draw(&mut app, 100, 30));
     assert!(

@@ -1057,7 +1057,9 @@ pub fn parse_live_args(
 /// nothing.
 fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     let name = session.core.selected()?;
-    session.core.status(name)?;
+    if !session.core.has_status(name) {
+        return None;
+    }
     Some(session.core.script_paint(name))
 }
 
@@ -1974,7 +1976,7 @@ fn profile_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "profile") {
         return;
     }
-    if session.core.vault().is_none() {
+    if !session.core.vault_open() {
         vault_unlock_prompt(ui, session);
         return;
     }
@@ -2057,7 +2059,7 @@ fn logout_enabled(
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 2);
-    let vault_open = session.core.vault().is_some();
+    let vault_open = session.core.vault_open();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
     let focused_queued = focused
@@ -5478,7 +5480,7 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let wrap =
                 ui.cursor_screen_pos()[0] + on_screen_avail(ui, right) - ui.window_pos()[0];
             let _wrap = ui.push_text_wrap_pos(wrap);
-            if session.core.vault().is_none() {
+            if !session.core.vault_open() {
                 vault_unlock_prompt(ui, session);
             } else {
                 profiles_toolbar(ui, session, right);
@@ -5631,11 +5633,7 @@ fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -
 
 /// The height the whole profile list needs: its heading and every row.
 fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
-    let rows = session
-        .core
-        .vault()
-        .map_or(0, |v| v.profiles().count())
-        .max(1);
+    let rows = session.core.profiles().count().max(1);
     ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
 }
 
@@ -5673,9 +5671,9 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
     let names: Vec<String> = session
         .core
-        .vault()
-        .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-        .unwrap_or_default();
+        .profiles()
+        .map(|p| p.username().to_string())
+        .collect();
     let focused = session.focused_name();
     let members = session.core.members();
     let multibox = session.multibox;
@@ -7011,22 +7009,35 @@ fn ui_frame(
 #[cfg(test)]
 mod parameter_options_tests {
     use super::*;
+    fn compiled_schema(
+        session: &crate::session::Session,
+        name: &str,
+    ) -> frontend_core::scripts::SchemaRef<'static> {
+        let id = frontend_core::scripts::CompiledCardId::lookup(name)
+            .unwrap_or_else(|| panic!("compiled card {name} is registered"));
+        match session.scripts.compiled_schema(&session.core, None, id) {
+            frontend_core::scripts::SchemaView::Ready { fields, .. } => fields,
+            frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                panic!("compiled card {name} schema unavailable: {reason}")
+            }
+        }
+    }
 
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
+        let session = crate::session::Session::new();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();
-        let schema = script::gatherer::settings::schema();
+        let schema = compiled_schema(&session, "Gatherer");
         let site = schema
-            .iter()
-            .find(|field| field.id == "site")
+            .get("site")
             .expect("Gatherer schema includes the Site setting");
         let mut bag = serde_json::Map::new();
         bag.insert("skill".into(), serde_json::json!("Woodcutting"));
         bag.insert("woodcuttingResources".into(), serde_json::json!(["normal"]));
         bag.insert("site".into(), serde_json::json!("woodcutting.draynor"));
         let options = frontend_core::scripts::resolve_parameter_options(
-            SettingView::from_script(site),
+            site,
             &bag,
             &loadouts,
             Some(data.as_ref()),
@@ -7051,27 +7062,26 @@ mod parameter_options_tests {
 
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
+        let session = crate::session::Session::new();
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();
-        let schema = script::gatherer::settings::schema();
+        let schema = compiled_schema(&session, "Gatherer");
         let site = schema
-            .iter()
-            .find(|field| field.id == "site")
+            .get("site")
             .expect("Gatherer schema includes the Site setting");
         let mut bag = serde_json::Map::new();
         bag.insert("skill".into(), serde_json::json!("Mining"));
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
         let options = frontend_core::scripts::resolve_parameter_options(
-            SettingView::from_script(site),
+            site,
             &bag,
             &loadouts,
             Some(data.as_ref()),
         );
 
         assert!(options.is_empty());
-        let disabled =
-            unavailable_parameter_text("Site", SettingView::from_script(site), &bag, &options);
+        let disabled = unavailable_parameter_text("Site", site, &bag, &options);
         assert!(disabled.contains("options unavailable"));
         assert!(disabled.contains("not for the selected resources"));
         assert_eq!(
@@ -7083,31 +7093,23 @@ mod parameter_options_tests {
 
     #[test]
     fn preserved_only_priority_array_is_editable_for_removal() {
+        let session = crate::session::Session::new();
         let loadouts = frontend_core::scripts::Loadouts::default();
-        let schema = (script::quester::card::CARD.schema)();
+        let schema = compiled_schema(&session, "Quester");
         let priority = schema
-            .iter()
-            .find(|field| field.id == "order_override")
+            .get("order_override")
             .expect("Quester has an order override array");
         let mut bag = serde_json::Map::new();
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
-        let options = frontend_core::scripts::resolve_parameter_options(
-            SettingView::from_script(priority),
-            &bag,
-            &loadouts,
-            None,
-        );
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
 
         assert!(
             options.is_empty(),
             "the saved priority has no selectable options"
         );
-        assert!(parameter_array_editor_enabled(
-            SettingView::from_script(priority),
-            &bag,
-            &options
-        ));
+        assert!(parameter_array_editor_enabled(priority, &bag, &options));
         let haunted = options
             .values()
             .iter()
@@ -7121,23 +7123,13 @@ mod parameter_options_tests {
             "the same preserved row cannot be selected again"
         );
 
-        let persisted = script::coerce_setting_value(
-            SettingView::from_script(priority).ty(),
-            &serde_json::json!(selected),
-        );
-        bag.insert(
-            SettingView::from_script(priority).id().to_owned(),
-            persisted.clone(),
-        );
+        let persisted = priority.coerce(&serde_json::json!(selected));
+        bag.insert(priority.id().to_owned(), persisted.clone());
         assert_eq!(persisted, serde_json::json!([]));
-        let options = frontend_core::scripts::resolve_parameter_options(
-            SettingView::from_script(priority),
-            &bag,
-            &loadouts,
-            None,
-        );
+        let options =
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
         assert!(
-            !parameter_array_editor_enabled(SettingView::from_script(priority), &bag, &options),
+            !parameter_array_editor_enabled(priority, &bag, &options),
             "after removal there is no refused stored row to edit"
         );
     }

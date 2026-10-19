@@ -39,11 +39,14 @@ fn main() {
     // The legacy pair cells use the native witness. The clue/Jive gold
     // cells are qualified by their multi-slot ScenarioRunner proofs.
     args.pair_core = pair_core;
-    let catalog_root = script::rs2b0t_env();
-    let stores = script::IsolatedEnv::enter(&format!("pair-watch-{}", std::process::id()));
+    let catalog_root = frontend_core::test_support::catalog_root();
+    let stores = frontend_core::test_support::IsolatedStores::enter(&format!(
+        "pair-watch-{}",
+        std::process::id()
+    ));
     // Isolate mutable stores while retaining the explicitly selected catalog.
     if let Some(root) = catalog_root {
-        stores.set_rs2b0t(&root);
+        stores.set_catalog_root(&root);
     }
     if let Err(error) = panel::run_panel(args) {
         eprintln!("FAIL: pair_watch: {error}");

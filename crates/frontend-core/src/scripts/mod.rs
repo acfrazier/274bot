@@ -114,6 +114,7 @@ impl LiveSettings {
     }
 
     /// Present only after the native preparer has validated the complete bag.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prepared(&self) -> Option<&script::native::PreparedConfig> {
         self.prepared.as_deref()
     }
@@ -584,13 +585,13 @@ impl Scripts {
 
     /// The card library.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn js(&self) -> &script::JsLibrary {
+    pub(crate) fn js(&self) -> &script::JsLibrary {
         &self.js
     }
 
     /// The card library, for load/transpile.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn js_mut(&mut self) -> &mut script::JsLibrary {
+    pub(crate) fn js_mut(&mut self) -> &mut script::JsLibrary {
         &mut self.js
     }
 
@@ -719,6 +720,7 @@ impl Scripts {
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
+    #[cfg(feature = "live-harness")]
     pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
@@ -731,13 +733,13 @@ impl Scripts {
 
     /// Legacy global per-card overrides.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn legacy(&self) -> &script::ScriptSettingsStore {
+    pub(crate) fn legacy(&self) -> &script::ScriptSettingsStore {
         &self.legacy
     }
 
     /// Legacy global per-card overrides, for writes (tests).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
+    pub(crate) fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
         &mut self.legacy
     }
 

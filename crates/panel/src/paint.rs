@@ -702,36 +702,17 @@ impl Default for PaintOverlay {
 #[cfg(test)]
 mod tests {
     use dear_imgui_rs::FramePrepareOptions;
-    use script::shim::ScriptPaint;
 
     use super::{chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X};
     use crate::test_support::headless_gpu;
-    use frontend_core::scripts::PaintFrame;
+    use frontend_core::test_support::paint::{caption_raster, TestPaint};
 
-    fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
-        ScriptPaint {
-            title: title.map(str::to_string),
-            accent: None,
-            lines: lines.iter().map(|l| l.to_string()).collect(),
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        }
+    fn paint(title: Option<&str>, lines: &[&str]) -> TestPaint {
+        TestPaint::new(title, lines)
     }
 
-    fn paint_with_button(
-        title: Option<&str>,
-        lines: &[&str],
-        id: &str,
-        label: &str,
-    ) -> ScriptPaint {
-        let mut p = paint(title, lines);
-        p.buttons.push(script::shim::ScriptPaintButton {
-            id: id.to_string(),
-            label: label.to_string(),
-        });
-        p
+    fn paint_with_button(title: Option<&str>, lines: &[&str], id: &str, label: &str) -> TestPaint {
+        paint(title, lines).with_button(id, label)
     }
 
     fn prepare_frame(ctx: &mut dear_imgui_rs::Context) {
@@ -769,7 +750,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(
                         ui,
                         None,
@@ -810,7 +791,7 @@ mod tests {
     fn paint_click_frame(
         ctx: &mut dear_imgui_rs::Context,
         overlay: &mut PaintOverlay,
-        p: &ScriptPaint,
+        p: &TestPaint,
         mouse: Option<[f32; 2]>,
         left_down: bool,
     ) {
@@ -827,7 +808,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(
                         ui,
                         None,
@@ -885,7 +866,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     let clicked = overlay.frame(
                         ui,
                         None,
@@ -916,7 +897,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     let _ = overlay.frame(
                         ui,
                         None,
@@ -939,7 +920,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     clicked = overlay.frame(
                         ui,
                         None,
@@ -952,7 +933,7 @@ mod tests {
         ctx.render();
         assert_eq!(
             clicked,
-            Some((PaintFrameHit::Button("gobank".to_string()), p.generation)),
+            Some((PaintFrameHit::Button("gobank".to_string()), p.generation())),
             "clicking the button dispatches the advertised id with the rendered generation"
         );
         assert!(!overlay.collapsed, "button click is not collapse");
@@ -970,16 +951,8 @@ mod tests {
         assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
     }
 
-    fn canvas_banner() -> ScriptPaint {
-        let mut p = paint(None, &[]);
-        p.canvas = vec![script::canvas::CanvasOp::fill_rect(
-            6,
-            6,
-            400,
-            50,
-            script::canvas::pack_rgba(0, 0, 0, 178),
-        )];
-        p
+    fn canvas_banner() -> TestPaint {
+        paint(None, &[]).with_canvas_banner()
     }
 
     #[test]
@@ -991,7 +964,7 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            let paint_frame = PaintFrame::from_script(p.clone());
+            let paint_frame = p.frame();
             overlay.frame(
                 ui,
                 None,
@@ -1006,7 +979,7 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            let paint_frame = PaintFrame::from_script(p.clone());
+            let paint_frame = p.frame();
             overlay.frame(
                 ui,
                 None,
@@ -1032,7 +1005,7 @@ mod tests {
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            let paint_frame = PaintFrame::from_script(p.clone());
+            let paint_frame = p.frame();
             overlay.frame(
                 ui,
                 None,
@@ -1052,12 +1025,11 @@ mod tests {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
-        let mut p = paint(Some("BoneBurier"), &["a row"]);
-        p.canvas = canvas_banner().canvas;
+        let p = paint(Some("BoneBurier"), &["a row"]).with_canvas_banner();
         prepare_frame(&mut ctx);
         {
             let ui = ctx.frame();
-            let paint_frame = PaintFrame::from_script(p.clone());
+            let paint_frame = p.frame();
             overlay.frame(
                 ui,
                 None,
@@ -1081,20 +1053,13 @@ mod tests {
 
     #[test]
     fn measured_fillrect_raster_covers_glyphs() {
-        script::canvas::begin();
-        script::canvas::set_style("font", "12px monospace");
         let text = "BoneBurier (external)  buried 0";
-        let width = script::canvas::measure_text(text).unwrap();
-        script::canvas::set_style("fillStyle", "rgba(0, 0, 0, 0.6)");
-        script::canvas::fill_rect(6.0, 6.0, width + 12.0, 24.0);
-        script::canvas::set_style("fillStyle", "#ffb15b");
-        script::canvas::fill_text(text, 12.0, 22.0);
-        let taken = script::canvas::take();
-        let raster = script::canvas::rasterize(&taken.ops).expect("raster");
-        assert!(raster.x <= 6 && raster.y <= 6);
-        assert!(raster.x + raster.w as i32 >= 6 + (width + 12.0).round() as i32);
+        let raster = caption_raster(text);
+        let width = raster.text_width();
+        assert!(raster.x() <= 6 && raster.y() <= 6);
+        assert!(raster.x() + raster.width() as i32 >= 6 + (width + 12.0).round() as i32);
         let mut painted = 0usize;
-        for px in raster.rgba.as_chunks::<4>().0 {
+        for px in raster.rgba().as_chunks::<4>().0 {
             if px[3] > 0 {
                 painted += 1;
             }
@@ -1148,14 +1113,14 @@ mod tests {
         ctx: &mut dear_imgui_rs::Context,
         overlay: &mut PaintOverlay,
         gpu: &mut RecordingGpu,
-        p: &ScriptPaint,
+        p: &TestPaint,
         min: [f32; 2],
         size: [f32; 2],
     ) {
         prepare_frame(ctx);
         {
             let ui = ctx.frame();
-            let paint_frame = PaintFrame::from_script(p.clone());
+            let paint_frame = p.frame();
             overlay.frame(ui, Some(gpu), Some(paint_frame.view()), min, size);
         }
         ctx.render();
@@ -1261,7 +1226,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(
                         ui,
                         None,
@@ -1291,7 +1256,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(
                         ui,
                         None,
@@ -1327,20 +1292,16 @@ mod tests {
         assert!(half_hit[3] <= half_chat[1] + half_chat[3] + 0.5);
     }
 
-    fn jive_strip_paint(status: &str) -> ScriptPaint {
-        ScriptPaint {
-            title: Some("JiveCrafting".into()),
-            generation: 3,
-            strip: Some(script::shim::PaintChromeBand {
-                id: "k".into(),
-                names: vec!["Statistics".into(), "Options".into()],
-                selected: "Statistics".into(),
-                status: Some(status.into()),
-                brand: Some("JiveCrafting".into()),
-            }),
-            lines: vec!["Overview row".into()],
-            ..Default::default()
-        }
+    fn jive_strip_paint(status: &str) -> TestPaint {
+        TestPaint::new(Some("JiveCrafting"), &["Overview row"])
+            .with_generation(3)
+            .with_strip(
+                "k",
+                &["Statistics", "Options"],
+                "Statistics",
+                Some(status),
+                Some("JiveCrafting"),
+            )
     }
 
     fn label_rects_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
@@ -1350,7 +1311,7 @@ mod tests {
     fn frame_strip_fixture(
         ctx: &mut dear_imgui_rs::Context,
         overlay: &mut PaintOverlay,
-        p: &ScriptPaint,
+        p: &TestPaint,
         min: [f32; 2],
         size: [f32; 2],
     ) {
@@ -1362,7 +1323,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(ui, None, Some(paint_frame.view()), min, size);
                 });
         }
@@ -1426,7 +1387,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
@@ -1457,7 +1418,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     clicked = overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
@@ -1469,7 +1430,7 @@ mod tests {
                     key: "strip:k".into(),
                     name: "Options".into(),
                 },
-                p.generation
+                p.generation()
             ))
         );
     }
@@ -1496,7 +1457,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
@@ -1513,7 +1474,7 @@ mod tests {
                 .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
                 .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
-                    let paint_frame = PaintFrame::from_script(p.clone());
+                    let paint_frame = p.frame();
                     overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], half);
                 });
         }
@@ -1534,17 +1495,7 @@ mod tests {
         let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let mut gpu = RecordingGpu::new(device, queue);
-        let mut p = paint(None, &[]);
-        p.canvas = vec![script::canvas::CanvasOp::StrokePath {
-            segs: vec![
-                script::canvas::PathSeg::MoveTo { x: 40.0, y: 40.0 },
-                script::canvas::PathSeg::LineTo { x: 80.0, y: 90.0 },
-            ],
-            color: script::canvas::pack_rgba(255, 224, 64, 140),
-            line_width: 1.5,
-            line_join: script::canvas::LineJoinKind::Round,
-            extras: script::canvas::DrawExtras::default(),
-        }];
+        let p = paint(None, &[]).with_path_stroke();
         gpu_frame(
             &mut ctx,
             &mut overlay,

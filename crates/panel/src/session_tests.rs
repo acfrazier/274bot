@@ -1,9 +1,9 @@
 use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
-    live_or_walk_paint, load_live_example_card, null_raster_live_entries, parse_getvar_line,
-    publish_nav_debug, retire_client_trail, script_active, script_pause_enabled,
-    script_stop_enabled, seed_on_first_world, stress_live_entries, temp_live_vault_from,
-    PreparationCompletion, SceneRoutePaint, Session, SlotIo,
+    live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
+    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
+    seed_on_first_world, stress_live_entries, temp_live_vault_from, PreparationCompletion,
+    SceneRoutePaint, Session, SlotIo,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -28,10 +28,16 @@ use frontend_core::launch::{
     ValidatedProfile, ValidationPending,
 };
 use frontend_core::scripts::{
-    CardSource, CompiledCardId, Loadouts, SchemaRef, ScriptChoice, ScriptRunState,
+    CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
 };
 use frontend_core::surface::InputSender;
-use host::{FrameBuf, SlotInput};
+use frontend_core::surface::{FrameBuf, SlotInput};
+use frontend_core::test_support::session::{
+    assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
+    vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
+    with_settings_bag, with_tutorial_skipped,
+};
+use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
@@ -54,7 +60,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use vault::{Profile, ProfileSettings, Vault};
 
 #[path = "../../host-play/tests/support/map_fixture.rs"]
 mod map_fixture;
@@ -87,22 +92,20 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    let mut alice = profile("alice", "pw", 274);
-    alice.settings.lowmem = true;
-    vault.upsert(alice).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 274).lowmem(true));
+    install_vault(&mut s.core, vault);
     s.set_memory_override(Some(false));
 
     s.load("alice");
-    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    let arm = s.core.play_for_test().unwrap().arm("alice").unwrap();
     assert_eq!(
         arm.lowmem_handshake(),
         Some(false),
         "the session override seeds the effective handshake mode"
     );
     s.core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -122,19 +125,12 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
     );
 
     assert!(
-        s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem,
+        s.core.profile("alice").unwrap().lowmem(),
         "the vault profile must remain unchanged"
     );
 }
 
 use crate::nav_settings::{effective, NavSettings};
-use script::IsolatedEnv;
 
 fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     let fixture =
@@ -453,8 +449,8 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     );
     assert!(!session.profile_bound());
     assert!(session.launcher.template().is_none());
-    assert!(session.core.play().is_none());
-    assert!(session.core.vault().is_none());
+    assert!(session.core.play_for_test().is_none());
+    assert!(!session.core.vault_open());
     assert!(session.core.slots().is_empty());
 }
 
@@ -472,8 +468,8 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
     assert_eq!(session.error.as_deref(), Some("cache changed"));
     assert!(!session.profile_bound());
     assert!(session.launcher.template().is_none());
-    assert!(session.core.play().is_none());
-    assert!(session.core.vault().is_none());
+    assert!(session.core.play_for_test().is_none());
+    assert!(!session.core.vault_open());
     assert!(session.core.slots().is_empty());
 }
 
@@ -509,8 +505,8 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     std::fs::write(cache.join("config"), b"changed after validation").unwrap();
     assert!(session.unlock("prepared-pass"));
     assert!(session.profile_bound());
-    assert!(session.core.play().is_some());
-    assert!(session.core.vault().is_some());
+    assert!(session.core.play_for_test().is_some());
+    assert!(session.core.vault_open());
     assert!(session.core.slots().is_empty());
 }
 
@@ -521,7 +517,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 /// the Play's own.
 #[test]
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
-    let _iso = IsolatedEnv::enter("start-handle-loadouts");
+    let _iso = IsolatedStores::enter("start-handle-loadouts");
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let _work_service_guard = crate::work_service_test_lock();
     let mut session = Session::new();
@@ -553,9 +549,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     // does not see it.
     let own_root = root.join(".274bot");
     assert_ne!(own_root.as_path(), thread_state_root().path());
-    let mut own = Loadouts::over(Arc::new(
-        crate::test_support::scratch_service(&own_root).operator_loadouts(),
-    ));
+    let mut own = Loadouts::operator(&crate::test_support::scratch_service(&own_root));
     own.upsert(api::loadout::Loadout::new("melee"));
     save_store_patiently(&mut own);
 
@@ -602,9 +596,9 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         }
     };
 
-    let _iso = IsolatedEnv::enter("panel-state-round-trip");
+    let _iso = IsolatedStores::enter("panel-state-round-trip");
     let mut session = Session::new();
-    await_readback(session.core.local_state().unwrap());
+    await_readback(session.core.local_state_for_test().unwrap());
     session.preferences.reload().unwrap();
     session.loadouts.reload().unwrap();
     assert!(
@@ -624,13 +618,15 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     );
 
     // Another 274bot process on this home: its own service, same files.
-    let peer = host_play::local_state::LocalStateService::open_process(thread_state_root());
+    let peer = Arc::new(host_play::local_state::LocalStateService::open_process(
+        thread_state_root(),
+    ));
     await_readback(&peer);
     assert_eq!(
         peer.preferences().value("last_focus"),
         Some(serde_json::json!("alice"))
     );
-    let mut peer_form = Loadouts::over(Arc::new(peer.operator_loadouts()));
+    let mut peer_form = Loadouts::operator(&peer);
     assert!(
         peer_form.load_error().is_none(),
         "the peer's initial loadouts readback must complete"
@@ -672,7 +668,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         ..state
     };
     crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
-    let mut reread = Loadouts::over(Arc::new(peer.operator_loadouts()));
+    let mut reread = Loadouts::operator(&peer);
     reread.reload().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
@@ -723,7 +719,7 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let session = unlock_upgrade_home(&template);
     let world = session
         .core
-        .play()
+        .play_for_test()
         .and_then(|play| play.world())
         .expect("the panel play has the packaged world");
     assert!(Arc::ptr_eq(&world, &template.world().unwrap()));
@@ -738,7 +734,7 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let template = map_host::SharedClientTemplate::load(overridden).unwrap();
     let session = unlock_upgrade_home(&template);
     assert!(session.error.is_none(), "{:?}", session.error);
-    assert!(session.core.play().unwrap().world().is_none());
+    assert!(session.core.play_for_test().unwrap().world().is_none());
     assert!(home.old_pack_untouched());
 }
 
@@ -983,10 +979,10 @@ fn settle_transpile_queue(session: &mut Session) {
 #[test]
 fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("prebind-catalog");
-    let explicit = write_looping_catalog(&iso.dir.join("explicit"), &[("Chosen", "Chosen")]);
-    let ambient = write_looping_catalog(&iso.dir.join("ambient"), &[("Ambient", "Ambient")]);
-    iso.set_rs2b0t(&ambient);
+    let iso = IsolatedStores::enter("prebind-catalog");
+    let explicit = write_looping_catalog(&iso.dir().join("explicit"), &[("Chosen", "Chosen")]);
+    let ambient = write_looping_catalog(&iso.dir().join("ambient"), &[("Ambient", "Ambient")]);
+    iso.set_catalog_root(&ambient);
 
     let mut session = Session::new();
     session.persist_ui = false;
@@ -998,9 +994,9 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
                 ..ProfileOptions::default()
             }),
             ProfileEnv::from_host(ProfileEnvironment {
-                home: Some(iso.dir.clone()),
-                working_dir: Some(iso.dir.clone()),
-                engine_dir: Some(iso.dir.join("engine")),
+                home: Some(iso.dir().to_path_buf()),
+                working_dir: Some(iso.dir().to_path_buf()),
+                engine_dir: Some(iso.dir().join("engine")),
                 ..ProfileEnvironment::default()
             }),
         )
@@ -1010,33 +1006,26 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     settle_catalog_work(&mut session);
     assert!(session
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "Chosen")
+        .card(CardSource::Catalog, "Chosen")
         .is_some());
     assert!(session
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "Ambient")
+        .card(CardSource::Catalog, "Ambient")
         .is_none());
 
-    let custom = iso.dir.join("custom.ts");
+    let custom = iso.dir().join("custom.ts");
     std::fs::write(
         &custom,
         "export default class Custom extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    session.scripts.js_mut().load(&custom).unwrap();
+    session.scripts.load_card(&custom).unwrap();
     session.import_rs2b0t_catalog(&ambient).unwrap();
     settle_catalog_work(&mut session);
+    assert!(session.scripts.card(CardSource::File, "custom").is_some());
     assert!(session
         .scripts
-        .js()
-        .get(script::ScriptSource::File, "custom")
-        .is_some());
-    assert!(session
-        .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "Ambient")
+        .card(CardSource::Catalog, "Ambient")
         .is_some());
 }
 
@@ -1074,8 +1063,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     settle_catalog_work(&mut session);
     session
         .scripts
-        .js_mut()
-        .ensure_js(script::ScriptSource::Catalog, "Chosen")
+        .ensure_card(CardSource::Catalog, "Chosen")
         .unwrap();
     std::fs::write(
         source,
@@ -1085,8 +1073,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     session.set_server_revision(289).unwrap();
     assert!(session
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "Chosen")
+        .card(CardSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
     session.bind_profile().unwrap();
@@ -1095,8 +1082,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     settle_catalog_work(&mut session);
     assert!(session
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "Another")
+        .card(CardSource::Catalog, "Another")
         .is_some());
 }
 
@@ -1174,25 +1160,17 @@ fn debug_dest_greenland_tooltip_is_the_script_comment() {
 fn mark_tutorial_skipped_persists_on_focused_profile() {
     let path = tmp_vault("tutskip-pref.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.set_focus_for_test("alice");
     assert_eq!(s.focused_tutorial_skipped(), None);
     s.mark_tutorial_skipped();
     assert_eq!(s.focused_tutorial_skipped(), Some(true));
     assert_eq!(
-        s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .tutorial_skipped,
+        s.core.profile("alice").unwrap().tutorial_skipped(),
         Some(true)
     );
 }
@@ -1230,7 +1208,7 @@ fn getvar_drain_session() -> (Session, frontend_core::surface::InputProbe) {
 /// One ingame scene-2 status row for `alice` with this chat head and
 /// pending-box fact.
 fn push_alice_row(s: &mut Session, chat_head: &str, pending: bool) {
-    let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
+    let mut rows = s.core.play_for_test().unwrap().statuses.lock().unwrap();
     rows.clear();
     rows.push(SlotStatus {
         username: "alice".into(),
@@ -1274,7 +1252,7 @@ fn assert_drain_click(clicks: &[frontend_core::surface::InputEv]) {
 
 #[test]
 fn getvar_drain_clicks_pending_box_once() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-once");
+    let iso = IsolatedStores::enter("getvar-drain-once");
     let (mut s, rx) = getvar_drain_session();
     // The probe goes out on the first ingame scene-2 pump (TutSkip unknown).
     push_alice_row(&mut s, "", false);
@@ -1302,7 +1280,7 @@ fn getvar_drain_clicks_pending_box_once() {
 
 #[test]
 fn getvar_drain_needs_the_pending_box() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-no-box");
+    let iso = IsolatedStores::enter("getvar-drain-no-box");
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
@@ -1323,7 +1301,7 @@ fn getvar_drain_needs_the_pending_box() {
 
 #[test]
 fn getvar_drain_survives_chat_head_turnover() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-turnover");
+    let iso = IsolatedStores::enter("getvar-drain-turnover");
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
@@ -1339,7 +1317,7 @@ fn getvar_drain_survives_chat_head_turnover() {
 
 #[test]
 fn getvar_drain_retries_when_capture_returns() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-recapture");
+    let iso = IsolatedStores::enter("getvar-drain-recapture");
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
@@ -1367,7 +1345,7 @@ fn getvar_drain_retries_when_capture_returns() {
 
 #[test]
 fn getvar_drain_waits_for_its_slot_to_focus() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-focus");
+    let iso = IsolatedStores::enter("getvar-drain-focus");
     let (mut s, rx) = getvar_drain_session();
     s.core.insert_slot_io(
         "bob",
@@ -1386,7 +1364,7 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
     // deliberately left live: no click may go out for another slot's box.
     s.set_focus_for_test("bob");
     {
-        let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
+        let mut rows = s.core.play_for_test().unwrap().statuses.lock().unwrap();
         rows.clear();
         rows.push(SlotStatus {
             username: "alice".into(),
@@ -1421,7 +1399,7 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
 
 #[test]
 fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-unrelated");
+    let iso = IsolatedStores::enter("getvar-drain-unrelated");
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
@@ -1444,16 +1422,19 @@ fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
 
 #[test]
 fn getvar_drain_ignores_matching_text_without_probe() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-unprobed");
+    let iso = IsolatedStores::enter("getvar-drain-unprobed");
     let path = tmp_vault("getvar-drain-unprobed.vault");
     let (mut s, rx) = getvar_drain_session();
     // TutSkip already known: the probe never goes out, so even a present
     // box with matching head text is another actor's and must not drain.
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    let mut alice = profile("alice", "pw", 42);
-    alice.settings.tutorial_skipped = Some(true);
-    s.core.vault_mut().unwrap().upsert(alice).unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(
+        &mut s.core,
+        with_tutorial_skipped(profile("alice", "pw", 42), Some(true)),
+    );
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
     assert!(
@@ -1465,7 +1446,7 @@ fn getvar_drain_ignores_matching_text_without_probe() {
 
 #[test]
 fn getvar_drain_stays_local_only() {
-    let iso = script::IsolatedEnv::enter("getvar-drain-local");
+    let iso = IsolatedStores::enter("getvar-drain-local");
     let (mut s, rx) = getvar_drain_session();
     // Non-loopback session host: no probe goes out and no reply ever drains.
     s.set_map_host("192.168.1.2");
@@ -1513,19 +1494,14 @@ fn debug_maxme_is_setstat_99_not_maxme_proc() {
 }
 
 fn empty_play() -> host_play::Play {
-    host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )
+    frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    })
 }
 
 /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -1551,7 +1527,7 @@ fn open_world(w: usize, h: usize) -> NavWorld {
 /// A synthetic offline client with a fake mainland scene base (same
 /// trick as the app tests — no live server, no network).
 fn paint_client() -> client::client::Client {
-    let mut c = host::prepare_client(
+    let mut c = client::client::Client::from_shared(
         client::client::ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -1559,11 +1535,11 @@ fn paint_client() -> client::client::Client {
             members: true,
             lowmem: true,
         },
-        1,
         Arc::new(client::config::Cache::default()),
         Arc::new(vec![]),
         Vec::new(),
     );
+    c.login_uid = 1;
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;
     c
@@ -2037,14 +2013,11 @@ fn remove_only_focused_drawing_slot_releases_flags() {
 
     let vault_path = tmp_vault("flags-last-slot-remove.vault");
     let mut s = Session::new();
-    s.core.set_vault(Some(
-        Vault::create(&vault_path, "test-passphrase-01").unwrap(),
-    ));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&vault_path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     s.rail_remove("alice");
@@ -2585,7 +2558,7 @@ fn tv_name_follows_the_focused_slot() {
         "Login all must prefer the focused slot, not the first FrameBuf key"
     );
     assert_eq!(
-        s.core.play().unwrap().focused().as_deref(),
+        s.core.play_for_test().unwrap().focused().as_deref(),
         Some("s05"),
         "select mirrors the sampled slot onto the play (pure bookkeeping)"
     );
@@ -2640,13 +2613,8 @@ fn tmp_vault(name: &str) -> TestPath {
     TestPath::new(name, "vault.vault")
 }
 
-fn profile(username: &str, password: &str, uid: i32) -> Profile {
-    Profile {
-        username: username.into(),
-        password: password.into(),
-        uid,
-        settings: ProfileSettings::default(),
-    }
+fn profile(username: &str, password: &str, uid: i32) -> FixtureProfile {
+    FixtureProfile::new(username, password).uid(uid)
 }
 
 #[test]
@@ -2654,32 +2622,28 @@ fn unlock_at_uses_the_given_path() {
     let path = tmp_vault("unlock-at.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "test-passphrase-01"));
-    assert!(s.core.vault().is_some());
+    assert!(s.core.vault_open());
 }
 
 /// alice (catalog Thiever) and bob (compiled Gatherer), both auto-login,
 /// last focus alice; the vault is locked and no worker threads spawn.
 fn multibox_unlock_fixture() -> (Session, TestPath) {
     let path = tmp_vault("multibox-unlock.vault");
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    let mut alice = profile("alice", "pw", 1);
-    alice.settings.auto_login = true;
-    alice.settings.script_assignment = Some(vault::ScriptAssignment {
-        source_kind: "catalog".into(),
-        identity: "Thiever".into(),
-        display_name: "Thiever".into(),
-        unavailable: None,
-    });
-    vault.upsert(alice).unwrap();
-    let mut bob = profile("bob", "pw", 2);
-    bob.settings.auto_login = true;
-    bob.settings.script_assignment = Some(vault::ScriptAssignment {
-        source_kind: "compiled".into(),
-        identity: "Gatherer".into(),
-        display_name: "Gatherer".into(),
-        unavailable: None,
-    });
-    vault.upsert(bob).unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(with_assignment(
+        profile("alice", "pw", 1).auto_login(true),
+        "catalog",
+        "Thiever",
+        "Thiever",
+        None,
+    ));
+    vault.put(with_assignment(
+        profile("bob", "pw", 2).auto_login(true),
+        "compiled",
+        "Gatherer",
+        "Gatherer",
+        None,
+    ));
     drop(vault);
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
@@ -2696,14 +2660,14 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
     let (mut session, path) = multibox_unlock_fixture();
     assert!(session.set_multibox(true));
     assert!(session.multibox && session.wall.chooser_open);
-    assert!(session.core.vault().is_none());
+    assert!(!session.core.vault_open());
     assert!(session.core.slots().is_empty());
     assert!(session.core.members().is_empty());
     assert!(session.unlock_at(&path, "test-passphrase-01"));
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session
         .core
-        .play()
+        .play_for_test()
         .unwrap()
         .arm("alice")
         .unwrap()
@@ -2712,16 +2676,13 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
         session.core.fleet().contains("alice"),
         "unlock while MultiBox is already on must register its spawned profile"
     );
-    assert_eq!(
-        session.core.play().unwrap().script_state("alice"),
-        script::RunState::Idle
-    );
+    assert_eq!(session.core.script_state("alice"), ScriptRunState::Idle);
     session.pick_profile("bob");
     assert_eq!(session.focused_name().as_deref(), Some("bob"));
     assert_eq!(session.core.slots().len(), 2);
     assert!(session
         .core
-        .play()
+        .play_for_test()
         .unwrap()
         .arm("alice")
         .unwrap()
@@ -2774,7 +2735,7 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     let legacy_path = dir.join("script-settings.json");
     let legacy_bytes = br#"{"catalog:Thiever":{"target":"legacy-only","radius":99}}"#;
     std::fs::write(&legacy_path, legacy_bytes).unwrap();
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
     for (i, (name, kind, card)) in [
         ("alice", "catalog", "Thiever"),
         ("bob", "compiled", "Gatherer"),
@@ -2782,27 +2743,23 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     .into_iter()
     .enumerate()
     {
-        let mut row = profile(name, "pw", i as i32 + 1);
-        row.settings.auto_login = true;
-        row.settings.script_assignment = Some(vault::ScriptAssignment {
-            source_kind: kind.into(),
-            identity: card.into(),
-            display_name: card.into(),
-            unavailable: None,
-        });
-        row.settings.script_settings.insert(
-            vault::assignment_key(kind, card),
-            serde_json::json!({"owner": name, "radius": i + 7})
-                .as_object()
-                .unwrap()
-                .clone(),
-        );
-        vault.upsert(row).unwrap();
+        let bag = serde_json::json!({"owner": name, "radius": i + 7})
+            .as_object()
+            .unwrap()
+            .clone();
+        vault.put(with_settings_bag(
+            with_assignment(
+                profile(name, "pw", i as i32 + 1).auto_login(true),
+                kind,
+                card,
+                card,
+                None,
+            ),
+            &assignment_key(kind, card),
+            bag,
+        ));
     }
-    let expected: Vec<_> = vault
-        .profiles()
-        .map(|row| (row.username.clone(), row.settings.clone()))
-        .collect();
+    let expected = vault_debug_rows(&vault);
     drop(vault);
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: Some("alice".into()),
@@ -2811,9 +2768,7 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     let mut session = Session::new();
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
-    session
-        .scripts
-        .set_legacy(script::ScriptSettingsStore::at(legacy_path.clone()));
+    session.scripts.set_legacy_store(legacy_path.clone());
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
 
@@ -2828,28 +2783,28 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
         }
         session.pump_status();
         assert_eq!(session.core.selected(), Some(selected));
-        let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
-        for (name, settings) in &expected {
-            assert_eq!(
-                &session.core.vault().unwrap().get(name).unwrap().settings,
-                settings,
-                "{step}: in-memory {name} settings must stay owned by {name}"
-            );
-            assert_eq!(
-                &disk.get(name).unwrap().settings,
-                settings,
-                "{step}: persisted {name} settings must stay owned by {name}"
-            );
+        let disk = VaultFixture::unlock(&path, "test-passphrase-01");
+        assert_eq!(
+            core_vault_debug_rows(&session.core),
+            expected,
+            "{step}: in-memory settings must stay owned by their profile"
+        );
+        assert_eq!(
+            vault_debug_rows(&disk),
+            expected,
+            "{step}: persisted settings must stay owned by their profile"
+        );
+        for name in ["alice", "bob"] {
             assert!(session.scripts.pending_browse(name).is_none());
             if session.core.slots().contains_key(name) {
                 assert_eq!(
-                    session.core.play().unwrap().script_state(name),
-                    script::RunState::Idle,
+                    session.core.script_state(name),
+                    ScriptRunState::Idle,
                     "{step}: no script may start without Start"
                 );
                 assert!(session
                     .core
-                    .play()
+                    .play_for_test()
                     .unwrap()
                     .arm(name)
                     .unwrap()
@@ -2867,19 +2822,15 @@ fn wrong_pass_does_not_delete_or_replace_the_vault() {
     let path = tmp_vault("wrong-pass.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "test-passphrase-01"));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     drop(s);
 
     let mut s = Session::new();
     assert!(!s.unlock_at(&path, "nope"));
-    assert!(s.core.vault().is_none());
+    assert!(!s.core.vault_open());
     assert!(path.is_file());
-    let v = Vault::unlock(&path, "test-passphrase-01").unwrap();
-    assert!(v.get("alice").is_some());
+    let v = VaultFixture::unlock(&path, "test-passphrase-01");
+    assert!(v.profile("alice").is_some());
 }
 
 #[test]
@@ -2889,7 +2840,7 @@ fn reset_vault_at_refuses_while_unlocked() {
     assert!(s.unlock_at(&path, "test-passphrase-01"));
     assert!(!s.reset_vault_at(&path));
     assert!(path.is_file());
-    assert!(s.core.vault().is_some());
+    assert!(s.core.vault_open());
 }
 
 #[test]
@@ -2897,7 +2848,7 @@ fn reset_vault_at_deletes_while_locked() {
     let path = tmp_vault("reset-ok.vault");
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "test-passphrase-01"));
-    s.core.set_vault(None);
+    clear_vault(&mut s.core);
     assert!(s.reset_vault_at(&path));
     assert!(!path.exists());
     assert!(s.unlock_at(&path, "new-passphrase-02"));
@@ -2953,7 +2904,7 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
 
 #[test]
 fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
-    let _isolated = IsolatedEnv::enter("manual-walk-permissions");
+    let _isolated = IsolatedStores::enter("manual-walk-permissions");
     let mut session = Session::new();
     // The durable writes are a peer frontend's: a second service on the
     // session's files, seen once the session's preferences re-read.
@@ -3002,8 +2953,8 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 
 #[test]
 fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
-    let iso = IsolatedEnv::enter("panel-quester-paths-startup");
-    let folder = iso.dir.join("paths");
+    let iso = IsolatedStores::enter("panel-quester-paths-startup");
+    let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
     for (id, name) in [("cook", "Folder Cook"), ("fresh-draft", "Fresh Draft")] {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -3066,14 +3017,14 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
         !report.is_empty(),
         "startup reload reports its result without a user action"
     );
-    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+    frontend_core::test_support::scripts::reset_quester_registry();
 }
 
 #[test]
 fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
-    let iso = IsolatedEnv::enter("panel-quester-paths-failed-folder-then-toggle");
-    let saved = iso.dir.join("saved-paths");
-    let uncommitted = iso.dir.join("uncommitted-paths");
+    let iso = IsolatedStores::enter("panel-quester-paths-failed-folder-then-toggle");
+    let saved = iso.dir().join("saved-paths");
+    let uncommitted = iso.dir().join("uncommitted-paths");
     std::fs::create_dir_all(&saved).unwrap();
     let root = thread_state_root();
     std::fs::create_dir_all(root.path()).unwrap();
@@ -3137,7 +3088,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
         saved.to_string_lossy().as_ref()
     );
     assert_eq!(document["quester_paths"]["enabled"], true);
-    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+    frontend_core::test_support::scripts::reset_quester_registry();
 }
 
 #[cfg(unix)]
@@ -3146,12 +3097,12 @@ fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
-    let iso = IsolatedEnv::enter("panel-quester-paths-non-utf8");
+    let iso = IsolatedStores::enter("panel-quester-paths-non-utf8");
     let root = thread_state_root();
     std::fs::create_dir_all(root.path()).unwrap();
     std::fs::write(root.preferences_file(), b"{}").unwrap();
 
-    let mut bytes = iso.dir.clone().into_os_string().into_vec();
+    let mut bytes = iso.dir().to_path_buf().into_os_string().into_vec();
     bytes.extend_from_slice(b"/paths-\xff");
     let folder = PathBuf::from(OsString::from_vec(bytes));
     let mut session = Session::new();
@@ -3176,12 +3127,12 @@ fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
         folder.as_path(),
         "checkbox must not replace a non-UTF-8 saved folder with the lossy edit buffer"
     );
-    script::quester::registry::set_source(script::quester::registry::FolderSource::default());
+    frontend_core::test_support::scripts::reset_quester_registry();
 }
 
 #[test]
 fn walk_permissions_projection_follows_a_peer_write() {
-    let _isolated = IsolatedEnv::enter("walk-permissions-peer-refresh");
+    let _isolated = IsolatedStores::enter("walk-permissions-peer-refresh");
     let mut session = Session::new();
     // The other frontend: a second service on the same files.
     let peer = thread_preferences();
@@ -3287,7 +3238,7 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     let name = "panel-walk-receipt";
     push_session_slot(&mut s, name, origin, None, true, true);
     s.statuses.refresh_from_play(&s.core);
-    s.core.play_mut().unwrap().focus(name);
+    s.core.play_mut_for_test().unwrap().focus(name);
     s.set_focus_for_test(name);
     s.select_picker_tile(&world, destination);
     assert!(s.confirm_picker_walk(&world), "{:?}", s.error);
@@ -3363,11 +3314,11 @@ fn push_session_slot(
     ingame: bool,
 ) {
     s.core
-        .play_mut()
+        .play_mut_for_test()
         .unwrap()
         .attach_arm(name, SlotArm::new(1, false));
     s.core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -3416,7 +3367,7 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
     s.core.fleet_mut().add("bob");
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     s.set_focus_for_test("bob");
-    s.core.play_mut().unwrap().focus("bob");
+    s.core.play_mut_for_test().unwrap().focus("bob");
     assert!(s.map_model.pending().is_some());
     assert!(s.confirm_picker_walk(&world));
     assert!(s.error.is_none());
@@ -3432,14 +3383,12 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
 fn session_with_vault(file: &str, names: &[&str]) -> Session {
     let path = tmp_vault(file);
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for (i, name) in names.iter().enumerate() {
-        s.core
-            .vault_mut()
-            .unwrap()
-            .upsert(profile(name, "pw", 1 + i as i32))
-            .unwrap();
+        vault_upsert(&mut s.core, profile(name, "pw", 1 + i as i32));
     }
     s
 }
@@ -4305,7 +4254,7 @@ fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
 
 #[test]
 fn picker_confirm_ignores_teles_until_allow_teleports() {
-    let _isolated = IsolatedEnv::enter("picker-teleport-permission");
+    let _isolated = IsolatedStores::enter("picker-teleport-permission");
     // world: origin cannot walk to dest; a teleport edge can.
     let mut session = Session::new();
     session.set_focus_for_test("alice");
@@ -4401,7 +4350,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
 
 #[test]
 fn picker_confirm_uses_find_with_options() {
-    let _isolated = IsolatedEnv::enter("picker-tele-wilderness-permissions");
+    let _isolated = IsolatedStores::enter("picker-tele-wilderness-permissions");
     // The tele fixture moved to wildy-north coords, with the teleport
     // landing on a wilderness tile: the teleport edge is the only way
     // across the wall, and its landing is inside the zone. Neither
@@ -4643,18 +4592,12 @@ fn focus_first_profile_selects_first_vault_name() {
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("focus-first.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     assert!(s.core.slots().contains_key("alice"));
@@ -4668,18 +4611,12 @@ fn focus_first_profile_selects_first_vault_name() {
 fn focus_first_prefers_last_focus() {
     let path = tmp_vault("focus-last.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     crate::ui_state::save(
         &s.preferences,
         &crate::ui_state::PanelUiState {
@@ -4700,13 +4637,11 @@ fn select_saves_last_focus() {
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     assert_eq!(
         crate::ui_state::load(&s.preferences).last_focus.as_deref(),
@@ -4718,18 +4653,12 @@ fn select_saves_last_focus() {
 fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     let path = tmp_vault("multibox-last-focus.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.select("alice");
     s.core.fleet_mut().add("bob");
     crate::ui_state::save(
@@ -4749,18 +4678,12 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
 fn select_spawns_parked_profile_once() {
     let path = tmp_vault("select-spawn.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.select("alice");
     assert_eq!(s.core.slots().len(), 1);
     s.select("bob");
@@ -4775,11 +4698,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "test-passphrase-01"));
     for (n, uid) in [("alice", 1), ("bob", 2), ("carol", 3)] {
-        s.core
-            .vault_mut()
-            .unwrap()
-            .upsert(profile(n, "pw", uid))
-            .unwrap();
+        vault_upsert(&mut s.core, profile(n, "pw", uid));
     }
     s.select("alice");
     s.load("bob");
@@ -4788,7 +4707,7 @@ fn flat_model_spawns_every_member_as_a_client() {
     // slot threads to publish their status rows.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
-        if s.core.play().unwrap().statuses().len() == 3 {
+        if s.core.play_for_test().unwrap().statuses().len() == 3 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -4799,21 +4718,24 @@ fn flat_model_spawns_every_member_as_a_client() {
         "every wall member owns a FrameBuf slot"
     );
     assert_eq!(
-        s.core.play().unwrap().statuses().len(),
+        s.core.play_for_test().unwrap().statuses().len(),
         3,
         "one full Client slot per profile — no lean channels"
     );
     assert!(
-        s.core.play().unwrap().arm("carol").is_some(),
+        s.core.play_for_test().unwrap().arm("carol").is_some(),
         "every member has a control arm"
     );
     // Focus is pure bookkeeping: selecting bob redirects the sampled
     // slot without touching a socket.
     s.select("bob");
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
-    assert_eq!(s.core.play().unwrap().focused().as_deref(), Some("bob"));
     assert_eq!(
-        s.core.play().unwrap().statuses().len(),
+        s.core.play_for_test().unwrap().focused().as_deref(),
+        Some("bob")
+    );
+    assert_eq!(
+        s.core.play_for_test().unwrap().statuses().len(),
         3,
         "focus does not swap sockets; every slot stays up"
     );
@@ -4827,18 +4749,12 @@ fn sidecar_select_does_not_restart_when_game_is_highmem() {
     let path = tmp_vault("select-no-restart.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.ui.lowmem = false;
     s.select("alice");
     s.load("bob");
@@ -4861,18 +4777,12 @@ fn sidecar_select_does_not_restart_when_game_is_cpu() {
     let path = tmp_vault("select-no-restart-cpu.vault");
     let mut s = Session::new();
     s.persist_ui = false;
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.ui.raster = frontend_core::command::RasterMode::Cpu;
     s.select("alice");
     s.load("bob");
@@ -4890,11 +4800,7 @@ fn logout_all_arms_every_wall_member() {
     let mut s = Session::new();
     assert!(s.unlock_at(&path, "test-passphrase-01"));
     for (n, uid) in [("alice", 1), ("bob", 2)] {
-        s.core
-            .vault_mut()
-            .unwrap()
-            .upsert(profile(n, "pw", uid))
-            .unwrap();
+        vault_upsert(&mut s.core, profile(n, "pw", uid));
     }
     s.select("alice");
     s.load("bob");
@@ -4902,18 +4808,28 @@ fn logout_all_arms_every_wall_member() {
     s.core.fleet_mut().add("bob");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
-        if s.core.play().unwrap().arm("bob").is_some() {
+        if s.core.play_for_test().unwrap().arm("bob").is_some() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     s.logout_all();
     assert!(
-        s.core.play().unwrap().arm("alice").unwrap().wants_logout(),
+        s.core
+            .play_for_test()
+            .unwrap()
+            .arm("alice")
+            .unwrap()
+            .wants_logout(),
         "the focused member must logout"
     );
     assert!(
-        s.core.play().unwrap().arm("bob").unwrap().wants_logout(),
+        s.core
+            .play_for_test()
+            .unwrap()
+            .arm("bob")
+            .unwrap()
+            .wants_logout(),
         "every wall member must logout"
     );
 }
@@ -4928,7 +4844,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     s.live_prepare_stress(3, false).expect("prepare");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
-        if s.core.play().unwrap().statuses().len() == 3 {
+        if s.core.play_for_test().unwrap().statuses().len() == 3 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -4945,7 +4861,12 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
     assert!(
-        s.core.play().unwrap().arm("s00").unwrap().wants_login(),
+        s.core
+            .play_for_test()
+            .unwrap()
+            .arm("s00")
+            .unwrap()
+            .wants_login(),
         "the focused slot arms immediately"
     );
     assert!(
@@ -4971,7 +4892,12 @@ fn login_all_arms_every_wall_member() {
     let mut s = Session::new();
     s.live_prepare_stress(2, false).expect("prepare");
     assert!(
-        s.core.play().unwrap().arm("s01").unwrap().wants_login(),
+        s.core
+            .play_for_test()
+            .unwrap()
+            .arm("s01")
+            .unwrap()
+            .wants_login(),
         "login all arms every member immediately (the FIFO serializes)"
     );
 }
@@ -5043,30 +4969,29 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let scenario = scenario::get("walk").expect("walk scenario in registry");
+    let scenario = frontend_core::live::Scenario::get("walk").expect("walk scenario in registry");
     s.live_prepare_script(scenario).expect("prepare");
     // Live boots a minted per-run account — never the registry's
     // `test` (engine auto-registers unknown names).
     let name = s
         .core
-        .vault()
-        .expect("live vault open")
-        .profiles()
+        .profile_names()
+        .into_iter()
         .next()
-        .expect("minted profile")
-        .username
-        .clone();
+        .expect("minted profile");
     assert_ne!(name, "test", "live must not log in `test`");
-    let play = s.core.play().expect("play started");
+    let play = s.core.play_for_test().expect("play started");
     assert!(
         play.arm(&name).unwrap().wants_login(),
         "login all arms the minted profile's handshake"
     );
-    let runner = s.scenario.lock().unwrap();
-    let runner = runner.as_ref().expect("scenario runner installed");
-    assert_eq!(runner.profile_name(), name);
+    let runner = s.core.live_runner();
+    assert_eq!(runner.profile_name().as_deref(), Some(name.as_str()));
     assert!(
-        matches!(runner.status(), scenario::RunnerStatus::Seeding),
+        matches!(
+            runner.status(),
+            Some(frontend_core::live::RunnerStatus::Seeding)
+        ),
         "a fresh runner holds in seeding until ingame scene 2"
     );
     assert!(
@@ -5081,24 +5006,23 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
 /// card's source is what the isolate will spawn on that step.
 #[test]
 fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
-    let iso = IsolatedEnv::enter("bone-live");
+    let iso = IsolatedStores::enter("bone-live");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
-    iso.set_rs2b0t(&root);
+    let root = write_looping_catalog(iso.dir(), &[("BoneBurier", "BoneBurier")]);
+    iso.set_catalog_root(&root);
     let mut s = preparation_only_session();
-    let result = s.live_prepare_script(scenario::get("bone_burier").expect("registered"));
+    let result = s.live_prepare_script(
+        frontend_core::live::Scenario::get("bone_burier").expect("registered"),
+    );
     let name = s
         .core
-        .vault()
-        .expect("live vault open")
-        .profiles()
+        .profile_names()
+        .into_iter()
         .next()
-        .expect("minted profile")
-        .username
-        .clone();
+        .expect("minted profile");
     assert_ne!(name, "test", "live must not log in `test`");
     match result {
         Ok(()) => {}
@@ -5109,47 +5033,39 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
         "prepare sets script_sel to the catalog card"
     );
-    let play = s.core.play().expect("play started");
     assert_ne!(
-        play.script_state(&name),
-        script::RunState::Running,
+        s.core.script_state(&name),
+        ScriptRunState::Running,
         "isolate is not Running yet — Start waits for the StartScript step"
     );
 }
 
 #[test]
 fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
-    let ts = script::live_example_path("bone_burier_v2.ts").expect("ts example");
-    let js = script::live_example_path("bone_burier_v2.js").expect("js example");
+    use frontend_core::test_support::scripts::{file_identity, live_example_path};
+    let ts = live_example_path("bone_burier_v2.ts").expect("ts example");
+    let js = live_example_path("bone_burier_v2.js").expect("js example");
     for (name, file_name, path) in [
         ("bone_burier_v2_ts", "bone_burier_v2.ts", ts.as_path()),
         ("bone_burier_v2_js", "bone_burier_v2.js", js.as_path()),
     ] {
-        let iso = IsolatedEnv::enter(&format!("bone-v2-{name}"));
+        let iso = IsolatedStores::enter(&format!("bone-v2-{name}"));
         let mut s = Session::new();
-        s.scripts.set_js(script::JsLibrary::with_cache(
-            iso.dir.join("js-scripts.json"),
-            iso.dir.join("js-cache"),
-        ));
-        s.scripts.js_mut().load(&ts).expect("preload ts");
-        s.scripts.js_mut().load(&js).expect("preload js");
-        s.scripts.legacy_mut().set_str(
-            script::ScriptSource::File,
-            "bone_burier_v2",
-            "boneName",
-            "stem",
+        s.scripts.use_library_at(
+            iso.dir().join("js-scripts.json"),
+            iso.dir().join("js-cache"),
         );
-        let identity = script::file_identity(path);
-        s.scripts.legacy_mut().set_str(
-            script::ScriptSource::File,
-            &identity,
-            "boneName",
-            "identity",
-        );
-        let scenario = scenario::get(name).expect("registered");
-        assert_eq!(scenario.settings.start_file, Some(file_name));
-        assert_eq!(scenario.settings.start_script, None);
-        let card = load_live_example_card(s.scripts.js_mut(), file_name).expect("identity load");
+        s.scripts.load_card(&ts).expect("preload ts");
+        s.scripts.load_card(&js).expect("preload js");
+        s.scripts
+            .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+        let identity = file_identity(path);
+        s.scripts
+            .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
+        let scenario = frontend_core::live::Scenario::get(name).expect("registered");
+        assert_eq!(scenario.view().start_file(), Some(file_name));
+        assert_eq!(scenario.view().start_script(), None);
+        let card = s.scripts.load_card(path).expect("identity load");
         assert_eq!(
             card.identity_id(),
             identity,
@@ -5160,22 +5076,15 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
             "{name} must not use the shared stem"
         );
         let bag = s
-            .pending_settings_bag(
-                CardSource::File,
-                &identity,
-                SchemaRef::from_script(&card.settings_schema),
-            )
+            .pending_settings_bag(CardSource::File, &identity, card.schema_ref())
             .expect("settings bag");
         assert_eq!(
             bag.get("boneName"),
             Some(&serde_json::json!("identity")),
             "{name} settings attach to the selected File identity"
         );
-        let stem_bag = s.pending_settings_bag(
-            CardSource::File,
-            "bone_burier_v2",
-            SchemaRef::from_script(&card.settings_schema),
-        );
+        let stem_bag =
+            s.pending_settings_bag(CardSource::File, "bone_burier_v2", card.schema_ref());
         assert_eq!(
             stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
             Some(&serde_json::json!("stem")),
@@ -5186,27 +5095,29 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
 
 #[test]
 fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
-    let iso = IsolatedEnv::enter("bone-v1-trade");
+    let iso = IsolatedStores::enter("bone-v1-trade");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
-    iso.set_rs2b0t(&root);
+    let root = write_looping_catalog(iso.dir(), &[("BoneBurier", "BoneBurier")]);
+    iso.set_catalog_root(&root);
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("bone_burier").expect("registered"))
+    s.live_prepare_script(frontend_core::live::Scenario::get("bone_burier").expect("registered"))
         .expect("v1");
     assert_eq!(
         s.script_sel,
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"))
     );
     let mut trade = preparation_only_session();
-    trade.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("trade-js.json"),
-        iso.dir.join("trade-cache"),
-    ));
+    trade.scripts.use_library_at(
+        iso.dir().join("trade-js.json"),
+        iso.dir().join("trade-cache"),
+    );
     trade
-        .live_prepare_script(scenario::get("script_trade").expect("registered"))
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("script_trade").expect("registered"),
+        )
         .expect("trade");
     assert_eq!(
         trade.script_sel,
@@ -5216,30 +5127,24 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
 
 #[test]
 fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
-    let iso = IsolatedEnv::enter("trade-live");
+    let iso = IsolatedStores::enter("trade-live");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
-    s.live_prepare_script(scenario::get("script_trade").expect("registered"))
+    s.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
+    s.live_prepare_script(frontend_core::live::Scenario::get("script_trade").expect("registered"))
         .expect("prepare");
     assert_eq!(
         s.script_sel,
         Some(ScriptChoice::loaded(CardSource::File, "trade_bot")),
         "script_trade loads the in-tree TradeBot fixture as File"
     );
-    let names: Vec<_> = s
-        .core
-        .vault()
-        .expect("live vault")
-        .profiles()
-        .map(|p| p.username.clone())
-        .collect();
+    let names = s.core.profile_names();
     assert_eq!(names.len(), 2, "script_trade is a two-profile fleet");
     let pending = s.core.live_runner().pending_starts_for_test();
     assert_eq!(
@@ -5280,25 +5185,21 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
 
 #[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
-    let iso = IsolatedEnv::enter("jive-kq-fleet");
+    let iso = IsolatedStores::enter("jive-kq-fleet");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let root = write_looping_catalog(&iso.dir, &[("JiveKQ", "JiveKQ")]);
-    iso.set_rs2b0t(&root);
+    let root = write_looping_catalog(iso.dir(), &[("JiveKQ", "JiveKQ")]);
+    iso.set_catalog_root(&root);
     let mut session = preparation_only_session();
     session
-        .live_prepare_script(scenario::get("jive_kq_four").expect("registered"))
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("jive_kq_four").expect("registered"),
+        )
         .expect("prepare four-player JiveKQ");
 
-    let names = session
-        .core
-        .vault()
-        .expect("live vault")
-        .profiles()
-        .map(|profile| profile.username.clone())
-        .collect::<Vec<_>>();
+    let names = session.core.profile_names();
     assert_eq!(names.len(), 4, "JiveKQ mints four fleet profiles");
     let roster = names
         .iter()
@@ -5334,15 +5235,15 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
 /// camps Men.
 #[test]
 fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
-    let iso = IsolatedEnv::enter("thiever-bag");
+    let iso = IsolatedStores::enter("thiever-bag");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let root = write_looping_catalog(&iso.dir, &[("Thiever", "ThievingBot")]);
-    iso.set_rs2b0t(&root);
+    let root = write_looping_catalog(iso.dir(), &[("Thiever", "ThievingBot")]);
+    iso.set_catalog_root(&root);
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("thiever").expect("registered"))
+    s.live_prepare_script(frontend_core::live::Scenario::get("thiever").expect("registered"))
         .expect("prepare");
     let pending = s.core.live_runner().pending_starts_for_test();
     let card = pending.first().expect("catalog start stashed");
@@ -5369,16 +5270,17 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
 
 #[test]
 fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
-    let iso = IsolatedEnv::enter("alcher-sel");
+    let iso = IsolatedStores::enter("alcher-sel");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let root = write_looping_catalog(&iso.dir, &[("Alcher", "Alcher")]);
-    iso.set_rs2b0t(&root);
+    let root = write_looping_catalog(iso.dir(), &[("Alcher", "Alcher")]);
+    iso.set_catalog_root(&root);
     let mut s = preparation_only_session();
-    let mut scenario = scenario::get("alcher").expect("registered");
-    scenario.settings.start_script = Some("Alcher");
+    let scenario =
+        frontend_core::test_support::live::scenario_with_start_script_for_test("alcher", "Alcher")
+            .expect("registered");
     s.live_prepare_script(scenario).expect("prepare");
     assert_eq!(
         s.script_sel,
@@ -5389,13 +5291,13 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
 
 #[test]
 fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
-    let iso = IsolatedEnv::enter("sherlock-live");
+    let iso = IsolatedStores::enter("sherlock-live");
     seed_ui_state(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("sherlock_talk").expect("registered"))
+    s.live_prepare_script(frontend_core::live::Scenario::get("sherlock_talk").expect("registered"))
         .expect("prepare compiled Sherlock without $RS2B0T");
     assert_eq!(
         s.script_sel,
@@ -5406,7 +5308,10 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
     );
     let pending = s.core.live_runner().pending_starts_for_test();
     let card = pending.first().expect("compiled start stashed");
-    assert_eq!(card.compiled, Some(script::CompiledId("Sherlock")));
+    assert_eq!(
+        frontend_core::test_support::live::pending_compiled_id(card).map(|id| id.as_str()),
+        Some("Sherlock")
+    );
     assert!(
         card.js.is_empty(),
         "compiled Start must not stash catalog JS"
@@ -5421,9 +5326,9 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let fleet = scenario::get("nav_door").expect("nav_door is registered");
+    let fleet = frontend_core::live::Scenario::get("nav_door").expect("nav_door is registered");
     assert!(
-        fleet.seed.profiles.len() > 1,
+        fleet.view().profile_count() > 1,
         "nav_door is a two-profile fleet"
     );
     s.live_prepare_script(fleet).expect("prepare");
@@ -5436,13 +5341,7 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         "multibox mirrors onto the focus so every bot rasters"
     );
     // Both fleet slots are minted fresh accounts, not `test`/`test2`.
-    let vault_names: Vec<String> = s
-        .core
-        .vault()
-        .expect("live vault open")
-        .profiles()
-        .map(|p| p.username.clone())
-        .collect();
+    let vault_names = s.core.profile_names();
     assert_eq!(vault_names.len(), 2, "a fleet mints both slots");
     for name in &vault_names {
         assert_ne!(name, "test", "live must not log in `test`");
@@ -5458,8 +5357,8 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let solo = scenario::get("walk").expect("walk is registered");
-    assert_eq!(solo.seed.profiles.len(), 1);
+    let solo = frontend_core::live::Scenario::get("walk").expect("walk is registered");
+    assert_eq!(solo.view().profile_count(), 1);
     s.live_prepare_script(solo).expect("prepare");
     assert!(!s.multibox, "a solo scenario keeps the single-bot boot");
     assert!(
@@ -5484,9 +5383,10 @@ fn temp_live_vault_mint_does_not_persist_username_as_password() {
     let entries = host_play::mint_live_entries(&names);
     let pass = host_play::live_vault_passphrase();
     let path = temp_live_vault_from(&entries, 274_000_001, &pass, true);
-    let vault = Vault::unlock(&path, &pass).unwrap();
-    for profile in vault.profiles() {
-        assert_ne!(profile.username, profile.password.as_str());
+    let vault = VaultFixture::unlock(&path, &pass);
+    for username in vault.usernames() {
+        let profile = vault.profile(&username).expect("a minted live profile");
+        assert_ne!(profile.username(), profile.draft().password_for_test());
     }
 }
 
@@ -5503,7 +5403,7 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
     let op = crate::session::default_vault_path();
     let before = stamp(&op);
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("walk").unwrap())
+    s.live_prepare_script(frontend_core::live::Scenario::get("walk").unwrap())
         .expect("prepare");
     let after = stamp(&op);
     assert_eq!(
@@ -5522,7 +5422,7 @@ fn live_prepare_script_does_not_write_last_focus() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let fleet = scenario::get("nav_door").expect("nav_door");
+    let fleet = frontend_core::live::Scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     assert_eq!(
         crate::ui_state::load(&s.preferences).last_focus.as_deref(),
@@ -5538,7 +5438,7 @@ fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let fleet = scenario::get("nav_door").expect("nav_door");
+    let fleet = frontend_core::live::Scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     let f = s.focus.lock().unwrap();
     assert!(f.live_full_rate);
@@ -5555,12 +5455,16 @@ fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("nav_full").unwrap())
+    s.live_prepare_script(frontend_core::live::Scenario::get("nav_full").unwrap())
         .expect("prepare");
-    let runner = s.scenario.lock().unwrap();
-    let runner = runner.as_ref().expect("runner");
-    assert_eq!(runner.deadline(), Duration::from_secs(360));
-    assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
+    assert_eq!(
+        s.core.live_runner().deadline_for_test(),
+        Some(Duration::from_secs(360))
+    );
+    assert_eq!(
+        s.core.live_runner().terminal_shot(),
+        Some("nav_full terminal")
+    );
 }
 
 #[test]
@@ -5570,11 +5474,12 @@ fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("render_smoke").unwrap())
+    s.live_prepare_script(frontend_core::live::Scenario::get("render_smoke").unwrap())
         .expect("prepare");
-    let runner = s.scenario.lock().unwrap();
-    let runner = runner.as_ref().expect("runner");
-    assert_eq!(runner.deadline(), Duration::from_secs(300));
+    assert_eq!(
+        s.core.live_runner().deadline_for_test(),
+        Some(Duration::from_secs(300))
+    );
 }
 
 #[test]
@@ -5591,10 +5496,9 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
     for choice in [None, Some(true), Some(false)] {
         let mut session = preparation_only_session();
         session.set_nav_paints_override(choice);
-        let mut scenario = scenario::get("nav_door").unwrap();
-        scenario.settings.nav.allow_teleports = true;
-        scenario.settings.nav.allow_wilderness = true;
-        let scenario = frontend_core::live::Scenario::from(scenario);
+        let scenario =
+            frontend_core::test_support::live::scenario_with_nav_for_test("nav_door", true, true)
+                .expect("registered");
         let (baseline, deadline, terminal_shot) = {
             let view = scenario.view();
             (
@@ -5628,11 +5532,12 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
             }
             None => assert_eq!(published, baseline),
         }
-        let runner = session.scenario.lock().unwrap();
-        let runner = runner.as_ref().unwrap();
+        let runner = session.core.live_runner();
         assert_eq!(
-            runner.deadline(),
-            scenario::budget_s_from_env().unwrap_or(deadline)
+            runner.deadline_for_test(),
+            Some(
+                frontend_core::test_support::live::budget_s_from_env_for_test().unwrap_or(deadline)
+            )
         );
         assert_eq!(runner.terminal_shot(), terminal_shot.as_deref());
         assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
@@ -5664,7 +5569,7 @@ fn live_force_layers_does_not_write_panel_ui() {
         "forced layers must never reach panel-ui.json"
     );
     let mut s = preparation_only_session();
-    s.live_prepare_script(scenario::get("nav_door").unwrap())
+    s.live_prepare_script(frontend_core::live::Scenario::get("nav_door").unwrap())
         .expect("prepare");
     assert!(
         s.nav_overlay
@@ -5717,8 +5622,10 @@ fn live_full_rate_sync_raises_focus_and_members() {
 fn focus_first_profile_noop_when_empty() {
     let path = tmp_vault("focus-empty.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     s.focus_first_profile();
     assert!(s.focused_name().is_none());
 }
@@ -5781,19 +5688,14 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
     // Logout latches + clears want_login; Log in must call arm_login_all
     // (clear latch, want_login, cancel want_logout) then select.
     let mut s = Session::new();
-    let mut play = host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    );
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
     let arm = SlotArm::new(7, false);
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));
@@ -5814,9 +5716,9 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
 fn load_refresh_keeps_an_explicit_non_auto_login() {
     let path = tmp_vault("load-refresh-explicit-login.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut session.core, vault);
     let mut play = empty_play();
     let arm = SlotArm::new(42, false);
     arm.arm_explicit_login();
@@ -5835,11 +5737,10 @@ fn load_refresh_keeps_an_explicit_non_auto_login() {
 fn load_keeps_a_persisted_auto_login_member_logged_out() {
     let path = tmp_vault("load-persisted-logout-auto.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    let mut alice = profile("alice", "pw", 42);
-    alice.settings.auto_login = true;
-    vault.upsert(alice).unwrap();
-    session.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    let alice = profile("alice", "pw", 42).auto_login(true);
+    vault.put(alice);
+    install_vault(&mut session.core, vault);
     let mut play = empty_play();
     let arm = SlotArm::new(42, true);
     arm.hold_logged_out();
@@ -5859,29 +5760,24 @@ fn load_keeps_a_persisted_auto_login_member_logged_out() {
 fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login.vault");
     let mut session = Session::new();
-    session
-        .core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    session
-        .core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut session.core, profile("alice", "pw", 42));
     session.core.set_spawn_workers(false);
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+    session
+        .core
+        .set_play(Some(frontend_core::test_support::empty_play(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+        )));
     let input = SlotInput::new();
     session.core.insert_slot_io(
         "alice",
@@ -5895,7 +5791,7 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 
     let replacement = session
         .core
-        .play()
+        .play_for_test()
         .and_then(|play| play.arm("alice"))
         .expect("explicit login recreates the terminal worker arm");
     assert!(replacement.wants_login());
@@ -5909,9 +5805,9 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login-all.vault");
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut session.core, vault);
     session.core.set_spawn_workers(false);
     let play = empty_play();
     play.statuses.lock().unwrap().push(SlotStatus {
@@ -5930,13 +5826,13 @@ fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
             pixels: FrameBuf::new(),
         },
     );
-    assert!(session.core.play().unwrap().arm("alice").is_none());
+    assert!(session.core.play_for_test().unwrap().arm("alice").is_none());
 
     session.login_all();
 
     let replacement = session
         .core
-        .play()
+        .play_for_test()
         .and_then(|play| play.arm("alice"))
         .expect("Login all recreates the terminal worker arm");
     assert!(replacement.wants_login());
@@ -5950,15 +5846,11 @@ fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
 fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     let path = tmp_vault("terminal-worker-select.vault");
     let mut session = Session::new();
-    session
-        .core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    session
-        .core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut session.core, profile("alice", "pw", 42));
     session.core.set_spawn_workers(false);
     let play = empty_play();
     play.statuses.lock().unwrap().push(SlotStatus {
@@ -5980,10 +5872,10 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     session.select("alice");
 
     assert!(
-        session.core.play().unwrap().arm("alice").is_none(),
+        session.core.play_for_test().unwrap().arm("alice").is_none(),
         "focus alone must not replace a terminal worker"
     );
-    let row = &session.core.play().unwrap().statuses()[0];
+    let row = &session.core.play_for_test().unwrap().statuses()[0];
     assert_eq!(
         row.worker_terminal,
         Some(host_play::WorkerTerminal::Panicked)
@@ -5998,32 +5890,31 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
 fn explicit_login_arms_a_fresh_non_auto_profile() {
     let path = tmp_vault("fresh-explicit-login.vault");
     let mut session = Session::new();
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    let alice = profile("alice", "pw", 42).auto_login(false);
+    vault_upsert(&mut session.core, alice);
+    session.core.set_spawn_workers(false);
     session
         .core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    let mut alice = profile("alice", "pw", 42);
-    alice.settings.auto_login = false;
-    session.core.vault_mut().unwrap().upsert(alice).unwrap();
-    session.core.set_spawn_workers(false);
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+        .set_play(Some(frontend_core::test_support::empty_play(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+        )));
 
     session.login("alice");
 
     let arm = session
         .core
-        .play()
+        .play_for_test()
         .and_then(|play| play.arm("alice"))
         .expect("fresh explicit login creates an arm");
     assert!(arm.wants_login());
@@ -6052,13 +5943,15 @@ fn arm_login_all_cancels_pending_logout() {
 fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
     let path = tmp_vault("edit-focus-desync.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
     ] {
-        s.core.vault_mut().unwrap().upsert(p).unwrap();
+        vault_upsert(&mut s.core, p);
     }
 
     s.begin_edit_profile(Some("aindniK"));
@@ -6068,11 +5961,17 @@ fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
-    let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
+    let disk = VaultFixture::unlock(&path, "test-passphrase-01");
+    let row = |name: &str| {
+        disk.profile(name)
+            .map(|p| (p.uid(), p.draft().password_for_test().to_string()))
+    };
     assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
     assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
-    assert_eq!(disk.get("aindniK").unwrap().settings.world, Some(2));
+    assert_eq!(
+        disk.profile("aindniK").unwrap().draft().settings().world(),
+        Some(2)
+    );
     assert!(saved, "{:?}", s.error);
 }
 
@@ -6080,13 +5979,15 @@ fn loading_another_profile_while_editing_keeps_the_editor_on_its_profile() {
 fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
     let path = tmp_vault("rename-onto-existing.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
     ] {
-        s.core.vault_mut().unwrap().upsert(p).unwrap();
+        vault_upsert(&mut s.core, p);
     }
 
     s.begin_edit_profile(Some("aindniK"));
@@ -6096,8 +5997,11 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
-    let row = |name: &str| disk.get(name).map(|p| (p.uid, p.password.clone()));
+    let disk = VaultFixture::unlock(&path, "test-passphrase-01");
+    let row = |name: &str| {
+        disk.profile(name)
+            .map(|p| (p.uid(), p.draft().password_for_test().to_string()))
+    };
     assert_eq!(row("Hans"), Some((43, "hpass".into())), "Hans untouched");
     assert_eq!(row("aindniK"), Some((42, "kpass".into())), "aindniK kept");
     assert!(!saved);
@@ -6116,13 +6020,11 @@ fn renaming_onto_an_existing_username_is_refused_and_writes_nothing() {
 fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     let path = tmp_vault("new-onto-existing.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("Hans", "hpass", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("Hans", "hpass", 43));
 
     s.begin_edit_profile(None);
     *s.profile_editor.draft_mut().username_mut() = "Hans".into();
@@ -6131,9 +6033,12 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
     s.core.flush_writes();
     s.pump_status();
 
-    let disk = Vault::unlock(&path, "test-passphrase-01").unwrap();
-    let hans = disk.get("Hans").unwrap();
-    assert_eq!((hans.uid, hans.password.as_str()), (43, "hpass"));
+    let disk = VaultFixture::unlock(&path, "test-passphrase-01");
+    let hans = disk.profile("Hans").unwrap();
+    assert_eq!(
+        (hans.uid(), hans.draft().password_for_test()),
+        (43, "hpass")
+    );
     assert!(!saved);
     assert_eq!(
         s.error.as_deref(),
@@ -6150,13 +6055,15 @@ fn a_new_profile_with_an_existing_username_is_refused_and_writes_nothing() {
 fn focus_changes_keep_the_edit_form_on_its_target() {
     let path = tmp_vault("edit-focus-keeps-target.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
     ] {
-        s.core.vault_mut().unwrap().upsert(p).unwrap();
+        vault_upsert(&mut s.core, p);
     }
 
     s.begin_edit_profile(Some("aindniK"));
@@ -6199,13 +6106,15 @@ fn focus_changes_keep_the_edit_form_on_its_target() {
 fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed() {
     let path = tmp_vault("edit-switch-confirm.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
     ] {
-        s.core.vault_mut().unwrap().upsert(p).unwrap();
+        vault_upsert(&mut s.core, p);
     }
 
     s.begin_edit_profile(Some("aindniK"));
@@ -6233,13 +6142,15 @@ fn opening_another_profile_with_unsaved_changes_keeps_the_form_until_confirmed()
 fn opening_another_profile_without_unsaved_changes_switches_at_once() {
     let path = tmp_vault("edit-switch-clean.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     for p in [
         profile("aindniK", "kpass", 42),
         profile("Hans", "hpass", 43),
     ] {
-        s.core.vault_mut().unwrap().upsert(p).unwrap();
+        vault_upsert(&mut s.core, p);
     }
 
     s.begin_edit_profile(Some("aindniK"));
@@ -6269,13 +6180,11 @@ fn opening_another_profile_without_unsaved_changes_switches_at_once() {
 fn save_credentials_upserts_under_username_key_keeping_uid() {
     let path = tmp_vault("save-creds.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "oldpass", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "oldpass", 42));
 
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "newpass".into();
@@ -6283,24 +6192,20 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     s.core.flush_writes();
     s.pump_status();
 
-    let p = s.core.vault().unwrap().get("alice").unwrap();
-    assert_eq!(p.password, "newpass");
-    assert_eq!(p.uid, 42, "save must keep the existing uid");
+    let p = s.core.profile("alice").unwrap();
+    assert_eq!(p.draft().password_for_test(), "newpass");
+    assert_eq!(p.uid(), 42, "save must keep the existing uid");
 }
 
 #[test]
 fn profile_editor_persists_trimmed_global_clue_duel_partner() {
     let path = tmp_vault("clue-duel-partner.vault");
     let mut session = Session::new();
-    session
-        .core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    session
-        .core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut session.core, profile("alice", "pw", 42));
 
     session.begin_edit_profile(Some("alice"));
     *session
@@ -6315,12 +6220,11 @@ fn profile_editor_persists_trimmed_global_clue_duel_partner() {
     assert_eq!(
         session
             .core
-            .vault()
+            .profile("alice")
             .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .clue_duel_partner,
+            .draft()
+            .settings()
+            .clue_duel_partner(),
         "Helper_Account"
     );
 }
@@ -6329,28 +6233,19 @@ fn profile_editor_persists_trimmed_global_clue_duel_partner() {
 fn chooser_world_edit_persists_and_updates_running_slot() {
     let path = tmp_vault("world-choice.vault");
     let mut session = Session::new();
-    session
-        .core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    session
-        .core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    let mut play = host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
+    install_vault(
+        &mut session.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
     );
+    vault_upsert(&mut session.core, profile("alice", "pw", 42));
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
     session.core.set_play(Some(play));
@@ -6364,12 +6259,12 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     assert!(session.save_credentials());
     session.core.flush_writes();
     assert_eq!(
-        Vault::unlock(&path, "test-passphrase-01")
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .world,
+        VaultFixture::unlock(&path, "test-passphrase-01")
+            .profile("alice")
+            .expect("alice is stored")
+            .draft()
+            .settings()
+            .world(),
         Some(2)
     );
     assert_eq!(
@@ -6391,12 +6286,12 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
     session.core.flush_writes();
     session.pump_status();
     assert_eq!(
-        Vault::unlock(&path, "test-passphrase-01")
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .world,
+        VaultFixture::unlock(&path, "test-passphrase-01")
+            .profile("alice")
+            .expect("alice is stored")
+            .draft()
+            .settings()
+            .world(),
         Some(2),
         "a credentials save outside the editor must not unpin an account"
     );
@@ -6411,13 +6306,11 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
 fn save_credentials_creates_new_profile_when_username_is_new() {
     let path = tmp_vault("new-user.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
 
     *s.profile_editor.draft_mut().username_mut() = "bob".into();
     *s.profile_editor.draft_mut().password_mut() = "bobpass".into();
@@ -6427,11 +6320,11 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert!(s.core.slots().contains_key("bob"));
 
-    let p = s.core.vault().unwrap().get("bob").unwrap();
-    assert_eq!(p.password, "bobpass");
-    assert_ne!(p.uid, 42, "a new profile gets a fresh uid");
+    let p = s.core.profile("bob").unwrap();
+    assert_eq!(p.draft().password_for_test(), "bobpass");
+    assert_ne!(p.uid(), 42, "a new profile gets a fresh uid");
     assert_eq!(
-        s.core.vault().unwrap().get("alice").unwrap().password,
+        s.core.profile("alice").unwrap().draft().password_for_test(),
         "pw",
         "saving a new username must not touch existing profiles"
     );
@@ -6441,8 +6334,10 @@ fn save_credentials_creates_new_profile_when_username_is_new() {
 fn save_credentials_rejects_empty_username() {
     let path = tmp_vault("empty-user.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     *s.profile_editor.draft_mut().username_mut() = "  ".into();
     *s.profile_editor.draft_mut().password_mut() = "x".into();
     assert!(!s.save_credentials());
@@ -6453,15 +6348,17 @@ fn save_credentials_rejects_empty_username() {
 fn save_credentials_without_focus_upserts_spawns_and_selects() {
     let path = tmp_vault("empty-first-run.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     assert!(s.focused_name().is_none());
     *s.profile_editor.draft_mut().username_mut() = "test".into();
     *s.profile_editor.draft_mut().password_mut() = "test".into();
     assert!(s.save_credentials());
     s.core.flush_writes();
     s.pump_status();
-    assert!(s.core.vault().unwrap().get("test").is_some());
+    assert!(s.core.profile("test").is_some());
     assert_eq!(s.focused_name().as_deref(), Some("test"));
     assert!(s.core.slots().contains_key("test"));
 }
@@ -6470,13 +6367,11 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
 fn save_credentials_does_not_duplicate_running_slot() {
     let path = tmp_vault("no-dup-slot.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.core.insert_slot_io(
         "alice",
         SlotIo {
@@ -6497,13 +6392,11 @@ fn save_credentials_does_not_duplicate_running_slot() {
 fn save_credentials_rename_editing_profile_replaces_old_key() {
     let path = tmp_vault("rename-creds.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
 
     s.begin_edit_profile(Some("alice"));
     *s.profile_editor.draft_mut().username_mut() = "bob".into();
@@ -6512,14 +6405,16 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
     s.core.flush_writes();
     s.pump_status();
 
-    let vault = s.core.vault().unwrap();
-    assert!(vault.get("bob").is_some(), "rename must upsert the new key");
     assert!(
-        vault.get("alice").is_none(),
+        s.core.profile("bob").is_some(),
+        "rename must upsert the new key"
+    );
+    assert!(
+        s.core.profile("alice").is_none(),
         "rename must remove the old key"
     );
     assert_eq!(
-        vault.get("bob").unwrap().uid,
+        s.core.profile("bob").unwrap().uid(),
         42,
         "rename keeps the old uid"
     );
@@ -6536,15 +6431,17 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
 
     assert!(s.save_credentials());
     assert!(
-        s.core.play().unwrap().arm("alice").is_none(),
+        s.core.play_for_test().unwrap().arm("alice").is_none(),
         "no worker before the write is durable"
     );
     s.core.flush_writes();
@@ -6555,17 +6452,20 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
         .error
         .as_deref()
         .is_some_and(|e| e.starts_with("credentials:")));
-    assert!(s.core.play().unwrap().arm("alice").is_none(), "no slot");
+    assert!(
+        s.core.play_for_test().unwrap().arm("alice").is_none(),
+        "no slot"
+    );
     assert!(s.core.slot_io("alice").is_none());
     assert!(s.focused_name().is_none());
-    assert!(s.core.vault().unwrap().get("alice").is_none());
+    assert!(s.core.profile("alice").is_none());
 
     // The same Save on a writable vault spawns once the write lands.
     assert!(s.save_credentials());
-    assert!(s.core.play().unwrap().arm("alice").is_none());
+    assert!(s.core.play_for_test().unwrap().arm("alice").is_none());
     s.core.flush_writes();
     s.pump_status();
-    assert!(s.core.play().unwrap().arm("alice").is_some());
+    assert!(s.core.play_for_test().unwrap().arm("alice").is_some());
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
 
@@ -6577,8 +6477,10 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     let dir = TestDir::new("save-err");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     *s.profile_editor.draft_mut().username_mut() = "alice".into();
     *s.profile_editor.draft_mut().password_mut() = "pw".into();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
@@ -6593,7 +6495,7 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
         s.error
     );
     assert!(
-        s.core.vault().unwrap().get("alice").is_none(),
+        s.core.profile("alice").is_none(),
         "the unsaved profile is rolled back"
     );
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -6603,13 +6505,11 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
 fn clear_credentials_empties_fields_but_keeps_vault() {
     let path = tmp_vault("clear-creds.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     *s.profile_editor.draft_mut().password_mut() = "edited".into();
 
@@ -6617,7 +6517,7 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
     assert!(s.profile_editor.draft().username().is_empty());
     assert!(s.profile_editor.draft().password_for_test().is_empty());
     assert!(
-        s.core.vault().unwrap().get("alice").is_some(),
+        s.core.profile("alice").is_some(),
         "clear must not delete the vault profile"
     );
 }
@@ -6626,13 +6526,11 @@ fn clear_credentials_empties_fields_but_keeps_vault() {
 fn begin_edit_profile_loads_fields_and_opens_chooser() {
     let path = tmp_vault("edit-profile.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "secret", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "secret", 42));
 
     s.begin_edit_profile(Some("alice"));
     assert!(s.wall.chooser_open);
@@ -6654,14 +6552,20 @@ fn begin_edit_profile_loads_fields_and_opens_chooser() {
 fn begin_edit_profile_loads_guardian_settings() {
     let path = tmp_vault("edit-guardian.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    let mut p = profile("alice", "secret", 42);
-    p.settings.auto_login = true;
-    p.settings.lamp_auto = false;
-    p.settings.lamp_skill = "magic".into();
-    p.settings.random_events = false;
-    s.core.vault_mut().unwrap().upsert(p).unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(
+        &mut s.core,
+        with_random_events(
+            with_lamp_skill(
+                with_lamp_auto(profile("alice", "secret", 42).auto_login(true), false),
+                "magic",
+            ),
+            false,
+        ),
+    );
 
     s.begin_edit_profile(Some("alice"));
     assert!(s.profile_editor.draft().settings().auto_login());
@@ -6680,13 +6584,11 @@ fn begin_edit_profile_loads_guardian_settings() {
 fn set_multibox_off_cancels_picker_edit() {
     let path = tmp_vault("edit-off.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.begin_edit_profile(Some("alice"));
     s.set_multibox(true);
     s.set_multibox(false);
@@ -6738,86 +6640,66 @@ fn multibox_on_never_latches_a_tv_mode() {
 fn set_auto_login_upserts_without_spawning() {
     let path = tmp_vault("auto-login.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    assert!(s.set_auto_login("alice", true));
-    assert!(
-        s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .auto_login
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
     );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    assert!(s.set_auto_login("alice", true));
+    assert!(s.core.profile("alice").unwrap().auto_login());
     assert!(
         s.core.slots().is_empty(),
         "set_auto_login must not spawn a slot"
     );
     assert!(s.set_auto_login("alice", false));
-    assert!(
-        !s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .auto_login
-    );
+    assert!(!s.core.profile("alice").unwrap().auto_login());
 }
 
 #[test]
 fn set_random_settings_upserts_all_three_fields_without_spawning() {
     let path = tmp_vault("random-settings.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     assert!(s.set_random_settings("alice", false, "magic", false));
-    let p = s.core.vault().unwrap().get("alice").unwrap();
-    assert!(!p.settings.random_events, "random events persist off");
-    assert_eq!(p.settings.lamp_skill, "magic");
-    assert!(!p.settings.lamp_auto, "lamp auto persists off");
+    let p = s.core.profile("alice").unwrap();
+    assert!(!p.random_events(), "random events persist off");
+    assert_eq!(p.draft().settings().lamp_skill(), "magic");
+    assert!(!p.draft().settings().lamp_auto(), "lamp auto persists off");
     assert!(
         s.core.slots().is_empty(),
         "set_random_settings must not spawn a slot"
     );
     assert!(s.set_random_settings("alice", true, "strength", true));
-    let p = s.core.vault().unwrap().get("alice").unwrap();
-    assert!(p.settings.random_events);
-    assert_eq!(p.settings.lamp_skill, "strength");
-    assert!(p.settings.lamp_auto);
+    let p = s.core.profile("alice").unwrap();
+    assert!(p.random_events());
+    assert_eq!(p.draft().settings().lamp_skill(), "strength");
+    assert!(p.draft().settings().lamp_auto());
 }
 
 #[test]
 fn set_random_event_policy_persists_without_spawning() {
     let path = tmp_vault("random-event-policy.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     assert!(s.set_random_event_policy(
         "alice",
         "River Troll",
         frontend_core::GuardianPolicy::Ignore
     ));
-    let saved = s.core.vault().unwrap().get("alice").unwrap();
     assert_eq!(
-        saved.settings.random_event_policy("river troll"),
-        vault::RandomEventPolicy::Ignore
+        s.core
+            .profile("alice")
+            .unwrap()
+            .random_event_policy("river troll"),
+        frontend_core::GuardianPolicy::Ignore
     );
     assert!(
         s.core.slots().is_empty(),
@@ -6829,26 +6711,19 @@ fn set_random_event_policy_persists_without_spawning() {
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    let mut play = host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
     );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
     let arm = SlotArm::new(42, false);
     assert!(arm.random_events.load(Ordering::Relaxed), "default on");
     assert!(
@@ -6888,8 +6763,10 @@ fn set_random_settings_mirrors_running_arm() {
 fn set_random_settings_rejects_unknown_or_locked_vault() {
     let path = tmp_vault("random-settings-unknown.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     assert!(
         !s.set_random_settings("nobody", false, "magic", false),
         "unknown profile must fail"
@@ -6907,62 +6784,37 @@ fn music_sfx_persists_lowmem_false() {
     let path = tmp_vault("music-sfx.vault");
     let mut s = Session::new();
     assert!(s.focused_lowmem(), "no focused profile defaults to lowmem");
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
     assert!(s.set_focused_lowmem(false));
-    assert!(
-        !s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem
-    );
+    assert!(!s.core.profile("alice").unwrap().lowmem());
     assert!(!s.focused_lowmem(), "focused profile reflects the setting");
     assert!(s.set_focused_lowmem(true));
-    assert!(
-        s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem
-    );
+    assert!(s.core.profile("alice").unwrap().lowmem());
 }
 
 #[test]
 fn set_auto_login_mirrors_running_arm() {
     let path = tmp_vault("auto-login-arm.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    let mut play = host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
     );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));
@@ -6993,26 +6845,18 @@ fn set_renderer_writes_renderer_by_for_focused() {
 fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     let path = tmp_vault("raster-mode.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert!(s.set_focused_lowmem(false));
     s.core.flush_writes();
     assert!(
-        !s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem,
+        !s.core.profile("alice").unwrap().lowmem(),
         "the memory switch is persisted before an unrelated raster write"
     );
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Off));
@@ -7029,23 +6873,11 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Cpu);
     assert!(s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert_eq!(
-        s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .raster,
-        vault::RasterMode::Cpu
+        s.core.profile("alice").unwrap().raster(),
+        frontend_core::command::RasterMode::Cpu
     );
     assert!(
-        !s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem,
+        !s.core.profile("alice").unwrap().lowmem(),
         "changing raster must not restore the pre-toggle memory mode"
     );
 }
@@ -7068,13 +6900,11 @@ fn raster_switch_confirm_only_when_backend_changes_on_spawned_slot() {
 fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     let path = tmp_vault("raster-no-confirm.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     s.request_focused_raster(frontend_core::command::RasterMode::Cpu);
     assert_eq!(
@@ -7094,13 +6924,11 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
 fn raster_switch_keeps_slot_frame_buf_and_input() {
     let path = tmp_vault("raster-no-restart.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     let slot = s.core.slot_io("alice").expect("select spawns the slot");
     let buf = Arc::clone(&slot.pixels);
@@ -7124,11 +6952,12 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
 fn arm_for_profile_respects_auto_login_and_latch() {
     let path = tmp_vault("arm-for-profile.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    let mut p = profile("alice", "pw", 42);
-    p.settings.auto_login = true;
-    s.core.vault_mut().unwrap().upsert(p).unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    let p = profile("alice", "pw", 42).auto_login(true);
+    vault_upsert(&mut s.core, p);
     let arm = s.core.arm_for_profile("alice").expect("arm");
     assert!(arm.wants_login());
     assert!(arm.auto_login());
@@ -7142,8 +6971,10 @@ fn arm_for_profile_respects_auto_login_and_latch() {
 fn set_auto_login_rejects_unknown_profile_without_spawning() {
     let path = tmp_vault("auto-login-missing.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
     assert!(!s.set_auto_login("nobody", true));
     assert!(s.error.is_some(), "missing profile sets the banner");
     assert!(s.core.slots().is_empty());
@@ -7204,7 +7035,11 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
     assert!(alice.wants_login());
     assert!(bob.wants_login());
     assert!(
-        s.core.play().unwrap().login_queue_uids().is_empty(),
+        s.core
+            .play_for_test()
+            .unwrap()
+            .login_queue_uids()
+            .is_empty(),
         "only worker Queueing transitions create FIFO membership"
     );
 }
@@ -7245,7 +7080,7 @@ fn focused_guard_park_is_only_the_repeat_guard_latch() {
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
     assert!(!s.focused_guard_parked());
-    s.core.play().unwrap().statuses.lock().unwrap()[0].login_latch_reason =
+    s.core.play_for_test().unwrap().statuses.lock().unwrap()[0].login_latch_reason =
         Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
             count: 3,
             window_seconds: 600,
@@ -7279,16 +7114,22 @@ fn queue_for_tracks_each_named_row_independent_of_focus() {
         queue_total: total,
         ..SlotStatus::default()
     };
-    s.core.play().unwrap().statuses.lock().unwrap().extend([
-        SlotStatus {
-            username: "alice".into(),
-            ..queued(2, 3)
-        },
-        SlotStatus {
-            username: "bob".into(),
-            ..queued(1, 2)
-        },
-    ]);
+    s.core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .extend([
+            SlotStatus {
+                username: "alice".into(),
+                ..queued(2, 3)
+            },
+            SlotStatus {
+                username: "bob".into(),
+                ..queued(1, 2)
+            },
+        ]);
     s.core.poll_host();
     let place = |position, total| Some(frontend_core::QueuePlace::new(position, total));
     assert_eq!(s.queue_for("alice"), place(2, 3));
@@ -7304,18 +7145,12 @@ fn queue_for_tracks_each_named_row_independent_of_focus() {
 fn load_and_rail_remove_sync_focus_wall() {
     let path = tmp_vault("focus-wall-sync.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.load("alice");
     s.load("bob");
     assert_eq!(
@@ -7341,13 +7176,11 @@ fn load_and_rail_remove_sync_focus_wall() {
 fn rail_remove_clears_focus_when_last_member() {
     let path = tmp_vault("rail-remove-last.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     s.rail_remove("alice");
@@ -7393,7 +7226,7 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         "rail removal must return without stopping the connected worker"
     );
 
-    s.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    s.core.play_for_test().unwrap().statuses.lock().unwrap()[0].connected = false;
     s.core.advance_removals(started);
     assert!(
         arm.stop.load(Ordering::Relaxed),
@@ -7404,9 +7237,9 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
 fn connected_removal_session(test_name: &str) -> (Session, Arc<SlotArm>) {
     let path = tmp_vault(test_name);
     let mut session = Session::new();
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    session.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut session.core, vault);
 
     let mut play = empty_play();
     let arm = SlotArm::new(42, true);
@@ -7441,12 +7274,19 @@ fn readd_during_rail_removal_cancels_the_old_lifetime() {
         "re-adding must restore the running lifetime's IO"
     );
 
-    session.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
     session
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = session.core.play().unwrap().arm("alice").unwrap();
+    let current = session.core.play_for_test().unwrap().arm("alice").unwrap();
     assert!(
         Arc::ptr_eq(&current, &arm),
         "the stale removal must not stop the re-added lifetime"
@@ -7472,11 +7312,18 @@ fn multibox_reseed_cancels_pending_removal_for_running_member() {
     );
     assert!(!session.core.removal_pending("alice"));
 
-    session.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
     session
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
-    let current = session.core.play().unwrap().arm("alice").unwrap();
+    let current = session.core.play_for_test().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &arm));
     assert!(
         !arm.stop.load(Ordering::Relaxed),
@@ -7495,7 +7342,7 @@ fn login_during_rail_removal_cancels_the_old_timeout() {
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = session.core.play().unwrap().arm("alice").unwrap();
+    let current = session.core.play_for_test().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &arm));
     assert!(
         arm.wants_login(),
@@ -7513,10 +7360,22 @@ fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
     let (mut disconnected, disconnected_arm) =
         connected_removal_session("rail-remove-disconnect.vault");
     disconnected.rail_remove_at("alice", started);
-    disconnected.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    disconnected
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
     disconnected.core.advance_removals(started);
     assert!(disconnected_arm.stop.load(Ordering::Relaxed));
-    assert!(disconnected.core.play().unwrap().arm("alice").is_none());
+    assert!(disconnected
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .is_none());
     assert!(!disconnected.core.removal_pending("alice"));
 
     let (mut timed_out, timed_out_arm) = connected_removal_session("rail-remove-timeout.vault");
@@ -7525,12 +7384,22 @@ fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1));
     assert!(!timed_out_arm.stop.load(Ordering::Relaxed));
-    assert!(timed_out.core.play().unwrap().arm("alice").is_some());
+    assert!(timed_out
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .is_some());
     timed_out
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
     assert!(timed_out_arm.stop.load(Ordering::Relaxed));
-    assert!(timed_out.core.play().unwrap().arm("alice").is_none());
+    assert!(timed_out
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .is_none());
     assert!(!timed_out.core.removal_pending("alice"));
 }
 
@@ -7540,7 +7409,7 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
     let (mut session, _) = connected_removal_session("rail-remove-terminal-owner.vault");
     session.rail_remove_at("alice", started);
     {
-        let play = session.core.play_mut().unwrap();
+        let play = session.core.play_mut_for_test().unwrap();
         play.begin_stop_slot("alice");
         play.statuses.lock().unwrap().push(SlotStatus {
             username: "alice".into(),
@@ -7557,7 +7426,7 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
     assert!(
         session
             .core
-            .play()
+            .play_for_test()
             .unwrap()
             .statuses()
             .iter()
@@ -7570,16 +7439,23 @@ fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
     let replacement = SlotArm::new(42, true);
     replaced
         .core
-        .play_mut()
+        .play_mut_for_test()
         .unwrap()
         .attach_arm("alice", Arc::clone(&replacement));
-    replaced.core.play().unwrap().statuses.lock().unwrap()[0].connected = false;
+    replaced
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()[0]
+        .connected = false;
 
     replaced
         .core
         .advance_removals(started + frontend_core::SLOT_REMOVE_TIMEOUT);
 
-    let current = replaced.core.play().unwrap().arm("alice").unwrap();
+    let current = replaced.core.play_for_test().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &replacement));
     assert!(
         !replacement.stop.load(Ordering::Relaxed),
@@ -7605,18 +7481,12 @@ fn set_multibox_on_syncs_focus_wall() {
 fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
     let path = tmp_vault("load-all.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     s.load("alice");
     let added = s.load_all();
     assert_eq!(added, 1, "only bob is new");
@@ -7633,7 +7503,7 @@ fn load_all_loads_vault_profiles_and_syncs_focus_wall() {
 }
 
 fn publish_slot_login(s: &mut Session, name: &str, scene_state: i32) {
-    let mut rows = s.core.play().unwrap().statuses.lock().unwrap();
+    let mut rows = s.core.play_for_test().unwrap().statuses.lock().unwrap();
     rows.retain(|row| row.username != name);
     rows.push(SlotStatus {
         username: name.into(),
@@ -7677,13 +7547,11 @@ fn load_all_keeps_focused_bot_drawing_when_others_log_in() {
     s.persist_ui = false;
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
     for (name, uid) in [("alice", 42), ("bob", 43), ("carol", 44), ("dave", 45)] {
-        let mut p = profile(name, "pw", uid);
-        p.settings.auto_login = name != "alice";
-        vault.upsert(p).unwrap();
+        vault.put(profile(name, "pw", uid).auto_login(name != "alice"));
     }
-    s.core.set_vault(Some(vault));
+    install_vault(&mut s.core, vault);
     s.set_multibox(true);
     s.load("alice");
     s.set_renderer(true);
@@ -7722,10 +7590,10 @@ fn load_all_picks_focus_when_none_was_focused() {
     s.persist_ui = false;
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("bob", "pw", 43)).unwrap();
-    vault.upsert(profile("carol", "pw", 44)).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("bob", "pw", 43));
+    vault.put(profile("carol", "pw", 44));
+    install_vault(&mut s.core, vault);
     s.set_multibox(true);
     s.set_renderer(true);
     s.focus.lock().unwrap().only_render_selected = true;
@@ -7760,13 +7628,11 @@ fn load_all_keeps_focus_with_render_all_on() {
     s.persist_ui = false;
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
     for (name, uid) in [("alice", 42), ("bob", 43), ("carol", 44)] {
-        let mut p = profile(name, "pw", uid);
-        p.settings.auto_login = name != "alice";
-        vault.upsert(p).unwrap();
+        vault.put(profile(name, "pw", uid).auto_login(name != "alice"));
     }
-    s.core.set_vault(Some(vault));
+    install_vault(&mut s.core, vault);
     s.set_multibox(true);
     s.load("alice");
     s.set_renderer(true);
@@ -7810,10 +7676,10 @@ fn chooser_row_load_still_focuses_the_member() {
     s.persist_ui = false;
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    vault.upsert(profile("bob", "pw", 43)).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    vault.put(profile("bob", "pw", 43));
+    install_vault(&mut s.core, vault);
     s.load("alice");
     s.load("bob");
     assert_eq!(
@@ -8037,13 +7903,11 @@ fn live_load_all_keeps_focus_on_engine_a() {
 fn chooser_vault_remove_keeps_wall_member_and_slot() {
     let path = tmp_vault("chooser-remove.vault");
     let mut s = Session::new();
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     let identity = s.core.profile_identity("alice").unwrap();
     s.fleet_selection.set(identity, true);
@@ -8053,7 +7917,7 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
         "deleting a profile removes its shared mark"
     );
     assert!(
-        s.core.vault().unwrap().get("alice").is_none(),
+        s.core.profile("alice").is_none(),
         "profile row gone from the vault"
     );
     assert_eq!(
@@ -8106,10 +7970,8 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     .unwrap();
 
     let mut s = Session::new();
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        store.clone(),
-        dir.join("js-cache"),
-    ));
+    s.scripts
+        .use_library_at(store.clone(), dir.join("js-cache"));
     s.load_js(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
@@ -8120,7 +7982,7 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
         }
         None => panic!("no card selected: {:?}", s.script_sel),
     }
-    assert_eq!(s.scripts.js().cards().len(), 1);
+    assert_eq!(s.scripts.cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
     assert!(store.exists(), "the card is persisted to the session store");
 
@@ -8165,10 +8027,8 @@ fn script_start_selected_refuses_unloadable_import() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
-        dir.join("js-cache"),
-    ));
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
@@ -8203,26 +8063,24 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
-        dir.join("js-cache"),
-    ));
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
     s.set_focus_for_test("alice");
     s.load_js(&path);
     assert_eq!(s.error, None, "load still registers the card");
-    let failures = s.scripts.js().load_failures();
+    let failures: Vec<_> = s.scripts.load_failures().collect();
     assert_eq!(failures.len(), 1, "one retained failure: {failures:?}");
-    let failure = failures[0].clone();
-    assert_eq!(failure.stage, script::LoadStage::ImportResolution);
+    let failure = failures[0];
+    assert_eq!(failure.stage(), LoadStage::ImportResolution);
     assert!(
         failure
-            .diagnostic
+            .diagnostic()
             .contains("../../event/webwalk/Something.js"),
         "diagnostic names the specifier: {}",
-        failure.diagnostic
+        failure.diagnostic()
     );
     assert!(
         failure
@@ -8241,19 +8099,16 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // tests that merely construct a `Session` never parse a real
     // catalog or rewrite `~/.274bot/rs2b0t-path`.
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("rs2b0t-fill");
-    let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
-    iso.set_rs2b0t(&root);
+    let iso = IsolatedStores::enter("rs2b0t-fill");
+    let root = write_looping_catalog(iso.dir(), &[("BoneBurier", "BoneBurier")]);
+    iso.set_catalog_root(&root);
     let mut s = Session::new();
     assert!(
-        s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
-            .is_none(),
+        s.scripts.card(CardSource::Catalog, "BoneBurier").is_none(),
         "Session::new must not parse $RS2B0T"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "Session::new must not rewrite the persisted root"
     );
     s.fill_rs2b0t_cards_once();
@@ -8262,27 +8117,23 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         "first browse queues catalog work"
     );
     assert!(
-        s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
-            .is_none(),
+        s.scripts.card(CardSource::Catalog, "BoneBurier").is_none(),
         "catalog cards are not parsed on the browse frame"
     );
     settle_catalog_work(&mut s);
     let card = s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card(CardSource::Catalog, "BoneBurier")
         .expect("BoneBurier card filled on first Browse");
-    assert_eq!(card.shape, script::LoadShape::CompatClass);
+    assert_eq!(card.shape(), LoadShape::CompatClass);
     assert!(
-        iso.home.join(".274bot/rs2b0t-path").is_file(),
+        iso.home().join(".274bot/rs2b0t-path").is_file(),
         "the first successful parse persists the root path"
     );
-    assert_eq!(s.scripts.js().cards().len(), 1, "once-only fill");
+    assert_eq!(s.scripts.cards().len(), 1, "once-only fill");
     s.fill_rs2b0t_cards_once();
     assert_eq!(
-        s.scripts.js().cards().len(),
+        s.scripts.cards().len(),
         1,
         "a second Browse does not re-parse"
     );
@@ -8316,7 +8167,7 @@ ScriptRegistry.register({
 
 #[test]
 fn load_then_browse_still_prompts_without_rs2b0t_root() {
-    let iso = IsolatedEnv::enter("load-browse");
+    let iso = IsolatedStores::enter("load-browse");
     let mut s = Session::new();
     s.fill_rs2b0t_cards_once();
     s.on_script_browse_open();
@@ -8325,32 +8176,30 @@ fn load_then_browse_still_prompts_without_rs2b0t_root() {
         "Load with no root must not skip the first Browse catalog prompt"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "Load with no root must not write rs2b0t-path"
     );
 }
 
 #[test]
 fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
-    let iso = IsolatedEnv::enter("defer");
+    let iso = IsolatedStores::enter("defer");
     let mut s = Session::new();
     s.on_script_browse_open();
     assert!(s.rs2b0t_catalog_open, "first browse opens folder picker");
     s.defer_rs2b0t_catalog();
     assert!(
-        script::rs2b0t_import_deferred_at(&iso.home.join(".274bot/rs2b0t-import")),
+        frontend_core::scripts::paths::rs2b0t_import_deferred_at(
+            &iso.home().join(".274bot/rs2b0t-import")
+        ),
         "defer flag written"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "defer must not write rs2b0t-path"
     );
     assert!(
-        s.scripts
-            .js()
-            .cards()
-            .iter()
-            .all(|c| c.source != script::ScriptSource::Catalog),
+        s.scripts.cards().all(|c| c.source() != CardSource::Catalog),
         "zero Catalog cards after defer"
     );
 }
@@ -8358,8 +8207,8 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("import");
-    let root = fake_rs2b0t_tree(&iso.dir);
+    let iso = IsolatedStores::enter("import");
+    let root = fake_rs2b0t_tree(iso.dir());
     let mut s = Session::new();
     s.import_rs2b0t_catalog(&root).expect("import");
     assert!(
@@ -8367,39 +8216,35 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         "catalog import is admitted as worker work"
     );
     assert!(
-        !iso.home.join(".274bot/rs2b0t-path").exists(),
+        !iso.home().join(".274bot/rs2b0t-path").exists(),
         "root is persisted only after preparation settles"
     );
     settle_catalog_work(&mut s);
-    assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
+    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
     let card = s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card(CardSource::Catalog, "BoneBurier")
         .expect("catalog card");
-    assert_eq!(card.category, "Prayer");
-    assert_eq!(card.description, "Buries bones");
-    assert_eq!(card.tags, vec!["bones"]);
+    assert_eq!(card.category(), "Prayer");
+    assert_eq!(card.description(), "Buries bones");
+    assert_eq!(card.tags(), vec!["bones"]);
 }
 
 #[test]
 fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("browse-env");
-    let root = fake_rs2b0t_tree(&iso.dir);
-    iso.set_rs2b0t(&root);
+    let iso = IsolatedStores::enter("browse-env");
+    let root = fake_rs2b0t_tree(iso.dir());
+    iso.set_catalog_root(&root);
     let mut s = Session::new();
     s.on_script_browse_open();
     assert!(s.scripts.catalog_work_pending());
     settle_catalog_work(&mut s);
     assert!(
-        s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
-            .is_some(),
+        s.scripts.card(CardSource::Catalog, "BoneBurier").is_some(),
         "RS2B0T env still fills catalog on first browse"
     );
-    assert!(iso.home.join(".274bot/rs2b0t-path").is_file());
+    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
 }
 
 fn write_two_card_catalog(dir: &Path) -> PathBuf {
@@ -8412,17 +8257,16 @@ fn write_two_card_catalog(dir: &Path) -> PathBuf {
 #[test]
 fn select_script_card_queues_only_that_card_through_worker() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("transpile-click");
-    let root = write_two_card_catalog(&iso.dir);
+    let iso = IsolatedStores::enter("transpile-click");
+    let root = write_two_card_catalog(iso.dir());
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
+    s.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
     s.scripts
-        .js_mut()
-        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
         .expect("catalog");
 
     s.select_script_card(CardSource::Catalog, "BoneBurier");
@@ -8437,19 +8281,17 @@ fn select_script_card_queues_only_that_card_through_worker() {
     );
     assert!(
         s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .card_snapshot(CardSource::Catalog, "BoneBurier")
             .unwrap()
-            .js
+            .js()
             .is_empty(),
         "click must not transpile on the same call"
     );
     assert!(
         s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "ShopRunner")
+            .card_snapshot(CardSource::Catalog, "ShopRunner")
             .unwrap()
-            .js
+            .js()
             .is_empty(),
         "a click must not warm the rest of the catalog"
     );
@@ -8457,20 +8299,18 @@ fn select_script_card_queues_only_that_card_through_worker() {
     s.pump_script_transpile();
     assert!(
         s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .card_snapshot(CardSource::Catalog, "BoneBurier")
             .unwrap()
-            .js
+            .js()
             .is_empty(),
         "first pump only arms so the UI can paint transpiling"
     );
     s.pump_script_transpile();
     assert!(
         s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .card_snapshot(CardSource::Catalog, "BoneBurier")
             .unwrap()
-            .js
+            .js()
             .is_empty(),
         "second pump submits worker work; it does not compile inline"
     );
@@ -8478,34 +8318,31 @@ fn select_script_card_queues_only_that_card_through_worker() {
     settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
         .unwrap()
-        .js
+        .js()
         .is_empty());
     assert!(s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "ShopRunner")
+        .card_snapshot(CardSource::Catalog, "ShopRunner")
         .unwrap()
-        .js
+        .js()
         .is_empty());
 }
 
 #[test]
 fn queue_transpile_all_uses_the_shared_worker_slot() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("transpile-all");
-    let root = write_two_card_catalog(&iso.dir);
+    let iso = IsolatedStores::enter("transpile-all");
+    let root = write_two_card_catalog(iso.dir());
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.set_js(script::JsLibrary::with_cache(
-        iso.dir.join("js-scripts.json"),
-        iso.dir.join("js-cache"),
-    ));
+    s.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
     s.scripts
-        .js_mut()
-        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
         .expect("catalog");
 
     s.queue_transpile_all();
@@ -8520,10 +8357,8 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
     );
     assert_eq!(
         s.scripts
-            .js()
             .cards()
-            .iter()
-            .filter(|card| !card.js.is_empty())
+            .filter(|card| card.is_transpiled())
             .count(),
         0,
         "the click frame does not compile any card"
@@ -8533,10 +8368,8 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
     settle_transpile_queue(&mut s);
     assert_eq!(
         s.scripts
-            .js()
             .cards()
-            .iter()
-            .filter(|card| !card.js.is_empty())
+            .filter(|card| card.is_transpiled())
             .count(),
         2
     );
@@ -8545,87 +8378,73 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
 #[test]
 fn select_script_card_queues_cached_output_through_worker() {
     let _work_service_guard = crate::work_service_test_lock();
-    let iso = IsolatedEnv::enter("transpile-hit");
-    let root = write_two_card_catalog(&iso.dir);
-    let store = iso.dir.join("js-scripts.json");
-    let cache = iso.dir.join("js-cache");
-    let mut warm = script::JsLibrary::with_cache(store.clone(), cache.clone());
-    warm.register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+    let iso = IsolatedStores::enter("transpile-hit");
+    let root = write_two_card_catalog(iso.dir());
+    let store = iso.dir().join("js-scripts.json");
+    let cache = iso.dir().join("js-cache");
+    let mut warm =
+        frontend_core::test_support::scripts::TestLibrary::with_cache(store.clone(), cache.clone());
+    warm.register_catalog(&root, &iso.dir().join("rs2b0t-path"))
         .expect("catalog");
-    warm.ensure_js(script::ScriptSource::Catalog, "BoneBurier")
-        .unwrap();
+    warm.ensure(CardSource::Catalog, "BoneBurier").unwrap();
     drop(warm);
 
     let mut s = Session::new();
     s.persist_ui = false;
+    s.scripts.use_library_at(store, cache);
     s.scripts
-        .set_js(script::JsLibrary::with_cache(store, cache));
-    s.scripts
-        .js_mut()
-        .register_rs2b0t(&root, &iso.dir.join("rs2b0t-path"))
+        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
         .expect("catalog");
     assert!(s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
         .unwrap()
-        .js
+        .js()
         .is_empty());
-    assert!(s.scripts.js().cache().is_cached(
+    assert!(s.scripts.is_transpile_cached(
         s.scripts
-            .js()
-            .get(script::ScriptSource::Catalog, "BoneBurier")
+            .card_snapshot(CardSource::Catalog, "BoneBurier")
             .unwrap()
-            .origin
-            .as_bytes()
+            .origin()
     ));
 
     s.select_script_card(CardSource::Catalog, "BoneBurier");
     assert_eq!(s.transpile_queue.len(), 1);
     assert!(s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
         .unwrap()
-        .js
+        .js()
         .is_empty());
     s.pump_script_transpile();
     s.pump_script_transpile();
     assert!(s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
         .unwrap()
-        .js
+        .js()
         .is_empty());
     settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
-        .js()
-        .get(script::ScriptSource::Catalog, "BoneBurier")
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
         .unwrap()
-        .js
+        .js()
         .is_empty());
 }
 
-fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
-    let iso = script::IsolatedEnv::enter(label);
+fn two_live_session(label: &str) -> (Session, IsolatedStores) {
+    let iso = IsolatedStores::enter(label);
     let path = tmp_vault(label);
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    s.core
-        .set_vault(Some(Vault::create(&path, "test-passphrase-01").unwrap()));
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
     (s, iso)
 }
 
@@ -8682,19 +8501,12 @@ fn background_ack_survives_session_restart() {
     let mut s2 = Session::new();
     s2.core.set_spawn_workers(false);
     s2.core.set_play(Some(empty_play()));
-    s2.core.set_vault(Some(
-        Vault::create(&tmp_vault("bg-ack-restart-2"), "test-passphrase-01").unwrap(),
-    ));
-    s2.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("alice", "pw", 42))
-        .unwrap();
-    s2.core
-        .vault_mut()
-        .unwrap()
-        .upsert(profile("bob", "pw", 43))
-        .unwrap();
+    install_vault(
+        &mut s2.core,
+        VaultFixture::create(&tmp_vault("bg-ack-restart-2"), "test-passphrase-01"),
+    );
+    vault_upsert(&mut s2.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s2.core, profile("bob", "pw", 43));
     s2.select("alice");
     s2.select("bob");
     assert!(
@@ -8809,7 +8621,7 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 
 #[test]
 fn skip_lock_session_does_not_create_instance_lock() {
-    let iso = script::IsolatedEnv::enter("session-skip-lock");
+    let iso = IsolatedStores::enter("session-skip-lock");
     let _s = Session::with_instance(InstancePermit::skip());
     assert!(!host_play::instance_lock_path().exists());
     let _iso = iso;
@@ -8817,7 +8629,7 @@ fn skip_lock_session_does_not_create_instance_lock() {
 
 #[test]
 fn locked_session_releases_the_instance_lock_on_drop() {
-    let iso = script::IsolatedEnv::enter("session-hold-lock");
+    let iso = IsolatedStores::enter("session-hold-lock");
     let permit = match frontend_core::launch::acquire_instance(InstanceKind::Panel, false) {
         Ok(Ok(permit)) => permit,
         Ok(Err(_)) => panic!("expected acquire"),
@@ -8834,7 +8646,7 @@ fn locked_session_releases_the_instance_lock_on_drop() {
 
 #[test]
 fn background_count_ignores_terminal_status_rows() {
-    let iso = script::IsolatedEnv::enter("bg-ack-terminal");
+    let iso = IsolatedStores::enter("bg-ack-terminal");
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     let mut play = empty_play();
@@ -8865,9 +8677,9 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
     s.set_multibox(true);
     let gate = s.core.write_gate();
     let held = gate.lock().unwrap();
@@ -8900,7 +8712,7 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     );
     assert!(!s.vault_remove("bob"), "chooser Delete is refused");
     assert!(
-        s.core.play().unwrap().arm("bob").is_none(),
+        s.core.play_for_test().unwrap().arm("bob").is_none(),
         "no slot from staged credentials"
     );
     assert!(!s.core.members().iter().any(|m| m == "bob"));
@@ -8914,7 +8726,7 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
         Some("bob"),
         "selected once durable"
     );
-    assert!(s.core.play().unwrap().arm("bob").is_some());
+    assert!(s.core.play_for_test().unwrap().arm("bob").is_some());
 }
 
 #[test]
@@ -8923,15 +8735,14 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    let mut alice = profile("alice", "pw", 42);
-    alice.settings.lowmem = true;
-    vault.upsert(alice).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    let alice = profile("alice", "pw", 42).lowmem(true);
+    vault.put(alice);
+    install_vault(&mut s.core, vault);
     assert!(s.load("alice"));
     s.select("alice");
     s.core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -8964,7 +8775,7 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     );
     assert_eq!(
         s.core
-            .play()
+            .play_for_test()
             .unwrap()
             .arm("alice")
             .unwrap()
@@ -8974,13 +8785,7 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     );
     s.core.flush_writes();
     assert!(
-        !s.core
-            .vault()
-            .unwrap()
-            .get("alice")
-            .unwrap()
-            .settings
-            .lowmem,
+        !s.core.profile("alice").unwrap().lowmem(),
         "the setting is durable"
     );
 }
@@ -8991,12 +8796,12 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
     assert!(s.load("alice"));
     s.core
-        .play()
+        .play_for_test()
         .unwrap()
         .statuses
         .lock()
@@ -9015,7 +8820,7 @@ fn memory_relog_starts_at_once_without_a_running_script() {
     assert!(!s.focused_memory_relog_warning(), "no script runs");
     assert!(!s.mem_relog_armed());
     assert!(s.request_focused_memory_relog());
-    let arm = s.core.play().unwrap().arm("alice").unwrap();
+    let arm = s.core.play_for_test().unwrap().arm("alice").unwrap();
     assert!(!arm.login_latched() && !arm.wants_logout() && arm.wants_login());
     assert!(
         s.core.memory_status("alice").unwrap().relog_pending,
@@ -9029,10 +8834,10 @@ fn memory_relog_arm_is_per_bot() {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 42)).unwrap();
-    vault.upsert(profile("bob", "pw", 43)).unwrap();
-    s.core.set_vault(Some(vault));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    vault.put(profile("bob", "pw", 43));
+    install_vault(&mut s.core, vault);
     assert!(s.load("alice"));
     assert!(s.load("bob"));
     s.select("alice");
@@ -9048,18 +8853,8 @@ fn memory_relog_arm_is_per_bot() {
 #[test]
 fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
     let mut play = empty_play();
-    play.spawn_slot(
-        profile("alice", "pw", 11),
-        None,
-        None,
-        Some(SlotArm::new(11, false)),
-    );
-    play.spawn_slot(
-        profile("bob", "pw", 22),
-        None,
-        None,
-        Some(SlotArm::new(22, false)),
-    );
+    profile("alice", "pw", 11).spawn_on(&mut play, Some(SlotArm::new(11, false)));
+    profile("bob", "pw", 22).spawn_on(&mut play, Some(SlotArm::new(22, false)));
     {
         let mut statuses = play.statuses.lock().unwrap();
         statuses
@@ -9080,14 +8875,14 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
     }
 
     let path = tmp_vault("marked-debug-command.vault");
-    let mut vault = Vault::create(&path, "test-passphrase-01").unwrap();
-    vault.upsert(profile("alice", "pw", 11)).unwrap();
-    vault.upsert(profile("bob", "pw", 22)).unwrap();
-    vault.upsert(profile("missing", "pw", 33)).unwrap();
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 11));
+    vault.put(profile("bob", "pw", 22));
+    vault.put(profile("missing", "pw", 33));
 
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
-    session.core.set_vault(Some(vault));
+    install_vault(&mut session.core, vault);
     session.core.set_play(Some(play));
     session.fleet_selection.mark_all([
         frontend_core::ProfileIdentity::uid(11),
