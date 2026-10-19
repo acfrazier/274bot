@@ -1149,7 +1149,11 @@ mod tests {
             .next()
             .expect("selected quest catalog has rows");
         let mut path = path(Vec::new(), Vec::new(), false);
-        path.id = facts.id.clone();
+        path.id = FactKey::new("draft-colour-proof");
+        let Knowledge::Known(binding) = &facts.progress_binding else {
+            panic!("selected quest has no journal binding");
+        };
+        path.progress.binding = binding.clone();
         let display = facts.display.to_string();
         let cases = [
             (
@@ -1185,7 +1189,8 @@ mod tests {
 
             assert_eq!(quest_colour(&path, &quests, view), Some(status));
             assert_eq!(
-                quest_list_status(&quests, &path.id, view).map(|observed| observed.value),
+                quest_list_status(&quests, facts.id.0.as_ref(), view)
+                    .map(|observed| observed.value),
                 Some(status)
             );
             assert_eq!(colour_stage(&path, &quests, view), stage);
