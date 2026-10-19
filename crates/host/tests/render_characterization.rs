@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use api::identity::{SlotKey, SlotKeyMinter};
 use client::client::{Client, ClientConfig, ClientRevision};
-use client::dash3d::{ClientNpc, TerrainOverlayShape};
+use client::dash3d::{ClientNpc, ClientPlayer, TerrainOverlayShape};
 use client::io::ClientStream;
 use client::render::backend::{BackendKind, FrameOutput, GpuBackend};
 use client::render::Renderer;
@@ -159,6 +159,17 @@ fn scene_client(cache_dir: Option<&str>) -> Client {
     }
     look_from(&mut client, 16 * 128, 4 * 128, 0);
     client
+}
+
+/// Put the local player within the fixture camera's visible scene.
+fn add_draw_player(client: &mut Client) {
+    let mut player = ClientPlayer {
+        ready: true,
+        ..ClientPlayer::default()
+    };
+    player.entity.x = 16 * 128;
+    player.entity.z = 12 * 128;
+    client.local_player = Some(player);
 }
 
 fn look_from(client: &mut Client, x: i32, z: i32, yaw: i32) {
@@ -724,9 +735,31 @@ fn with_slot<R>(
     control: &SlotControl,
     body: impl FnOnce() -> R,
 ) -> (R, SessionAfter) {
+    with_slot_setup(server, input, mailbox, control, body, |_| {})
+}
+
+fn with_slot_player<R>(
+    server: Option<SocketAddr>,
+    input: &Arc<SlotInput>,
+    mailbox: &Arc<FrameBuf>,
+    control: &SlotControl,
+    body: impl FnOnce() -> R,
+) -> (R, SessionAfter) {
+    with_slot_setup(server, input, mailbox, control, body, add_draw_player)
+}
+
+fn with_slot_setup<R>(
+    server: Option<SocketAddr>,
+    input: &Arc<SlotInput>,
+    mailbox: &Arc<FrameBuf>,
+    control: &SlotControl,
+    body: impl FnOnce() -> R,
+    setup_client: impl FnOnce(&mut Client) + Send,
+) -> (R, SessionAfter) {
     std::thread::scope(|scope| {
         let slot = scope.spawn(move || {
             let mut client = scene_client(None);
+            setup_client(&mut client);
             if let Some(addr) = server {
                 client.stream =
                     Some(ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
@@ -831,7 +864,7 @@ fn slot_head_detach_and_reattach_keep_the_session_without_reconnect() {
         let control = SlotControl::default();
         let constructed = Renderer::constructed();
         let gpu_base = client::profiling::gpu_bytes();
-        let ((), after) = with_slot(Some(addr), &input, &mailbox, &control, || {
+        let ((), after) = with_slot_player(Some(addr), &input, &mailbox, &control, || {
             let (server, _) = listener.accept().unwrap();
             server.set_nonblocking(true).unwrap();
             listener.set_nonblocking(true).unwrap();
@@ -844,6 +877,11 @@ fn slot_head_detach_and_reattach_keep_the_session_without_reconnect() {
             );
             let attached = take_pixels(&mailbox, head);
             assert!(lit_scene(&attached) > SCENE_PIXELS / 4, "{head:?}: scene");
+
+            assert!(
+                control.dynamic_sprite_bytes.load(Ordering::SeqCst) > 0,
+                "{head:?}: the visible local player warms dynamic draw-sprite storage"
+            );
 
             // Detach.
             control.draw.store(false, Ordering::SeqCst);
@@ -878,6 +916,11 @@ fn slot_head_detach_and_reattach_keep_the_session_without_reconnect() {
                 "{head:?}: attach builds a fresh head"
             );
             let reattached = take_pixels(&mailbox, head);
+
+            assert!(
+                control.dynamic_sprite_bytes.load(Ordering::SeqCst) > 0,
+                "{head:?}: reattach rebuilds dynamic draw-sprite storage"
+            );
             assert_eq!(
                 scene_diff(&attached, &reattached),
                 0,
