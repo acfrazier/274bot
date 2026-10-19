@@ -49,6 +49,7 @@ const TAVERLEY_CROSS_ZONES: &[&str] = &[
     "lesser_demon@2926,9802,0",
     "lesser_demon@2931,9807,0",
     "lesser_demon@2932,9810,0",
+    "blue_dragon@2897,9797,0",
 ];
 const NEIGHBOR_OFFSETS: &[(i32, i32)] = &[
     (-1, -1),
@@ -925,13 +926,18 @@ fn drive_route(
             }
             last_tile = here;
         }
-        if last_tick != Some(snapshot.tick()) {
+        if outcome.is_none() && last_tick != Some(snapshot.tick()) {
             last_tick = Some(snapshot.tick());
-            if let Some(terminal) = traveller.follow(client, snapshot, route.clone(), &mut options)
-            {
-                outcome = Some(terminal);
-                break;
-            }
+            outcome = traveller.follow(client, snapshot, route.clone(), &mut options);
+        }
+        // A region rebuild can still be pending at the terminal movement
+        // tick. Keep pumping inside the original deadline, without another
+        // Traveller call or send, until the arrival scene is ready.
+        if outcome.as_ref().is_some_and(|terminal| {
+            !matches!(terminal, TravelOutcome::Arrived { .. })
+                || (snapshot.ingame() && snapshot.attached() && snapshot.scene_state() == 2)
+        }) {
+            break;
         }
         std::thread::sleep(POLL_INTERVAL);
     }
@@ -1141,7 +1147,9 @@ fn run_case(case: EntranceCase) {
     );
     assert!(
         interact::login(&mut client, &account, &password, false),
-        "relogin refused"
+        "relogin refused: {} {}",
+        client.login_mes1,
+        client.login_mes2
     );
     assert!(
         wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
@@ -1263,7 +1271,9 @@ fn run_case(case: EntranceCase) {
         );
         assert!(
             interact::login(&mut client, &account, &password, false),
-            "quest-seed relog-in failed"
+            "quest-seed relog-in refused: {} {}",
+            client.login_mes1,
+            client.login_mes2
         );
         assert!(
             wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
