@@ -4,13 +4,13 @@
 are JSON sealed with **AES-256-GCM** under a key derived from the passphrase
 via **PBKDF2-HMAC-SHA256** (100,000 rounds for new files; unlock reads the
 round count from the file header and **rejects** 0 or anything above
-**2,000,000** as `Corrupt`, naming the value and the accepted range, before
-any key is derived, and refuses a vault file over 16 MiB). Persist stamps the
+**2,000,000** as `Corrupt` before any key is derived, and refuses a vault
+file over 16 MiB). Persist stamps the
 rounds the key was derived with, not the current constant. The file holds only
 the KDF salt, nonce, and ciphertext — passphrases and profile passwords
 never appear in plaintext. The AES key lives in RAM (zeroized on drop).
 Argon2 is not used: a change of KDF would be a format-version bump and a
-re-seal, which is out of scope for 0.2.0.
+re-seal, which is out of scope for 0.2.4.
 
 ## File format
 
@@ -71,6 +71,11 @@ file is left unmodified), `Corrupt`, `Io`. A missing file is
 and corrupt files never delete or replace the vault — the panel's
 **Reset vault** (confirm + “I understand”) is the only wipe. First-run
 **Create vault** only runs when the file is absent.
+
+A file that ends before the end of its GCM tag is `Corrupt`, not
+`WrongPassphrase`. This includes a file that ends right after its header. A
+file damaged further in still reports `WrongPassphrase`, because the
+encryption cannot tell the two apart.
 
 ## Passphrase policy and upgrading an existing vault
 

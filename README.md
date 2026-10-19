@@ -1,6 +1,6 @@
 # 274bot
 
-**Beta (0.2.0 Beta 1).** A Rust **bot host** for RuneScape revision **289** (~2004-era Lost City stack), with revision **274** on a best-effort path: N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
+**Beta (0.2.4 Beta 1).** A Rust **bot host** for RuneScape revision **289** (~2004-era Lost City stack), with revision **274** on a best-effort path: N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
 
 The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start / Pause / Stop, bulk Start all / Stop all, catalog refresh, manual Reload, and JS/TS loading share the Rust host kernel. Catalog compatibility is **partial**: implemented banking, food, loadout and traversal helpers run through Rust; unsupported operations fail closed. This is not a claim that every catalog script or option matrix passes. See [CHANGELOG.md](CHANGELOG.md), [docs/api/script.md](docs/api/script.md), and the [reusable live harness](docs/harness.md) / [native suite runner](docs/e2e-suite.md).
 
@@ -14,7 +14,7 @@ The Quester also owes a lot to Liza Carvelli's Questionable, a quest-automation 
 
 It also stands on **[Lost City](https://github.com/LostCityRS)**, the open 2004-era engine, content and client work every server and client here descends from, and on the **[Fairy Ring](https://github.com/Fairy-Ring/FR-client-rust)** Rust client our bot-host client is built from.
 
-## What 0.2.0 does
+## What 0.2.4 does
 
 Native scripts compiled into the host, driven through the panel or TUI script chrome like any other card:
 

@@ -4,7 +4,7 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.0 is Beta 1. Revision 289 is the production revision: the product is
+0.2.4 is Beta 1. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
