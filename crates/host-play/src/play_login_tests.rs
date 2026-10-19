@@ -26,6 +26,191 @@ fn tcp_client(port: u16) -> Client {
     )
 }
 
+// Preserve genuine OS errors as typed login receipts without invoking the native client.
+fn os_transport_error(stage: client::client::LoginStage, error: std::io::Error) -> LoginError {
+    let mut receipt = LoginError::response(-1, "", "");
+    receipt.transport = Some(client::client::LoginTransportError::from_io(stage, &error));
+    receipt
+}
+
+// The host hook is process-scoped; isolate hosted cases from sibling native-client tests.
+fn run_hosted_test_in_child(test_name: &str, marker: &str) -> bool {
+    if std::env::var_os(marker).is_some() {
+        return false;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+        .env(marker, "1")
+        .output()
+        .expect("start isolated hosted login test");
+    assert!(
+        output.status.success(),
+        "isolated hosted login test {test_name} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
+struct HostedNetworkFixture {
+    service: Arc<client_adapter::service::NetworkService>,
+    stop_maintenance: Arc<std::sync::atomic::AtomicBool>,
+    maintenance: Option<thread::JoinHandle<()>>,
+}
+
+impl HostedNetworkFixture {
+    fn start() -> Self {
+        let driver = client_adapter::service::NetworkService::start_composition()
+            .expect("start hosted test network service");
+        let service = Arc::clone(driver.service());
+        let stop_maintenance = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = Arc::clone(&stop_maintenance);
+        let maintenance = thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                driver.maintain(Instant::now());
+                thread::park_timeout(Duration::from_millis(10));
+            }
+            driver.maintain(Instant::now());
+        });
+        Self {
+            service,
+            stop_maintenance,
+            maintenance: Some(maintenance),
+        }
+    }
+
+    fn prepared_attempt(&self, arm: &SlotArm, port: u16) -> PreparedGameAttempt {
+        let park = arm.park();
+        let source = client_adapter::cancel::CancelSource::new(Arc::clone(&park));
+        let token = source.child().expect("test attempt generation");
+        let retirement = Arc::new(AttemptRetire::new(token.generation()));
+        let mut addresses = client_adapter::resolver::ResolvedAddresses::new();
+        assert!(addresses.push(std::net::SocketAddr::from(([127, 0, 0, 1], port))));
+        PreparedGameAttempt::new(
+            Arc::clone(self.service.reactor()),
+            park,
+            token,
+            retirement,
+            client_adapter::host_network::GameTransport::Tcp,
+            "127.0.0.1",
+            port,
+            addresses,
+        )
+        .expect("prepare hosted test transport")
+    }
+
+    fn run_login(
+        &self,
+        permit: &mut GrantedReservation,
+        arm: &SlotArm,
+        client: &mut Client,
+        command: IntentCommand,
+        world_generation: u64,
+        backoff: &LoginBackoff,
+        after_return: impl FnOnce(&Client),
+    ) -> Option<LoginAttemptReturn<(), LoginError>> {
+        let prepared = self.prepared_attempt(arm, client.config.port);
+        permit.attempt(
+            prepared,
+            || false,
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world_generation, cancel, generation)
+            },
+            move |deadline, cancel| {
+                SlotLogin {
+                    client,
+                    arm,
+                    command,
+                    world_generation,
+                    username: "alice",
+                    password: "secret",
+                    reconnect: false,
+                    backoff,
+                }
+                .run(deadline, cancel, after_return)
+                .0
+            },
+            |result| server_hold(result, backoff),
+        )
+    }
+}
+
+impl Drop for HostedNetworkFixture {
+    fn drop(&mut self) {
+        self.stop_maintenance.store(true, Ordering::Release);
+        if let Some(maintenance) = self.maintenance.take() {
+            maintenance.thread().unpark();
+            maintenance.join().expect("hosted service maintainer");
+        }
+    }
+}
+
+fn run_hosted_client_login(
+    network: &HostedNetworkFixture,
+    arm: &SlotArm,
+    client: &mut Client,
+    port: u16,
+    reconnect: bool,
+) -> Result<(), LoginError> {
+    let prepared = network.prepared_attempt(arm, port);
+    let cancel = client::io::client_stream::LoginCancel::new();
+    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
+    client.set_login_cancel(cancel);
+    client.set_login_deadline(Instant::now() + Duration::from_secs(3));
+    client_adapter::host_network::with_prepared_game_attempt(prepared, || {
+        client.login("alice", "secret", reconnect)
+    })
+}
+
+fn run_os_read_seed(listener: std::net::TcpListener, timeout: Option<Duration>) -> std::io::Error {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let port = listener.local_addr().unwrap().port();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        socket.write_all(&[0; 9 + 2]).unwrap();
+        if timeout.is_some() {
+            held.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+    });
+    let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    if timeout.is_some() {
+        socket.set_read_timeout(timeout).unwrap();
+    }
+    socket.write_all(&[14, 0]).unwrap();
+    // Consume the server prelude and its two real seed bytes without copying the client parser.
+    let mut response_and_partial_seed = [0; 9 + 2];
+    socket.read_exact(&mut response_and_partial_seed).unwrap();
+    let mut remaining_seed = [0; 6];
+    let error = socket.read_exact(&mut remaining_seed).unwrap_err();
+    if timeout.is_some() {
+        release.send(()).unwrap();
+    }
+    server.join().unwrap();
+    error
+}
+
+// Bound accept so a failed host fence cannot strand a test server indefinitely.
+fn accept_local_with_timeout(
+    listener: &std::net::TcpListener,
+) -> std::io::Result<(std::net::TcpStream, std::net::SocketAddr)> {
+    listener.set_nonblocking(true)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match listener.accept() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                thread::park_timeout(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
 fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> GrantedReservation {
     let mut q = queue.lock();
     q.enqueue_owner(arm.queue_owner, uid);
@@ -38,13 +223,6 @@ fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> Granted
 }
 fn test_cells(permit: &GrantedReservation, binding: u64) -> QueueAttemptCells {
     synthetic_queue_attempt(permit.owner, binding)
-}
-
-fn acknowledge_test_return<T, E>(outcome: &LoginAttemptReturn<T, E>) {
-    assert!(
-        outcome.acknowledge_after_physical_release(Instant::now()),
-        "the exact test flight remains until physical release"
-    );
 }
 
 fn finish_test_login(
@@ -132,11 +310,7 @@ fn prequeue_cancel_is_exact_and_invalidating_intents_fire_outside_k4() {
     arm.clear_prequeue_cancel(&first);
 
     let current = arm.new_cancel_token().expect("current prequeue token");
-    assert!(arm.publish_prequeue_cancel(
-        current.clone(),
-        command,
-        world_generation,
-    ));
+    assert!(arm.publish_prequeue_cancel(current.clone(), command, world_generation,));
     arm.clear_prequeue_cancel(&first);
     assert!(
         arm.lifecycle
@@ -189,12 +363,7 @@ fn prestart_handshake_abort_requires_the_exact_active_generation() {
     let generation = token.generation();
     assert!(arm.publish_prequeue_cancel(token, command, world_generation));
     let cancel = LoginCancel::new();
-    assert!(arm.begin_attempt_with_generation(
-        command,
-        world_generation,
-        cancel,
-        generation,
-    ));
+    assert!(arm.begin_attempt_with_generation(command, world_generation, cancel, generation,));
 
     assert!(arm.lifecycle.lock().prequeue_cancel.is_none());
 
@@ -234,17 +403,13 @@ fn stop_cancels_prequeue_wait_and_withdraws_its_fifo_place() {
     assert!(arm.publish_prequeue_cancel(token.clone(), command, world_generation));
     enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
 
-    arm.post_intent(Intent::RemoveSlot).expect("slot removal is accepted");
+    arm.post_intent(Intent::RemoveSlot)
+        .expect("slot removal is accepted");
     assert!(token.is_cancelled());
-    let result = wait_for_permit_with_cancel(
-        &queue,
-        &statuses,
-        "alice",
-        7,
-        &arm,
-        &token,
-        &mut || Duration::from_millis(1),
-    );
+    let result =
+        wait_for_permit_with_cancel(&queue, &statuses, "alice", 7, &arm, &token, &mut || {
+            Duration::from_millis(1)
+        });
 
     assert!(matches!(result, PermitWait::Cancelled));
     assert!(queue.lock().status_owner(arm.queue_owner).is_none());
@@ -315,12 +480,7 @@ fn cancelling_published_attempt_before_k1_start_does_not_charge_queue_or_connect
     let result = permit.attempt_with_test_cells(
         cells,
         |cancel, generation| {
-            assert!(arm.begin_attempt_with_generation(
-                command,
-                world,
-                cancel.clone(),
-                generation
-            ));
+            assert!(arm.begin_attempt_with_generation(command, world, cancel.clone(), generation));
             arm.request_logout();
             assert!(cancel.is_cancelled());
             true
@@ -339,7 +499,7 @@ fn cancelling_published_attempt_before_k1_start_does_not_charge_queue_or_connect
     q.enqueue_owner(99, 8);
     assert_eq!(q.head_blocker(99, Instant::now()), None);
 }
- 
+
 #[test]
 fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -367,7 +527,9 @@ fn cancelling_after_queue_start_before_connect_does_not_open_socket() {
                 reconnect: false,
                 backoff: &backoff,
             }
-            .run(deadline, cancel, |_| panic!("cancelled before Client::login"))
+            .run(deadline, cancel, |_| {
+                panic!("cancelled before Client::login")
+            })
             .0
         },
         |_| None,
@@ -434,13 +596,20 @@ fn password_read_does_not_acquire_slot_lock_in_reverse_order() {
 
 #[test]
 fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
+    if run_hosted_test_in_child(
+        "release_tests::logout_interrupts_blocked_login_read_and_closes_before_retirement_ack",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
     use std::io::Read;
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (accepted_tx, accepted_rx) = std::sync::mpsc::channel();
     let (eof_tx, eof_rx) = std::sync::mpsc::channel();
     let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(60)))
             .unwrap();
@@ -455,6 +624,7 @@ fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
     let (command, world) = capture_login_authorization(&arm, false).unwrap();
     let mut permit = granted_for_arm(&queue, &arm, 7);
     let mut client = tcp_client(port);
+    let backoff = LoginBackoff::new();
     let poster = {
         let arm = Arc::clone(&arm);
         thread::spawn(move || {
@@ -463,27 +633,17 @@ fn logout_interrupts_blocked_login_read_and_closes_before_retirement_ack() {
         })
     };
     let began = Instant::now();
-    let cells = test_cells(&permit, 1);
-    let result = permit.attempt_with_test_cells(
-        cells,
-        |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
-        |deadline, cancel| {
-            SlotLogin {
-                client: &mut client,
-                arm: &arm,
-                command,
-                world_generation: world,
-                username: "alice",
-                password: "secret",
-                reconnect: false,
-                backoff: &LoginBackoff::new(),
-            }
-            .run(deadline, cancel, |_| {})
-            .0
-        },
-        |_| None,
-    )
-    .expect("started attempt returns exact Q facts");
+    let result = network
+        .run_login(
+            &mut permit,
+            &arm,
+            &mut client,
+            command,
+            world,
+            &backoff,
+            |_| {},
+        )
+        .expect("started attempt returns exact Q facts");
     assert!(matches!(
         finish_test_login(&arm, &mut client, command, world, result),
         Ok(SlotLoginOutcome::Aborted)
@@ -584,7 +744,9 @@ fn cancelling_rows_after_unused_grant_abandon_without_settlement() {
         let cells = test_cells(&permit, 1);
         let result = permit.attempt_with_test_cells(
             cells,
-            |cancel, generation| arm.begin_attempt_with_generation(command, world, cancel, generation),
+            |cancel, generation| {
+                arm.begin_attempt_with_generation(command, world, cancel, generation)
+            },
             |_, _| panic!("no socket work for {row:?}"),
             |_: &Result<(), ()>| None,
         );
@@ -645,13 +807,7 @@ fn revocation_precedes_deadline_for_success_and_failure() {
         let cancel = LoginCancel::new();
         assert!(arm.begin_attempt(command, world, cancel.clone()));
         cancel.cancel();
-        assert!(!arm.finish_attempt(
-            command,
-            world,
-            Instant::now(),
-            &cancel,
-            &result,
-        ));
+        assert!(!arm.finish_attempt(command, world, Instant::now(), &cancel, &result,));
         assert_eq!(arm.session_key(), None);
         assert!(matches!(
             arm.latest_lifecycle_event().unwrap().payload(),
@@ -664,11 +820,18 @@ fn revocation_precedes_deadline_for_success_and_failure() {
 
 #[test]
 fn response_sixteen_after_logout_keeps_server_hold() {
+    if run_hosted_test_in_child(
+        "release_tests::response_sixteen_after_logout_keeps_server_hold",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
     use std::io::{Read, Write};
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
         let mut hello = [0; 2];
         socket.read_exact(&mut hello).unwrap();
         let mut reply = [0; 9];
@@ -681,31 +844,16 @@ fn response_sixteen_after_logout_keeps_server_hold() {
     let command = arm.login_command(false).unwrap();
     let world = arm.world_generation();
     let backoff = LoginBackoff::new();
-    let hold = std::cell::Cell::new(None);
     let mut client = tcp_client(port);
-    let cells = test_cells(&permit, 1);
-    let outcome = permit
-        .attempt_with_test_cells(
-            cells,
-            |cancel, generation| {
-                arm.begin_attempt_with_generation(command, world, cancel, generation)
-            },
-            |deadline, cancel| {
-                let (result, server_hold) = SlotLogin {
-                    client: &mut client,
-                    arm: &arm,
-                    command,
-                    world_generation: world,
-                    username: "alice",
-                    password: "secret",
-                    reconnect: false,
-                    backoff: &backoff,
-                }
-                .run(deadline, cancel, |_| arm.request_logout());
-                hold.set(server_hold);
-                result
-            },
-            |_| hold.get(),
+    let outcome = network
+        .run_login(
+            &mut permit,
+            &arm,
+            &mut client,
+            command,
+            world,
+            &backoff,
+            |_| arm.request_logout(),
         )
         .expect("started attempt returns exact Q facts");
     assert!(matches!(
@@ -723,13 +871,20 @@ fn response_sixteen_after_logout_keeps_server_hold() {
 
 #[test]
 fn refused_client_stream_closes_before_queue_retirement() {
+    if run_hosted_test_in_child(
+        "release_tests::refused_client_stream_closes_before_queue_retirement",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
     use std::io::{Read, Write};
+    let network = HostedNetworkFixture::start();
     for code in [3, 5, 7, 16, 21, -1] {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (eof_tx, eof_rx) = std::sync::mpsc::channel();
         let server = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
+            let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
@@ -756,30 +911,15 @@ fn refused_client_stream_closes_before_queue_retirement() {
         let mut client = tcp_client(port);
         client.set_external_reconnect_owner(true);
         let backoff = LoginBackoff::new();
-        let hold = std::cell::Cell::new(None);
-        let cells = test_cells(&permit, 1);
-        let outcome = permit
-            .attempt_with_test_cells(
-                cells,
-                |cancel, generation| {
-                    arm.begin_attempt_with_generation(command, world, cancel, generation)
-                },
-                |deadline, cancel| {
-                    let (result, server_hold) = SlotLogin {
-                        client: &mut client,
-                        arm: &arm,
-                        command,
-                        world_generation: world,
-                        username: "alice",
-                        password: "secret",
-                        reconnect: false,
-                        backoff: &backoff,
-                    }
-                    .run(deadline, cancel, |_| {});
-                    hold.set(server_hold);
-                    result
-                },
-                |_| hold.get(),
+        let outcome = network
+            .run_login(
+                &mut permit,
+                &arm,
+                &mut client,
+                command,
+                world,
+                &backoff,
+                |_| {},
             )
             .expect("started attempt returns exact Q facts");
         assert!(matches!(
@@ -810,12 +950,19 @@ fn refused_client_stream_closes_before_queue_retirement() {
 
 #[test]
 fn cancelled_late_success_logs_out_and_closes_real_socket_before_retirement() {
+    if run_hosted_test_in_child(
+        "release_tests::cancelled_late_success_logs_out_and_closes_real_socket_before_retirement",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
     use std::io::{Read, Write};
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (eof_tx, eof_rx) = std::sync::mpsc::channel();
     let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
@@ -838,33 +985,18 @@ fn cancelled_late_success_logs_out_and_closes_real_socket_before_retirement() {
     let world = arm.world_generation();
     let mut client = tcp_client(port);
     let backoff = LoginBackoff::new();
-    let hold = std::cell::Cell::new(None);
-    let cells = test_cells(&permit, 1);
-    let outcome = permit
-        .attempt_with_test_cells(
-            cells,
-            |cancel, generation| {
-                arm.begin_attempt_with_generation(command, world, cancel, generation)
+    let outcome = network
+        .run_login(
+            &mut permit,
+            &arm,
+            &mut client,
+            command,
+            world,
+            &backoff,
+            |returned| {
+                assert!(returned.ingame && returned.has_stream());
+                arm.request_logout();
             },
-            |deadline, cancel| {
-                let (result, server_hold) = SlotLogin {
-                    client: &mut client,
-                    arm: &arm,
-                    command,
-                    world_generation: world,
-                    username: "alice",
-                    password: "secret",
-                    reconnect: false,
-                    backoff: &backoff,
-                }
-                .run(deadline, cancel, |returned| {
-                    assert!(returned.ingame && returned.has_stream());
-                    arm.request_logout();
-                });
-                hold.set(server_hold);
-                result
-            },
-            |_| hold.get(),
         )
         .expect("started attempt returns exact Q facts");
     assert!(matches!(
@@ -1007,16 +1139,14 @@ fn assert_transport_event(
 }
 
 #[test]
-fn real_client_connect_refusal_reports_connect_transport_event() {
+fn os_connect_refusal_maps_to_connect_transport_event() {
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
-    let error = tcp_client(port)
-        .login("alice", "secret", false)
-        .unwrap_err();
+    let error = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap_err();
     assert_transport_event(
-        error,
+        os_transport_error(client::client::LoginStage::Connect, error),
         client::client::LoginStage::Connect,
         std::io::ErrorKind::ConnectionRefused,
         TransportFailure::Connect,
@@ -1024,26 +1154,11 @@ fn real_client_connect_refusal_reports_connect_transport_event() {
 }
 
 #[test]
-fn real_client_partial_seed_timeout_reports_read_transport_event() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let (release, held) = std::sync::mpsc::channel::<()>();
-    let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
-        let mut hello = [0; 2];
-        socket.read_exact(&mut hello).unwrap();
-        socket.write_all(&[0; 9]).unwrap();
-        held.recv_timeout(Duration::from_secs(2)).unwrap();
-    });
-    let mut client = tcp_client(port);
-    client.set_login_deadline(Instant::now() + Duration::from_millis(150));
-    let error = client.login("alice", "secret", false).unwrap_err();
-    release.send(()).unwrap();
-    server.join().unwrap();
+fn os_partial_seed_timeout_maps_to_read_transport_event() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let error = run_os_read_seed(listener, Some(Duration::from_millis(150)));
     assert_transport_event(
-        error,
+        os_transport_error(client::client::LoginStage::ReadSeed, error),
         client::client::LoginStage::ReadSeed,
         std::io::ErrorKind::TimedOut,
         TransportFailure::Read,
@@ -1051,23 +1166,11 @@ fn real_client_partial_seed_timeout_reports_read_transport_event() {
 }
 
 #[test]
-fn real_client_partial_seed_eof_reports_closed_transport_event() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
-        let mut hello = [0; 2];
-        socket.read_exact(&mut hello).unwrap();
-        socket.write_all(&[0; 9 + 2]).unwrap();
-    });
-    let error = tcp_client(port)
-        .login("alice", "secret", false)
-        .unwrap_err();
-    server.join().unwrap();
+fn os_partial_seed_eof_maps_to_closed_transport_event() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let error = run_os_read_seed(listener, None);
     assert_transport_event(
-        error,
+        os_transport_error(client::client::LoginStage::ReadSeed, error),
         client::client::LoginStage::ReadSeed,
         std::io::ErrorKind::UnexpectedEof,
         TransportFailure::Closed,
@@ -1076,13 +1179,14 @@ fn real_client_partial_seed_eof_reports_closed_transport_event() {
 
 #[cfg(unix)]
 #[test]
-fn real_client_adopted_reset_socket_reports_write_transport_event() {
-    use client::io::client_stream::ClientStream;
-    use std::net::TcpListener;
+fn os_reset_write_maps_to_write_transport_event() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
     use std::os::fd::AsRawFd;
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let mut stream = ClientStream::connect("127.0.0.1", port).unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let (accepted, _) = listener.accept().unwrap();
     let linger = libc::linger {
         l_onoff: 1,
@@ -1102,27 +1206,29 @@ fn real_client_adopted_reset_socket_reports_write_transport_event() {
     };
     assert_eq!(set, 0, "SO_LINGER: {}", std::io::Error::last_os_error());
     drop(accepted);
+    stream.set_nonblocking(true).unwrap();
     let until = Instant::now() + Duration::from_secs(2);
     loop {
-        match stream.available() {
+        let mut byte = [0; 1];
+        match stream.read(&mut byte) {
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
             Ok(0) if Instant::now() < until => thread::yield_now(),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
+            {
+                thread::yield_now()
+            }
             result => panic!("expected local server reset before the login write: {result:?}"),
         }
     }
-    let mut client = tcp_client(port);
-    client.stream = Some(stream);
-    client.baton = true;
-    client.set_login_deadline(Instant::now() + Duration::from_secs(1));
-    let error = client.login("alice", "secret", true).unwrap_err();
-    let transport = error.transport.as_ref().unwrap();
+    let error = stream.write_all(&[14, 0]).unwrap_err();
+    let kind = error.kind();
     assert!(matches!(
-        transport.kind,
+        kind,
         std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
     ));
-    let kind = transport.kind;
     assert_transport_event(
-        error,
+        os_transport_error(client::client::LoginStage::SendHello, error),
         client::client::LoginStage::SendHello,
         kind,
         TransportFailure::Write,
@@ -1130,24 +1236,31 @@ fn real_client_adopted_reset_socket_reports_write_transport_event() {
 }
 
 #[test]
-fn real_response_sixteen_publishes_server_hold_with_exact_deadline() {
+fn hosted_client_response_sixteen_publishes_server_hold_with_exact_deadline() {
+    if run_hosted_test_in_child(
+        "release_tests::hosted_client_response_sixteen_publishes_server_hold_with_exact_deadline",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    let network = HostedNetworkFixture::start();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = thread::spawn(move || {
-        let (mut socket, _) = listener.accept().unwrap();
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
         let mut hello = [0; 2];
         socket.read_exact(&mut hello).unwrap();
         let mut reply = [0; 9];
         reply[8] = 16;
         socket.write_all(&reply).unwrap();
     });
-    let error = tcp_client(port)
-        .login("alice", "secret", false)
-        .unwrap_err();
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, false).unwrap_err();
     server.join().unwrap();
-    assert_eq!(error.code, 16, "the real client read response 16");
+    assert_eq!(error.code, 16, "the hosted client read response 16");
     let backoff = LoginBackoff::new();
     let hold = server_hold(&Err::<(), _>(error), &backoff).unwrap();
     let at = Instant::now();
@@ -1157,7 +1270,6 @@ fn real_response_sixteen_publishes_server_hold_with_exact_deadline() {
         username: "alice".into(),
         ..SlotStatus::default()
     }]));
-    let arm = SlotArm::new(7, true);
     arm.prepared();
     enqueue_queue_place(&queue, &statuses, "alice", 7, &arm);
     let event = arm.latest_lifecycle_event().unwrap();
@@ -1235,10 +1347,7 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
     let first = queue_attempt(&mut queue, &arm, until, 1);
     let command = arm.login_command(false).unwrap();
     assert!(return_and_release_queue_attempt(
-        &mut queue,
-        &first,
-        until,
-        None
+        &mut queue, &first, until, None
     ));
     assert_eq!(
         arm.defer_clean_release_at(&busy(), command, HOST, PORT, until),
@@ -1247,10 +1356,7 @@ fn clean_exit_paces_from_exit_not_old_handshake_and_release_then_admits() {
     let retry = until + CLEAN_RELEASE_CADENCE;
     let second = queue_attempt(&mut queue, &arm, retry, 2);
     assert!(return_and_release_queue_attempt(
-        &mut queue,
-        &second,
-        retry,
-        None
+        &mut queue, &second, retry, None
     ));
     assert!(arm.session_online());
     assert!(arm.clean_release_admission_at(HOST, PORT, retry).is_none());
@@ -1271,10 +1377,7 @@ fn skipped_device_owner_publishes_its_device_limit_reason() {
         let cells = synthetic_queue_attempt(owner, binding);
         assert!(cells.start(&mut queue, now).is_some());
         assert!(return_and_release_queue_attempt(
-            &mut queue,
-            &cells,
-            now,
-            None
+            &mut queue, &cells, now, None
         ));
     }
 
@@ -1493,10 +1596,7 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
         "still one handshake even after release deadline"
     );
     assert!(return_and_release_queue_attempt(
-        &mut queue,
-        &sibling,
-        later,
-        None
+        &mut queue, &sibling, later, None
     ));
     assert_eq!(
         poll_permit(&mut queue, arm.queue_owner, 7, later),
@@ -1510,10 +1610,7 @@ fn release_wait_owns_fifo_place_not_handshake_and_never_overlaps_attempts() {
         Permit::Wait(_)
     ));
     assert!(return_and_release_queue_attempt(
-        &mut queue,
-        &relog,
-        later,
-        None
+        &mut queue, &relog, later, None
     ));
     assert_eq!(
         poll_permit(&mut queue, u64::MAX - 1, 10, later),
