@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- The runecrafting compatibility catalog is materialized directly from the Rust
+  route roster. Its names, order, default rune and real Tile values are unchanged;
+  the unused posted content-page copy has been removed.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
