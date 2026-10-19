@@ -3427,6 +3427,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/gathering_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/hunt_v8.rs",
       "owner": "T2"
     },
@@ -4164,6 +4168,10 @@
     },
     {
       "path": "crates/script/src/shim/game_messages.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/shim/gathering_locations.js",
       "owner": "T2"
     },
     {
@@ -5056,6 +5064,10 @@
     },
     {
       "path": "crates/script/tests/supply_helpers.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_gathering_family.rs",
       "owner": "T2"
     },
     {

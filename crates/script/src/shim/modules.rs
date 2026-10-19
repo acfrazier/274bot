@@ -903,6 +903,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("bot_host.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/shim/gathering_locations.js",
+            include_str!("gathering_locations.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/scripts/bot/declared_surface.js",
             include_str!("declared_surface.js"),
         ),

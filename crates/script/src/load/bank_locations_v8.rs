@@ -255,6 +255,10 @@ fn bank_distance<'s>(
 fn bank_distance_value(from: &WorldTile, bank: &WorldTile) -> f64 {
     let dx = f64::from(bank.x) - f64::from(from.x);
     let dz = f64::from(bank.z) - f64::from(from.z);
+    bank_distance_delta(dx, dz)
+}
+
+pub(super) fn bank_distance_delta(dx: f64, dz: f64) -> f64 {
     dx.hypot(dz)
 }
 

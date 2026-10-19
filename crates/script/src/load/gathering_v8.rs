@@ -117,7 +117,7 @@ pub(super) fn location_options<'s>(
     };
     let map_callback: v8::Local<v8::Value> = map_callback.into();
     let mapped = cb::call(scope, map, table, &[map_callback], "map")?;
-    let iterator = SpreadIterator::open(scope, mapped)?;
+    let iterator = cb::ForOf::open(scope, mapped, "location options")?;
     let mut index = prefix.len() as u32;
 
     loop {
@@ -148,90 +148,6 @@ pub(super) fn location_options<'s>(
     }
     Ok(output.into())
 }
-
-/// A no-allocation `GetIterator` path for the spread in `locationOptions`.
-/// `callback_v8::ForOf` builds formatted error text while opening, which would
-/// allocate a Rust `String` on this successful helper path.
-struct SpreadIterator<'s> {
-    iterator: v8::Local<'s, v8::Value>,
-    next: v8::Local<'s, v8::Value>,
-    poll: cb::Poll,
-}
-
-impl<'s> SpreadIterator<'s> {
-    fn open(
-        scope: &mut v8::HandleScope<'s>,
-        iterable: v8::Local<'s, v8::Value>,
-    ) -> JsResult<'s, Self> {
-        if iterable.is_null_or_undefined() {
-            return Err(cb::type_error(scope, "location options is not iterable"));
-        }
-        let symbol: v8::Local<v8::Value> = v8::Symbol::get_iterator(scope).into();
-        let method = cb::catching(scope, |s| iterable.to_object(s)?.get(s, symbol))?;
-        if !method.is_function() {
-            return Err(cb::type_error(scope, "location options is not iterable"));
-        }
-        let iterator = cb::call(scope, method, iterable, &[], "Symbol.iterator")?;
-        if !iterator.is_object() {
-            return Err(cb::type_error(
-                scope,
-                "Result of the Symbol.iterator method is not an object",
-            ));
-        }
-        let next = cb::get(scope, iterator, "next")?;
-        Ok(Self {
-            iterator,
-            next,
-            poll: cb::Poll::default(),
-        })
-    }
-
-    fn step(
-        &self,
-        scope: &mut v8::HandleScope<'s>,
-    ) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
-        self.poll.check(scope)?;
-        let result = cb::call(scope, self.next, self.iterator, &[], "iterator next")?;
-        if !result.is_object() {
-            return Err(cb::type_error(scope, "Iterator result is not an object"));
-        }
-        let done = cb::get(scope, result, "done")?;
-        if cb::truthy(scope, done) {
-            Ok(None)
-        } else {
-            cb::get(scope, result, "value").map(Some)
-        }
-    }
-
-    fn body<T>(
-        &self,
-        scope: &mut v8::HandleScope<'s>,
-        outcome: JsResult<'s, T>,
-    ) -> JsResult<'s, T> {
-        let thrown = match outcome {
-            Ok(value) => return Ok(value),
-            Err(cb::Throw::Terminated) => return Err(cb::Throw::Terminated),
-            Err(thrown) => thrown,
-        };
-        match self.close(scope) {
-            Err(cb::Throw::Terminated) => Err(cb::Throw::Terminated),
-            _ => Err(thrown),
-        }
-    }
-
-    fn close(&self, scope: &mut v8::HandleScope<'s>) -> JsResult<'s, ()> {
-        let ret = cb::get(scope, self.iterator, "return")?;
-        if ret.is_null_or_undefined() {
-            return Ok(());
-        }
-        let result = cb::call(scope, ret, self.iterator, &[], "iterator return")?;
-        if !result.is_object() {
-            return Err(cb::type_error(scope, "Iterator result is not an object"));
-        }
-        Ok(())
-    }
-}
-
 
 fn map_name_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -352,17 +268,27 @@ fn nearest_row<'s>(
     let mut index = 1.0;
 
     loop {
-        let length = cb::get(scope, pool, "length")?;
-        let index_value = cb::num(scope, index);
-        if !cb::lt(scope, index_value, length)? {
-            break;
-        }
-        let location = cb::get_index(scope, pool, index as u32)?;
-        let spot = cb::get(scope, location, "spot")?;
-        let distance = bank_distance(scope, start_tile, spot)?;
-        if distance < best_distance {
-            best = location;
-            best_distance = distance;
+        let inner = &mut v8::EscapableHandleScope::new(scope);
+        let result = (|| {
+            let length = cb::get(inner, pool, "length")?;
+            let index_value = cb::num(inner, index);
+            if !cb::lt(inner, index_value, length)? {
+                return Ok(Flow::Break(None));
+            }
+            let location = cb::get_index(inner, pool, index as u32)?;
+            let spot = cb::get(inner, location, "spot")?;
+            let distance = bank_distance(inner, start_tile, spot)?;
+            if distance < best_distance {
+                best_distance = distance;
+                Ok(Flow::Continue(Some(location)))
+            } else {
+                Ok(Flow::Continue(None))
+            }
+        })();
+        match cb::iteration(inner, result)? {
+            Flow::Continue(Some(location)) => best = location,
+            Flow::Continue(None) => {}
+            Flow::Break(_) => break,
         }
         index += 1.0;
     }
@@ -423,4 +349,67 @@ fn find_named_callback<'s>(
         Ok(v8::Boolean::new(scope, lowered.strict_equals(args.data())).into())
     })();
     cb::finish(scope, rv, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::RuntimeOptions;
+
+    #[test]
+    fn gathering_callbacks_have_measured_cold_and_zero_warm_rust_heap() {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>(
+                r#"
+const from = { x: 64, z: 64, level: 0 };
+const rows = [
+    { name: 'Far', spot: { x: 74, z: 64, level: 0 } },
+    { name: 'Cross plane', spot: { x: 67, z: 68, level: 1 } },
+    { name: 'Local', spot: { x: 70, z: 72, level: 0 }, boothName: 'Chest', boothOp: 'Bank' },
+];
+const call = (operation, ...args) => __rs2b0t_gathering_locations(operation, ...args);
+globalThis.checkGathering = () => {
+    const options = call('locationOptions', rows);
+    const defaults = call('boothFields', null);
+    const custom = call('boothFields', rows[2]);
+    return call('DEFAULT_BOOTH_NAME') === 'Bank booth' &&
+        call('DEFAULT_BOOTH_OP') === 'Use-quickly' &&
+        call('MAP_SQUARE') === 64 &&
+        call('sameMapSquare', from, rows[0].spot) &&
+        !call('sameMapSquare', from, rows[1].spot) &&
+        options.length === 8 && options[5] === 'Far' && options[7] === 'Local' &&
+        defaults.boothName === 'Bank booth' && defaults.boothOp === 'Use-quickly' &&
+        custom.boothName === 'Chest' && custom.boothOp === 'Bank' &&
+        call('resolveGatheringLocation', 'Use Closest', from, rows) === rows[1] &&
+        call('resolveGatheringLocation', 'Auto', from, rows) === rows[0] &&
+        call('resolveGatheringLocation', ' cross plane ', from, rows) === rows[1] &&
+        call('resolveGatheringLocation', 'Use Start Position', from, rows) === null &&
+        call('resolveGatheringLocation', 'Use Custom Position', from, rows) === null &&
+        call('resolveGatheringLocation', 'unknown', from, rows) === null;
+};
+"#,
+            )
+            .unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkGathering");
+        let function =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let cold = allocation_counter::measure(|| {
+            assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!("Gathering seven-helper callbacks cold={cold:?}; warm1000={warm:?}");
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
 }

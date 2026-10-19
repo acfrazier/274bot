@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Gathering scripts can use the declared location options, booth defaults,
+  map-square checks and location resolver. Rust owns these calculations over
+  caller-provided locations, without a second resource catalog.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
