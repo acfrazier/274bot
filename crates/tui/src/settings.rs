@@ -107,7 +107,7 @@ pub enum SettingsKey {
 /// The notices are drawn into the same buffer as the settings rows.
 pub struct SettingsPane<'a> {
     pub settings: &'a mut SettingsDraft,
-    pub nav: &'a mut host_play::WalkGlobals,
+    pub nav: &'a mut frontend_core::WalkGlobals,
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
@@ -125,7 +125,7 @@ pub struct SettingsPane<'a> {
 impl<'a> SettingsPane<'a> {
     pub fn new(
         settings: &'a mut SettingsDraft,
-        nav: &'a mut host_play::WalkGlobals,
+        nav: &'a mut frontend_core::WalkGlobals,
         map_bake: &'a mut MapBakeChoice,
         state: &'a mut SettingsState,
     ) -> Self {
@@ -344,9 +344,36 @@ impl<'a> SettingsPane<'a> {
                 self.state.random_event_index =
                     (self.state.random_event_index + 1) % GUARDIAN_EVENTS.len();
             }
-            5 => self.nav.allow_teleports = !self.nav.allow_teleports,
-            6 => self.nav.allow_wilderness = !self.nav.allow_wilderness,
-            7 => self.nav.allow_bank_fetch = !self.nav.allow_bank_fetch,
+            5 => {
+                let nav = *self.nav;
+                *self.nav = frontend_core::WalkGlobals::new(
+                    !nav.allow_teleports(),
+                    nav.allow_wilderness(),
+                    nav.allow_bank_fetch(),
+                    nav.allow_danger_zones(),
+                    nav.survivable_routing(),
+                );
+            }
+            6 => {
+                let nav = *self.nav;
+                *self.nav = frontend_core::WalkGlobals::new(
+                    nav.allow_teleports(),
+                    !nav.allow_wilderness(),
+                    nav.allow_bank_fetch(),
+                    nav.allow_danger_zones(),
+                    nav.survivable_routing(),
+                );
+            }
+            7 => {
+                let nav = *self.nav;
+                *self.nav = frontend_core::WalkGlobals::new(
+                    nav.allow_teleports(),
+                    nav.allow_wilderness(),
+                    !nav.allow_bank_fetch(),
+                    nav.allow_danger_zones(),
+                    nav.survivable_routing(),
+                );
+            }
             8 => {
                 let next = self.nav.danger_level().next();
                 self.nav.set_danger_level(next);
@@ -431,19 +458,19 @@ impl Widget for SettingsPane<'_> {
                 "{}{}: {}",
                 marker(5),
                 GLOBAL_PERMISSION_LABELS[0].1,
-                self.nav.allow_teleports
+                self.nav.allow_teleports()
             ),
             format!(
                 "{}{}: {}",
                 marker(6),
                 GLOBAL_PERMISSION_LABELS[1].1,
-                self.nav.allow_wilderness
+                self.nav.allow_wilderness()
             ),
             format!(
                 "{}{}: {} · {}",
                 marker(7),
                 GLOBAL_PERMISSION_LABELS[2].1,
-                self.nav.allow_bank_fetch,
+                self.nav.allow_bank_fetch(),
                 BANK_FETCH_PERMISSION_SCOPE
             ),
             if danger_level == frontend_core::DangerLevel::Always {
@@ -766,7 +793,7 @@ mod tests {
     use frontend_core::{GuardianPolicy, SettingsDraft};
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
 
-    use host_play::WalkGlobals;
+    use frontend_core::WalkGlobals;
 
     use super::{SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE, LAMP_SKILLS};
 
@@ -900,7 +927,7 @@ mod tests {
             pane.on_key(key(KeyCode::Enter))
         };
         assert_eq!(key, SettingsKey::WalkGlobal(NavPreference::AllowBankFetch));
-        assert!(nav.allow_bank_fetch, "bank fetch toggles on");
+        assert!(nav.allow_bank_fetch(), "bank fetch toggles on");
     }
 
     #[test]
@@ -925,10 +952,10 @@ mod tests {
             };
             assert_eq!(outcome, SettingsKey::WalkGlobal(preference));
         }
-        assert!(nav.allow_teleports);
-        assert!(nav.allow_wilderness);
-        assert!(nav.allow_bank_fetch);
-        assert!(nav.allow_danger_zones);
+        assert!(nav.allow_teleports());
+        assert!(nav.allow_wilderness());
+        assert!(nav.allow_bank_fetch());
+        assert!(nav.allow_danger_zones());
         assert_eq!(nav.danger_level(), frontend_core::DangerLevel::Always);
     }
 
@@ -1271,7 +1298,7 @@ mod tests {
         assert_eq!(state.row, 10, "the map-bake row follows the pause toggle");
         assert_eq!(flipped, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Always);
-        assert!(!nav.allow_bank_fetch, "the bank row is untouched");
+        assert!(!nav.allow_bank_fetch(), "the bank row is untouched");
         let text = render(
             SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state),
             60,

@@ -1,10 +1,9 @@
 use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
-    live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow, null_raster_live_entries,
-    parse_getvar_line, publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime,
-    retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
-    seed_on_first_world, stress_live_entries, temp_live_vault_from, ProfilePreparationCompletion,
-    SceneRoutePaint, Session, SlotIo, WalkArm,
+    live_or_walk_paint, load_live_example_card, null_raster_live_entries, parse_getvar_line,
+    publish_nav_debug, retire_client_trail, script_active, script_pause_enabled,
+    script_stop_enabled, seed_on_first_world, stress_live_entries, temp_live_vault_from,
+    PreparationCompletion, SceneRoutePaint, Session, SlotIo,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -24,9 +23,14 @@ use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
+use frontend_core::launch::{
+    InstanceKind, InstancePermit, ProfileArgs, ProfileClass, ProfileEnv, ProfileTemplate,
+    ValidatedProfile, ValidationPending,
+};
 use frontend_core::scripts::{
     CardSource, CompiledCardId, Loadouts, SchemaRef, ScriptChoice, ScriptRunState,
 };
+use frontend_core::surface::InputSender;
 use host::{FrameBuf, SlotInput};
 use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
@@ -69,7 +73,7 @@ fn seed_ui_state(state: &crate::ui_state::PanelUiState) {
 #[test]
 fn session_cache_is_unset_until_a_profile_is_bound() {
     let session = Session::new();
-    let cache_dir = &session.play_options().cache_dir;
+    let cache_dir = session.play_options().cache_dir();
 
     assert!(
         cache_dir.is_empty(),
@@ -365,7 +369,27 @@ fn configure_isolated_profile(
     options: ProfileOptions,
     home: &Path,
 ) -> Result<(), String> {
-    session.configure_profile_with_env(options, isolated_profile_environment(home))
+    session.configure_profile_with_env(
+        ProfileArgs::from_host(options),
+        ProfileEnv::from_host(isolated_profile_environment(home)),
+    )
+}
+
+/// Join a final resource validation on the shared worker, as boot does.
+/// The caller holds `crate::work_service_test_lock()`.
+fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
+    let template = session.template_for_validation().unwrap();
+    let job = ValidationPending::new(generation, template)
+        .submit()
+        .expect("validation submit");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !job.is_finished() && Instant::now() < deadline {
+        session.core.poll();
+        session.poll_scripts();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(job.is_finished(), "validation did not settle");
+    job.join().expect("validation")
 }
 
 #[test]
@@ -386,12 +410,11 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         &root,
     )
     .unwrap();
-    let env = isolated_profile_environment(&root);
-    session.bind_profile_with_env(&env).unwrap();
+    session.bind_profile().unwrap();
     assert!(session.server_label().starts_with("local-274"));
     assert_eq!(session.catalog_root().unwrap(), None);
     assert!(session.set_server_revision(289).is_err());
-    assert!(session.bind_profile_with_env(&env).is_err());
+    assert!(session.bind_profile().is_err());
 }
 
 #[test]
@@ -411,8 +434,9 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
         &root,
     )
     .unwrap();
-    let (generation, preparation) = session.profile_preparation().unwrap();
-    let template = preparation.run().unwrap();
+    let generation = session.profile_generation();
+    let preparation = session.profile_preparation().unwrap();
+    let template = preparation.run_blocking().unwrap();
 
     configure_isolated_profile(
         &mut session,
@@ -425,10 +449,10 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     .unwrap();
     assert_eq!(
         session.finish_profile_preparation(generation, Ok(template)),
-        ProfilePreparationCompletion::Stale
+        PreparationCompletion::Stale
     );
     assert!(!session.profile_bound());
-    assert!(session.template.is_none());
+    assert!(session.launcher.template().is_none());
     assert!(session.core.play().is_none());
     assert!(session.core.vault().is_none());
     assert!(session.core.slots().is_empty());
@@ -443,11 +467,11 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 
     assert_eq!(
         session.finish_profile_preparation(generation, Err("cache changed".into())),
-        ProfilePreparationCompletion::Failed
+        PreparationCompletion::Failed
     );
     assert_eq!(session.error.as_deref(), Some("cache changed"));
     assert!(!session.profile_bound());
-    assert!(session.template.is_none());
+    assert!(session.launcher.template().is_none());
     assert!(session.core.play().is_none());
     assert!(session.core.vault().is_none());
     assert!(session.core.slots().is_empty());
@@ -456,6 +480,7 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let _work_service_guard = crate::work_service_test_lock();
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -471,15 +496,15 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
         &root,
     )
     .unwrap();
-    let (generation, preparation) = session.profile_preparation().unwrap();
-    let template = preparation.run().unwrap();
+    let generation = session.profile_generation();
+    let preparation = session.profile_preparation().unwrap();
+    let template = preparation.run_blocking().unwrap();
     assert_eq!(
-        session.finish_profile_preparation(generation, Ok(Arc::clone(&template))),
-        ProfilePreparationCompletion::Installed
+        session.finish_profile_preparation(generation, Ok(template.share())),
+        PreparationCompletion::Installed
     );
-    session
-        .install_validated_template(template.validate_for_play().unwrap())
-        .unwrap();
+    let validated = join_validation(&mut session, generation);
+    session.install_validated_template(validated).unwrap();
 
     std::fs::write(cache.join("config"), b"changed after validation").unwrap();
     assert!(session.unlock("prepared-pass"));
@@ -498,6 +523,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedEnv::enter("start-handle-loadouts");
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let _work_service_guard = crate::work_service_test_lock();
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -513,19 +539,19 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
         &root,
     )
     .unwrap();
-    let (generation, preparation) = session.profile_preparation().unwrap();
-    let template = preparation.run().unwrap();
+    let generation = session.profile_generation();
+    let preparation = session.profile_preparation().unwrap();
+    let template = preparation.run_blocking().unwrap();
     assert_eq!(
-        session.finish_profile_preparation(generation, Ok(Arc::clone(&template))),
-        ProfilePreparationCompletion::Installed
+        session.finish_profile_preparation(generation, Ok(template.share())),
+        PreparationCompletion::Installed
     );
-    session
-        .install_validated_template(template.validate_for_play().unwrap())
-        .unwrap();
+    let validated = join_validation(&mut session, generation);
+    session.install_validated_template(validated).unwrap();
 
     // A row only the Play's own state root holds: the session's service
     // does not see it.
-    let own_root = template.profile().state_root().to_path_buf();
+    let own_root = root.join(".274bot");
     assert_ne!(own_root.as_path(), thread_state_root().path());
     let mut own = Loadouts::over(Arc::new(
         crate::test_support::scratch_service(&own_root).operator_loadouts(),
@@ -683,12 +709,14 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
     configure_isolated_profile(&mut session, ProfileOptions::default(), &home).unwrap();
     let generation = session.profile_generation();
     assert_eq!(
-        session.finish_profile_preparation(generation, Ok(Arc::clone(template))),
-        ProfilePreparationCompletion::Installed
+        session.finish_profile_preparation(
+            generation,
+            Ok(ProfileTemplate::from_host(Arc::clone(template)))
+        ),
+        PreparationCompletion::Installed
     );
-    session
-        .install_validated_template(template.validate_for_play().unwrap())
-        .unwrap();
+    let validated = join_validation(&mut session, generation);
+    session.install_validated_template(validated).unwrap();
     assert!(session.unlock("upgrade-pass"), "{:?}", session.error);
     session
 }
@@ -699,6 +727,7 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
 #[test]
 fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     let home = UpgradeHome::new();
+    let _work_service_guard = crate::work_service_test_lock();
     let profile = home.bind(None);
     assert!(profile.nav_origin().is_bundled());
     let template = map_host::SharedClientTemplate::load(profile).unwrap();
@@ -731,7 +760,7 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     let profile = home.bind(None);
     let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let mut session = preparation_only_session();
-    session.install_prepared_template(template);
+    session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
@@ -759,7 +788,7 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let profile = home.bind(None);
     let template = map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let mut session = preparation_only_session();
-    session.install_prepared_template(template);
+    session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
@@ -791,20 +820,26 @@ fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
     let mut session = Session::new();
     session.ui.server_revision = 274;
+    let options = ProfileOptions {
+        rs2b2t: true,
+        ..ProfileOptions::default()
+    };
+    let env = ProfileEnvironment {
+        home: Some(home.to_path_buf()),
+        working_dir: Some(home.to_path_buf()),
+        ..ProfileEnvironment::default()
+    };
     session
         .configure_profile_with_env(
-            ProfileOptions {
-                rs2b2t: true,
-                ..ProfileOptions::default()
-            },
-            ProfileEnvironment {
-                home: Some(home.to_path_buf()),
-                working_dir: Some(home.to_path_buf()),
-                ..ProfileEnvironment::default()
-            },
+            ProfileArgs::from_host(options.clone()),
+            ProfileEnv::from_host(env.clone()),
         )
         .unwrap();
-    let selection = session.resolve_profile().unwrap();
+    // Resolution moved behind the launch seam: the session configures, the
+    // same host inputs resolve.
+    let selection = options
+        .resolve_with_env(Some(session.ui.server_revision), &env)
+        .unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
 }
@@ -818,16 +853,16 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
     let mut session = Session::new();
     session
         .configure_profile_with_env(
-            ProfileOptions {
+            ProfileArgs::from_host(ProfileOptions {
                 revision: Some("275".into()),
                 vault_path: Some(intended.clone()),
                 ..ProfileOptions::default()
-            },
-            ProfileEnvironment {
+            }),
+            ProfileEnv::from_host(ProfileEnvironment {
                 home: Some(root.to_path_buf()),
                 working_dir: Some(root.to_path_buf()),
                 ..ProfileEnvironment::default()
-            },
+            }),
         )
         .unwrap();
     assert!(!session.reset_vault());
@@ -843,22 +878,26 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
     let ambient = TestDir::new("profile-ambient-guard");
     let injected = TestDir::new("profile-injected-home");
     let mut session = Session::new();
+    let options = ProfileOptions {
+        profile: Some("local-274".into()),
+        ..ProfileOptions::default()
+    };
+    let env = ProfileEnvironment {
+        home: Some(injected.to_path_buf()),
+        working_dir: Some(injected.to_path_buf()),
+        engine_dir: Some(injected.join("engine")),
+        ..ProfileEnvironment::default()
+    };
     session
         .configure_profile_with_env(
-            ProfileOptions {
-                profile: Some("local-274".into()),
-                ..ProfileOptions::default()
-            },
-            ProfileEnvironment {
-                home: Some(injected.to_path_buf()),
-                working_dir: Some(injected.to_path_buf()),
-                engine_dir: Some(injected.join("engine")),
-                ..ProfileEnvironment::default()
-            },
+            ProfileArgs::from_host(options.clone()),
+            ProfileEnv::from_host(env.clone()),
         )
         .unwrap();
 
-    let selection = session.resolve_profile().unwrap();
+    let selection = options
+        .resolve_with_env(Some(session.ui.server_revision), &env)
+        .unwrap();
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Local);
     assert!(injected.join(".274bot/servers.json").is_file());
     assert!(
@@ -873,28 +912,28 @@ fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
     let mut session = Session::new();
     session
         .configure_profile_with_env(
-            ProfileOptions {
+            ProfileArgs::from_host(ProfileOptions {
                 rs2b2t: true,
                 ..ProfileOptions::default()
-            },
-            ProfileEnvironment {
+            }),
+            ProfileEnv::from_host(ProfileEnvironment {
                 home: Some(home.to_path_buf()),
                 ..ProfileEnvironment::default()
-            },
+            }),
         )
         .unwrap();
 
-    assert_eq!(session.profile_class(), host_play::ProfileClass::Remote);
+    assert_eq!(session.profile_class(), ProfileClass::Remote);
     assert!(!session.debug_ui());
     assert!(!session.map_teleport_authorized());
 
     let generation = session.profile_generation();
     assert_eq!(
         session.finish_profile_preparation(generation, Err("bind refused".into())),
-        ProfilePreparationCompletion::Failed
+        PreparationCompletion::Failed
     );
     assert!(!session.profile_bound());
-    assert_eq!(session.profile_class(), host_play::ProfileClass::Remote);
+    assert_eq!(session.profile_class(), ProfileClass::Remote);
     assert!(!session.debug_ui());
     assert!(!session.map_teleport_authorized());
 }
@@ -964,17 +1003,17 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     session.persist_ui = false;
     session
         .configure_profile_with_env(
-            ProfileOptions {
+            ProfileArgs::from_host(ProfileOptions {
                 profile: Some("local-274".into()),
                 catalog_root: Some(explicit.clone()),
                 ..ProfileOptions::default()
-            },
-            ProfileEnvironment {
+            }),
+            ProfileEnv::from_host(ProfileEnvironment {
                 home: Some(iso.dir.clone()),
                 working_dir: Some(iso.dir.clone()),
                 engine_dir: Some(iso.dir.join("engine")),
                 ..ProfileEnvironment::default()
-            },
+            }),
         )
         .unwrap();
     assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
@@ -1030,7 +1069,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     session.persist_ui = false;
     session
         .configure_profile_with_env(
-            ProfileOptions {
+            ProfileArgs::from_host(ProfileOptions {
                 revision: None,
                 cache_dir: Some(cache),
                 cache_manifest: Some(manifest),
@@ -1038,8 +1077,8 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
                 http_port: Some(port),
                 catalog_root: Some(catalog),
                 ..ProfileOptions::default()
-            },
-            env.clone(),
+            }),
+            ProfileEnv::from_host(env.clone()),
         )
         .unwrap();
     session.fill_rs2b0t_cards_once();
@@ -1061,7 +1100,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .get(script::ScriptSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
-    session.bind_profile_with_env(&env).unwrap();
+    session.bind_profile().unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
     settle_catalog_work(&mut session);
@@ -1102,15 +1141,12 @@ fn live_follow_route_wins_over_empty_walkto_arm() {
         dest: script_dest,
         ticks: 1.0,
     };
-    let script_projection = map_host::walk_map::RouteProjection {
-        stamp: map_host::walk_map::RouteStamp {
-            source: map_host::walk_map::RouteSource::Script,
-            generation: 1,
-            destination: script_dest,
-        },
-        route: map_host::walk_map::RouteProjectionPath::Legacy(&script_route),
-        aim: Some(script_dest),
-    };
+    let script_projection = frontend_core::walk_map::RouteProjectionView::legacy(
+        &script_route,
+        frontend_core::walk_map::WalkRouteSource::Script,
+        1,
+        Some(script_dest),
+    );
     let (route, click) =
         live_or_walk_paint(false, (None, None), (None, None), Some(script_projection));
     assert_eq!(
@@ -1185,7 +1221,7 @@ fn parse_getvar_line_reads_engine_reply() {
 /// Pump fixture for the getvar-reply drain: focused `alice`, a local live
 /// `Play`, our own capture channel standing in for the view's, and no
 /// vault (TutSkip unknown, so the probe fires).
-fn getvar_drain_session() -> (Session, std::sync::mpsc::Receiver<host::InputEv>) {
+fn getvar_drain_session() -> (Session, frontend_core::surface::InputProbe) {
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
@@ -1197,7 +1233,7 @@ fn getvar_drain_session() -> (Session, std::sync::mpsc::Receiver<host::InputEv>)
         },
     );
     s.set_focus_for_test("alice");
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = InputSender::probe();
     s.capture_tx = Some(tx);
     (s, rx)
 }
@@ -1219,7 +1255,7 @@ fn push_alice_row(s: &mut Session, chat_head: &str, pending: bool) {
 }
 
 /// Drain whatever the capture channel holds.
-fn drain_capture(rx: &std::sync::mpsc::Receiver<host::InputEv>) -> Vec<host::InputEv> {
+fn drain_capture(rx: &frontend_core::surface::InputProbe) -> Vec<frontend_core::surface::InputEv> {
     std::iter::from_fn(|| rx.try_recv().ok()).collect()
 }
 
@@ -1228,18 +1264,20 @@ fn drain_capture(rx: &std::sync::mpsc::Receiver<host::InputEv>) -> Vec<host::Inp
 /// the box is present), so this asserts the exact point rather than a
 /// "safe rect": the old rect test wrongly implied the click was harmless
 /// with no box, where it would fall through to the chat minimenu.
-fn assert_drain_click(clicks: &[host::InputEv]) {
+fn assert_drain_click(clicks: &[frontend_core::surface::InputEv]) {
     assert_eq!(clicks.len(), 3, "one Move + Down + Up, got {clicks:?}");
     match &clicks[0] {
-        host::InputEv::Move { x, y } => assert_eq!((*x, *y), (250, 400)),
+        frontend_core::surface::InputEv::Move { x, y } => assert_eq!((*x, *y), (250, 400)),
         other => panic!("first event is a Move, got {other:?}"),
     };
     match &clicks[1] {
-        host::InputEv::Down { button: 1, x, y } => assert_eq!((*x, *y), (250, 400)),
+        frontend_core::surface::InputEv::Down { button: 1, x, y } => {
+            assert_eq!((*x, *y), (250, 400))
+        }
         other => panic!("second event is a left Down at the Move point, got {other:?}"),
     };
     assert!(
-        matches!(&clicks[2], host::InputEv::Up),
+        matches!(&clicks[2], frontend_core::surface::InputEv::Up),
         "third event releases the click, got {:?}",
         clicks[2]
     );
@@ -1325,7 +1363,7 @@ fn getvar_drain_retries_when_capture_returns() {
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
     // Capture back on: the still-present box drains, exactly once.
-    let (tx, rx2) = std::sync::mpsc::channel();
+    let (tx, rx2) = InputSender::probe();
     s.capture_tx = Some(tx);
     s.pump_status();
     assert_drain_click(&drain_capture(&rx2));
@@ -1385,7 +1423,7 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
     );
     // Focusing alice again with capture on drains her still-present box.
     s.set_focus_for_test("alice");
-    let (tx, rx2) = std::sync::mpsc::channel();
+    let (tx, rx2) = InputSender::probe();
     s.capture_tx = Some(tx);
     s.pump_status();
     assert_drain_click(&drain_capture(&rx2));
@@ -1456,11 +1494,11 @@ fn getvar_drain_stays_local_only() {
 #[test]
 fn tutskip_button_omitted_until_known_open() {
     assert_eq!(
-        debug_main_buttons_for(host_play::ProfileClass::Local, false),
+        debug_main_buttons_for(ProfileClass::Local, false),
         ["DebugPanel", "Lumbridge", "maxme", "Teles"]
     );
     assert_eq!(
-        debug_main_buttons_for(host_play::ProfileClass::Local, true),
+        debug_main_buttons_for(ProfileClass::Local, true),
         ["DebugPanel", "TutSkip", "Lumbridge", "maxme", "Teles"]
     );
 }
@@ -1468,11 +1506,11 @@ fn tutskip_button_omitted_until_known_open() {
 #[test]
 fn debug_main_buttons_remote_is_debug_panel_only() {
     assert_eq!(
-        debug_main_buttons_for(host_play::ProfileClass::Remote, true),
+        debug_main_buttons_for(ProfileClass::Remote, true),
         ["DebugPanel"]
     );
     assert_eq!(
-        debug_main_buttons_for(host_play::ProfileClass::Remote, false),
+        debug_main_buttons_for(ProfileClass::Remote, false),
         ["DebugPanel"]
     );
 }
@@ -1540,196 +1578,6 @@ fn paint_client() -> client::client::Client {
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;
     c
-}
-
-fn response_15_reconnect(c: &mut Client) {
-    use std::io::{Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    c.config.port = listener.local_addr().unwrap().port();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut header = [0; 2];
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(header[0], 14);
-        stream.write_all(&[0; 17]).unwrap();
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(header[0], 18);
-        let mut login = vec![0; header[1] as usize];
-        stream.read_exact(&mut login).unwrap();
-        stream.write_all(&[15]).unwrap();
-    });
-    c.login("snapshot", "test", true).unwrap();
-    server.join().unwrap();
-}
-
-type FrontendFixture = (
-    Arc<Mutex<std::collections::HashMap<String, client::client::ClientGens>>>,
-    Arc<Mutex<std::collections::HashMap<String, (GameSnapshot, WorldState)>>>,
-    super::SlotTravellers,
-    Arc<Mutex<std::collections::HashMap<String, (u64, Tile)>>>,
-);
-
-fn frontend_fixture() -> FrontendFixture {
-    (
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-    )
-}
-
-#[test]
-fn frontend_logout_clears_facts_armed_work_and_tick_latch() {
-    let (gens, states, travellers, latch) = frontend_fixture();
-    let mut c = paint_client();
-    c.ingame = true;
-    c.scene_state = 2;
-    c.local_player = Some(client::client::ClientPlayer::at(5, 6));
-    c.bump_gens(ServerProt::PLAYER_INFO);
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-    latch.lock().unwrap().insert(
-        "alice".into(),
-        (
-            c.gens.player,
-            Tile {
-                x: 3205,
-                z: 3206,
-                level: 0,
-            },
-        ),
-    );
-
-    c.logout();
-    assert!(publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    let states = states.lock().unwrap();
-    assert!(!states["alice"].0.ingame());
-    assert!(states["alice"].0.local_player().is_none());
-    drop(states);
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-    assert!(!latch.lock().unwrap().contains_key("alice"));
-}
-
-#[test]
-fn frontend_response_15_replacement_waits_for_post_grant_player_packet() {
-    let (gens, states, travellers, latch) = frontend_fixture();
-    let mut c = paint_client();
-    c.ingame = true;
-    c.scene_state = 2;
-    c.local_player = Some(client::client::ClientPlayer::at(5, 6));
-    c.bump_gens(ServerProt::PLAYER_INFO);
-    publish_frontend_slot("alice", &c, &gens, &states, &travellers, &latch);
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-
-    response_15_reconnect(&mut c);
-    assert!(publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    assert!(states.lock().unwrap()["alice"].0.local_player().is_none());
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-
-    let mut player = client::io::Packet::new(vec![0xe0, 0x50, 0xc0, 0]);
-    c.psize = 4;
-    c.handle_packet(ServerProt::PLAYER_INFO, &mut player);
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    assert!(states.lock().unwrap()["alice"].0.local_player().is_some());
-}
-
-#[test]
-fn same_name_lifetime_resets_but_scene_change_and_guardian_hold_preserve_work() {
-    let (gens, states, travellers, latch) = frontend_fixture();
-    let mut c = paint_client();
-    c.ingame = true;
-    c.scene_state = 2;
-    c.local_player = Some(client::client::ClientPlayer::at(5, 6));
-    c.bump_gens(ServerProt::PLAYER_INFO);
-    publish_frontend_slot("alice", &c, &gens, &states, &travellers, &latch);
-    travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
-    latch.lock().unwrap().insert(
-        "alice".into(),
-        (
-            c.gens.player,
-            Tile {
-                x: 1,
-                z: 1,
-                level: 0,
-            },
-        ),
-    );
-
-    c.scene_state = 1;
-    c.bump_gens(ServerProt::REBUILD_NORMAL);
-    assert!(!publish_frontend_slot(
-        "alice",
-        &c,
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    assert!(!frontend_core::walk_permissions::manual_walk_may_follow(
-        true, false
-    ));
-    assert!(!frontend_core::walk_permissions::manual_walk_may_follow(
-        false, true
-    ));
-    assert!(travellers.lock().unwrap().contains_key("alice"));
-    assert!(latch.lock().unwrap().contains_key("alice"));
-
-    assert!(reset_frontend_slot_lifetime(
-        "alice",
-        &gens,
-        &states,
-        &travellers,
-        &latch
-    ));
-    assert!(!gens.lock().unwrap().contains_key("alice"));
-    assert!(!states.lock().unwrap().contains_key("alice"));
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
-    assert!(!latch.lock().unwrap().contains_key("alice"));
-
-    let fresh = paint_client();
-    publish_frontend_slot("alice", &fresh, &gens, &states, &travellers, &latch);
-    assert!(!travellers.lock().unwrap().contains_key("alice"));
 }
 
 /// A 64×64 level-0 world at (3200, 3200) with a face wall and a
@@ -1807,15 +1655,12 @@ fn compact_script_route_paints_its_scene_path_and_click_ahead_of_walkto() {
         .route_view(&lease)
         .expect("same-pack compact route view")
         .expect("completed route");
-    let script = map_host::walk_map::RouteProjection {
-        stamp: map_host::walk_map::RouteStamp {
-            source: map_host::walk_map::RouteSource::Script,
-            generation: 9,
-            destination,
-        },
-        route: map_host::walk_map::RouteProjectionPath::Compact(view),
-        aim: Some(destination),
-    };
+    let script = frontend_core::walk_map::RouteProjectionView::compact(
+        view,
+        frontend_core::walk_map::WalkRouteSource::Script,
+        9,
+        Some(destination),
+    );
     let manual_destination = WorldTile { x: 3210, ..from };
     let manual = Route {
         legs: vec![Leg::Walk {
@@ -1918,7 +1763,7 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
         &world,
         Some(SceneRoutePaint::build(
             &world,
-            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
             here,
             true,
             true,
@@ -2524,7 +2369,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         &world,
         Some(SceneRoutePaint::build(
             &world,
-            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
             None,
             true,
             true,
@@ -2560,7 +2405,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         &world,
         Some(SceneRoutePaint::build(
             &world,
-            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
             None,
             true,
             true,
@@ -2599,7 +2444,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         &world,
         Some(SceneRoutePaint::build(
             &world,
-            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
             None,
             true,
             true,
@@ -2689,7 +2534,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
         &world,
         Some(SceneRoutePaint::build(
             &world,
-            Some(map_host::walk_map::RouteProjectionPath::Legacy(&route)),
+            Some(frontend_core::walk_map::WalkRoutePath::Legacy(&route)),
             None,
             true,
             true,
@@ -3359,7 +3204,7 @@ fn walk_permissions_projection_follows_a_peer_write() {
     .unwrap();
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
-    assert!(!session.walk_permissions.globals.allow_teleports);
+    assert!(!session.walk_permissions.globals().allow_teleports());
 
     // Frames with no write in between keep the projection as it was.
     let before = session.walk_permissions;
@@ -3387,7 +3232,7 @@ fn walk_permissions_projection_follows_a_peer_write() {
     );
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
-    assert!(session.walk_permissions.globals.allow_teleports);
+    assert!(session.walk_permissions.globals().allow_teleports());
     assert!(
         session.ui.nav.allow_teleports,
         "the edit buffer follows the durable projection"
@@ -3401,11 +3246,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);
-    s.server_profile = Some(Arc::clone(fixture.template.profile()));
-    s.statuses = play.statuses();
+    s.launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
+    s.statuses.refresh_from_play(&s.core);
     fixture
+}
+
+/// Frontend vocabulary for a nav tile asserted against route state.
+fn world_tile(tile: Tile) -> WorldTile {
+    WorldTile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    }
 }
 
 fn confirm_map_walk(s: &mut Session, world: &NavWorld, origin: Tile, dest: Tile) -> bool {
@@ -3442,7 +3297,7 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     let _fixture = bind_picker_session(&mut s, &world, origin);
     let name = "panel-walk-receipt";
     push_session_slot(&mut s, name, origin, None, true, true);
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     s.core.play_mut().unwrap().focus(name);
     s.set_focus_for_test(name);
     s.select_picker_tile(&world, destination);
@@ -3472,7 +3327,7 @@ fn picker_without_observed_origin_refuses_and_consumes_selection() {
     assert_eq!(s.walk_dest, None);
     assert!(!s.confirm_picker_walk(&world));
     assert_eq!(s.walk_dest, None);
-    assert!(s.travellers.lock().unwrap().is_empty());
+    assert!(!s.core.walk_route_armed("alice"));
     assert!(s.map_model.pending().is_none());
     assert!(!s.confirm_picker_walk(&world));
 }
@@ -3495,7 +3350,7 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     let generation = s.route_gen();
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert_eq!(s.walk_dest, None);
-    assert!(s.travellers.lock().unwrap().is_empty());
+    assert!(!s.core.walk_route_armed("alice"));
     assert!(s.confirm_picker_walk(&world));
     assert_eq!(s.walk_dest, Some(dest));
     assert!(s.error.is_none());
@@ -3503,11 +3358,8 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     let armed_generation = s.route_gen();
     assert_ne!(armed_generation, generation);
     assert_eq!(
-        s.travellers.lock().unwrap()["alice"]
-            .lock()
-            .unwrap()
-            .queued_tile(),
-        Some(dest)
+        s.core.manual_walk_route("alice").unwrap().dest,
+        world_tile(dest)
     );
     assert!(!s.confirm_picker_walk(&world));
     assert_eq!(s.route_gen(), armed_generation);
@@ -3570,7 +3422,7 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
         true,
         true,
     );
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     s.core.fleet_mut().add("alice");
     s.core.fleet_mut().add("bob");
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
@@ -3579,9 +3431,11 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
     assert!(s.map_model.pending().is_some());
     assert!(s.confirm_picker_walk(&world));
     assert!(s.error.is_none());
-    let arms = s.travellers.lock().unwrap();
-    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
-    assert!(!arms.contains_key("alice"));
+    assert_eq!(
+        s.core.manual_walk_route("bob").unwrap().dest,
+        world_tile(dest)
+    );
+    assert!(!s.core.walk_route_armed("alice"));
 }
 
 /// A session whose vault holds `names` (uids 1..), so the shared marked
@@ -3603,7 +3457,7 @@ fn session_with_vault(file: &str, names: &[&str]) -> Session {
 
 #[test]
 fn picker_group_walk_several_slots_reports_like_start_all() {
-    use host_play::walk_map::{WalkExclude, WalkSlotStatus};
+    use frontend_core::walk_map::WalkExclude;
     let mut s = session_with_vault(
         "group-walk-several.vault",
         &["alice", "bob", "logged-out", "nopos"],
@@ -3645,7 +3499,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         true,
         true,
     );
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     for name in ["alice", "bob", "logged-out", "nopos"] {
         s.core.fleet_mut().add(name);
     }
@@ -3661,10 +3515,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
             (
                 row.name(),
                 row.checked(&s.fleet_selection),
-                match row.status {
-                    WalkSlotStatus::Eligible(_) => None,
-                    WalkSlotStatus::Excluded(reason) => Some(reason),
-                },
+                row.status.exclusion(),
             )
         })
         .collect();
@@ -3681,10 +3532,16 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
     assert!(s.confirm_picker_group_walk(&world));
     assert!(s.map_model.pending().is_none());
     assert_eq!(s.walk_dest, Some(dest));
-    let arms = s.travellers.lock().unwrap();
-    assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
-    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
-    assert!(!arms.contains_key("logged-out"));
+    assert_eq!(
+        s.core.manual_walk_route("alice").unwrap().dest,
+        world_tile(dest)
+    );
+    assert_eq!(
+        s.core.manual_walk_route("bob").unwrap().dest,
+        world_tile(dest)
+    );
+    assert!(!s.core.walk_route_armed("logged-out"));
+    assert!(!s.core.walk_route_armed("nopos"));
 }
 
 /// The picker's group Walk goes through the shared command: a marked bot
@@ -3733,7 +3590,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
         true,
         true,
     );
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     for name in ["alice", "bob", "logged-out", "nopos"] {
         s.core.fleet_mut().add(name);
         let identity = s.fleet_identity(name);
@@ -3743,11 +3600,16 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     s.refresh_walk_send();
     s.set_walk_send_mode(super::WalkSendMode::Group);
     assert!(s.confirm_picker_group_walk(&world));
-    let arms = s.travellers.lock().unwrap();
-    assert_eq!(arms["alice"].lock().unwrap().queued_tile(), Some(dest));
-    assert_eq!(arms["bob"].lock().unwrap().queued_tile(), Some(dest));
-    assert!(!arms.contains_key("logged-out"));
-    assert!(!arms.contains_key("nopos"));
+    assert_eq!(
+        s.core.manual_walk_route("alice").unwrap().dest,
+        world_tile(dest)
+    );
+    assert_eq!(
+        s.core.manual_walk_route("bob").unwrap().dest,
+        world_tile(dest)
+    );
+    assert!(!s.core.walk_route_armed("logged-out"));
+    assert!(!s.core.walk_route_armed("nopos"));
 }
 
 /// The Fleet window's Walk opens the picker in group mode checked from the
@@ -3774,7 +3636,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         true,
         true,
     );
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     for name in ["alice", "bob"] {
         s.core.fleet_mut().add(name);
     }
@@ -3823,7 +3685,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         true,
         true,
     );
-    s.statuses = s.core.play().unwrap().statuses();
+    s.statuses.refresh_from_play(&s.core);
     for name in ["alice", "bob"] {
         s.core.fleet_mut().add(name);
     }
@@ -3938,7 +3800,6 @@ fn restored_50_fps_costs_nothing_for_slots_that_do_not_draw() {
 
 #[test]
 fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
-    use host_play::walk_map::ActionError;
     let world = open_world(3, 3);
     let fixture = MapFixture::new(&world, "public-289");
     let play = fixture.play(Tile {
@@ -3947,10 +3808,11 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
         level: 0,
     });
     let mut s = Session::new();
-    s.server_profile = Some(Arc::clone(fixture.template.profile()));
-    s.statuses = play.statuses();
+    s.launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
+    s.statuses.refresh_from_play(&s.core);
     s.select_picker_tile(
         &world,
         Tile {
@@ -3960,15 +3822,17 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
         },
     );
     assert!(!s.confirm_picker_teleport(&world));
-    assert_eq!(s.error, Some(ActionError::Unauthorized.to_string()));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Debug Teleport requires a local loopback engine target")
+    );
     assert!(s.map_model.pending().is_none());
     assert!(!s.confirm_picker_teleport(&world));
-    assert_eq!(s.error, Some(ActionError::NoSelection.to_string()));
+    assert_eq!(s.error.as_deref(), Some("Select a map destination first"));
 }
 
 #[test]
 fn picker_teleport_without_spawned_queue_is_no_focus() {
-    use host_play::walk_map::ActionError;
     let mut s = Session::new();
     let world = open_world(3, 3);
     let origin = Tile {
@@ -3983,13 +3847,17 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     };
     let fixture = MapFixture::new(&world, "local-289");
     let play = fixture.play(origin);
-    s.server_profile = Some(Arc::clone(fixture.template.profile()));
-    s.statuses = play.statuses();
+    s.launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
+    s.statuses.refresh_from_play(&s.core);
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert!(!s.confirm_picker_teleport(&world));
-    assert_eq!(s.error, Some(ActionError::NoFocus.to_string()));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Walk/Teleport unavailable: no focused running slot")
+    );
     assert!(s.map_model.pending().is_none());
 }
 
@@ -4022,12 +3890,16 @@ fn picker_teleport_follows_profile_class() {
     let mut local = Session::new();
     let local_fixture = MapFixture::new(&world, "local-289");
     let play = local_fixture.play(origin);
-    local.server_profile = Some(Arc::clone(local_fixture.template.profile()));
-    local.statuses = play.statuses();
+    local
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(
+            &local_fixture.template,
+        )));
     local.set_focus_for_test("alice");
     local.core.set_play(Some(play));
+    local.statuses.refresh_from_play(&local.core);
     local.select_picker_tile(&world, blocked);
-    assert_eq!(local.profile_class(), host_play::ProfileClass::Local);
+    assert_eq!(local.profile_class(), ProfileClass::Local);
     assert!(local.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&local);
     assert_eq!(labels, &["recentre", "Walk", "Send", "Teleport"][..]);
@@ -4036,10 +3908,13 @@ fn picker_teleport_follows_profile_class() {
 
     let mut prod = Session::new();
     let prod_fixture = MapFixture::new(&world, "public-289");
-    prod.server_profile = Some(Arc::clone(prod_fixture.template.profile()));
+    prod.launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(
+            &prod_fixture.template,
+        )));
     prod.set_map_host("127.0.0.1");
     prod.select_picker_tile(&world, blocked);
-    assert_eq!(prod.profile_class(), host_play::ProfileClass::Remote);
+    assert_eq!(prod.profile_class(), ProfileClass::Remote);
     assert!(!prod.debug_ui());
     assert!(!prod.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&prod);
@@ -4049,10 +3924,14 @@ fn picker_teleport_follows_profile_class() {
 
     let mut remote = Session::new();
     let remote_fixture = MapFixture::new(&world, "local-289");
-    remote.server_profile = Some(Arc::clone(remote_fixture.template.profile()));
+    remote
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(
+            &remote_fixture.template,
+        )));
     remote.set_map_host("192.168.1.2");
     remote.select_picker_tile(&world, blocked);
-    assert_eq!(remote.profile_class(), host_play::ProfileClass::Local);
+    assert_eq!(remote.profile_class(), ProfileClass::Local);
     assert!(!remote.map_teleport_authorized());
     let (labels, actions, status) = walkto_panel_state(&remote);
     assert_eq!(labels, &["recentre", "Walk", "Send"][..]);
@@ -4062,7 +3941,7 @@ fn picker_teleport_follows_profile_class() {
 
 #[test]
 fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
-    use host_play::walk_map::{ActionError, ActionKind};
+    use frontend_core::walk_map::{WalkActionErrorKind, WalkActionKind};
     let mut s = Session::new();
     let world = open_world(3, 3);
     let origin = Tile {
@@ -4078,15 +3957,18 @@ fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
     let _fixture = bind_picker_session(&mut s, &world, origin);
     assert_eq!(s.select_picker_tile(&world, blocked), None);
     let pending = s.map_model.pending().expect("miss still selects requested");
-    assert_eq!(pending.requested, blocked);
-    assert_eq!(pending.target, None);
+    assert_eq!(pending.requested(), blocked);
+    assert_eq!(pending.walk_target(), None);
     assert_eq!(
-        s.picker_action_available(&world, ActionKind::Walk),
-        Err(ActionError::Blocked)
+        s.picker_action_available(&world, WalkActionKind::Walk)
+            .unwrap_err()
+            .kind(),
+        WalkActionErrorKind::Blocked
     );
     assert_eq!(
-        s.picker_action_available(&world, ActionKind::Teleport),
-        Ok(blocked)
+        s.picker_action_available(&world, WalkActionKind::Teleport)
+            .expect("blocked tile stays teleportable"),
+        blocked
     );
     assert!(
         s.map_model.pending().is_some(),
@@ -4094,8 +3976,8 @@ fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
     );
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(
-        s.error,
-        Some(ActionError::NoFocus.to_string()),
+        s.error.as_deref(),
+        Some("Walk/Teleport unavailable: no focused running slot"),
         "blocked Teleport must not fail as Blocked"
     );
     assert!(s.map_model.pending().is_none());
@@ -4138,9 +4020,10 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     // Alice's walker already latched the mine session (entered via
     // Aubury): a WalkTo out of the mine must route through the exit
     // portal's return hop — the arm feeds the traveller's latch.
-    s.travellers.lock().unwrap().insert(
+    let arms = host_play::WalkArms::default();
+    arms.lock().unwrap().insert(
         "alice".into(),
-        Arc::new(Mutex::new(WalkArm {
+        Arc::new(Mutex::new(host_play::WalkArm {
             traveller: {
                 let mut t = Traveller::new();
                 t.set_essence(nav::essence::essence_session_for_wizard(553));
@@ -4151,6 +4034,7 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
             ..Default::default()
         })),
     );
+    s.core.set_walk_arms(arms);
     let world = picker_mine_world();
     let anchor = Tile {
         x: 3253,
@@ -4167,18 +4051,17 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
         },
         anchor
     ));
-    let queued = s
-        .travellers
-        .lock()
-        .unwrap()
-        .get("alice")
-        .expect("focused walk arm exists")
-        .lock()
-        .unwrap()
-        .queued_tile();
+    let route = s
+        .core
+        .manual_walk_route("alice")
+        .expect("focused walk arm exists");
     assert_eq!(
-        queued,
-        Some(anchor),
+        route.dest,
+        api::snapshot::WorldTile {
+            x: anchor.x,
+            z: anchor.z,
+            level: anchor.level,
+        },
         "the exit route reaches Aubury's anchor"
     );
 }
@@ -4204,12 +4087,7 @@ fn picker_confirm_without_a_latch_keeps_the_mine_sealed() {
             level: 0,
         }
     ));
-    assert!(s
-        .travellers
-        .lock()
-        .unwrap()
-        .values()
-        .all(|arm| arm.lock().unwrap().route.is_none()));
+    assert!(!s.core.walk_route_armed("alice"));
 }
 
 #[test]
@@ -4255,11 +4133,7 @@ fn picker_confirm_no_path_keeps_destination_without_arming() {
     ));
     assert_eq!(s.walk_dest, Some(dest));
     assert!(
-        s.travellers
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_none_or(|a| a.lock().unwrap().route.is_none()),
+        !s.core.walk_route_armed("alice"),
         "no route must be armed when find fails"
     );
 }
@@ -4325,12 +4199,12 @@ fn toll_world() -> NavWorld {
     )
 }
 
-/// A `WorldState` with 10 coins, derived through the slot-thread
-/// publish path: a client with a TYPE_INV iface, rebuilt into a
+/// A published snapshot and its `WorldState` with 10 coins, derived through
+/// the slot-thread publish path: a client with a TYPE_INV iface, rebuilt into a
 /// snapshot, mapped via [`WorldState::from_snapshot`]. The cache dir
 /// is a unique scratch dir so a stray real cache (e.g. jags under
 /// `/tmp`) cannot seed other ifaces.
-fn coins_snapshot_state() -> WorldState {
+fn coins_snapshot() -> (GameSnapshot, WorldState) {
     let cache_dir = TestDir::new("toll-cache");
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
@@ -4352,9 +4226,10 @@ fn coins_snapshot_state() -> WorldState {
         },
     );
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
-    let mut snap = GameSnapshot::new();
-    snap.rebuild(&c);
-    WorldState::from_snapshot(&snap)
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    let state = WorldState::from_snapshot(&snapshot);
+    (snapshot, state)
 }
 
 /// The focused slot's published snapshot facts gate the WalkTo route:
@@ -4367,10 +4242,8 @@ fn picker_confirm_uses_focused_slot_state_across_a_toll() {
     s.set_focus_for_test("alice");
     // The slot thread published 10 coins (derived from a live
     // snapshot); the picker routes with those facts.
-    s.nav_states.lock().unwrap().insert(
-        "alice".into(),
-        (GameSnapshot::new(), coins_snapshot_state()),
-    );
+    let (snapshot, world_state) = coins_snapshot();
+    s.core.publish_test_snapshot("alice", snapshot, world_state);
     assert!(confirm_map_walk(
         &mut s,
         &world,
@@ -4386,43 +4259,33 @@ fn picker_confirm_uses_focused_slot_state_across_a_toll() {
         }
     ));
     let route = s
-        .travellers
-        .lock()
-        .unwrap()
-        .get("alice")
-        .expect("focused walk arm exists")
-        .lock()
-        .unwrap()
-        .route
-        .clone();
+        .core
+        .manual_walk_route("alice")
+        .expect("focused walk arm exists");
     assert!(
-        route
-            .expect("the toll route armed")
-            .legs
-            .iter()
-            .any(|l| matches!(
-                l,
-                Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
-            )),
+        route.legs.iter().any(|l| matches!(
+            l,
+            Leg::Transport { edge } if edge.consumed_req == vec![(995, 10)]
+        )),
         "the route must cross the toll"
     );
 }
 
-/// Walk follow reads the slot's stored nav snapshot, not a from-scratch
-/// `GameSnapshot::new()` on each hop tick.
+/// A published slot snapshot is visible through the borrowed view used by
+/// WalkTo follow.
 #[test]
-fn walk_follow_uses_stored_nav_snapshot() {
-    use std::collections::HashMap;
-    let mut states = HashMap::new();
-    let snap = GameSnapshot::new();
-    states.insert("alice".into(), (snap, WorldState::empty()));
-    let stored = states.get("alice").unwrap().0.locs().as_ptr();
-    let got = nav_snapshot_for_follow(&states, "alice").expect("published snapshot");
-    assert!(
-        std::ptr::eq(got.locs().as_ptr(), stored),
-        "follow must borrow the stored snapshot"
-    );
-    assert!(nav_snapshot_for_follow(&states, "bob").is_none());
+fn walk_follow_reads_the_published_slot_snapshot() {
+    let mut s = Session::new();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_tick(7);
+    s.core
+        .publish_test_snapshot("alice", snapshot, WorldState::empty());
+    let tick = s
+        .core
+        .with_slot_world_state("alice", |snapshot, _| snapshot.tick())
+        .expect("published snapshot and world state");
+    assert_eq!(tick, 7);
+    assert!(s.core.with_slot_snapshot("bob", |_| ()).is_none());
 }
 
 /// Missing inventory facts leave the toll unusable even with an observed origin.
@@ -4446,11 +4309,7 @@ fn picker_confirm_falls_back_to_empty_when_slot_has_no_state() {
         }
     ));
     assert!(
-        s.travellers
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_none_or(|a| a.lock().unwrap().route.is_none()),
+        !s.core.walk_route_armed("alice"),
         "no route armed when the toll is unpayable"
     );
 }
@@ -4544,15 +4403,8 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     )
     .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
-    let arm = session.travellers.lock().unwrap();
-    let route = arm
-        .get(&session.focused_name().unwrap())
-        .unwrap()
-        .lock()
-        .unwrap()
-        .route
-        .clone();
-    assert!(route.unwrap().legs.iter().any(|l| matches!(
+    let route = session.core.manual_walk_route("alice").expect("walk route");
+    assert!(route.legs.iter().any(|l| matches!(
         l,
         Leg::Transport { edge } if edge.kind == TransportKind::Teleport
     )));
@@ -4683,15 +4535,8 @@ fn picker_confirm_uses_find_with_options() {
     )
     .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
-    let arm = session.travellers.lock().unwrap();
-    let route = arm
-        .get(&session.focused_name().unwrap())
-        .unwrap()
-        .lock()
-        .unwrap()
-        .route
-        .clone();
-    assert!(route.unwrap().legs.iter().any(|l| matches!(
+    let route = session.core.manual_walk_route("alice").expect("walk route");
+    assert!(route.legs.iter().any(|l| matches!(
         l,
         Leg::Transport { edge } if edge.kind == TransportKind::Teleport
     )));
@@ -4704,6 +4549,12 @@ fn picker_confirm_uses_find_with_options() {
 #[test]
 fn a_picker_walk_shows_the_member_running_until_it_ends() {
     let mut s = Session::new();
+    let arms = host_play::WalkArms::default();
+    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
+    arms.lock()
+        .unwrap()
+        .insert("alice".into(), Arc::clone(&arm));
+    s.core.set_walk_arms(arms);
     let world = open_world(3, 3);
     let origin = Tile {
         x: 0,
@@ -4733,7 +4584,6 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     );
 
     // The slot hook ends the route while it holds the arm.
-    let arm = Arc::clone(s.travellers.lock().unwrap().get("alice").unwrap());
     {
         let mut held = arm.lock().unwrap();
         held.route = None;
@@ -4743,7 +4593,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
             "an arm in use keeps its last answer; the pump does not wait"
         );
     }
-    s.walk_clear.store(true, Ordering::Relaxed);
+    s.core.finish_walk_for_test("alice");
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
     assert!(!arrived.walking());
@@ -4775,7 +4625,8 @@ fn focused_tile_is_none_without_status() {
 fn disconnected_focused_slot_has_no_tile() {
     let mut session = Session::new();
     session.set_focus_for_test("alice");
-    session.statuses.push(SlotStatus {
+    let play = empty_play();
+    play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         connected: false,
         ingame: false,
@@ -4784,6 +4635,8 @@ fn disconnected_focused_slot_has_no_tile() {
         tile_level: -1,
         ..SlotStatus::default()
     });
+    session.core.set_play(Some(play));
+    session.statuses.refresh_from_play(&session.core);
     assert_eq!(session.focused_tile(), None);
 }
 
@@ -7366,13 +7219,16 @@ fn focused_connection_is_distinct_from_game_readiness() {
     s.set_focus_for_test("alice");
     assert!(!s.focused_connected());
     assert!(!s.focused_ingame());
-    s.statuses.push(SlotStatus {
+    let play = empty_play();
+    play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         connected: true,
         ingame: false,
         startup_phase: StartupPhase::LoadingScene,
         ..SlotStatus::default()
     });
+    s.core.set_play(Some(play));
+    s.statuses.refresh_from_play(&s.core);
     assert!(s.focused_connected());
     assert!(!s.focused_ingame());
 }
@@ -7384,17 +7240,21 @@ fn focused_connection_is_distinct_from_game_readiness() {
 fn focused_guard_park_is_only_the_repeat_guard_latch() {
     let mut s = Session::new();
     s.set_focus_for_test("alice");
-    s.statuses.push(SlotStatus {
+    let play = empty_play();
+    play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         login_latch_reason: Some(host_play::LoginLatchReason::OperatorLogout),
         ..SlotStatus::default()
     });
+    s.core.set_play(Some(play));
+    s.statuses.refresh_from_play(&s.core);
     assert!(!s.focused_guard_parked());
-    s.statuses[0].login_latch_reason =
+    s.core.play().unwrap().statuses.lock().unwrap()[0].login_latch_reason =
         Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
             count: 3,
             window_seconds: 600,
         });
+    s.statuses.refresh_from_play(&s.core);
     assert!(s.focused_guard_parked());
     s.set_focus_for_test("bob");
     assert!(
@@ -7994,7 +7854,7 @@ fn live_load_all_keeps_focus_on_engine_a() {
 
     let mut s = Session::new();
     s.persist_ui = false;
-    s.configure_profile(host_play::ProfileOptions {
+    s.configure_profile(ProfileArgs::from_host(host_play::ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
@@ -8007,7 +7867,7 @@ fn live_load_all_keeps_focus_on_engine_a() {
         cache_dir: Some(cache),
         unpack_dir: Some(unpack),
         ..host_play::ProfileOptions::default()
-    })
+    }))
     .expect("configure Engine A");
     s.bind_profile().expect("bind Engine A");
     assert!(s.unlock_at(&vault_path, &pass), "{:?}", s.error);
@@ -8954,12 +8814,7 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 #[test]
 fn skip_lock_session_does_not_create_instance_lock() {
     let iso = script::IsolatedEnv::enter("session-skip-lock");
-    let permit =
-        match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, true).unwrap() {
-            host_play::InstancePermitOutcome::Ready(p) => p,
-            host_play::InstancePermitOutcome::NeedsConfirm(_) => panic!("skip must be ready"),
-        };
-    let _s = Session::with_instance(permit);
+    let _s = Session::with_instance(InstancePermit::skip());
     assert!(!host_play::instance_lock_path().exists());
     let _iso = iso;
 }
@@ -8967,11 +8822,11 @@ fn skip_lock_session_does_not_create_instance_lock() {
 #[test]
 fn locked_session_releases_the_instance_lock_on_drop() {
     let iso = script::IsolatedEnv::enter("session-hold-lock");
-    let permit =
-        match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, false).unwrap() {
-            host_play::InstancePermitOutcome::Ready(p) => p,
-            host_play::InstancePermitOutcome::NeedsConfirm(h) => panic!("expected acquire {h:?}"),
-        };
+    let permit = match frontend_core::launch::acquire_instance(InstanceKind::Panel, false) {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => panic!("expected acquire"),
+        Err(error) => panic!("expected acquire: {error}"),
+    };
     let session = Session::with_instance(permit);
     drop(session);
     match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {

@@ -229,8 +229,8 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     let passphrase = host_play::live_vault_passphrase();
     let vault_path = temp_live_vault(&credentials, &passphrase);
 
-    let mut session = TuiSession::new_bound(template, host_play::InstancePermit::SkipLock);
-    session.options.mainland = true;
+    let mut session = TuiSession::new_bound(template);
+    session.mainland = true;
     session.persist_ui = false;
     session.unlock_at(&vault_path, &passphrase)?;
     session.set_pause_script_on_manual_walk_abort(pause_owner);

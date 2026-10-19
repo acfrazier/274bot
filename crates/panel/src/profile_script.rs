@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use frontend_core::scripts::{CardSource, ReloadOutcome, SchemaRef, ScriptChoice};
 use serde_json::{Map, Value};
+#[cfg(test)]
 use vault::ScriptAssignment;
 
 use crate::session::Session;
@@ -61,6 +62,7 @@ impl Session {
         self.scripts.set_pending_browse(profile, sel);
     }
 
+    #[cfg(test)]
     pub fn persist_successful_assignment(&mut self, profile: &str, assignment: ScriptAssignment) {
         self.scripts
             .persist_assignment(&mut self.core, profile, assignment);

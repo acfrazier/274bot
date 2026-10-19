@@ -313,7 +313,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
     let manager = MapDemandManager::with_shipped_map(root.clone(), producer.clone(), shipped);
     let mut gate = MapBakeGate::new(prefs.map_bake);
     let handle = gate
-        .open(&manager, fixture_descriptor(), MapDemand::Images)
+        .open_for_test(&manager, fixture_descriptor(), MapDemand::Images)
         .unwrap();
     assert_eq!(gate.prompt(), MapBakePrompt::None, "no bake question");
     let started = Instant::now();

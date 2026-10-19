@@ -2,17 +2,16 @@
 //! `host-play` / `panel-play` (`--vault`, `--vault-pass-stdin`,
 //! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).
 //!
-//! The operator lifecycle (vault, `host_play::Play`, fleet membership,
+//! The operator lifecycle (vault, the play session, fleet membership,
 //! selection, Load/Log in/Log out/Remove, script Start/Stop settlement and
 //! status polling) lives in the shared [`frontend_core::OperatorSession`];
-//! the binary adds a per-frame hook that publishes each slot's snapshot and
-//! steps the focused slot's walk arm, and the UI loop polls the core,
-//! refreshes [`TuiApp`], routes keys/clicks, and dispatches the returned
-//! [`AppAction`] —
-//! map Walk-confirm consumes a revision-bound `MapCommand` through
-//! `host_play::Play::map_walk`, chat Continue/Answer and WASD walks go
-//! through `host_play::WireCmd`, and the settings popup writes
-//! `ProfileSettings` on the focused profile.
+//! the core publishes each slot's snapshot and steps its walk arm, the
+//! binary's per-frame hook adds mainland seeding and the `--live` runner,
+//! and the UI loop polls the core, refreshes [`TuiApp`], routes
+//! keys/clicks, and dispatches the returned [`AppAction`] — map
+//! Walk-confirm consumes a revision-bound map command, chat
+//! Continue/Answer and WASD walks go through the core's slot accessors,
+//! and the settings popup writes `ProfileSettings` on the focused profile.
 //!
 //! **Raster Off:** every profile is spawned with `RasterMode::Off` and the
 //! TUI never attaches a `Renderer` (no `panel` / imgui / wgpu anywhere).
@@ -20,7 +19,7 @@
 //! (like the panel) and PASS/FAIL comes from the scenario runner, not a
 //! screenshot.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,25 +33,12 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-#[cfg(test)]
-use host_play::arm_walk_on;
 use host_play::catalog_core::CoreWatch;
 use host_play::live_gate::{self, CoreGate, LiveCore, LiveTiming, PassHold};
 use host_play::live_start::{self, PendingCatalogStart, StartArming};
 use host_play::paired_core::PairWatch;
-use host_play::walk_map::{
-    observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude, WalkSlotStatus,
-};
-use host_play::{
-    live_vault_passphrase, load_navpois, map_ready_catalogue, mint_live_entries, mint_live_names,
-    open_vault, parse_profile_args, peek_map_catalogue, player_here_tile, profile_password,
-    run_with_io, run_with_template, MapDemandHandle, MapJobStatus, MapStage, PlayOptions,
-    ProfileOptions, ReadyCatalogue, ServerProfile, SharedClientTemplate, SlotFrameInput, WalkArm,
-    WireCmd,
-};
-use nav::map::identity::Digest;
+use host_play::{live_vault_passphrase, mint_live_entries, mint_live_names, profile_password};
 use nav::tile::Tile;
-use nav::WorldState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use vault::{Profile, Vault};
@@ -61,13 +47,19 @@ use frontend_core::resources::background_ack_text;
 use frontend_core::scripts::{
     CardSource, CompiledCardId, Loadouts, OwnedSchema, PaintFrame, ScriptChoice,
 };
+use frontend_core::walk_map::{
+    peek_walk_catalogue, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState, WalkMapStage,
+    WalkReadyCatalogue,
+};
+#[cfg(test)]
+use frontend_core::HeadlessSurface;
 use frontend_core::UiPreferences;
 use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, GuardianEdit, HeadlessSurface, MapBakeGate,
-    OperatorCommand, OperatorSession, SubmitError, Targets,
+    load_map_bake_choice, persist_map_bake_choice, GuardianEdit, MapBakeGate, OperatorCommand,
+    OperatorSession, SubmitError, Targets,
 };
-use host_play::local_state::{LocalStateService, StateRoot};
-use host_play::map_cache::MapDemand;
+#[cfg(test)]
+use host_play::{run_with_io, PlayOptions, SharedClientTemplate};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
@@ -88,7 +80,7 @@ pub enum RunMode {
 }
 
 /// Parsed `tui-play` flags.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Args {
     /// `--vault-pass-stdin`: read the vault passphrase from a piped stdin. It
     /// is never an argument or an environment variable; on a terminal it is
@@ -97,7 +89,7 @@ pub struct Args {
     pub users: Vec<String>,
     pub live: Option<String>,
     pub world: Option<u16>,
-    pub profile: ProfileOptions,
+    pub profile: frontend_core::launch::ProfileArgs,
     /// `--catalog-core`: qualify the `--live` run under the shared catalog
     /// core witness (the panel `catalog_watch` mode).
     pub catalog_core: bool,
@@ -178,7 +170,8 @@ pub fn parse_args() -> Args {
 
 /// Testable CLI parse.
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
-    let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
+    let (profile, rest) =
+        frontend_core::launch::parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
     let mut parsed = Args {
         pass_stdin: false,
@@ -193,8 +186,10 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     let mut core_flags: Option<(bool, bool)> = None;
     let mut it = rest.into_iter();
     while let Some(arg) = it.next() {
-        if host_play::passphrase::is_removed_flag(arg.as_ref()) {
-            return Err(host_play::passphrase::removed_flag_error("tui-play"));
+        if frontend_core::launch::is_removed_passphrase_flag(arg.as_ref()) {
+            return Err(frontend_core::launch::removed_passphrase_flag_error(
+                "tui-play",
+            ));
         }
         match arg.as_ref() {
             "--vault-pass-stdin" => parsed.pass_stdin = true,
@@ -225,9 +220,9 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         );
     }
     if parsed.map_bundle.is_some()
-        && (parsed.profile.revision.is_none()
-            || parsed.profile.cache_dir.is_none()
-            || parsed.profile.unpack_dir.is_none()
+        && (!parsed.profile.has_revision()
+            || !parsed.profile.has_cache_dir()
+            || !parsed.profile.has_unpack_dir()
             || parsed.live.is_some())
     {
         return Err(
@@ -277,58 +272,6 @@ fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
     path
 }
 
-/// The walk-arm step latch key: `(player gen, here)` per username, so a
-/// hop is sent once per server tick, not every 20 ms frame.
-type NavStepLatch = HashMap<String, (u64, (i32, i32, i32))>;
-
-type SlotTravellers = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
-
-fn reset_frontend_slot_session(
-    name: &str,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    tick_latch.lock().unwrap().remove(name);
-    let removed = travellers.lock().unwrap().remove(name);
-    let Some(arm) = removed else {
-        return false;
-    };
-    host_play::cancel_walk_arm(Some(name), &mut arm.lock().unwrap(), None, "SessionEnded");
-    true
-}
-
-fn reset_frontend_slot_lifetime(
-    name: &str,
-    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    gens.lock().unwrap().remove(name);
-    snapshots.lock().unwrap().remove(name);
-    reset_frontend_slot_session(name, travellers, tick_latch)
-}
-
-fn publish_frontend_slot(
-    name: &str,
-    client: &client::client::Client,
-    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    let mut gens_guard = gens.lock().unwrap();
-    let last = gens_guard.entry(name.to_string()).or_default();
-    let mut snapshot_guard = snapshots.lock().unwrap();
-    let snapshot = snapshot_guard.entry(name.to_string()).or_default();
-    let publication = host_play::Host::publish_frontend_snapshot(last, snapshot, client);
-    drop(snapshot_guard);
-    if publication.session_boundary {
-        reset_frontend_slot_session(name, travellers, tick_latch);
-    }
-    publication.session_boundary
-}
-
 /// Claim the one mainland seed for a slot's cold login. Reconnects retain
 /// scenario-owned position, while an ordinary interactive boot stays opt-in.
 fn take_mainland_seed(
@@ -338,13 +281,6 @@ fn take_mainland_seed(
     last_login_reconnect: Option<bool>,
 ) -> bool {
     enabled && last_login_reconnect != Some(true) && sent.lock().unwrap().insert(name.to_string())
-}
-
-fn mainland_seed_options(options: &PlayOptions) -> (bool, PlayOptions) {
-    let enabled = options.mainland;
-    let mut host_options = options.clone();
-    host_options.mainland = false;
-    (enabled, host_options)
 }
 
 fn seed_mainland_on_ready<D: api::interact::Driver>(
@@ -361,6 +297,210 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
     } else {
         false
     }
+}
+
+/// The TUI's per-frame client work on every slot. The core already
+/// published the frame's snapshot, cancelled a walk on manual input and
+/// follows the armed walk afterwards; this adds mainland seeding and the
+/// shared `--live script_*` runner.
+struct TuiFrameHook {
+    /// Hop a fresh slot to the mainland once in a loaded scene. TUI-owned so
+    /// host-play cannot re-arm it when a scenario logout starts a new run.
+    mainland: bool,
+    mainland_sent: Mutex<HashSet<String>>,
+    scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
+    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
+    start_arming: Arc<Mutex<StartArming>>,
+    live_timing: Arc<Mutex<Option<LiveTiming>>>,
+}
+
+impl frontend_core::frames::FrameHook for TuiFrameHook {
+    fn frame(
+        &self,
+        client: &mut dyn std::any::Any,
+        name: &str,
+        frame: &frontend_core::frames::FrameContext<'_>,
+    ) {
+        let c = client
+            .downcast_mut::<Client>()
+            .expect("tui slots run the client this TUI links");
+        let Self {
+            mainland,
+            mainland_sent,
+            scenario,
+            pending_script,
+            start_arming,
+            live_timing,
+        } = self;
+        let hold = frame.hold();
+        // The picked walk destination clears at every session boundary.
+        if frame.session_boundary() {
+            frame.mark_walk_clear();
+        }
+
+        // TUI owns mainland seeding so host-play cannot re-arm it when
+        // an intentional scenario logout starts a new run_client stretch.
+        if seed_mainland_on_ready(
+            c,
+            mainland_sent,
+            name,
+            *mainland,
+            c.ingame && c.scene_state == 2 && c.local_player.is_some(),
+            c.last_login_reconnect,
+        ) {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Info,
+                slot = name,
+                "mainland hop queued"
+            );
+        }
+
+        // The shared `--live script_*` runner: tick the driven
+        // slot and its companions before the local-player gate
+        // (seeding must observe frames with no player decode).
+        // Hold freezes scenario follow like `step_nav_bot`.
+        if let Some(runner) = scenario.lock().unwrap().as_mut() {
+            if runner.drives(name) {
+                if runner.wants_script_paint() {
+                    let paint = start_arming
+                        .lock()
+                        .unwrap()
+                        .handle
+                        .as_ref()
+                        .and_then(|handle| handle.paint(name));
+                    if let Some(paint) = paint {
+                        runner.observe_script_paint(paint.lines.iter().map(String::as_str));
+                    }
+                }
+                let on_start_script = runner.on_start_script();
+                let pump = {
+                    let mut pending = pending_script.lock().unwrap();
+                    let mut timing = live_timing.lock().unwrap();
+                    if timing.as_ref().is_some_and(|timing| {
+                        timing.setup_expired(live_gate::PAIR_FIXTURE_SETUP_DEADLINE, Instant::now())
+                    }) {
+                        runner.fail_start("paired fixture setup deadline expired before Start");
+                        live_start::StartScriptPump::Hold
+                    } else {
+                        let pump = live_start::fire_pending_catalog_start(
+                            &mut pending,
+                            on_start_script,
+                            runner.on_stop_script(),
+                            || start_arming.lock().unwrap().clone(),
+                        );
+                        mark_live_script_start(
+                            &mut timing,
+                            &pending,
+                            on_start_script,
+                            &pump,
+                            Instant::now(),
+                        );
+                        pump
+                    }
+                };
+                match pump {
+                    live_start::StartScriptPump::Hold => {}
+                    live_start::StartScriptPump::CompiledFailed(error) => {
+                        runner.fail_start(&error);
+                    }
+                    live_start::StartScriptPump::Continue
+                    | live_start::StartScriptPump::CompiledRunning => {
+                        if pump == live_start::StartScriptPump::CompiledRunning {
+                            runner.observe_script_running();
+                        }
+                        if runner.on_stop_script() {
+                            runner.observe_script_idle(start_arming.lock().is_ok_and(|arming| {
+                                arming
+                                    .handle
+                                    .as_ref()
+                                    .is_some_and(|handle| handle.idle(name))
+                            }));
+                        }
+                        runner.tick_with_hold(c, hold);
+                        // A relog can enter Start on the final off-world frame.
+                        // Arm it now rather than after the reconnect posts colour.
+                        if runner.on_start_script() {
+                            if let Ok(mut pending) = pending_script.lock() {
+                                let mut timing = live_timing.lock().unwrap();
+                                let pump = if timing.as_ref().is_some_and(|timing| {
+                                    timing.setup_expired(
+                                        live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
+                                        Instant::now(),
+                                    )
+                                }) {
+                                    runner.fail_start(
+                                        "paired fixture setup deadline expired before Start",
+                                    );
+                                    live_start::StartScriptPump::Hold
+                                } else {
+                                    let pump = live_start::fire_pending_catalog_start(
+                                        &mut pending,
+                                        true,
+                                        false,
+                                        || {
+                                            start_arming
+                                                .lock()
+                                                .map(|arming| arming.clone())
+                                                .unwrap_or_default()
+                                        },
+                                    );
+                                    mark_live_script_start(
+                                        &mut timing,
+                                        &pending,
+                                        true,
+                                        &pump,
+                                        Instant::now(),
+                                    );
+                                    pump
+                                };
+                                match pump {
+                                    live_start::StartScriptPump::CompiledRunning => {
+                                        runner.observe_script_running();
+                                    }
+                                    live_start::StartScriptPump::CompiledFailed(error) => {
+                                        runner.fail_start(&error);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(index) = runner.companion_for(name) {
+                runner.companion_tick(index, c);
+            }
+        }
+    }
+}
+
+/// The headless slot surface: every spawn raster-off with no per-slot
+/// devices. A lifetime reset that ended an armed walk flags the picked walk
+/// destination for clearing.
+struct TuiSurface<'a> {
+    walk_cleared: &'a mut bool,
+}
+
+impl frontend_core::SlotSurface for TuiSurface<'_> {
+    type Io = ();
+
+    fn attach(
+        &mut self,
+        _name: &str,
+        profile: &mut frontend_core::SpawnProfile<'_>,
+        _retained: Option<()>,
+    ) -> frontend_core::SlotAttach<()> {
+        profile.set_raster(frontend_core::command::RasterMode::Off);
+        frontend_core::SlotAttach::new((), None, None)
+    }
+
+    fn lifetime_reset(&mut self, _name: &str, walk_was_armed: bool) {
+        if walk_was_armed {
+            *self.walk_cleared = true;
+        }
+    }
+
+    fn released(&mut self, _name: &str) {}
 }
 
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
@@ -416,9 +556,8 @@ struct LiveWitnesses {
     pair: PairWatch,
 }
 
-/// The TUI session: the running play, the vault, the per-slot snapshot
-/// publication, and the per-username walk arms (the same `WalkArm` map
-/// `host_play::arm_walk_on` latches and the panel drives).
+/// The TUI session: the running play, the vault and the per-username walk
+/// arms (the core owns the per-slot snapshot publication).
 pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
     memory: Option<host_play::memory::Run>,
@@ -429,13 +568,14 @@ pub struct TuiSession {
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
-    /// Legacy-only endpoint bag retained for unit-test constructors.
-    options: PlayOptions,
-    /// Checked production assets and immutable server identity.
-    template: Option<Arc<SharedClientTemplate>>,
-    server_profile: Option<Arc<ServerProfile>>,
+    /// Hop a fresh slot to the mainland once in a loaded scene (the TUI's own
+    /// seed; the host never sees it).
+    mainland: bool,
+    /// The server-profile binding: its prepared template, connection
+    /// settings and the launch the next play session uses.
+    launcher: frontend_core::launch::ProfileLauncher,
     /// Catalogue-only demand lease. Dropped on MapClose; never requests PNGs.
-    map_demand: Option<MapDemandHandle>,
+    map_demand: Option<WalkMapDemandHandle>,
     /// Map demand goes through the shared bake consent (catalogue-only here,
     /// so it never asks); the remembered choice is edited in settings.
     map_bake: MapBakeGate,
@@ -443,23 +583,10 @@ pub struct TuiSession {
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
-    /// Per-username snapshots, rebuilt by the per-frame hook.
-    snapshots: Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    /// Host publication cursor per slot. PLAYER_INFO's tick edge is tracked
-    /// separately from the snapshot's family generations.
-    frontend_gens: Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    /// Per-username walk arms; the focused arm's route paints the map and
-    /// the per-frame hook steps it via `Traveller::follow`.
-    travellers: SlotTravellers,
-    /// Last `(player gen, here)` ticked per username, so a walk hop is
-    /// sent once per server tick, not every 20 ms frame.
-    tick_latch: Arc<Mutex<NavStepLatch>>,
-    /// Slot threads set this when a traveller returns Arrived/Budget so
-    /// the UI can clear the picked walk dest.
-    walk_clear: Arc<AtomicBool>,
-    /// The shared nav world (`Play::world`), read by the per-frame walk
-    /// step and the app thread's route arms.
-    nav_world: Arc<Mutex<Option<Arc<nav::world::NavWorld>>>>,
+    /// A slot lifetime reset ended an armed walk: the picked walk
+    /// destination clears on the next pump.
+    walk_reset: bool,
+
     /// The shared `--live script_*` runner (slot threads tick it from the
     /// per-frame hook; the UI loop reads its status/evidence).
     scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
@@ -538,13 +665,26 @@ impl TuiSession {
 }
 
 impl TuiSession {
-    /// Empty session over the default engine options.
+    /// Empty session over the legacy local connection (`options.host`).
     #[cfg(test)]
     fn new(options: PlayOptions) -> Self {
-        Self::with_instance(options, host_play::InstancePermit::SkipLock)
+        let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+        launcher.set_play_host(&options.host);
+        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
     }
 
-    fn with_instance(options: PlayOptions, _instance: host_play::InstancePermit) -> Self {
+    /// A session bound to the prepared host `template`.
+    #[cfg(test)]
+    fn new_bound(template: Arc<host_play::SharedClientTemplate>) -> Self {
+        let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+        launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(template));
+        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+    }
+
+    fn with_launcher(
+        launcher: frontend_core::launch::ProfileLauncher,
+        permit: frontend_core::launch::InstancePermit,
+    ) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
         // A missing store is a first run; a refused or corrupt one is said out
@@ -553,15 +693,12 @@ impl TuiSession {
         if let Some(error) = restore_error {
             eprintln!("tui-play: {error}");
         }
-        let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         // The composition root opens the process local-state service once;
         // every consumer clones these preferences and the loadouts form
         // writes through the same service.
-        let service = LocalStateService::open_process(StateRoot::new(
-            frontend_core::scripts::paths::bot_home().join(".274bot"),
-        ));
-        let mut core = OperatorSession::new(_instance);
-        core.bind_local_state(Arc::clone(&service));
+        let mut core = OperatorSession::open(permit);
+        core.open_process_state();
+        let loadouts = Loadouts::operator_of(&core);
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
@@ -573,8 +710,6 @@ impl TuiSession {
         .unwrap_or(true);
         core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
         core.set_walk_globals_store(preferences.share());
-        // The fleet rows show the map walks this TUI arms.
-        core.set_walk_arms(Arc::clone(&travellers));
         let background_ack = frontend_core::resources::background_bots_acked(&preferences);
         Self {
             #[cfg(feature = "memory-profile")]
@@ -583,19 +718,13 @@ impl TuiSession {
             auto_world: None,
             error: None,
             names: Vec::new(),
-            options,
-            template: None,
-            server_profile: None,
+            mainland: false,
+            launcher,
             map_demand: None,
             map_bake: MapBakeGate::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
             last_focused: None,
-            snapshots: Arc::new(Mutex::new(HashMap::new())),
-            frontend_gens: Arc::new(Mutex::new(HashMap::new())),
-            travellers,
-            tick_latch: Arc::new(Mutex::new(HashMap::new())),
-            walk_clear: Arc::new(AtomicBool::new(false)),
-            nav_world: Arc::new(Mutex::new(None)),
+            walk_reset: false,
             scenario: Arc::new(Mutex::new(None)),
             pending_script: Arc::new(Mutex::new(Vec::new())),
             start_arming: Arc::new(Mutex::new(StartArming::default())),
@@ -617,7 +746,7 @@ impl TuiSession {
             profile_import_preview_pending: false,
             script_category_order: Vec::new(),
             preferences: preferences.share(),
-            loadouts: Loadouts::operator(&service),
+            loadouts,
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,
@@ -630,50 +759,33 @@ impl TuiSession {
         }
     }
 
-    fn new_bound(template: Arc<SharedClientTemplate>, permit: host_play::InstancePermit) -> Self {
-        let profile = Arc::clone(template.profile());
-        let mut session = Self::with_instance(
-            PlayOptions {
-                host: profile.client().game_host().to_string(),
-                transport: profile.transport(),
-                port: profile.client().game_port(),
-                cache_dir: profile.client().cache_dir().display().to_string(),
-                lowmem: true,
-                mainland: false,
-            },
-            permit,
-        );
-        session.template = Some(template);
-        session.server_profile = Some(profile);
-        session
+    /// The server profile this session is bound to, once bound.
+    fn bound(&self) -> Option<&frontend_core::launch::BoundProfile> {
+        self.launcher.bound()
     }
 
     #[cfg(feature = "memory-profile")]
     fn profile_class(&self) -> host_play::ProfileClass {
-        self.server_profile
-            .as_ref()
-            .map_or(host_play::ProfileClass::Remote, |profile| {
-                profile.profile_class()
-            })
+        match self.bound().map(|profile| profile.class()) {
+            Some(frontend_core::launch::ProfileClass::Local) => host_play::ProfileClass::Local,
+            _ => host_play::ProfileClass::Remote,
+        }
     }
 
     fn app_title(&self) -> String {
-        let revision = self
-            .server_profile
-            .as_ref()
-            .map_or(274, |profile| profile.revision().as_i32());
+        let revision = self.bound().map_or(274, |profile| profile.revision());
         format!("{revision}bot")
     }
 
     fn profile_label(&self) -> String {
-        self.server_profile.as_ref().map_or_else(
+        self.bound().map_or_else(
             || "legacy local-274 · revision 274".into(),
             |profile| profile.label(),
         )
     }
 
     fn catalog_root(&self) -> Option<PathBuf> {
-        match self.server_profile.as_ref() {
+        match self.bound() {
             Some(profile) => profile.catalog_root().map(Path::to_path_buf),
             None => frontend_core::scripts::paths::rs2b0t_root(),
         }
@@ -707,278 +819,51 @@ impl TuiSession {
 
     /// Unlock (or first-run create) the vault at `path` and start the play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
-        let vault = open_vault(path, pass).map_err(|e| e.to_string())?;
-        self.start_play(vault)
+        let (launch, hook) = self.play_launch();
+        self.core
+            .unlock_vault(path, pass, launch, hook)
+            .map_err(|e| e.to_string())?;
+        self.play_started();
+        Ok(())
     }
 
-    /// Empty `Play` (shared cache + FIFO + per-frame hook) handed to the
-    /// core; the boot then loads and logs in the focused profile only and
-    /// `m` loads and logs in the rest.
+    /// Start the play over an already-open `vault` (tests).
+    #[cfg(test)]
     fn start_play(&mut self, vault: Vault) -> Result<(), String> {
-        let snapshots = Arc::clone(&self.snapshots);
-        let frontend_gens = Arc::clone(&self.frontend_gens);
-        let travellers = Arc::clone(&self.travellers);
-        let tick_latch = Arc::clone(&self.tick_latch);
-        let walk_clear = Arc::clone(&self.walk_clear);
-        let nav_world = Arc::clone(&self.nav_world);
-        let scenario = Arc::clone(&self.scenario);
-        let pending_script = Arc::clone(&self.pending_script);
-        let start_arming = Arc::clone(&self.start_arming);
-        let live_timing = Arc::clone(&self.live_timing);
-        let options = self.options.clone();
-        let (mainland, host_options) = mainland_seed_options(&options);
-        let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
-        let map_members = self
-            .template
-            .as_ref()
-            .map(|t| t.profile().map_members())
-            .unwrap_or(false);
-        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
-            let hold = frame.hold;
-            if host_play::cancel_walk_arm_on_manual_input(
-                name,
-                &travellers,
-                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
-                    x,
-                    z,
-                    level,
-                }),
-                frame,
-            ) {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
-            // Clear facts and externally armed work at the actual session
-            // boundary before scenario/local-player/Guardian early returns.
-            if publish_frontend_slot(
-                name,
-                c,
-                &frontend_gens,
-                &snapshots,
-                &travellers,
-                &tick_latch,
-            ) {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
+        let (launch, hook) = self.play_launch();
+        self.core.start_play(vault, launch, hook)?;
+        self.play_started();
+        Ok(())
+    }
 
-            // TUI owns mainland seeding so host-play cannot re-arm it when
-            // an intentional scenario logout starts a new run_client stretch.
-            if seed_mainland_on_ready(
-                c,
-                &mainland_sent,
-                name,
-                mainland,
-                c.ingame && c.scene_state == 2 && c.local_player.is_some(),
-                c.last_login_reconnect,
-            ) {
-                api::host_log!(
-                    api::hostlog::Category::Lifecycle,
-                    api::hostlog::Level::Info,
-                    slot = name,
-                    "mainland hop queued"
-                );
-            }
-
-            // The shared `--live script_*` runner: tick the driven
-            // slot and its companions before the local-player gate
-            // (seeding must observe frames with no player decode).
-            // Hold freezes scenario follow like `step_nav_bot`.
-            if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                if runner.drives(name) {
-                    if runner.wants_script_paint() {
-                        let paint = start_arming
-                            .lock()
-                            .unwrap()
-                            .handle
-                            .as_ref()
-                            .and_then(|handle| handle.paint(name));
-                        if let Some(paint) = paint {
-                            runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                        }
-                    }
-                    let on_start_script = runner.on_start_script();
-                    let pump = {
-                        let mut pending = pending_script.lock().unwrap();
-                        let mut timing = live_timing.lock().unwrap();
-                        if timing.as_ref().is_some_and(|timing| {
-                            timing.setup_expired(
-                                live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
-                                Instant::now(),
-                            )
-                        }) {
-                            runner.fail_start("paired fixture setup deadline expired before Start");
-                            live_start::StartScriptPump::Hold
-                        } else {
-                            let pump = live_start::fire_pending_catalog_start(
-                                &mut pending,
-                                on_start_script,
-                                runner.on_stop_script(),
-                                || start_arming.lock().unwrap().clone(),
-                            );
-                            mark_live_script_start(
-                                &mut timing,
-                                &pending,
-                                on_start_script,
-                                &pump,
-                                Instant::now(),
-                            );
-                            pump
-                        }
-                    };
-                    match pump {
-                        live_start::StartScriptPump::Hold => {}
-                        live_start::StartScriptPump::CompiledFailed(error) => {
-                            runner.fail_start(&error);
-                        }
-                        live_start::StartScriptPump::Continue
-                        | live_start::StartScriptPump::CompiledRunning => {
-                            if pump == live_start::StartScriptPump::CompiledRunning {
-                                runner.observe_script_running();
-                            }
-                            if runner.on_stop_script() {
-                                runner.observe_script_idle(start_arming.lock().is_ok_and(
-                                    |arming| {
-                                        arming
-                                            .handle
-                                            .as_ref()
-                                            .is_some_and(|handle| handle.idle(name))
-                                    },
-                                ));
-                            }
-                            runner.tick_with_hold(c, hold);
-                            // A relog can enter Start on the final off-world frame.
-                            // Arm it now rather than after the reconnect posts colour.
-                            if runner.on_start_script() {
-                                if let Ok(mut pending) = pending_script.lock() {
-                                    let mut timing = live_timing.lock().unwrap();
-                                    let pump = if timing.as_ref().is_some_and(|timing| {
-                                        timing.setup_expired(
-                                            live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
-                                            Instant::now(),
-                                        )
-                                    }) {
-                                        runner.fail_start(
-                                            "paired fixture setup deadline expired before Start",
-                                        );
-                                        live_start::StartScriptPump::Hold
-                                    } else {
-                                        let pump = live_start::fire_pending_catalog_start(
-                                            &mut pending,
-                                            true,
-                                            false,
-                                            || {
-                                                start_arming
-                                                    .lock()
-                                                    .map(|arming| arming.clone())
-                                                    .unwrap_or_default()
-                                            },
-                                        );
-                                        mark_live_script_start(
-                                            &mut timing,
-                                            &pending,
-                                            true,
-                                            &pump,
-                                            Instant::now(),
-                                        );
-                                        pump
-                                    };
-                                    match pump {
-                                        live_start::StartScriptPump::CompiledRunning => {
-                                            runner.observe_script_running();
-                                        }
-                                        live_start::StartScriptPump::CompiledFailed(error) => {
-                                            runner.fail_start(&error);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if let Some(index) = runner.companion_for(name) {
-                    runner.companion_tick(index, c);
-                }
-            }
-
-            let Some(here) = player_here_tile(c) else {
-                return;
-            };
-            // Step the armed walk route one leg per player-info tick
-            // (the panel's `tick_latch` pattern — a hop is sent once
-            // per server tick, not re-sent every 20 ms frame).
-            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
-                return;
-            };
-            let finished = {
-                let snapshots = snapshots.lock().unwrap();
-                let Some(snap) = snapshots.get(name) else {
-                    return;
-                };
-                let mut arm = arm.lock().unwrap();
-                let world = nav_world.lock().unwrap().clone();
-                let refused = world.as_deref().is_some_and(|world| {
-                    host_play::observe_walk_arm_admission(
-                        snap,
-                        &mut arm,
-                        world,
-                        map_members,
-                        Some(name),
-                    )
-                });
-                if refused
-                    || !frontend_core::walk_permissions::manual_walk_may_follow(
-                        hold,
-                        frame.host_move_owned,
-                    )
-                {
-                    if refused {
-                        walk_clear.store(true, Ordering::Relaxed);
-                    }
-                    return;
-                }
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
-                        return;
-                    }
-                    latch.insert(name.to_string(), (c.gens.player, here));
-                }
-                host_play::step_walk_arm_follow(
-                    c,
-                    snap,
-                    &mut arm,
-                    world.as_deref(),
-                    here,
-                    map_members,
-                    Some(name),
-                )
-            };
-            if finished {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
-        };
-        let mut play = match self.template.clone() {
-            Some(template) => run_with_template(
-                template,
-                host_options.mainland,
-                Vec::new(),
-                |_| (None, None),
-                per_frame,
-            )?,
-            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
-        };
-        // `script_start_handle()` below captures the Play's state composition
-        // when called, before `core.start` adopts the bound service: adopt it
-        // here so the handle already writes through the process service
-        // (adopting the same service again in `start` is a no-op).
-        if let Some(service) = self.core.local_state().cloned() {
-            play.adopt_local_state(service);
-        }
+    /// What the next `Play` launches from, and the per-frame hook every
+    /// slot runs. The play is empty (shared cache + FIFO); the boot then
+    /// loads and logs in the focused profile only and `m` loads and logs in
+    /// the rest.
+    fn play_launch(&mut self) -> (frontend_core::launch::PlayLaunch, Arc<TuiFrameHook>) {
+        let hook = Arc::new(TuiFrameHook {
+            mainland: self.mainland,
+            mainland_sent: Mutex::new(HashSet::new()),
+            scenario: Arc::clone(&self.scenario),
+            pending_script: Arc::clone(&self.pending_script),
+            start_arming: Arc::clone(&self.start_arming),
+            live_timing: Arc::clone(&self.live_timing),
+        });
+        let mut launch = self.launcher.take_launch();
         if let Some(number) = self.auto_world {
-            play.set_auto_world(number)?;
+            launch = launch.with_auto_world(number);
         }
-        self.nav_world.lock().unwrap().clone_from(&play.world());
+        (launch, hook)
+    }
+
+    /// The started play's debug trace and the Start handle and core watches
+    /// the `--live` runner arms its Starts with.
+    fn play_started(&mut self) {
+        let Some(play) = self.core.play() else {
+            return;
+        };
         if std::env::var_os("BOT_DEBUG").is_some() {
-            let game_data = play.game_data();
+            let game_data = self.core.game_data();
             let lobster_heal = game_data
                 .as_deref()
                 .and_then(|data| data.fixed_food_heal("Lobster"));
@@ -997,8 +882,6 @@ impl TuiSession {
             catalog: Some(play.catalog_core_watch()),
             pair: Some(play.paired_core_watch()),
         };
-        self.core.start(vault, play);
-        Ok(())
     }
 
     /// Load `name` into the fleet and log it in (the TUI boot and `--live`
@@ -1050,25 +933,13 @@ impl TuiSession {
     }
 
     /// Split borrow: the core plus the headless surface, whose lifetime
-    /// reset drops this slot's published snapshot and walk arm.
-    fn core_and_surface(
-        &mut self,
-    ) -> (
-        &mut OperatorSession<()>,
-        HeadlessSurface<impl FnMut(&str) + '_>,
-    ) {
-        let gens = &self.frontend_gens;
-        let snapshots = &self.snapshots;
-        let travellers = &self.travellers;
-        let tick_latch = &self.tick_latch;
-        let walk_clear = &self.walk_clear;
+    /// reset flags the picked walk destination when it ended an armed walk.
+    fn core_and_surface(&mut self) -> (&mut OperatorSession<()>, TuiSurface<'_>) {
         (
             &mut self.core,
-            HeadlessSurface::with_reset(move |name: &str| {
-                if reset_frontend_slot_lifetime(name, gens, snapshots, travellers, tick_latch) {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
-            }),
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+            },
         )
     }
 
@@ -1244,7 +1115,8 @@ impl TuiSession {
         self.live_stop_wait_started = None;
         let world = play.world();
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
-        runner.set_tick_speed_endpoint(&self.options.host, self.options.port);
+        let play_config = self.launcher.play_config();
+        runner.set_tick_speed_endpoint(play_config.host(), play_config.port());
         runner.set_map_members(play.map_members());
         let budget = scenario::budget_s_from_env();
         if let Some(budget) = budget {
@@ -1379,58 +1251,15 @@ impl TuiSession {
         live_start::card_siblings(js, card)
     }
 
-    fn map_members(&self) -> bool {
-        self.core
-            .play()
-            .map(|p| p.map_members())
-            .or_else(|| self.template.as_ref().map(|t| t.profile().map_members()))
-            .unwrap_or(false)
-    }
-
-    /// The focused slot's last published [`WorldState`] (inv/equipment/
-    /// stats/varps/quests), or the fail-closed empty state when the slot
-    /// has not published yet.
-    fn focused_walk_state(&self, name: &Option<String>) -> WorldState {
-        name.as_deref()
-            .and_then(|n| {
-                self.snapshots
-                    .lock()
-                    .unwrap()
-                    .get(n)
-                    .map(|s| WorldState::from_snapshot(s).with_map_members(self.map_members()))
-            })
-            .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
-    }
-
-    fn walk_risk_input(&self, name: Option<&str>) -> host_play::admission::RiskInput {
-        name.and_then(|name| {
-            self.snapshots.lock().unwrap().get(name).map(|snapshot| {
-                host_play::admission::capture(
-                    snapshot,
-                    self.map_members(),
-                    Default::default(),
-                    false,
-                )
-            })
-        })
-        .unwrap_or_else(|| host_play::admission::unavailable(self.map_members()))
-    }
-
-    fn map_context(&self, app: &TuiApp) -> Result<MapContext, ActionError> {
-        let name = app.focused_name().ok_or(ActionError::NoFocus)?;
-        let focus = self.core.play().and_then(|play| play.map_focus(&name));
-        let nav = self
-            .server_profile
-            .as_ref()
-            .and_then(|profile| profile.nav_identity())
-            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
-            .ok_or(ActionError::NoNavigation)?;
-        Ok(MapContext {
-            focus,
+    fn map_context(&self, app: &TuiApp) -> Option<frontend_core::walk_map::WalkMapContext> {
+        let name = app.focused_name()?;
+        let nav = self.bound()?.nav_identity()?;
+        Some(self.core.walk_map_context(
+            Some(&name),
             nav,
-            overlay: app.map_host_catalogue.as_ref().map(|c| c.key()),
-            generation: 1,
-        })
+            app.map_catalogue.as_ref().map(|catalogue| catalogue.key()),
+            1,
+        ))
     }
 
     fn bind_map_context(&self, app: &mut TuiApp) {
@@ -1438,25 +1267,22 @@ impl TuiSession {
             app.map_model.close();
             return;
         }
-        match self.map_context(app) {
-            Ok(context) => {
-                app.map_model.bind(context);
-            }
-            Err(error) => {
-                app.map_model.close();
-                app.error = Some(format!("map: {error}"));
-            }
+        if let Some(context) = self.map_context(app) {
+            app.map_model.bind(context);
+        } else {
+            app.map_model.close();
+            app.error = Some("map: focused slot or navigation identity unavailable".into());
         }
     }
 
     fn open_map_catalogue(&mut self, app: &mut TuiApp) {
-        let Some(profile) = self.server_profile.clone() else {
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
         if self.map_demand.is_none() {
             match self
                 .map_bake
-                .open_profile(profile.as_ref(), MapDemand::CatalogueOnly)
+                .open_profile(&profile, WalkMapDemand::CatalogueOnly)
             {
                 Ok(handle) => self.map_demand = Some(handle),
                 Err(error) => {
@@ -1480,56 +1306,62 @@ impl TuiSession {
         if !app.map_active {
             return;
         }
-        let Some(profile) = self.server_profile.clone() else {
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        let status = match &self.map_demand {
-            Some(handle) => handle.status(),
-            None => return,
+        let Some(handle) = self.map_demand.as_ref() else {
+            return;
         };
-        match status {
-            MapJobStatus::Ready => {
-                let ready = self
+        let status = handle.status();
+        match status.state() {
+            WalkMapJobState::Ready => {
+                if let Some(ready) = self
                     .map_demand
                     .as_ref()
-                    .and_then(|handle| map_ready_catalogue(handle).ok());
-                if let Some(ready) = ready {
+                    .and_then(|handle| handle.ready_catalogue().ok())
+                {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Queued => {
+            WalkMapJobState::Queued => {
                 app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
                 app.map_coverage = "coverage: queued".into();
-                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                if let Some(ready) = peek_walk_catalogue(&profile) {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Running(progress) => {
-                app.map_catalogue_status = match progress.stage {
-                    MapStage::ReadingCache => MapCatalogueStatus::ReadingCache,
+            WalkMapJobState::Running => {
+                let Some(progress) = status.progress() else {
+                    return;
+                };
+                app.map_catalogue_status = match progress.stage() {
+                    WalkMapStage::ReadingCache => MapCatalogueStatus::ReadingCache,
                     _ => MapCatalogueStatus::DerivingPois,
                 };
-                let stage = match progress.stage {
-                    MapStage::ReadingCache => "reading cache",
-                    MapStage::DerivingPois => "deriving POIs",
-                    MapStage::BakingPlane => "baking plane",
-                    MapStage::BuildingZoomLevels => "building zoom levels",
-                    MapStage::Publishing => "publishing",
+                let stage = match progress.stage() {
+                    WalkMapStage::ReadingCache => "reading cache",
+                    WalkMapStage::DerivingPois => "deriving POIs",
+                    WalkMapStage::BakingPlane => "baking plane",
+                    WalkMapStage::BuildingZoomLevels => "building zoom levels",
+                    WalkMapStage::Publishing => "publishing",
                 };
                 app.map_coverage = format!(
                     "coverage: {stage} ({}/{}) {}",
-                    progress.completed, progress.total, progress.message
+                    progress.completed(),
+                    progress.total(),
+                    progress.message()
                 );
-                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                if let Some(ready) = peek_walk_catalogue(&profile) {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Failed(error) => {
+            WalkMapJobState::Failed => {
+                let error = status.failure().unwrap_or("unknown map cache error");
                 app.set_map_unavailable(format!(
                     "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
                 ));
             }
-            MapJobStatus::Paused | MapJobStatus::Cancelled => {
+            WalkMapJobState::Paused | WalkMapJobState::Cancelled => {
                 app.set_map_unavailable(
                     "coverage: catalogue unavailable: demand paused; terrain imagery unavailable",
                 );
@@ -1537,207 +1369,92 @@ impl TuiSession {
         }
     }
 
-    fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<ReadyCatalogue>) {
-        let Some(world) = app.world.clone().or_else(|| {
-            self.core
-                .play()
-                .and_then(|play| play.world())
-                .or_else(|| self.nav_world.lock().unwrap().clone())
-        }) else {
+    fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<WalkReadyCatalogue>) {
+        let Some(world) = app.world.clone().or_else(|| self.core.nav_world()) else {
             return;
         };
-        let identity = ready.manifest().identity;
-        let Some(profile) = self.server_profile.as_ref() else {
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        let Some(nav) = profile
-            .nav_identity()
-            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
-        else {
+        let identity = ready.identity();
+        let Some(nav) = profile.nav_identity() else {
             return;
         };
-        let data = profile
-            .game_data()
-            .or_else(|| self.core.play().and_then(|play| play.game_data()));
-        let same = app.map_host_catalogue.as_ref().is_some_and(|catalogue| {
+        let data = profile.game_data().or_else(|| self.core.game_data());
+        let same = app.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity && catalogue.nav_identity() == nav
         });
         if same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let services = load_navpois(profile, identity.content, nav);
-        let Ok(catalogue) = Catalogue::from_ready(world, identity, nav, Some(ready), services)
+        let Ok((mut catalogue, named)) =
+            self.core.walk_catalogue_from_ready(&profile, world, ready)
         else {
             return;
         };
-        self.map_catalogue_named = false;
-        let catalogue = match data {
-            Some(data) => match catalogue.with_game_data(data) {
-                Ok(named) => {
-                    self.map_catalogue_named = true;
-                    named
+        self.map_catalogue_named = named;
+        if !named {
+            if let Some(data) = data {
+                match catalogue.with_game_data(data) {
+                    Ok(named_catalogue) => {
+                        self.map_catalogue_named = true;
+                        catalogue = named_catalogue;
+                    }
+                    Err(_) => return,
                 }
-                Err(_) => return,
-            },
-            None => catalogue,
-        };
-        app.bind_host_catalogue(Arc::new(catalogue));
+            }
+        }
+        app.bind_walk_catalogue(Arc::new(catalogue));
     }
 
     fn release_map_catalogue(&mut self) {
         self.map_demand = None;
         self.map_catalogue_named = false;
+        frontend_core::walk_map::reap_walk_map_demand();
     }
 
-    /// Map Walk-confirm consumes the shared, revision-bound command before
-    /// handing it to `Play`; the panel and TUI therefore share stale-focus,
-    /// origin and routing-option checks.
-    fn arm_walk_on(&mut self, app: &mut TuiApp, dest: Tile) {
-        self.walk_clear.store(false, Ordering::Relaxed);
-        #[cfg(test)]
-        if self.core.play().is_none() && self.server_profile.is_none() {
-            // Headless arm tests have no Play/profile identity to capture.
-            self.arm_walk_without_host(app, dest);
+    /// Confirm the pending map Walk through the shared operator session.
+    fn arm_walk_on(&mut self, app: &mut TuiApp, _dest: Tile) {
+        let Some(name) = app.focused_name() else {
+            app.error = Some("map: no focused slot".into());
             return;
-        }
-        let name = app.focused_name();
-        let origin = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
-        let options = app.map_find_options();
-        let profile = self.server_profile.clone();
-        let state = self.focused_walk_state(&name);
-        let request = host_play::walk_map::WalkRequest {
-            slot: name.as_deref(),
-            origin,
-            destination: app
-                .map_model
-                .pending()
-                .map(|s| s.target.unwrap_or(s.requested))
-                .or(Some(dest)),
-            options,
-            map_members: state.map_members,
-            members: profile
-                .as_ref()
-                .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
         };
-        let result = request.run(|| {
-            let context = self.map_context(app)?;
-            let from = origin.ok_or(ActionError::NoOrigin)?;
-            let command = app
-                .map_model
-                .confirm(ActionKind::Walk, &context, Some(from), options);
-            app.clear_consumed_map_selection();
-            let command = command?;
-            let play = self.core.play().ok_or(ActionError::NoFocus)?;
-            let bank = name
-                .as_deref()
-                .map(|n| play.bank_rows(n))
-                .unwrap_or_default();
-            let destination = command.destination();
-            let input = self.walk_risk_input(name.as_deref());
-            let route = play.map_walk(command, &context, &state, &bank, input, &self.travellers)?;
-            app.walk_dest = Some(destination);
-            Ok(route)
-        });
+        let Some(context) = self.map_context(app) else {
+            app.error = Some("map: navigation identity unavailable".into());
+            return;
+        };
+        let options = app.map_find_options();
+        let result = self
+            .core
+            .confirm_walk(&mut app.map_model, context, Some(&name), options);
+        app.clear_consumed_map_selection();
         match result {
-            Ok(_) => app.error = None,
+            Ok(destination) => {
+                app.walk_dest = Some(destination);
+                app.error = None;
+            }
             Err(error) => app.error = Some(format!("map: {error}")),
         }
     }
 
-    #[cfg(test)]
-    fn arm_walk_without_host(&mut self, app: &mut TuiApp, dest: Tile) {
-        let name = app.focused_name();
-        let from = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
-        let world = self.nav_world.lock().unwrap().clone();
-        let (Some(world), Some(from)) = (world, from) else {
-            app.error = Some(ActionError::NoOrigin.to_string());
-            return;
-        };
-        let state = self.focused_walk_state(&name);
-        // No host owns a bank memory here: the test's memory is what the
-        // slot's observer would leave from its last published snapshot (the
-        // loaded open bank, else an unobserved `Unknown` bank).
-        let bank = name
-            .as_deref()
-            .and_then(|n| {
-                self.snapshots.lock().unwrap().get(n).map(|snap| {
-                    let mut memory = api::bank_memory::BankMemory::default();
-                    memory.track(snap, 0);
-                    nav::bank_fetch::BankRows::of(&memory)
-                })
-            })
-            .unwrap_or_default();
-        let routed = arm_walk_on(
-            &world,
-            from,
-            dest,
-            app.map_find_options(),
-            &state,
-            &bank,
-            host_play::admission::Admission::manual(
-                app.map_find_options(),
-                self.walk_risk_input(name.as_deref()),
-                0,
-                app.walk_permissions.globals,
-            ),
-            &self.travellers,
-            name.as_deref(),
-        );
-        match routed {
-            Ok(_) => {
-                app.walk_dest = Some(dest);
-                app.error = None;
-            }
-            Err(_) => {
-                app.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
-            }
-        }
-    }
-
     fn map_teleport(&mut self, app: &mut TuiApp, _dest: Tile) {
-        let Some(context) = self.map_context(app).ok() else {
-            app.error = Some("map: teleport unavailable: stale host context".into());
+        let Some(name) = app.focused_name() else {
+            app.error = Some("map: no focused slot".into());
             return;
         };
-        let from = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
+        let Some(context) = self.map_context(app) else {
+            app.error = Some("map: navigation identity unavailable".into());
+            return;
+        };
         let options = app.map_find_options();
-        let command = match app
-            .map_model
-            .confirm(ActionKind::Teleport, &context, from, options)
-        {
-            Ok(command) => command,
-            Err(error) => {
-                app.clear_consumed_map_selection();
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
+        let result = self
+            .core
+            .confirm_teleport(&mut app.map_model, context, Some(&name), options);
         app.clear_consumed_map_selection();
-        let Some(play) = self.core.play() else {
-            app.error = Some(ActionError::NoFocus.to_string());
-            return;
-        };
-        app.error = play
-            .map_teleport(command, &context)
-            .err()
-            .map(|error| format!("map: {error}"));
+        app.error = result.err().map(|error| format!("map: {error}"));
     }
 
-    /// Walk every marked bot to the pending destination through the shared
-    /// [`frontend_core::walk_marked`], the same command the panel's picker
-    /// runs. Nothing marked keeps the map selection.
+    /// Walk every marked bot through the shared operator-session operation.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
         if frontend_core::marked_availability(
             frontend_core::MarkedAction::Walk,
@@ -1749,60 +1466,34 @@ impl TuiSession {
             app.error = Some("no bots selected".into());
             return;
         }
+        let Some(context) = self.map_context(app) else {
+            app.error = Some("map: focused slot or navigation identity unavailable".into());
+            return;
+        };
         let options = app.map_find_options();
-        let destination = app
+        let planned = app
             .map_model
             .pending()
-            .map(|s| s.target.unwrap_or(s.requested));
-        let prepared = self.map_context(app).and_then(|context| {
-            let plan = app.map_model.confirm_walk_plan(&context, options);
-            app.clear_consumed_map_selection();
-            plan.map(|plan| (context, plan))
-        });
-        let planned = prepared.as_ref().ok().map(|(_, plan)| plan.destination());
-        let report = frontend_core::walk_marked(
+            .map(|selection| selection.reported_destination());
+        let report = self.core.confirm_marked_walk(
             &app.table.selection,
-            &self.core,
-            frontend_core::MarkedWalk::new(prepared, destination, options, &self.travellers),
-            |name| {
-                frontend_core::WalkInputs::new(
-                    self.focused_walk_state(&Some(name.to_string())),
-                    self.core
-                        .play()
-                        .map(|play| play.bank_rows(name))
-                        .unwrap_or_default(),
-                    self.walk_risk_input(Some(name)),
-                )
-            },
+            &mut app.map_model,
+            context,
+            options,
         );
+        app.clear_consumed_map_selection();
         if report.done_count() > 0 {
-            let mut latch = self.tick_latch.lock().unwrap();
-            for name in report.done() {
-                latch.remove(name);
-            }
-            drop(latch);
-            self.walk_clear.store(false, Ordering::Relaxed);
             app.walk_dest = planned;
         }
         app.error = Some(report.summary());
     }
 
-    /// WASD one-tile walk: a direct `try_move` through the slot's wire
-    /// queue (adjacent world tile; the client pathfinds the step).
+    /// WASD one-tile walk: the client pathfinds this adjacent step.
     fn wasd_walk(&self, app: &TuiApp, dest: Tile) {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = self.core.play() {
-            play.queue_wire(
-                &name,
-                WireCmd::Walk {
-                    x: dest.x,
-                    z: dest.z,
-                    level: dest.level,
-                },
-            );
-        }
+        self.core.step_to(&name, dest.x, dest.z, dest.level);
     }
 
     /// Chat modal advance: queue `continue_dialog` / `answer_choice` on
@@ -1811,29 +1502,26 @@ impl TuiSession {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = self.core.play() {
-            match action {
-                ChatAction::Continue => play.queue_wire(&name, WireCmd::Continue),
-                ChatAction::Answer(option) => {
-                    play.queue_wire(&name, WireCmd::Answer(option as i32))
-                }
-                ChatAction::PaintButton(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
-                        if let Some(id) = paint.buttons().nth(index).map(|b| b.id().to_owned()) {
-                            play.script_paint_click(&name, &id, paint.generation());
-                        }
+        match action {
+            ChatAction::Continue => self.core.chat_continue(&name),
+            ChatAction::Answer(option) => self.core.chat_answer(&name, option as i32),
+            ChatAction::PaintButton(index) => {
+                if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
+                    if let Some(id) = paint.buttons().nth(index).map(|b| b.id().to_owned()) {
+                        self.core.script_paint_click(&name, &id, paint.generation());
                     }
                 }
-                ChatAction::PaintChrome(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
-                        let rows = super::chat::paint_chrome_rows(paint);
-                        if let Some((key, select_name, _)) = rows.get(index) {
-                            play.script_paint_select(&name, key, select_name, paint.generation());
-                        }
-                    }
-                }
-                ChatAction::None => {}
             }
+            ChatAction::PaintChrome(index) => {
+                if let Some(paint) = app.chat_data.script_paint.as_ref().map(PaintFrame::view) {
+                    let rows = super::chat::paint_chrome_rows(paint);
+                    if let Some((key, select_name, _)) = rows.get(index) {
+                        self.core
+                            .script_paint_select(&name, key, select_name, paint.generation());
+                    }
+                }
+            }
+            ChatAction::None => {}
         }
     }
 
@@ -2298,7 +1986,7 @@ impl TuiSession {
             app.params_state.open = false;
             return AppAction::None;
         };
-        let data = self.template.as_ref().and_then(|t| t.game_data());
+        let data = self.bound().and_then(|profile| profile.game_data());
         let was_open = app.params_state.open;
         let was_editing = app.params_state.editing;
         let action = {
@@ -2529,11 +2217,11 @@ impl TuiSession {
     /// projection to the session on every pump.
     fn project_walk_globals(&mut self, app: &mut TuiApp) {
         let before = app.walk_permissions;
-        let after = frontend_core::WalkGlobalsView {
-            globals: app.nav,
-            script_scope_notice_ack: app.script_scope_notice_ack,
-            survivable_routing_notice_ack: app.survivable_routing_notice_ack,
-        };
+        let after = frontend_core::WalkGlobalsView::new(
+            app.nav,
+            app.script_scope_notice_ack,
+            app.survivable_routing_notice_ack,
+        );
         let dirty = std::mem::take(&mut app.nav_preferences_dirty);
         self.core.set_walk_globals_store(self.preferences.share());
 
@@ -2556,7 +2244,7 @@ impl TuiSession {
         }
 
         app.refresh_walk_permissions();
-        self.core.set_walk_globals(app.walk_permissions.globals);
+        self.core.set_walk_globals(app.walk_permissions.globals());
     }
 
     /// Persist the shared manual-walk pause preference and apply it to the
@@ -2604,10 +2292,7 @@ impl TuiSession {
     }
     /// Persist changed source settings and service the shared Path controller.
     fn project_quester_paths(&mut self, app: &mut TuiApp) {
-        let selected = self
-            .template
-            .as_ref()
-            .and_then(|template| template.game_data());
+        let selected = self.bound().and_then(|profile| profile.game_data());
         self.project_quester_paths_with_game_data(app, selected);
     }
 
@@ -2641,10 +2326,7 @@ impl TuiSession {
     }
 
     fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
-        let selected = self
-            .template
-            .as_ref()
-            .and_then(|template| template.game_data());
+        let selected = self.bound().and_then(|profile| profile.game_data());
         app.quester_paths_controller.request_reload(selected);
     }
 
@@ -2840,16 +2522,17 @@ impl TuiSession {
         // The map paints `Play`'s packed collision, not the live loc
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
-        app.world = self.nav_world.lock().unwrap().clone();
+        app.world = self.core.nav_world();
         // This is the UI loop, not a client's snapshot/tick thread. The first
         // explicit reach-layer request decodes the already verified sidecar.
         app.map_reach = if app.map_active && app.map.layers.reach {
-            self.server_profile.as_ref().and_then(|profile| {
+            self.bound().and_then(|profile| {
                 let world = app.world.as_ref()?;
                 let bound = profile.world()?;
-                Arc::ptr_eq(world, &bound)
-                    .then(|| profile.reach())
-                    .flatten()
+                if !Arc::ptr_eq(world, &bound) {
+                    return None;
+                }
+                profile.walk_reach_source()?.get()
             })
         } else {
             None
@@ -2858,12 +2541,7 @@ impl TuiSession {
         self.bind_map_context(app);
         if app.map_active {
             self.poll_map_demand(app);
-            app.refresh_walk_send(|name| {
-                self.core
-                    .play()
-                    .map(|p| p.walk_eligibility(name))
-                    .unwrap_or(WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn))
-            });
+            app.refresh_walk_send(|name| self.core.walk_slot_status(name));
         }
 
         if let Some(name) = &focused {
@@ -2872,59 +2550,55 @@ impl TuiSession {
             let show_game_chat = app.chat_data.show_game_chat;
             // Borrow the focused slot's snapshot under the lock and copy
             // the small views the panes need (GameSnapshot is not Clone).
-            let snap = self.snapshots.lock().unwrap();
-            match snap.get(name) {
-                Some(s) => {
-                    app.chat_data = chat_data_from(s);
-                    app.chat_data.show_game_chat = show_game_chat;
-                    app.inv_items = s
-                        .inventory()
-                        .iter()
-                        .map(|i| (i.def.name.clone().unwrap_or_else(|| "?".into()), i.count))
-                        .collect();
-                    app.stats_rows = s
-                        .stats()
-                        .iter()
-                        .filter(|st| st.used)
-                        .map(|st| (st.name.clone(), st.effective))
-                        .collect();
-                    let here = app.here;
-                    app.locs_near = s
-                        .locs()
-                        .iter()
-                        .filter_map(|l| {
-                            let name = l.name.as_deref()?.to_string();
-                            let d = here
-                                .map(|h| (l.tile.x - h.x).abs().max((l.tile.z - h.z).abs()))
-                                .unwrap_or(l.distance);
-                            Some((d, name))
-                        })
-                        .collect();
-                    app.locs_near.sort_by_key(|(d, _)| *d);
-                    app.locs_near.truncate(3);
-                    if app.map_active {
-                        if let Ok(ctx) = self.map_context(app) {
-                            match observed_services(s, ctx, ctx) {
-                                Ok(records) => app.map_observed = records,
-                                Err(_) => app.map_observed.clear(),
-                            }
-                        } else {
-                            app.map_observed.clear();
+            let read = self.core.with_slot_snapshot(name, |s| {
+                app.chat_data = chat_data_from(s);
+                app.chat_data.show_game_chat = show_game_chat;
+                app.inv_items = s
+                    .inventory()
+                    .iter()
+                    .map(|i| (i.def.name.clone().unwrap_or_else(|| "?".into()), i.count))
+                    .collect();
+                app.stats_rows = s
+                    .stats()
+                    .iter()
+                    .filter(|st| st.used)
+                    .map(|st| (st.name.clone(), st.effective))
+                    .collect();
+                let here = app.here;
+                app.locs_near = s
+                    .locs()
+                    .iter()
+                    .filter_map(|l| {
+                        let name = l.name.as_deref()?.to_string();
+                        let d = here
+                            .map(|h| (l.tile.x - h.x).abs().max((l.tile.z - h.z).abs()))
+                            .unwrap_or(l.distance);
+                        Some((d, name))
+                    })
+                    .collect();
+                app.locs_near.sort_by_key(|(d, _)| *d);
+                app.locs_near.truncate(3);
+                if app.map_active {
+                    if let Some(context) = self.map_context(app) {
+                        match frontend_core::walk_map::observed_walk_services(s, context) {
+                            Ok(records) => app.map_observed = records,
+                            Err(_) => app.map_observed.clear(),
                         }
+                    } else {
+                        app.map_observed.clear();
                     }
                 }
-                None => {
-                    // A slot with no published snapshot must not show the
-                    // previous focused slot's chat / inventory.
-                    app.chat_data = ChatData::default();
-                    app.chat_data.show_game_chat = show_game_chat;
-                    app.inv_items.clear();
-                    app.stats_rows.clear();
-                    app.locs_near.clear();
-                    app.map_observed.clear();
-                }
+            });
+            if read.is_none() {
+                // A slot with no published snapshot must not show the
+                // previous focused slot's chat / inventory.
+                app.chat_data = ChatData::default();
+                app.chat_data.show_game_chat = show_game_chat;
+                app.inv_items.clear();
+                app.stats_rows.clear();
+                app.locs_near.clear();
+                app.map_observed.clear();
             }
-            drop(snap);
             // The script's paint frame rides the status row (copied from
             // the isolate each observe); the chat pane shows it in place
             // of the game chat while it is non-empty.
@@ -2936,16 +2610,12 @@ impl TuiSession {
             if app.chat_data.script_paint.is_none() {
                 app.chat_data.show_game_chat = false;
             }
-            app.route = self
-                .travellers
-                .lock()
-                .unwrap()
-                .get(name)
-                .and_then(|a| a.lock().unwrap().route.clone());
-            if self.walk_clear.swap(false, Ordering::Relaxed) {
+            app.route = self.core.manual_walk_route(name);
+            let walk_cleared = self.core.take_walk_clear();
+            if std::mem::take(&mut self.walk_reset) || walk_cleared {
                 app.walk_dest = None;
             }
-            if self.core.play().is_some() {
+            if self.core.has_play() {
                 app.script_state = self.core.script_state(name);
             }
             app.script_queued = self.scripts.start_queue_place(name).is_some();
@@ -3201,12 +2871,7 @@ impl TuiSession {
             return;
         }
         self.refresh_ack_cache(now);
-        let focused = app.focused_name();
-        let background = self
-            .core
-            .play()
-            .map(|play| play.background_bot_count(focused.as_deref()))
-            .unwrap_or(0);
+        let background = self.core.background_bot_count();
         if self.background_bots_acked || background == 0 {
             self.notice_sig = None;
             app.background_notice = None;
@@ -3354,8 +3019,8 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
     }
 }
 
-fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
-    eprintln!("{}", host_play::instance_conflict_message(holder));
+fn prompt_instance_conflict(conflict: &frontend_core::launch::InstanceConflict) -> bool {
+    eprintln!("{}", conflict.message());
     eprint!("Exit (default) or Continue anyway [E/c]: ");
     let _ = std::io::Write::flush(&mut std::io::stderr());
     let mut line = String::new();
@@ -3388,36 +3053,43 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     };
     let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
-    let permit = match host_play::resolve_instance_permit(host_play::InstanceKind::Tui, skip_lock) {
-        Ok(host_play::InstancePermitOutcome::Ready(permit)) => permit,
-        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
-            if !prompt_instance_conflict(&holder) {
+    let permit = match frontend_core::launch::acquire_instance(
+        frontend_core::launch::InstanceKind::Tui,
+        skip_lock,
+    ) {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(conflict)) => {
+            if !prompt_instance_conflict(&conflict) {
                 return Ok(0);
             }
-            host_play::InstancePermit::skip()
+            frontend_core::launch::InstancePermit::skip()
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
-    let selection = args.profile.resolve(None)?;
+    let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+    launcher.configure(
+        args.profile.duplicate(),
+        frontend_core::launch::ProfileEnv::capture(),
+    )?;
+    launcher.bind_with(None)?;
     if let Some(number) = args.world {
-        let worlds = selection
-            .public_worlds()
+        let mut worlds = launcher
+            .bound()
+            .and_then(|profile| profile.public_world_numbers())
             .ok_or("--world requires the rs2b2t profile")?;
-        if worlds.by_number(number).is_none() {
+        if !worlds.any(|world| world == number) {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
             ));
         }
     }
-    let template = selection.prepare_template()?;
-    let mut session = TuiSession::new_bound(template, permit);
+    let mut session = TuiSession::with_launcher(launcher, permit);
     if frontend_core::log_file::session_log_setting(&session.preferences) {
         frontend_core::log_file::apply_session_log(true);
     }
     session.auto_world = args.world;
     session
-        .server_profile
-        .as_ref()
+        .bound()
         .expect("bound session")
         .require_bot_operation()?;
 
@@ -3427,7 +3099,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
         let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
-        session.options.mainland = true;
+        session.mainland = true;
         session.unlock_at(&run.vault, &run.pass)?;
         run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
             world: session.core.play().and_then(|p| p.world()),
@@ -3454,7 +3126,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     match mode {
         RunMode::Live(name) => {
             let scenario = live_scenario(&name)?;
-            session.options.mainland = scenario.seed.mainland;
+            session.mainland = scenario.seed.mainland;
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
@@ -3468,16 +3140,15 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         RunMode::Interactive => {
             let vault_path = session
-                .server_profile
-                .as_ref()
+                .bound()
                 .expect("bound session")
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
-            let pass = host_play::passphrase::obtain(
+            let pass = frontend_core::launch::obtain_passphrase(
                 "tui-play",
                 args.pass_stdin,
-                host_play::passphrase::Purpose::for_vault(vault_exists),
+                vault_exists,
             )?;
             if let Err(e) = session.unlock_at(&vault_path, &pass) {
                 return Err(format!("vault {}: {e}", vault_path.display()));
@@ -3640,7 +3311,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         }
         {
             let _profile_frame = client::profiling::UI_FRAME.start();
-            let params_data = session.template.as_ref().and_then(|t| t.game_data());
+            let params_data = session.bound().and_then(|profile| profile.game_data());
             terminal
                 .draw(|frame| {
                     let _profile_draw = client::profiling::UI_DRAW.start();
@@ -3674,10 +3345,11 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     result
 }
 
-/// Route one [`AppAction`] onto the session: map walks arm through
-/// `host_play::arm_walk_on`, chat and manual walks go through [`WireCmd`],
-/// the script actions dispatch `Play::script_start_load` / pause / stop /
-/// the JS library, and the settings popup persists on the next pump.
+/// Route one [`AppAction`] onto the session: map walks arm through the
+/// core's walk arms, chat and manual walks go through the core's slot
+/// accessors, the script actions dispatch the shared script coordinator
+/// (Start / pause / stop / the JS library), and the settings popup persists
+/// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
         AppAction::Quit => app.quit = true,
@@ -3802,7 +3474,7 @@ fn set_mouse_capture(on: bool) {
 
 pub fn main() -> ExitCode {
     let args = parse_args();
-    host_play::passphrase::warn_legacy_env("tui-play");
+    frontend_core::launch::warn_legacy_passphrase_env("tui-play");
     if let Some(out) = &args.map_bundle {
         return map_bundle(&args.profile, out);
     }
@@ -3825,37 +3497,34 @@ pub fn main() -> ExitCode {
 /// client cache into `OUT/map/<revision>/` and print its descriptions
 /// (JSON) on stdout.
 /// Progress goes to stderr at most once a second.
-fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
-    let (Some(revision), Some(cache), Some(unpack)) = (
-        profile.revision.as_deref(),
-        profile.cache_dir.as_deref(),
-        profile.unpack_dir.as_deref(),
-    ) else {
-        usage();
-    };
-    let revision = match host_play::parse_revision(revision) {
-        Ok(revision) => revision.as_i32() as u16,
+fn map_bundle(profile: &frontend_core::launch::ProfileArgs, out: &Path) -> ExitCode {
+    let revision = match profile.revision_number() {
+        Ok(Some(revision)) => revision,
+        Ok(None) => usage(),
         Err(error) => {
             eprintln!("tui-play: {error}");
             return ExitCode::from(2);
         }
     };
-    let mut reported: Option<(Instant, MapStage)> = None;
-    let result = host_play::bake_shipped_map_bundle(revision, cache, unpack, out, |status| {
-        let MapJobStatus::Running(progress) = status else {
-            return;
-        };
-        if reported.is_none_or(|(at, stage)| {
-            stage != progress.stage || at.elapsed() >= Duration::from_secs(1)
-        }) {
-            eprintln!("tui-play: map bundle: {}", progress.message);
-            reported = Some((Instant::now(), progress.stage));
-        }
-    });
-    match result
-        .map_err(|error| error.to_string())
-        .and_then(|shipped| serde_json::to_string(&shipped).map_err(|error| error.to_string()))
-    {
+    let (Some(cache), Some(unpack)) = (profile.cache_dir(), profile.unpack_dir()) else {
+        usage();
+    };
+    let mut reported: Option<(Instant, WalkMapStage)> = None;
+    let result = frontend_core::map_bake::bake_shipped_map_bundle(
+        revision,
+        cache,
+        unpack,
+        out,
+        |stage, message| {
+            if reported.is_none_or(|(at, previous)| {
+                previous != stage || at.elapsed() >= Duration::from_secs(1)
+            }) {
+                eprintln!("tui-play: map bundle: {message}");
+                reported = Some((Instant::now(), stage));
+            }
+        },
+    );
+    match result {
         Ok(json) => {
             println!("{json}");
             ExitCode::SUCCESS

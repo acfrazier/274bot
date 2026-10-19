@@ -25,6 +25,15 @@ impl Loadouts {
         ))))
     }
 
+    /// The form over the operator loadout store of `core`'s bound process
+    /// state (see [`Self::operator`]).
+    pub fn operator_of<Io>(core: &crate::OperatorSession<Io>) -> Self {
+        let service = core
+            .local_state()
+            .expect("the session's local state is bound before its loadouts open");
+        Self::operator(service)
+    }
+
     /// Rows with nowhere to save them (a setting's option list, a test):
     /// [`Self::save`] refuses.
     pub fn detached(loadouts: Vec<Loadout>) -> Self {

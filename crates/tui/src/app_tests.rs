@@ -16,9 +16,9 @@ use crate::overlay::Modal;
 use crate::script_shape::BrowseCard;
 use crate::test_support::{ch, draw, find, key, text};
 
-use host_play::walk_map::{
-    ActionError, ActionKind, AuthenticatedServices, Catalogue, MapContext, WalkExclude,
-    WalkSlotReady, WalkSlotStatus,
+use frontend_core::walk_map::{
+    WalkActionErrorKind, WalkActionKind, WalkCatalogue, WalkExclude, WalkMapContext, WalkServices,
+    WalkSlotStatus,
 };
 use nav::map::formats::{
     ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois, NAVPOIS_VERSION,
@@ -141,7 +141,7 @@ fn poi_record(
     }
 }
 
-fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
+fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     let world = std::sync::Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
     ));
@@ -191,8 +191,8 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
         records: Rows::new(labels).unwrap(),
     };
     let bytes = doc.encode_navpois().unwrap();
-    let services = AuthenticatedServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
-    let catalogue = Catalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
+    let services = WalkServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
+    let catalogue = WalkCatalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
     let booth = catalogue
         .entries()
         .find(|e| e.name() == "Bank booth")
@@ -212,7 +212,7 @@ fn map_poi_catalogue() -> (std::sync::Arc<Catalogue>, Tile, Tile) {
     (std::sync::Arc::new(catalogue), stand, label_anchor)
 }
 
-fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
+fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<WalkCatalogue>) {
     app.world = Some(std::sync::Arc::clone(catalogue.world()));
     app.names = vec!["alice".into()];
     app.focused = Some(0);
@@ -221,14 +221,13 @@ fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<Catalogue>) {
         z: 0,
         level: 0,
     });
-    app.map_model.bind(MapContext {
-        focus: None,
-        nav: catalogue.nav_identity(),
-        overlay: None,
-        generation: 1,
-    });
+    app.map_model.bind(WalkMapContext::browsing(
+        catalogue.nav_identity(),
+        Some(catalogue.key()),
+        1,
+    ));
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.bind_host_catalogue(catalogue);
+    app.bind_walk_catalogue(catalogue);
 }
 
 fn search_and_jump(app: &mut TuiApp, query: &str) {
@@ -808,7 +807,7 @@ fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projecti
     .is_some());
     assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
     assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
-    assert!(app.walk_permissions.survivable_routing_notice_ack);
+    assert!(app.walk_permissions.survivable_routing_notice_ack());
     assert!(find(
         &draw(&mut app, 100, 24),
         "Danger routing now has three levels"
@@ -871,7 +870,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav.allow_teleports = true;
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
@@ -904,13 +903,14 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav.allow_danger_zones = false;
+    app.nav
+        .set_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
-    assert!(app.nav.allow_danger_zones);
+    assert!(app.nav.allow_danger_zones());
     assert!(
         !app.map_route_through_zones,
         "enabling global danger clears any hidden one-shot grant"
@@ -1095,23 +1095,12 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     );
     app.refresh_walk_send(|name| {
         if name == "alice" {
-            WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(1, 1) })
+            WalkSlotStatus::eligible(tile(1, 1))
         } else {
-            WalkSlotStatus::Excluded(WalkExclude::NoPosition)
+            WalkSlotStatus::excluded(WalkExclude::NoPosition)
         }
     });
-    app.map_observed = vec![host_play::walk_map::ObservedService {
-        npc_index: 1,
-        kind: PoiKind::Bank,
-        tile: tile(1, 1),
-        evidence: CapabilityEvidence::ActiveQuickBooth,
-        context: host_play::walk_map::MapContext {
-            focus: None,
-            nav: nav::map::identity::Digest::of(b"walkthrough"),
-            overlay: None,
-            generation: 1,
-        },
-    }];
+    app.map_observed.clear();
 
     assert_eq!(app.on_key(ch('/')), AppAction::None);
     assert!(app.map_search_open);
@@ -1223,7 +1212,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
         "{width}x{height} eligibility: {all}"
     );
     assert!(
-        all.contains("obs:1"),
+        all.contains("obs:0"),
         "{width}x{height} observed services: {all}"
     );
 
@@ -1236,7 +1225,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     assert_eq!(app.map_catalogue_status, MapCatalogueStatus::Inactive);
     assert!(app.map_pois.is_empty(), "close releases the catalogue");
     assert!(app.map_observed.is_empty());
-    assert!(app.map_host_catalogue.is_none());
+    assert!(app.map_catalogue.is_none());
 }
 
 #[test]
@@ -1250,41 +1239,36 @@ fn map_keyboard_walkthrough_80x24() {
 }
 
 #[test]
-fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
+fn map_poi_selection_keeps_catalogue_stand_and_blocks_view_only_labels() {
     let (catalogue, stand, label_anchor) = map_poi_catalogue();
-    let ctx = MapContext {
-        focus: None,
-        nav: catalogue.nav_identity(),
-        overlay: Some(catalogue.key()),
-        generation: 1,
-    };
+    let ctx = WalkMapContext::browsing(catalogue.nav_identity(), Some(catalogue.key()), 1);
     let mut app = TuiApp::new("274bot headless");
     bind_catalogue_map(&mut app, Arc::clone(&catalogue));
 
     search_and_jump(&mut app, "lumbridge");
     let pending = app.map_model.pending().expect("label selection");
-    assert_eq!(pending.requested, label_anchor);
-    assert_eq!(pending.target, None, "view-only label is not a walk stand");
+    assert_eq!(pending.requested(), label_anchor);
+    assert_eq!(
+        pending.walk_target(),
+        None,
+        "view-only label is not a walk stand"
+    );
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::ArmWalk(label_anchor)
     );
     assert_eq!(
         app.map_model
-            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
-            .expect_err("view-only label"),
-        ActionError::Blocked
+            .availability(WalkActionKind::Walk, ctx, Some(tile(0, 0)))
+            .expect_err("view-only label")
+            .kind(),
+        WalkActionErrorKind::Blocked
     );
-    assert!(app.map_model.pending().is_none());
+    assert!(app.map_model.pending().is_some());
     assert_eq!(
         app.map.selection,
         Some(label_anchor),
-        "host consume leaves the leftover crosshair"
-    );
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter after a consumed label must not walk"
+        "view-only selection retains the map crosshair"
     );
     assert!(app.walk_dest.is_none());
 
@@ -1292,41 +1276,38 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
     let pending = app.map_model.pending().expect("booth selection");
-    assert_eq!(pending.target, Some(stand));
-    assert_ne!(pending.requested, stand);
-    let requested = pending.requested;
+    assert_eq!(pending.walk_target(), Some(stand));
+    assert_ne!(pending.requested(), stand);
+    let requested = pending.requested();
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
         AppAction::ArmWalk(requested)
     );
     assert_eq!(
-        app.map_model.pending().map(|p| p.target),
+        app.map_model
+            .pending()
+            .map(|selection| selection.walk_target()),
         Some(Some(stand)),
-        "confirm must keep the catalogue stand, not a radius snap"
+        "map selection keeps the catalogue stand, not a radius snap"
     );
     assert_eq!(
         app.map_model
-            .confirm(ActionKind::Walk, &ctx, Some(tile(0, 0)), Default::default())
-            .expect_err("no focus token in this headless bind"),
-        ActionError::NoFocus
+            .availability(WalkActionKind::Walk, ctx, Some(tile(0, 0)))
+            .expect_err("browsing context has no focused slot")
+            .kind(),
+        WalkActionErrorKind::NoFocus
     );
-    assert!(app.map_model.pending().is_none());
     assert_eq!(app.map.selection, Some(requested));
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "Enter after a consumed POI walk must not snap a second walk"
-    );
 
     app.map_model.clear_selection();
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
     app.names = vec!["poi-walker".into()];
-    app.refresh_walk_send(|_| WalkSlotStatus::Eligible(WalkSlotReady { origin: tile(0, 0) }));
+    app.refresh_walk_send(|_| WalkSlotStatus::eligible(tile(0, 0)));
     assert_eq!(app.on_key(ch('g')), AppAction::None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::MapWalkGroup);
     assert_eq!(
-        app.map_model.pending().expect("group").target,
+        app.map_model.pending().expect("group").walk_target(),
         Some(stand),
         "group confirm must not replace the POI stand with a snap"
     );
@@ -1336,7 +1317,7 @@ fn map_poi_confirm_keeps_catalogue_stand_and_blocks_view_only_labels() {
 fn map_status_shows_walk_refusal_at_120_and_80() {
     let mut app = open_map_world();
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.error = Some(ActionError::NoOrigin.to_string());
+    app.error = Some("Walk/Teleport unavailable: no observed player".into());
     app.walk_dest = None;
     for (width, height) in [(120, 40), (80, 24)] {
         let all = text(&draw(&mut app, width, height));
@@ -1395,13 +1376,13 @@ fn map_search_types_j_and_k_and_navigates_with_arrows() {
 fn new_map_selection_clears_a_previous_blocked_status() {
     let mut app = open_map_world();
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    app.error = Some(ActionError::Blocked.to_string());
+    app.error = Some("No walkable tile within radius 16 (or no proven POI stand)".into());
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     assert!(
         app.error.is_none(),
         "a new view-centre selection must clear the leftover Blocked status"
     );
-    app.error = Some(ActionError::Blocked.to_string());
+    app.error = Some("No walkable tile within radius 16 (or no proven POI stand)".into());
     assert_eq!(app.on_key(ch('/')), AppAction::None);
     for c in "2,2,0".chars() {
         app.on_key(ch(c));

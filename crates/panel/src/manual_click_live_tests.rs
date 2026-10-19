@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use host::InputEv;
+use frontend_core::surface::InputEv;
 use nav::bank_fetch::BankRows;
 use nav::router::FindOptions;
 use nav::tile::Tile;
@@ -142,11 +142,14 @@ fn stamp() -> String {
 }
 
 fn player_tile(session: &Session, name: &str) -> Result<Tile, String> {
-    let states = session.nav_states.lock().unwrap();
-    let tile = states
-        .get(name)
-        .and_then(|row| row.0.local_player())
-        .map(|player| player.player.actor.tile)
+    let tile = session
+        .core
+        .with_slot_snapshot(name, |snapshot| {
+            snapshot
+                .local_player()
+                .map(|player| player.player.actor.tile)
+        })
+        .flatten()
         .ok_or("panel player tile is unavailable")?;
     Ok(Tile {
         x: tile.x,
@@ -262,22 +265,24 @@ fn prepare_session_n(
     count: usize,
 ) -> Result<(Session, String), String> {
     prime_local_cache(&inputs.cache)?;
-    let mut session = Session::with_instance(host_play::InstancePermit::SkipLock);
+    let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
-    session.configure_profile(host_play::ProfileOptions {
-        profile: Some("local-289".into()),
-        revision: Some("289".into()),
-        host: Some("127.0.0.1".into()),
-        asset_host: Some("127.0.0.1".into()),
-        port: Some(LOCAL_GAME_PORT),
-        http_port: Some(LOCAL_ASSET_PORT),
-        engine_dir: Some(inputs.engine.clone()),
-        nav_pack: Some(inputs.nav_pack.clone()),
-        cache_dir: Some(inputs.cache.clone()),
-        unpack_dir: Some(inputs.cache.clone()),
-        ..host_play::ProfileOptions::default()
-    })?;
+    session.configure_profile(frontend_core::launch::ProfileArgs::from_host(
+        host_play::ProfileOptions {
+            profile: Some("local-289".into()),
+            revision: Some("289".into()),
+            host: Some("127.0.0.1".into()),
+            asset_host: Some("127.0.0.1".into()),
+            port: Some(LOCAL_GAME_PORT),
+            http_port: Some(LOCAL_ASSET_PORT),
+            engine_dir: Some(inputs.engine.clone()),
+            nav_pack: Some(inputs.nav_pack.clone()),
+            cache_dir: Some(inputs.cache.clone()),
+            unpack_dir: Some(inputs.cache.clone()),
+            ..host_play::ProfileOptions::default()
+        },
+    ))?;
     session.bind_profile()?;
     let mut scenario =
         scenario::get("render_smoke").ok_or("render_smoke scenario is unavailable")?;
@@ -294,9 +299,9 @@ fn prepare_session_n(
             .statuses
             .iter()
             .filter(|row| {
-                row.ingame
-                    && row.scene_state == 2
-                    && player_tile(&session, &row.username)
+                row.ingame()
+                    && row.scene_state() == 2
+                    && player_tile(&session, row.username())
                         .is_ok_and(|tile| (tile.x, tile.z, tile.level) == (3220, 3220, 0))
             })
             .count()
@@ -308,21 +313,21 @@ fn prepare_session_n(
             std::thread::sleep(Duration::from_millis(20));
             continue;
         }
-        if let Some(row) = session.statuses.iter().find(|row| {
-            row.ingame
-                && row.scene_state == 2
+        if let Some(name) = session.statuses.iter().find_map(|row| {
+            (row.ingame()
+                && row.scene_state() == 2
                 && session
-                    .nav_states
-                    .lock()
-                    .unwrap()
-                    .get(&row.username)
-                    .and_then(|state| state.0.local_player())
-                    .is_some_and(|player| {
-                        let tile = player.player.actor.tile;
-                        (tile.x, tile.z, tile.level) == (3220, 3220, 0)
+                    .core
+                    .with_slot_snapshot(row.username(), |snapshot| {
+                        snapshot.local_player().is_some_and(|player| {
+                            let tile = player.player.actor.tile;
+                            (tile.x, tile.z, tile.level) == (3220, 3220, 0)
+                        })
                     })
+                    .unwrap_or(false))
+            .then(|| row.username().to_string())
         }) {
-            break row.username.clone();
+            break name;
         }
         if Instant::now() >= deadline {
             return Err(format!("panel scene-ready deadline: {:?}", session.error));
@@ -342,18 +347,25 @@ fn current_probe(session: &Session, name: &str) -> Result<serde_json::Value, Str
         .manual_click_live_probe(name);
     let tile = player_tile(session, name)?;
     proof["player_tile"] = serde_json::json!([tile.x, tile.z, tile.level]);
-    if let Some((snapshot, _)) = session.nav_states.lock().unwrap().get(name) {
+    session.core.with_slot_snapshot(name, |snapshot| {
         proof["menu_entries"] = serde_json::json!(snapshot.menu_entries());
         proof["npcs"] = serde_json::json!(snapshot.npcs());
-    }
-    let arm = session.travellers.lock().unwrap().get(name).cloned();
-    if let Some(arm) = arm {
-        let arm = arm.lock().unwrap();
+    });
+    if let Some(arm) = session.core.with_walk_arm(name, |arm| {
+        (
+            arm.route_generation,
+            arm.queued_tile().map(|tile| [tile.x, tile.z, tile.level]),
+            arm.route.is_some() || arm.bank_fetch.is_some(),
+            arm.traveller
+                .current_aim()
+                .map(|tile| [tile.x, tile.z, tile.level]),
+        )
+    }) {
         proof["walk_arm"] = serde_json::json!({
-            "route_generation": arm.route_generation,
-            "destination": arm.queued_tile().map(|tile| [tile.x, tile.z, tile.level]),
-            "active": arm.route.is_some() || arm.bank_fetch.is_some(),
-            "follow_aim": arm.traveller.current_aim().map(|tile| [tile.x, tile.z, tile.level]),
+            "route_generation": arm.0,
+            "destination": arm.1,
+            "active": arm.2,
+            "follow_aim": arm.3,
         });
     }
     Ok(proof)
@@ -441,13 +453,17 @@ fn send_click(session: &Session, button: i32, x: i32, y: i32) -> Result<(), Stri
         .capture_tx
         .as_ref()
         .ok_or("production panel capture sender is unavailable")?;
-    sender
-        .send(InputEv::Move { x, y })
-        .map_err(|error| error.to_string())?;
-    sender
-        .send(InputEv::Down { button, x, y })
-        .map_err(|error| error.to_string())?;
-    sender.send(InputEv::Up).map_err(|error| error.to_string())
+    if !sender.send(InputEv::Move { x, y }) {
+        return Err("the slot dropped its input channel".into());
+    }
+    if !sender.send(InputEv::Down { button, x, y }) {
+        return Err("the slot dropped its input channel".into());
+    }
+    if sender.send(InputEv::Up) {
+        Ok(())
+    } else {
+        Err("the slot dropped its input channel".into())
+    }
 }
 
 fn send_minimap_click(session: &Session) -> Result<(), String> {
@@ -722,7 +738,8 @@ fn hover_frame(session: &mut Session, x: i32, y: i32) -> Result<(), String> {
         .as_ref()
         .ok_or("panel capture sender")?
         .send(InputEv::Move { x, y })
-        .map_err(|error| error.to_string())?;
+        .then_some(())
+        .ok_or("the slot dropped its input channel")?;
     let deadline = Instant::now() + Duration::from_secs(5);
     while session
         .focused_pixels()
@@ -1133,10 +1150,10 @@ fn run_group_capture() -> Result<(), String> {
     let peer = session
         .statuses
         .iter()
-        .find(|row| row.username != name)
+        .find(|row| row.username() != name)
         .ok_or("missing ready group companion")?
-        .username
-        .clone();
+        .username()
+        .to_string();
     let world = session
         .core
         .play()
@@ -1517,10 +1534,10 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let target = session
         .statuses
         .iter()
-        .find(|row| row.username != source)
+        .find(|row| row.username() != source)
         .expect("second live profile")
-        .username
-        .clone();
+        .username()
+        .to_string();
     let id = CompiledCardId::lookup("Gatherer").unwrap();
     let target_uid = session.core.vault().unwrap().get(&target).unwrap().uid;
     session

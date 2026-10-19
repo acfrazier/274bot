@@ -10,6 +10,7 @@ use dear_imgui_rs::{sys, Condition, Context, FramePrepareOptions, MouseButton, U
 use super::PanelState;
 use crate::session::{PanelWindow, Session};
 use crate::test_support::TestDir;
+use frontend_core::launch::ProfileTemplate;
 use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice};
 
 use host_play as map_host;
@@ -282,7 +283,10 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
         Vec::new(),
     );
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
-    state.session.server_profile = Some(Arc::clone(fixture.template.profile()));
+    state
+        .session
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     Some(fixture)
 }
 
@@ -765,7 +769,9 @@ fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
     ] {
         let fixture = map_fixture::MapFixture::new(&world, profile);
         let mut session = Session::new();
-        session.server_profile = Some(Arc::clone(fixture.template.profile()));
+        session
+            .launcher
+            .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
         assert_eq!(session.debug_ui(), debug_allowed, "{profile} allows Debug");
         ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let shown = super::draw_test_rail_mark_tooltip(ctx.frame(), session.debug_ui());

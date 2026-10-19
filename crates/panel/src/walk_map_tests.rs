@@ -8,10 +8,11 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use dear_imgui_rs::TextureId;
+use frontend_core::walk_map::WalkReadyImages;
 use frontend_core::{WalkMapDecodeController, WalkMapDecodeResult};
 use host_play::map_cache::{
     fixture::{self, CountingMapProducer},
-    MapDemandManager, MapJobStatus, MapProfileDescriptor, ReadyImages,
+    MapDemandManager, MapJobStatus, MapProfileDescriptor,
 };
 use nav::collision::WorldCollision;
 use nav::map::formats::{ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt};
@@ -92,7 +93,7 @@ impl Drop for ReadyImageDir {
 fn ready_images_with_tile(
     identity: ImageIdentity,
     key: TileKey,
-) -> (Arc<ReadyImages>, ReadyImageDir) {
+) -> (Arc<WalkReadyImages>, ReadyImageDir) {
     ready_images_with_tiles(identity, &[key], &[])
 }
 
@@ -103,7 +104,7 @@ fn ready_images_with_tiles(
     identity: ImageIdentity,
     keys: &[TileKey],
     unreadable: &[TileKey],
-) -> (Arc<ReadyImages>, ReadyImageDir) {
+) -> (Arc<WalkReadyImages>, ReadyImageDir) {
     static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
     let root = std::env::temp_dir().join(format!(
         "274bot-walk-map-{}-{}",
@@ -177,6 +178,7 @@ fn ready_images_with_tiles(
             fs::write(&path, vec![0u8; len]).expect("unreadable tile file");
         }
     }
+    let images = Arc::new(WalkReadyImages::from_test_fixture(images));
     (images, ReadyImageDir(root))
 }
 

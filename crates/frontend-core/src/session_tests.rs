@@ -12,6 +12,7 @@ use super::*;
 use crate::scripts::LoadShape;
 use crate::surface::{SlotAttach, SlotSurface};
 use crate::ArmMirror;
+use crate::WalkGlobals;
 
 /// Records lifecycle callbacks; IO values count attaches so reuse is visible.
 #[derive(Default)]
@@ -39,7 +40,7 @@ impl SlotSurface for Recorder {
         SlotAttach::new(io, None, None)
     }
 
-    fn lifetime_reset(&mut self, name: &str) {
+    fn lifetime_reset(&mut self, name: &str, _walk_was_armed: bool) {
         self.resets.push(name.to_string());
     }
 
@@ -67,18 +68,15 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = host_play::WalkGlobals {
-        allow_teleports: true,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        allow_danger_zones: true,
-        survivable_routing: false,
-    };
+    let granted = WalkGlobals::new(true, true, true, true, false);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
-    assert_eq!(session.play().unwrap().walk_globals(), granted);
-    session.set_walk_globals(host_play::WalkGlobals::default());
-    assert_eq!(session.play().unwrap().walk_globals(), Default::default());
+    assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());
+    session.set_walk_globals(WalkGlobals::default());
+    assert_eq!(
+        session.play().unwrap().walk_globals(),
+        WalkGlobals::default().to_host()
+    );
 }
 
 fn vault_path(test: &str) -> std::path::PathBuf {
@@ -2664,7 +2662,7 @@ impl SlotSurface for MemoryOverrideSurface {
         SlotAttach::new(retained.unwrap_or_default(), None, None)
     }
 
-    fn lifetime_reset(&mut self, _name: &str) {}
+    fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
 
     fn released(&mut self, _name: &str) {}
 }

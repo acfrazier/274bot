@@ -485,10 +485,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
                 ui.set_item_tooltip("saved settings need a restart to apply");
             }
             let progress = if needs_progress {
-                session
-                    .core
-                    .play()
-                    .and_then(|play| play.script_progress(row.name()))
+                session.core.script_progress(row.name())
             } else {
                 None
             };
@@ -507,11 +504,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
                     FleetColumn::Run => {
                         ui.text(frontend_core::views::run_state_label(row.script()));
                         if ui.is_item_hovered() {
-                            if let Some(error) = session
-                                .core
-                                .play()
-                                .and_then(|play| play.script_last_error(row.name()))
-                            {
+                            if let Some(error) = session.core.script_last_error(row.name()) {
                                 ui.set_item_tooltip(&error);
                             }
                         }

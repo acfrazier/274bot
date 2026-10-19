@@ -410,7 +410,7 @@ impl TuiApp {
             Command::MapWalk => return self.map_enter(),
             Command::MapTeleport => {
                 if let Some(pending) = self.map_model.pending() {
-                    return AppAction::MapTeleport(pending.requested);
+                    return AppAction::MapTeleport(pending.requested());
                 }
             }
             Command::LogSave => {
@@ -646,11 +646,11 @@ impl TuiApp {
             }
             SettingsKey::Refused(reason) => self.error = Some(reason.into()),
             SettingsKey::WalkGlobal(preference) => {
-                let pending = frontend_core::WalkGlobalsView {
-                    globals: self.nav,
-                    script_scope_notice_ack: self.script_scope_notice_ack,
-                    survivable_routing_notice_ack: self.survivable_routing_notice_ack,
-                };
+                let pending = frontend_core::WalkGlobalsView::new(
+                    self.nav,
+                    self.script_scope_notice_ack,
+                    self.survivable_routing_notice_ack,
+                );
                 if preference == frontend_core::NavPreference::SurvivableRouting
                     && !pending.danger_this_walk(true)
                 {

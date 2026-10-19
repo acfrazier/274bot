@@ -542,6 +542,7 @@ impl MemoryNotice {
 }
 
 mod commands;
+mod map;
 mod native_settings;
 pub(crate) use commands::StagedProfileWrite;
 pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
@@ -608,11 +609,13 @@ pub struct OperatorSession<Io> {
     resources: Resources,
     /// The front end's walk arms: a member with an armed WalkTo route is
     /// walking (script walks are on the host rows).
-    walk_arms: Option<WalkArms>,
+    /// Per-slot frame state the slot threads share: walk arms, published
+    /// snapshots, step latch.
+    frames: Arc<crate::frames::FrameShared>,
     /// Shared preference applied whenever a Play is installed and whenever
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
-    walk_globals: host_play::WalkGlobals,
+    walk_globals: crate::walk_permissions::WalkGlobals,
     walk_globals_store: Option<host_play::local_state::Preferences>,
     /// The process local-state service the front end's composition root
     /// opened; every `Play` this session adopts uses it, so the process has
@@ -646,6 +649,12 @@ enum CapacityKind {
 }
 
 impl<Io> OperatorSession<Io> {
+    /// A session holding `permit` (the instance lock or the decision to run
+    /// without it).
+    pub fn open(permit: crate::launch::InstancePermit) -> Self {
+        Self::new(permit.into_host())
+    }
+
     pub fn new(instance: InstancePermit) -> Self {
         crate::log::global();
         Self {
@@ -685,9 +694,9 @@ impl<Io> OperatorSession<Io> {
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
-            walk_arms: None,
+            frames: Arc::new(crate::frames::FrameShared::new()),
             pause_script_on_manual_walk_abort: true,
-            walk_globals: host_play::WalkGlobals::default(),
+            walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
             _instance: instance,
@@ -711,7 +720,7 @@ impl<Io> OperatorSession<Io> {
             play.adopt_local_state(Arc::clone(service));
         }
         play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
-        play.set_walk_globals(self.walk_globals);
+        play.set_walk_globals(self.walk_globals.to_host());
         if let Some(preferences) = self.walk_globals_store.as_ref() {
             play.set_walk_globals_store(preferences.clone());
         }
@@ -719,6 +728,128 @@ impl<Io> OperatorSession<Io> {
         self.play = Some(play);
         self.vault = Some(vault);
         self.writer = None;
+    }
+
+    /// Start the play session `launch` describes, with `hook` as the front
+    /// end's per-frame client work on every slot, and adopt it with `vault`.
+    pub fn start_play(
+        &mut self,
+        vault: Vault,
+        launch: crate::launch::PlayLaunch,
+        hook: Arc<dyn crate::frames::FrameHook>,
+    ) -> Result<(), String> {
+        use crate::launch::LaunchParts;
+        let (parts, auto_world, keep_world_state) = launch.into_parts();
+        let map_members = parts.map_members();
+        self.frames.set_keep_world_state(keep_world_state);
+        let per_frame = crate::frames::slot_frame(
+            Arc::clone(&self.frames),
+            hook,
+            crate::frames::ClientOps::new(
+                host_play::player_here_tile,
+                host_play::Host::publish_frontend_snapshot,
+                host_play::step_walk_arm_follow,
+                |client| client.gens.player,
+            ),
+        );
+        let mut play = match parts {
+            LaunchParts::Validated(validated, mainland) => host_play::run_prepared_template(
+                validated,
+                mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            LaunchParts::Template(template, mainland) => host_play::run_with_template(
+                template,
+                mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            LaunchParts::Direct(options) => {
+                host_play::run_with_io(&options, Vec::new(), |_| (None, None), per_frame)
+            }
+        };
+        if let Some(number) = auto_world {
+            play.set_auto_world(number)?;
+        }
+        self.frames.bind_world(play.world(), map_members);
+        self.frames.bind_script_nav_paint(play.script_nav_paint());
+        self.start(vault, play);
+        Ok(())
+    }
+
+    /// Open (or first-run create) the vault at `path` with `typed` and
+    /// start the play session `launch` describes, with `hook` as the front
+    /// end's per-frame client work.
+    pub fn unlock_vault(
+        &mut self,
+        path: &std::path::Path,
+        typed: &str,
+        launch: crate::launch::PlayLaunch,
+        hook: Arc<dyn crate::frames::FrameHook>,
+    ) -> Result<(), crate::launch::UnlockError> {
+        use crate::launch::{UnlockError, UnlockStage};
+        let vault = crate::launch::open_vault_typed(path, typed)
+            .map_err(|error| UnlockError::new(UnlockStage::Vault, error.to_string()))?;
+        self.start_play(vault, launch, hook)
+            .map_err(|error| UnlockError::new(UnlockStage::Launch, error))
+    }
+
+    /// Whether a walk ended, was refused or was cancelled since the last
+    /// call (clears the flag).
+    pub fn take_walk_clear(&self) -> bool {
+        self.frames.take_walk_clear()
+    }
+
+    /// Read `name`'s walk arm (tests and the live probe proofs).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_walk_arm<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&host_play::WalkArm) -> R,
+    ) -> Option<R> {
+        let arm = self.frames.walk_arms().lock().unwrap().get(name).cloned()?;
+        let arm = arm.lock().unwrap();
+        Some(f(&arm))
+    }
+
+    /// Whether `name` has an armed walk route.
+    pub fn walk_route_armed(&self, name: &str) -> bool {
+        self.frames
+            .walk_arms()
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|arm| arm.lock().unwrap().route.is_some())
+    }
+
+    /// Read `name`'s latest published snapshot.
+    pub fn with_slot_snapshot<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&api::snapshot::GameSnapshot) -> R,
+    ) -> Option<R> {
+        self.frames.with_snapshot(name, f)
+    }
+
+    /// Read `name`'s latest published snapshot with its navigation world
+    /// state (kept when the launch asked for it).
+    pub fn with_slot_world_state<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav::WorldState) -> R,
+    ) -> Option<R> {
+        self.frames.with_world_state(name, f)
+    }
+
+    pub(crate) fn walk_arms(&self) -> &WalkArms {
+        self.frames.walk_arms()
+    }
+
+    pub(crate) fn frames(&self) -> &crate::frames::FrameShared {
+        &self.frames
     }
 
     /// Bind the process local-state service the front end's composition
@@ -763,10 +894,10 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Publish grants before or after Play installation.
-    pub fn set_walk_globals(&mut self, globals: host_play::WalkGlobals) {
+    pub fn set_walk_globals(&mut self, globals: crate::walk_permissions::WalkGlobals) {
         self.walk_globals = globals;
         if let Some(play) = self.play.as_ref() {
-            play.set_walk_globals(globals);
+            play.set_walk_globals(globals.to_host());
         }
     }
 
@@ -895,8 +1026,32 @@ impl<Io> OperatorSession<Io> {
 
     /// Hand over the front end's walk arms (the map its WalkTo arms and
     /// its slot hook follows) so the rows show those walks too.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_walk_arms(&mut self, arms: WalkArms) {
-        self.walk_arms = Some(arms);
+        let shared =
+            Arc::get_mut(&mut self.frames).expect("walk arms are replaced before any play starts");
+        shared.replace_walk_arms(arms);
+    }
+
+    /// Publish a retained snapshot and navigation state for frontend tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn publish_test_snapshot(
+        &mut self,
+        name: &str,
+        snapshot: api::snapshot::GameSnapshot,
+        world_state: nav::WorldState,
+    ) {
+        self.frames
+            .publish_test_snapshot(name, snapshot, world_state);
+    }
+
+    /// Complete a retained walk arm and raise the next-frame clear signal.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn finish_walk_for_test(&mut self, name: &str) {
+        if let Some(arm) = self.frames.walk_arms().lock().unwrap().get(name).cloned() {
+            arm.lock().unwrap().route = None;
+        }
+        self.frames.mark_walk_clear();
     }
 
     /// Open an operation for a coordinator in this crate (scripts).
@@ -1025,7 +1180,8 @@ impl<Io> OperatorSession<Io> {
             return Ok(());
         };
         self.deferred.remove(name);
-        surface.lifetime_reset(name);
+        let walk_was_armed = self.frames.end_lifetime(name);
+        surface.lifetime_reset(name, walk_was_armed);
         let retained = self.slots.remove(name);
         let attach = surface.attach(
             name,
@@ -1410,6 +1566,132 @@ impl<Io> OperatorSession<Io> {
             })
     }
 
+    /// Whether a play session is running.
+    pub fn has_play(&self) -> bool {
+        self.play.is_some()
+    }
+
+    /// `name`'s status row.
+    pub fn slot_view(&self, name: &str) -> Option<crate::SlotView<'_>> {
+        self.status(name).map(crate::SlotView::new)
+    }
+
+    /// Whether `name` has a status row.
+    pub fn has_status(&self, name: &str) -> bool {
+        self.status(name).is_some()
+    }
+
+    /// Run an operator-typed debug command on `name`'s slot.
+    pub fn debug_command(&self, name: &str, cmd: &str) -> Result<(), String> {
+        let play = self.play.as_ref().ok_or("no active play session")?;
+        play.cheat(name, cmd).map_err(|refusal| refusal.to_string())
+    }
+
+    /// Run a debug command the front end issues itself (the tutorial probe,
+    /// debug buttons) on `name`'s slot.
+    pub fn debug_command_internal(&self, name: &str, cmd: &str) -> Result<(), String> {
+        let play = self.play.as_ref().ok_or("no active play session")?;
+        play.cheat_internal(name, cmd)
+            .map_err(|refusal| refusal.to_string())
+    }
+
+    /// Kick `name`'s slot thread so a parked slot applies a draw, capture or
+    /// focus change within a frame.
+    pub fn wake_slot(&self, name: &str) {
+        if let Some(play) = &self.play {
+            play.wake(name);
+        }
+    }
+
+    /// Kick every slot thread.
+    pub fn wake_all_slots(&self) {
+        if let Some(play) = &self.play {
+            play.wake_all();
+        }
+    }
+
+    /// `name`'s last script error, if any.
+    pub fn script_last_error(&self, name: &str) -> Option<String> {
+        self.play.as_ref()?.script_last_error(name)
+    }
+
+    /// `name`'s run progress, while a script run is armed.
+    pub fn script_progress(&self, name: &str) -> Option<crate::progress::RunProgress> {
+        self.play
+            .as_ref()?
+            .script_progress(name)
+            .map(crate::progress::RunProgress::new)
+    }
+
+    /// Why queued script Starts are waiting, if they are.
+    pub fn script_start_wait_reason(&self) -> Option<Arc<String>> {
+        self.play.as_ref()?.script_start_wait_reason()
+    }
+
+    /// Deliver a paint-button click to `name`'s script.
+    pub fn script_paint_click(&self, name: &str, id: &str, generation: u64) {
+        if let Some(play) = &self.play {
+            play.script_paint_click(name, id, generation);
+        }
+    }
+
+    /// Deliver a paint chrome selection to `name`'s script.
+    pub fn script_paint_select(&self, name: &str, key: &str, select_name: &str, generation: u64) {
+        if let Some(play) = &self.play {
+            play.script_paint_select(name, key, select_name, generation);
+        }
+    }
+
+    /// Press the chat modal's Continue button on `name`'s slot.
+    pub fn chat_continue(&self, name: &str) {
+        if let Some(play) = &self.play {
+            play.queue_wire(name, host_play::WireCmd::Continue);
+        }
+    }
+
+    /// Press the chat modal's `option`-th choice (1-based) on `name`'s slot.
+    pub fn chat_answer(&self, name: &str, option: i32) {
+        if let Some(play) = &self.play {
+            play.queue_wire(name, host_play::WireCmd::Answer(option));
+        }
+    }
+
+    /// Step `name` to the adjacent tile `(x, z, level)` (a direct one-step
+    /// move, not a routed walk).
+    pub fn step_to(&self, name: &str, x: i32, z: i32, level: i32) {
+        if let Some(play) = &self.play {
+            play.queue_wire(name, host_play::WireCmd::Walk { x, z, level });
+        }
+    }
+
+    /// Whether the bound map treats the world as members.
+    pub fn map_members(&self) -> bool {
+        self.play.as_ref().is_some_and(|play| play.map_members())
+    }
+
+    /// `name`'s known bank rows (empty without a play).
+    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+        self.play
+            .as_ref()
+            .map(|play| play.bank_rows(name))
+            .unwrap_or_default()
+    }
+
+    /// The bound navigation world, once loaded.
+    pub fn nav_world(&self) -> Option<Arc<nav::world::NavWorld>> {
+        self.play.as_ref()?.world()
+    }
+
+    /// The selected game data, once loaded.
+    pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.play.as_ref()?.game_data()
+    }
+
+    /// The object-name table (empty without a play).
+    pub fn obj_names(&self) -> Option<Arc<api::obj_names::ObjNames>> {
+        self.play.as_ref().map(|play| play.obj_names())
+    }
+
     /// Whether `name`'s script is paused (its Pause button reads Resume).
     pub fn script_paused(&self, name: &str) -> bool {
         self.play
@@ -1557,7 +1839,8 @@ impl<Io> OperatorSession<Io> {
             }
         }
         self.operations.set(op, name, Outcome::Pending);
-        surface.lifetime_reset(name);
+        let walk_was_armed = self.frames.end_lifetime(name);
+        surface.lifetime_reset(name, walk_was_armed);
         surface.released(name);
         let mut removal = Removal {
             op,
@@ -1729,10 +2012,12 @@ impl<Io> OperatorSession<Io> {
             });
         // Map before arm, the order every walk-arm user takes; an arm its
         // slot thread holds is not waited on (see `views::update_row`).
-        let walks = self.walk_arms.as_ref().map(|arms| {
-            arms.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
+        let walks = Some(
+            self.frames
+                .walk_arms()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         let input = Inputs {
             members: self.fleet.members(),
             selected,
@@ -2908,6 +3193,9 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub fn set_play(&mut self, play: Option<Play>) {
+        if let Some(play) = play.as_ref() {
+            self.frames.bind_world(play.world(), play.map_members());
+        }
         self.play = play;
     }
 

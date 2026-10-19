@@ -80,14 +80,14 @@ impl Default for NavSettings {
 }
 
 impl NavSettings {
-    pub fn walk_globals(&self) -> host_play::WalkGlobals {
-        host_play::WalkGlobals {
-            allow_teleports: self.allow_teleports,
-            allow_wilderness: self.allow_wilderness,
-            allow_bank_fetch: self.allow_bank_fetch,
-            allow_danger_zones: self.allow_danger_zones,
-            survivable_routing: self.survivable_routing,
-        }
+    pub fn walk_globals(&self) -> frontend_core::WalkGlobals {
+        frontend_core::WalkGlobals::new(
+            self.allow_teleports,
+            self.allow_wilderness,
+            self.allow_bank_fetch,
+            self.allow_danger_zones,
+            self.survivable_routing,
+        )
     }
 
     pub fn danger_level(&self) -> frontend_core::DangerLevel {
@@ -97,8 +97,8 @@ impl NavSettings {
     pub fn set_danger_level(&mut self, level: frontend_core::DangerLevel) {
         let mut globals = self.walk_globals();
         globals.set_danger_level(level);
-        self.allow_danger_zones = globals.allow_danger_zones;
-        self.survivable_routing = globals.survivable_routing;
+        self.allow_danger_zones = globals.allow_danger_zones();
+        self.survivable_routing = globals.survivable_routing();
     }
 
     pub fn refresh_walk_globals(
@@ -106,13 +106,14 @@ impl NavSettings {
         preferences: &frontend_core::UiPreferences,
     ) -> std::io::Result<()> {
         let view = frontend_core::WalkGlobalsView::read(preferences);
-        self.allow_teleports = view.globals.allow_teleports;
-        self.allow_wilderness = view.globals.allow_wilderness;
-        self.allow_bank_fetch = view.globals.allow_bank_fetch;
-        self.allow_danger_zones = view.globals.allow_danger_zones;
-        self.survivable_routing = view.globals.survivable_routing;
-        self.script_scope_notice_ack = view.script_scope_notice_ack;
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack;
+        let globals = view.globals();
+        self.allow_teleports = globals.allow_teleports();
+        self.allow_wilderness = globals.allow_wilderness();
+        self.allow_bank_fetch = globals.allow_bank_fetch();
+        self.allow_danger_zones = globals.allow_danger_zones();
+        self.survivable_routing = globals.survivable_routing();
+        self.script_scope_notice_ack = view.script_scope_notice_ack();
+        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         Ok(())
     }
 }

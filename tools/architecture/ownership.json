@@ -555,6 +555,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/session/map.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/session/native_settings.rs",
       "owner": "T3"
     },
@@ -572,6 +576,10 @@
     },
     {
       "path": "crates/frontend-core/src/views_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/walk_map.rs",
       "owner": "T3"
     },
     {
@@ -6724,6 +6732,30 @@
     },
     {
       "path": "crates/frontend-core/src/scripts/paths.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/slot_view.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/frames.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/launch.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/process.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/frames_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/launch_tests.rs",
       "owner": "T3"
     }
   ]

@@ -1,11 +1,10 @@
 //! Game input capture: native keyboard queue, ImGui shifted-key adapter,
 //! hover-independent key ownership, and hovered new-input streaming.
 
-use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
 use dear_imgui_rs::{Io, Key, Ui};
-use host::{map_image_to_applet, InputEv};
+use frontend_core::surface::{map_image_to_applet, InputEv, InputSender};
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 /// Named GameShell `ch` values (arrows 1–4, ASCII controls, space).
@@ -326,7 +325,7 @@ impl KeyboardOwner {
     pub(crate) fn process_ownership(
         &mut self,
         ui: &Ui,
-        tx: Option<&Sender<InputEv>>,
+        tx: Option<&InputSender>,
         target: Option<&str>,
     ) {
         let changed = self.target.as_deref() != target;
@@ -360,7 +359,7 @@ impl KeyboardOwner {
     /// Only called for a hovered Game Image. New downs/text remain gated by
     /// panel capture and OS focus. Same-frame down/up bursts retain native
     /// event order and the character recorded at the press, not later Shift.
-    pub(crate) fn capture_keys(&mut self, ui: &Ui, tx: Option<&Sender<InputEv>>) {
+    pub(crate) fn capture_keys(&mut self, ui: &Ui, tx: Option<&InputSender>) {
         if !game_keyboard_available(ui) {
             return;
         }
@@ -394,7 +393,7 @@ impl KeyboardOwner {
 /// Image widget size) to applet coords and enqueues `InputEv::Down`. No-op
 /// when the capture channel has been dropped (capture off) or the point is
 /// outside the Image.
-pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, h: f32) {
+pub fn maybe_send_click(tx: &Option<InputSender>, lx: f32, ly: f32, w: f32, h: f32) {
     let Some(tx) = tx else {
         return;
     };
@@ -410,7 +409,7 @@ pub fn maybe_send_click(tx: &Option<Sender<InputEv>>, lx: f32, ly: f32, w: f32, 
 // only shuffle names across the one call site.
 #[allow(clippy::too_many_arguments)]
 pub fn stream_capture(
-    tx: &Option<Sender<InputEv>>,
+    tx: &Option<InputSender>,
     lx: f32,
     ly: f32,
     w: f32,

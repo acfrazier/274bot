@@ -2,7 +2,7 @@
 //!
 //! Terrain and optional grid/collision/reach layers are drawn by the app-owned
 //! [`crate::walk_map::WalkMapRenderer`]. Click, search, **Walk**, and **Teleport**
-//! go through [`host_play::walk_map::MapModel`] on `Session`; confirmation
+//! go through the frontend core's `WalkMap` on `Session`; confirmation
 //! consumes the pending selection once. Walk needs a snapped target; debug
 //! Teleport uses the requested tile when Local+loopback is authorized.
 //! Missing origin or focus still refuse.
@@ -19,11 +19,11 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
+use frontend_core::walk_map::{
+    RouteProjectionView, WalkMap, WalkRoutePath, WalkRouteSource, WalkSelection,
+};
 use frontend_core::{
     MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
-};
-use host_play::walk_map::{
-    ActionError, MapModel, RouteProjection, RouteProjectionPath, RouteSource, Selection,
 };
 use nav::contract::LegView;
 #[cfg(test)]
@@ -254,6 +254,20 @@ fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
     mutex.lock().unwrap()
 }
 
+/// Update the process-profile flags path, expected digest, and provenance.
+/// `None` clears the binding so lookup falls back to `$NAV_FLAGS`/default.
+fn update_navflags_binding(
+    path: Option<PathBuf>,
+    flags_sha256: Option<String>,
+    trusted_bundled: bool,
+) {
+    let _nav = lock_nav_statics();
+    *lock_data(&BOUND_NAV_FLAGS) = path;
+    *lock_data(&EXPECTED_FLAGS_SHA256) = flags_sha256;
+    FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
+    drop_flags_sidecar();
+}
+
 /// Bind the process-profile flags path, expected digest, and provenance.
 /// `trusted_bundled` is true only for the build-stamped sibling of a bundled
 /// pack; an explicit flags override must pass `false` even when its path
@@ -263,11 +277,48 @@ pub(crate) fn set_navflags_binding(
     flags_sha256: Option<String>,
     trusted_bundled: bool,
 ) {
-    let _nav = lock_nav_statics();
-    *lock_data(&BOUND_NAV_FLAGS) = Some(path);
-    *lock_data(&EXPECTED_FLAGS_SHA256) = flags_sha256;
-    FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
-    drop_flags_sidecar();
+    update_navflags_binding(Some(path), flags_sha256, trusted_bundled);
+}
+
+/// Bind the current profile's verified map flags/reach identity. No profile
+/// restores environment/default flags lookup and clears stale profile state.
+pub(crate) fn bind_profile_nav(profile: Option<&frontend_core::launch::BoundProfile>) {
+    if let Some(profile) = profile {
+        set_navflags_binding(
+            profile.nav_flags_path().to_path_buf(),
+            profile.nav_flags_sha256().map(str::to_owned),
+            profile.nav_flags_trusted_bundled(),
+        );
+    } else {
+        update_navflags_binding(None, None, false);
+    }
+
+    let world = profile.and_then(frontend_core::launch::BoundProfile::world);
+    let (origin, width, height) = world.as_deref().map_or(
+        (
+            WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            0,
+            0,
+        ),
+        |world| {
+            (
+                world.collision.origin,
+                world.collision.width,
+                world.collision.height,
+            )
+        },
+    );
+    set_reach_binding(
+        profile.and_then(frontend_core::launch::BoundProfile::walk_reach_source),
+        origin,
+        width,
+        height,
+        profile.is_some_and(|profile| profile.nav_identity().is_some()),
+    );
 }
 
 /// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
@@ -278,7 +329,7 @@ pub(crate) fn navflags_path() -> PathBuf {
     }
     match std::env::var("NAV_FLAGS") {
         Ok(p) => PathBuf::from(p),
-        Err(_) => host_play::default_pack_path().with_extension("navflags"),
+        Err(_) => frontend_core::walk_map::default_walk_nav_flags_path(),
     }
 }
 
@@ -433,7 +484,7 @@ struct ReachCache {
 enum ReachBinding {
     Unbound,
     Bound {
-        source: Option<Arc<host_play::profile::DeferredReach>>,
+        source: Option<Arc<frontend_core::walk_map::WalkReachSource>>,
         origin: WorldTile,
         width: usize,
         height: usize,
@@ -447,7 +498,7 @@ static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 /// sidecar stays unavailable rather than being replaced by a runtime flood.
 /// Only a legacy unbound 3D paint may still one-time bake; the map never bakes.
 pub(crate) fn set_reach_binding(
-    source: Option<Arc<host_play::profile::DeferredReach>>,
+    source: Option<Arc<frontend_core::walk_map::WalkReachSource>>,
     origin: WorldTile,
     width: usize,
     height: usize,
@@ -685,12 +736,10 @@ fn recenter_on(x: i32, z: i32) {
     PAN_REM_Z.store(0, Ordering::Relaxed);
 }
 
-fn sync_view_from_model(model: &MapModel) {
-    recenter_on(
-        model.center[0].floor() as i32,
-        model.center[1].floor() as i32,
-    );
-    LEVEL.store(i32::from(model.plane), Ordering::Relaxed);
+fn sync_view_from_model(model: &WalkMap) {
+    let center = model.center();
+    recenter_on(center[0].floor() as i32, center[1].floor() as i32);
+    LEVEL.store(i32::from(model.plane()), Ordering::Relaxed);
 }
 
 fn bind_map_model(session: &mut Session, world: &NavWorld) {
@@ -702,7 +751,7 @@ pub(crate) fn pending_highlight(session: &Session) -> Option<Tile> {
     session
         .map_model
         .pending()
-        .map(|sel| sel.target.unwrap_or(sel.requested))
+        .map(WalkSelection::reported_destination)
 }
 
 fn poi_anchor(poi: &nav::map::poi::PoiRecord) -> Tile {
@@ -790,21 +839,21 @@ pub(crate) enum WalktoCaption {
 }
 
 pub(crate) fn walkto_selection_caption(
-    pending: Option<&Selection>,
+    pending: Option<WalkSelection>,
     teleport: bool,
 ) -> WalktoCaption {
     match pending {
         None => WalktoCaption::None,
-        Some(sel) => match sel.target {
+        Some(selection) => match selection.walk_target() {
             Some(target) => WalktoCaption::Walk {
-                requested: sel.requested,
+                requested: selection.requested(),
                 target,
             },
             None if teleport => WalktoCaption::TeleportOnly {
-                requested: sel.requested,
+                requested: selection.requested(),
             },
             None => WalktoCaption::Blocked {
-                requested: sel.requested,
+                requested: selection.requested(),
             },
         },
     }
@@ -865,9 +914,12 @@ pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> Stri
 }
 
 /// Walk needs a snapped target. Teleport needs any selection when authorized.
-pub(crate) fn walkto_actions_enabled(pending: Option<&Selection>, teleport: bool) -> (bool, bool) {
+pub(crate) fn walkto_actions_enabled(
+    pending: Option<WalkSelection>,
+    teleport: bool,
+) -> (bool, bool) {
     (
-        pending.and_then(|sel| sel.target).is_some(),
+        pending.is_some_and(|selection| selection.walk_target().is_some()),
         teleport && pending.is_some(),
     )
 }
@@ -1219,7 +1271,7 @@ struct LegSpan {
 }
 
 struct RouteTileCache {
-    source: RouteSource,
+    source: WalkRouteSource,
     generation: u64,
     tiles: RouteTiles,
     legs: Vec<LegSpan>,
@@ -1240,13 +1292,13 @@ fn push_flat(tiles: &mut RouteTiles, tile: WorldTile, transport: bool) {
     tiles.push((tile, transport));
 }
 
-fn flatten_route(route: RouteProjectionPath<'_>) -> (RouteTiles, Vec<LegSpan>) {
+fn flatten_route(route: WalkRoutePath<'_>) -> (RouteTiles, Vec<LegSpan>) {
     #[cfg(test)]
     ROUTE_FLATTEN_COUNT.fetch_add(1, Ordering::Relaxed);
     let mut tiles = Vec::new();
     let mut legs = Vec::new();
     match route {
-        RouteProjectionPath::Legacy(route) => {
+        WalkRoutePath::Legacy(route) => {
             for leg in &route.legs {
                 match leg {
                     Leg::Walk { tiles: walk } => push_walk_leg(&mut tiles, &mut legs, walk),
@@ -1256,7 +1308,7 @@ fn flatten_route(route: RouteProjectionPath<'_>) -> (RouteTiles, Vec<LegSpan>) {
                 }
             }
         }
-        RouteProjectionPath::Compact(view) => {
+        WalkRoutePath::Compact(view) => {
             for leg in view.legs() {
                 match leg {
                     LegView::Walk(walk) => push_walk_leg(&mut tiles, &mut legs, walk),
@@ -1345,7 +1397,7 @@ fn remaining_start(
 }
 
 fn update_route_cache(
-    computed: Option<(RouteSource, u64, RouteProjectionPath<'_>)>,
+    computed: Option<(WalkRouteSource, u64, WalkRoutePath<'_>)>,
     here: Option<WorldTile>,
 ) {
     // Nav statics first (lock order); tests share one route cache.
@@ -1381,12 +1433,12 @@ fn update_route_cache(
 #[cfg(test)]
 fn cached_remaining_path_view(
     view: RouteView<'_>,
-    source: RouteSource,
+    source: WalkRouteSource,
     generation: u64,
     here: Option<WorldTile>,
 ) -> Vec<(WorldTile, bool)> {
     update_route_cache(
-        Some((source, generation, RouteProjectionPath::Compact(view))),
+        Some((source, generation, WalkRoutePath::Compact(view))),
         here,
     );
     lock_route_path().as_slice().to_vec()
@@ -1402,9 +1454,12 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
         update_route_cache(None, here);
         return;
     };
-    let read = |proj: Option<RouteProjection<'_>>| {
+    let read = |projection: Option<RouteProjectionView<'_>>| {
         update_route_cache(
-            proj.map(|proj| (proj.stamp.source, proj.stamp.generation, proj.route)),
+            projection.map(|projection| {
+                let stamp = projection.stamp();
+                (stamp.source(), stamp.generation(), projection.route())
+            }),
             here,
         );
     };
@@ -1414,24 +1469,19 @@ fn bind_focused_route_cache(session: &Session, here: Option<WorldTile>) {
             .as_ref()
             .and_then(|runner| runner.drives(&name).then(|| runner.armed_route()).flatten());
         if let Some(route) = live_route {
-            let live = Some(RouteProjection::live(route, session.route_gen(), None));
-            if let Some(play) = session.core.play() {
-                play.with_map_route(&name, None, live, read);
-            } else {
-                read(live);
-            }
+            let live = Some(RouteProjectionView::legacy(
+                route,
+                WalkRouteSource::Live,
+                session.route_gen(),
+                None,
+            ));
+            session.core.with_walk_route(&name, live, read);
             return;
         }
     }
     #[cfg(test)]
     tests::before_map_route();
-    let manual_arc = session.travellers.lock().unwrap().get(&name).cloned();
-    if let Some(play) = session.core.play() {
-        play.with_map_route(&name, manual_arc.as_deref(), None, read);
-    } else {
-        let manual = manual_arc.as_ref().map(|arm| arm.lock().unwrap());
-        read(manual.as_deref().and_then(RouteProjection::manual));
-    }
+    session.core.with_walk_route(&name, None, read);
 }
 
 /// The remaining route tiles, borrowed across the canvas draw. The draw floods
@@ -1478,12 +1528,12 @@ pub(crate) fn route_flatten_count() -> usize {
 #[cfg(test)]
 pub(crate) fn cached_remaining_path(
     route: &Route,
-    source: RouteSource,
+    source: WalkRouteSource,
     generation: u64,
     here: Option<WorldTile>,
 ) -> Vec<(WorldTile, bool)> {
     update_route_cache(
-        Some((source, generation, RouteProjectionPath::Legacy(route))),
+        Some((source, generation, WalkRoutePath::Legacy(route))),
         here,
     );
     lock_route_path().as_slice().to_vec()
@@ -1516,7 +1566,7 @@ pub fn draw_picker(
             Some(world) => picker_map_body(ui, gpu, session, map, &world),
             None => {
                 map.note_open();
-                ui.text_wrapped(walkto_unavailable_text(session.core.play().is_some()));
+                ui.text_wrapped(walkto_unavailable_text(session.core.has_play()));
             }
         });
     if !open {
@@ -1665,10 +1715,8 @@ fn picker_map_body(
         .unwrap_or(0);
     let toolbar = draw_walkto_toolbar(ui, session, map, world, &levels, &mut lvl_idx);
     persist_special_area_toggle(session, map);
-    if !map.search.trim().is_empty() {
-        if let Ok(coord) = MapModel::parse_coordinates(map.search.trim()) {
-            ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.level));
-        } else if let Some(coord) = map.parse_search_coord() {
+    if !map.search.trim().is_empty() && WalkMap::parse_coordinates(map.search.trim()).is_err() {
+        if let Some(coord) = map.parse_search_coord() {
             ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.plane));
         } else {
             draw_search_hits(ui, session, map, world);
@@ -1703,7 +1751,7 @@ fn picker_map_body(
         .map(|label| button_w(ui, if *label == "Walk" { walk_label } else { label }))
         .sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
-    let global_danger = session.walk_permissions.globals.allow_danger_zones;
+    let global_danger = session.walk_permissions.globals().allow_danger_zones();
     let route_control_w = if global_danger {
         button_w(ui, GLOBAL_DANGER_WARNING)
     } else {
@@ -1799,7 +1847,7 @@ fn draw_walk_send_window(ui: &Ui, session: &mut Session) {
     }
     use crate::session::WalkSendMode;
     use crate::theme::{scale_size, TEXT_DIM};
-    use host_play::walk_map::WalkSlotStatus;
+
     let viewport = ui.main_viewport();
     let (work_pos, work_size) = (viewport.work_pos(), viewport.work_size());
     let width = scale_px(ui, WALK_SEND_W).min(work_size[0]);
@@ -1858,8 +1906,7 @@ fn draw_walk_send_window(ui: &Ui, session: &mut Session) {
                         let mut dummy = false;
                         ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut dummy);
                         ui.same_line();
-                        if let WalkSlotStatus::Excluded(reason) = session.walk_send.rows()[i].status
-                        {
+                        if let Some(reason) = session.walk_send.rows()[i].status.exclusion() {
                             ui.text_colored(TEXT_DIM, reason.as_str());
                         }
                     }
@@ -1921,7 +1968,7 @@ pub(crate) fn draw_test_walk_send(ui: &Ui, session: &mut Session) -> SendWindowF
 pub(crate) fn search_hit_caption_into(out: &mut String, name: &str, x: i32, z: i32, level: i32) {
     use std::fmt::Write as _;
     out.clear();
-    host_play::walk_map::display_name_into(name, out);
+    frontend_core::walk_map::display_walk_name_into(name, out);
     let _ = write!(out, "  {x} {z} {level}");
 }
 
@@ -1971,7 +2018,9 @@ fn apply_search_jump(session: &mut Session, map: &mut WalkMapRenderer, world: &N
             sync_view_from_model(&session.map_model);
             return;
         }
-        Err(ActionError::InvalidCoordinates) => {}
+        Err(error)
+            if error.kind() == frontend_core::walk_map::WalkActionErrorKind::InvalidCoordinates => {
+        }
         Err(error) => {
             session.error = Some(error.to_string());
             return;

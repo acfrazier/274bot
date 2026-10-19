@@ -21,7 +21,9 @@ pub mod capacity;
 pub mod command;
 pub mod driver;
 pub mod fleet;
+pub mod frames;
 pub mod group_walk;
+pub mod launch;
 pub mod log;
 pub mod log_file;
 pub mod map_bake;
@@ -30,6 +32,7 @@ pub mod marked;
 pub mod nav_prefs;
 pub mod operations;
 pub mod prefs;
+pub mod process;
 pub mod process_status;
 pub mod profile_draft;
 pub mod profile_editor;
@@ -43,8 +46,10 @@ pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
 pub mod session;
+pub mod slot_view;
 pub mod surface;
 pub mod views;
+pub mod walk_map;
 pub mod walk_permissions;
 
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
@@ -94,10 +99,11 @@ pub use session::{
     Selection, SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition,
     SLOT_REMOVE_TIMEOUT,
 };
+pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
-    DangerLevel, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
+    DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
     SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };

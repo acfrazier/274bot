@@ -14,8 +14,8 @@
 //! command vocabulary shared by keys, buttons, the palette and help,
 //! `layout` is the geometry and `shell` draws it. `tui-play` (bin.rs) wires
 //! the actions to the shared session: chat Continue/Answer and manual walks
-//! go through [`host_play::WireCmd`], map Walk-confirm routes via
-//! `host_play::arm_walk_on`.
+//! go through the core's slot accessors, map Walk-confirm routes through the
+//! core's walk arms.
 
 pub mod app;
 pub mod bin;

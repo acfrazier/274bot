@@ -17,7 +17,7 @@ use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
-use host_play::walk_map::Catalogue;
+use frontend_core::walk_map::WalkCatalogue;
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::paint::remaining_path_tiles;
 use nav::router::Route;
@@ -172,7 +172,7 @@ pub struct Map<'a, F> {
     /// Small shared catalogue projection. The TUI never owns one copy per
     /// bot and never decodes terrain images.
     pub pois: &'a [PoiRecord],
-    pub catalogue: Option<&'a Catalogue>,
+    pub catalogue: Option<&'a WalkCatalogue>,
     pub selected_poi: Option<usize>,
     /// Focused-bot live NPC services; dropped when the map closes.
     pub observed: &'a [ObservedMark],
@@ -211,7 +211,7 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
         self
     }
 
-    pub fn catalogue(mut self, catalogue: &'a Catalogue) -> Self {
+    pub fn catalogue(mut self, catalogue: &'a WalkCatalogue) -> Self {
         self.catalogue = Some(catalogue);
         self
     }

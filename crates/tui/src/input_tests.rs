@@ -635,7 +635,7 @@ fn a_map_click_selects_and_a_second_action_walks() {
         .map_model
         .pending()
         .expect("the click selected a tile")
-        .requested;
+        .requested();
     assert_eq!((requested.x, requested.z), (1, 1));
     let rows = draw(&mut app, 120, 40);
     let (wx, wy) = find(&rows, "[Walk]").expect("walk button");

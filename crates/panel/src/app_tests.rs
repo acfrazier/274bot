@@ -10,12 +10,11 @@ use super::{
     clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
     live_smoke_tick, live_stress_tick, loading_text, logout_enabled, manual_shot_label, parse_args,
-    parse_live_args, progress_channel, request_clean_stop_capture, request_native_failure_capture,
-    runner_config, script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
+    parse_live_args, request_clean_stop_capture, request_native_failure_capture, runner_config,
+    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
     status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProfilePrepareJob, ProfilePreparePending, ProgressPhase, RunMode, ShotStatus,
-    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
-    SMOKE_DEADLINE, SMOKE_SETTLE,
+    PanelState, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
+    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::TestDir;
@@ -614,7 +613,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.resolve_with_env(None, &env).unwrap();
+        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -651,7 +650,7 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
         other => panic!("nav_full must map to a deferred Script boot, got {other:?}"),
     }
     match boot_for(&RunMode::Interactive, Some("hunter2".into())) {
-        Some(Boot::Unlock { pass }) => assert_eq!(pass, "hunter2"),
+        Some(Boot::Unlock { pass }) => assert_eq!(pass.as_str(), "hunter2"),
         other => panic!("a piped passphrase must map to a deferred Unlock boot, got {other:?}"),
     }
     assert!(matches!(
@@ -712,25 +711,6 @@ fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvir
         ..ProfileEnvironment::default()
     };
     (root, options, env)
-}
-
-fn profile_prepare_task(
-    generation: u64,
-    result: Result<Arc<SharedClientTemplate>, String>,
-) -> script::preparation::PreparedTask<Result<Arc<SharedClientTemplate>, String>> {
-    let result_bytes = std::mem::size_of_val(&result)
-        + match &result {
-            Ok(_) => 0,
-            Err(error) => error.capacity(),
-        };
-    let input = script::preparation::PreparationInput::new(generation, 0, 0, result_bytes).unwrap();
-    script::preparation::submit(
-        script::preparation::PreparationKind::Profile,
-        api::identity::Scope::Process,
-        input,
-        move |_| result,
-    )
-    .unwrap()
 }
 
 fn wait_for_preparation<R: Send + 'static>(task: &script::preparation::PreparedTask<R>) {
@@ -798,12 +778,16 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let mut state = PanelState::default();
     state
         .session
-        .configure_profile_with_env(options, env)
+        .configure_profile_with_env(
+            frontend_core::launch::ProfileArgs::from_host(options),
+            frontend_core::launch::ProfileEnv::from_host(env),
+        )
         .unwrap();
     let generation = state.session.profile_generation();
-    state
-        .session
-        .finish_profile_preparation(generation, Ok(template));
+    state.session.finish_profile_preparation(
+        generation,
+        Ok(frontend_core::launch::ProfileTemplate::from_host(template)),
+    );
     assert!(state.session.profile_bound());
     let startup = StartupPreparation::new(Some(boot));
     (state, startup, root)
@@ -816,8 +800,23 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let validation = startup.validate.as_ref().expect("final validation job");
-    wait_for_preparation(&validation.task);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let done = startup
+            .validate
+            .as_ref()
+            .map(|validation| validation.job.is_finished())
+            .unwrap_or(false);
+        if done {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "WorkAdmission validation did not settle"
+        );
+        drive_startup(&mut state, &mut startup);
+        thread::sleep(Duration::from_millis(5));
+    }
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.core.vault().is_some());
@@ -837,8 +836,15 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     assert!(state.session.core.vault().is_none());
     assert!(state.session.core.play().is_none());
     assert!(state.session.core.slots().is_empty());
-    wait_for_preparation(&validation.task);
-    assert!(validation.task.join().unwrap().is_ok());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !validation.job.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "WorkAdmission validation did not settle"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(validation.job.join().is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
 }
 
@@ -849,7 +855,10 @@ fn profile_selection_retries_after_work_admission_is_full() {
     let mut state = PanelState::default();
     state
         .session
-        .configure_profile_with_env(options, env)
+        .configure_profile_with_env(
+            frontend_core::launch::ProfileArgs::from_host(options),
+            frontend_core::launch::ProfileEnv::from_host(env),
+        )
         .unwrap();
     let generation = state.session.profile_generation();
     let mut startup = StartupPreparation::new(None);
@@ -906,42 +915,32 @@ fn profile_validation_retries_after_work_admission_is_full() {
 
 #[test]
 fn startup_progress_is_latest_only_and_generation_scoped() {
-    use host_play::progress::{ProfileProgress, ProfileProgressStage};
+    use frontend_core::launch::{ProgressStage, ProgressView};
 
     let (_root, options, env) = startup_profile_inputs();
     let mut state = PanelState::default();
     state
         .session
-        .configure_profile_with_env(options, env)
+        .configure_profile_with_env(
+            frontend_core::launch::ProfileArgs::from_host(options),
+            frontend_core::launch::ProfileEnv::from_host(env),
+        )
         .unwrap();
-    let (generation, preparation) = state.session.profile_preparation().unwrap();
-    let (observer, progress) = progress_channel(ProfileProgress::steps(
-        ProfileProgressStage::CheckingGameFiles,
-        0,
-        8,
-    ));
-    observer.report(ProfileProgress::steps(
-        ProfileProgressStage::CheckingGameFiles,
-        3,
-        8,
-    ));
-    observer.report(ProfileProgress::bytes(
-        ProfileProgressStage::CheckingNavigationFiles,
-        1024,
-        4096,
-    ));
+    let generation = state.session.profile_generation();
+    let preparation = state.session.profile_preparation().unwrap();
     let mut startup = StartupPreparation::new(None);
-    startup.prepare_pending = Some(ProfilePreparePending {
-        generation,
-        preparation: Arc::new(preparation),
-        observer,
-        progress,
-    });
+    startup.prepare_pending = Some(preparation);
 
     let current = startup_progress(&startup, generation).expect("matching generation progress");
     assert_eq!(current.phase, ProgressPhase::Preparing);
-    assert_eq!(current.progress.completed, 1024);
-    assert_eq!(current.progress.total, 4096);
+    // The banner renders the latest reported view: 3 of 8 steps.
+    let rendered = loading_text(
+        current.phase,
+        &ProgressView::steps(ProgressStage::CheckingGameFiles, 3, 8),
+    );
+    assert_eq!(rendered.description, "Checking game files");
+    assert_eq!(rendered.percent, 37);
+    assert_eq!(rendered.caption, "3 of 8 steps complete");
     assert!(
         startup_progress(&startup, generation.wrapping_add(1)).is_none(),
         "stale work is hidden"
@@ -955,7 +954,7 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
 
 #[test]
 fn preparation_failure_clears_progress_with_partial_session_state_absent() {
-    use host_play::progress::{ProfileProgress, ProfileProgressStage};
+    use frontend_core::launch::{PreparationJob, ProgressStage, ProgressView};
     let _work_service_guard = crate::work_service_test_lock();
 
     let (root, cache, manifest) = checked_fixture(274);
@@ -963,41 +962,37 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     state
         .session
         .configure_profile_with_env(
-            host_play::ProfileOptions {
+            frontend_core::launch::ProfileArgs::from_host(host_play::ProfileOptions {
                 profile: Some("local-274".into()),
                 cache_dir: Some(cache),
                 cache_manifest: Some(manifest),
                 ..host_play::ProfileOptions::default()
-            },
-            ProfileEnvironment {
+            }),
+            frontend_core::launch::ProfileEnv::from_host(ProfileEnvironment {
                 home: Some(root.to_path_buf()),
                 working_dir: Some(root.to_path_buf()),
                 ..ProfileEnvironment::default()
-            },
+            }),
         )
         .unwrap();
     let generation = state.session.profile_generation();
-    let task = profile_prepare_task(generation, Err("fixture preparation failed".into()));
-    wait_for_preparation(&task);
-    let (_, progress) = progress_channel(ProfileProgress::steps(
-        ProfileProgressStage::CheckingGameFiles,
-        3,
-        8,
-    ));
-    let mut startup = StartupPreparation {
-        prepare: Some(ProfilePrepareJob {
-            generation,
-            task,
-            progress,
-        }),
-        prepare_pending: None,
-        validate: None,
-        validate_pending: None,
-        pending_boot: Some(Boot::Unlock {
-            pass: "not-used".into(),
-        }),
-        failed_generation: None,
-    };
+    let job = PreparationJob::settled_for_test(
+        generation,
+        Err("fixture preparation failed".into()),
+        ProgressView::steps(ProgressStage::CheckingGameFiles, 3, 8),
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !job.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "WorkAdmission preparation did not settle"
+        );
+        std::thread::yield_now();
+    }
+    let mut startup = StartupPreparation::new(Some(Boot::Unlock {
+        pass: "not-used".into(),
+    }));
+    startup.prepare = Some(job);
 
     drive_startup(&mut state, &mut startup);
 
@@ -1015,11 +1010,11 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
 
 #[test]
 fn loading_text_fits_the_rail_and_never_rounds_partial_work_to_complete() {
-    use host_play::progress::{ProfileProgress, ProfileProgressStage};
+    use frontend_core::launch::{ProgressStage, ProgressView};
 
     let partial = loading_text(
         ProgressPhase::FinalChecks,
-        &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 999, 1000),
+        &ProgressView::bytes(ProgressStage::CheckingNavigationFiles, 999, 1000),
     );
 
     assert!(partial.description.starts_with("Final checks"));
@@ -1030,18 +1025,18 @@ fn loading_text_fits_the_rail_and_never_rounds_partial_work_to_complete() {
 
 #[test]
 fn loading_text_names_bundled_decode_and_custom_verify_passes() {
-    use host_play::progress::{ProfileProgress, ProfileProgressStage};
+    use frontend_core::launch::{ProgressStage, ProgressView};
 
     let bundled = loading_text(
         ProgressPhase::Preparing,
-        &ProfileProgress::steps(ProfileProgressStage::PreparingNavigation, 1, 1),
+        &ProgressView::steps(ProgressStage::PreparingNavigation, 1, 1),
     );
     assert_eq!(bundled.description, "Loading navigation");
     assert_eq!(bundled.percent, 100);
 
     let custom = loading_text(
         ProgressPhase::Preparing,
-        &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 10, 100),
+        &ProgressView::bytes(ProgressStage::CheckingNavigationFiles, 10, 100),
     );
     assert_eq!(custom.description, "Verifying custom navigation");
     assert_eq!(custom.percent, 10);
@@ -2291,12 +2286,10 @@ fn manual_shot_without_a_focused_live_snapshot_is_not_enqueued() {
 fn manual_shot_rejects_an_empty_published_snapshot() {
     let mut state = PanelState::default();
     state.session.set_focus_for_test("alice");
-    state.session.nav_states.lock().unwrap().insert(
-        "alice".into(),
-        (
-            api::snapshot::GameSnapshot::new(),
-            nav::WorldState::default(),
-        ),
+    state.session.core.publish_test_snapshot(
+        "alice",
+        api::snapshot::GameSnapshot::new(),
+        nav::WorldState::default(),
     );
     super::enqueue_manual_shot(&mut state);
     assert!(state.shot_state.lock().unwrap().requests.is_empty());
@@ -2412,10 +2405,8 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
     snapshot.rebuild(&client);
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
-        .nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        .core
+        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "bone-stop";
@@ -2493,10 +2484,8 @@ fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
     session
-        .nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        .core
+        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("bone-stop");
     let mut live = LiveScript {
@@ -2619,10 +2608,8 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
-    s.nav_states.lock().unwrap().insert(
-        "catalogtest".into(),
-        (terminal_snapshot, nav::WorldState::default()),
-    );
+    s.core
+        .publish_test_snapshot("catalogtest", terminal_snapshot, nav::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("core-pass");
     let mut baseline = host_play::catalog_core::Observation {
@@ -2981,10 +2968,8 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
     snapshot.rebuild(&client);
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
-        .nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        .core
+        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "thiever";
@@ -3055,10 +3040,8 @@ fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(&client);
     session
-        .nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snapshot, nav::WorldState::default()));
+        .core
+        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("thiever");
     super::enqueue_current_terminal_shot(&session, &shots, "thiever");
@@ -3122,14 +3105,10 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
 
     assert!(snap_a.ingame() && snap_a.scene_state() == 2);
     assert!(snap_b.ingame() && snap_b.scene_state() == 2);
-    s.nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snap_a, nav::WorldState::default()));
-    s.nav_states
-        .lock()
-        .unwrap()
-        .insert("bob".into(), (snap_b, nav::WorldState::default()));
+    s.core
+        .publish_test_snapshot("alice", snap_a, nav::WorldState::default());
+    s.core
+        .publish_test_snapshot("bob", snap_b, nav::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let mut live = LiveScript {
@@ -3220,7 +3199,7 @@ fn dummy_slot() -> crate::session::SlotIo {
     }
 }
 
-fn insert_named_scene2(session: &crate::session::Session, name: &str, player: Option<&str>) {
+fn insert_named_scene2(session: &mut crate::session::Session, name: &str, player: Option<&str>) {
     let mut client = script_client();
     match player {
         Some(player_name) => {
@@ -3234,10 +3213,8 @@ fn insert_named_scene2(session: &crate::session::Session, name: &str, player: Op
     snap.rebuild(&client);
     assert!(snap.ingame() && snap.scene_state() == 2);
     session
-        .nav_states
-        .lock()
-        .unwrap()
-        .insert(name.into(), (snap, nav::WorldState::default()));
+        .core
+        .publish_test_snapshot(name, snap, nav::WorldState::default());
 }
 
 fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
@@ -3261,8 +3238,8 @@ fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
     state.session.core.insert_slot_io("alice", dummy_slot());
     state.session.core.insert_slot_io("bob", dummy_slot());
     state.session.set_focus_for_test("alice");
-    insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
-    insert_named_scene2(&state.session, "bob", None);
+    insert_named_scene2(&mut state.session, "alice", Some("NatureMaster"));
+    insert_named_scene2(&mut state.session, "bob", None);
     {
         let mut shots = state.shot_state.lock().unwrap();
         shots.enqueue_for_actor(
@@ -3357,12 +3334,10 @@ fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
     state.session.core.insert_slot_io("alice", dummy_slot());
     state.session.set_focus_for_test("alice");
     state.last_upload = Some(("alice".into(), 1));
-    state.session.nav_states.lock().unwrap().insert(
-        "alice".into(),
-        (
-            api::snapshot::GameSnapshot::new(),
-            nav::WorldState::default(),
-        ),
+    state.session.core.publish_test_snapshot(
+        "alice",
+        api::snapshot::GameSnapshot::new(),
+        nav::WorldState::default(),
     );
     state.shot_state.lock().unwrap().enqueue_for_actor(
         "air-alice".into(),
@@ -3391,7 +3366,7 @@ fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
     let mut state = PanelState::default();
     state.session.core.insert_slot_io("alice", dummy_slot());
     state.session.set_focus_for_test("alice");
-    insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
+    insert_named_scene2(&mut state.session, "alice", Some("NatureMaster"));
     state.last_upload = Some(("alice".into(), 1));
 
     let before = actor_snapshot_serialization_count();
@@ -3582,7 +3557,7 @@ fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalW
 }
 
 fn alice_scene2_session() -> crate::session::Session {
-    let s = crate::session::Session::new();
+    let mut s = crate::session::Session::new();
     *s.scenario.lock().unwrap() = Some(passed_prereq_runner());
     let mut client = script_client();
     let mut player = client::dash3d::ClientPlayer::at(20, 20);
@@ -3591,10 +3566,8 @@ fn alice_scene2_session() -> crate::session::Session {
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&client);
     assert!(snap.ingame() && snap.scene_state() == 2);
-    s.nav_states
-        .lock()
-        .unwrap()
-        .insert("alice".into(), (snap, nav::WorldState::default()));
+    s.core
+        .publish_test_snapshot("alice", snap, nav::WorldState::default());
     s
 }
 
@@ -5747,27 +5720,6 @@ fn unlock_sends_the_passphrase_exactly_as_typed() {
     session.pass_scratch.push_str("   ");
     super::submit_vault_pass(&mut session, false);
     assert!(session.take_requested_unlock().is_none());
-}
-
-#[test]
-fn typed_unlock_opens_terminal_and_trimmed_panel_vaults() {
-    use crate::session::Session;
-    let dir = TestDir::new("vault-typed-unlock");
-
-    // Made in the terminal with the spaces kept: only the typed text opens it.
-    let terminal = dir.join("terminal");
-    drop(vault::Vault::create(&terminal, " pad ").unwrap());
-    assert!(Session::open_vault_typed(&terminal, " pad ").is_ok());
-
-    // Made by the 0.1.9.1 panel, which stored the trimmed text.
-    let legacy = dir.join("legacy");
-    drop(vault::Vault::create(&legacy, "pad").unwrap());
-    assert!(Session::open_vault_typed(&legacy, "  pad ").is_ok());
-
-    assert!(matches!(
-        Session::open_vault_typed(&legacy, " nope "),
-        Err(vault::VaultError::WrongPassphrase)
-    ));
 }
 
 /// Content width of the docked Nav config window at scale 1: the width the

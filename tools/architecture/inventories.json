@@ -194,6 +194,14 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/map_bake.rs|WalkMapBakeError",
+      "path": "crates/frontend-core/src/map_bake.rs",
+      "symbol": "WalkMapBakeError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/map_decode.rs|WalkMapDecodeController",
       "path": "crates/frontend-core/src/map_decode.rs",
       "symbol": "WalkMapDecodeController",
@@ -914,6 +922,14 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/walk_permissions.rs|WalkGlobals",
+      "path": "crates/frontend-core/src/walk_permissions.rs",
+      "symbol": "WalkGlobals",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/walk_permissions.rs|WalkGlobalsView",
       "path": "crates/frontend-core/src/walk_permissions.rs",
       "symbol": "WalkGlobalsView",
@@ -1424,6 +1440,534 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/slot_view.rs|StatusBuf",
+      "path": "crates/frontend-core/src/slot_view.rs",
+      "symbol": "StatusBuf",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/slot_view.rs|SlotView",
+      "path": "crates/frontend-core/src/slot_view.rs",
+      "symbol": "SlotView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/frames.rs|FrameContext",
+      "path": "crates/frontend-core/src/frames.rs",
+      "symbol": "FrameContext",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/frames.rs|AudioChange",
+      "path": "crates/frontend-core/src/frames.rs",
+      "symbol": "AudioChange",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/frames.rs|AudioGate",
+      "path": "crates/frontend-core/src/frames.rs",
+      "symbol": "AudioGate",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|PlayConfig",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "PlayConfig",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileTemplate",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileTemplate",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ValidatedProfile",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ValidatedProfile",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|PlayLaunch",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "PlayLaunch",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileArgs",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileArgs",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileEnv",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileEnv",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileClass",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileClass",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|BoundProfile",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "BoundProfile",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProgressStage",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProgressStage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProgressUnit",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProgressUnit",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProgressView",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProgressView",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|SubmitError",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "SubmitError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfilePreparation",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfilePreparation",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|PreparationJob",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "PreparationJob",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ValidationPending",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ValidationPending",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ValidationJob",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ValidationJob",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|PreparationCompletion",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "PreparationCompletion",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|ProfileLauncher",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "ProfileLauncher",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|Passphrase",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "Passphrase",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|UnlockStage",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "UnlockStage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|UnlockError",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "UnlockError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|InstanceKind",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "InstanceKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|InstancePermit",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "InstancePermit",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/launch.rs|InstanceConflict",
+      "path": "crates/frontend-core/src/launch.rs",
+      "symbol": "InstanceConflict",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapContext",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapContext",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkActionErrorKind",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkActionErrorKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkActionError",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkActionError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkActionKind",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkActionKind",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkSelection",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkSelection",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapLayers",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapLayers",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMap",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMap",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkServices",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkServices",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkCatalogue",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkCatalogue",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapEntry",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapEntry",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMeaning",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMeaning",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkSourceStatus",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkSourceStatus",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkSearch",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkSearch",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkDisplayName",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkDisplayName",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkObservedService",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkObservedService",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkSlotStatus",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkSlotStatus",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkExclude",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkExclude",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapDemand",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapDemand",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapCacheError",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapCacheError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkReadyCatalogue",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkReadyCatalogue",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkReadyImages",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkReadyImages",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkReachSource",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkReachSource",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapJobState",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapJobState",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapStage",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapStage",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapProgressView",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapProgressView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapJobStatus",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapJobStatus",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkMapDemandHandle",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkMapDemandHandle",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkRouteSource",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkRouteSource",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkRouteStamp",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkRouteStamp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|WalkRoutePath",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "WalkRoutePath",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/walk_map.rs|RouteProjectionView",
+      "path": "crates/frontend-core/src/walk_map.rs",
+      "symbol": "RouteProjectionView",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "T3.3 walk-map seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/progress.rs|RunProgress",
+      "path": "crates/frontend-core/src/progress.rs",
+      "symbol": "RunProgress",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 launch and frame seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|FrameBuf",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "FrameBuf",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 ruling D1: named re-export of the per-slot frame mailbox and input channel."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|SlotInput",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "SlotInput",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 ruling D1: named re-export of the per-slot frame mailbox and input channel."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|InputEv",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "InputEv",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "T3.3 operator input feed into a slot (frontend-core owned, converted at the one host forward)."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|InputSender",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "InputSender",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 operator input feed into a slot (frontend-core owned, converted at the one host forward)."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/surface.rs|InputProbe",
+      "path": "crates/frontend-core/src/surface.rs",
+      "symbol": "InputProbe",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T3.3 test-support receiving end of an input feed."
     }
   ],
   "violations": [],

@@ -25,7 +25,7 @@ use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
-use host_play::walk_map::{MapModel, RouteSource};
+use frontend_core::walk_map::{WalkMap, WalkRouteSource};
 use script::IsolatedEnv;
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
@@ -83,6 +83,16 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let _nav = super::lock_nav_statics();
     let mut session = Session::new();
     session.set_focus_for_test("alice");
+    let arms = host_play::WalkArms::default();
+    let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
+        route: Some(Arc::new(test_route())),
+        route_generation: 42,
+        ..Default::default()
+    }));
+    arms.lock()
+        .unwrap()
+        .insert("alice".into(), Arc::clone(&arm));
+    session.core.set_walk_arms(arms);
     session.core.set_play(Some(host_play::run_with_io(
         &host_play::PlayOptions {
             host: "127.0.0.1".into(),
@@ -96,16 +106,6 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
         |_| (None, None),
         |_, _, _| {},
     )));
-    let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
-        route: Some(Arc::new(test_route())),
-        route_generation: 42,
-        ..Default::default()
-    }));
-    session
-        .travellers
-        .lock()
-        .unwrap()
-        .insert("alice".into(), Arc::clone(&arm));
     let paint = session.core.play().unwrap().script_nav_paint();
     let scenario = Arc::clone(&session.scenario);
     let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -427,7 +427,7 @@ fn walkto_footer_adds_teleport_on_local_engine() {
 #[test]
 fn walkto_actions_enable_teleport_without_a_walk_target() {
     let world = open_world(3, 3);
-    let mut model = MapModel::default();
+    let mut model = WalkMap::new();
     let miss = Tile {
         x: 1000,
         z: 1001,
@@ -650,7 +650,7 @@ fn picker_click_selects_a_walkable_tile() {
     s.walkto_open = true;
     // FirstUseEver WalkTo is 720×560 at the default imgui origin; the
     // canvas sits under the toolbar. A click in the window interior
-    // must select through MapModel — not pan, not miss the hit target.
+    // must select through the frontend map model — not pan or miss the hit target.
     assert!(
         click_to_tile(&world, (3220, 3220), 2.0, [100.0, 100.0], [200.0, 200.0], 0).is_some(),
         "lumbridge-centred 3x3 must be snappable"
@@ -667,7 +667,7 @@ fn picker_click_selects_a_walkable_tile() {
     let pending = s
         .map_model
         .pending()
-        .and_then(|sel| sel.target)
+        .and_then(|sel| sel.walk_target())
         .expect("click on the WalkTo canvas must snap a tile");
     assert_eq!(pending.level, 0);
     assert!(
@@ -1314,7 +1314,7 @@ fn compact_route_view_uses_the_same_clipped_leg_cache() {
     let route = test_route();
     let world = open_world_at((0, 0), 6, 1);
     let view = nav::producer::route_view(&world, &route).expect("route view");
-    let tiles = cached_remaining_path_view(view, RouteSource::Script, 2, Some(wt(2, 0)));
+    let tiles = cached_remaining_path_view(view, WalkRouteSource::Script, 2, Some(wt(2, 0)));
     assert_eq!(
         tiles.iter().map(|(tile, _)| *tile).collect::<Vec<_>>(),
         vec![wt(3, 0), wt(4, 0), wt(5, 0)],
@@ -1329,17 +1329,17 @@ fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
     let _guard = super::lock_nav_statics();
     reset_route_cache();
     let route = test_route();
-    let tiles = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    let tiles = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(2, 0)));
     assert_eq!(
         tiles.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
         vec![wt(3, 0), wt(4, 0), wt(5, 0)],
         "here at a completed walk end must skip that leg"
     );
     assert_eq!(route_flatten_count(), 1);
-    let again = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    let again = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(2, 0)));
     assert_eq!(again, tiles);
     assert_eq!(route_flatten_count(), 1, "cache hit must not flatten again");
-    let off_route = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(80, 80)));
+    let off_route = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(80, 80)));
     assert_eq!(
         off_route, tiles,
         "off-route here must not re-show walked legs"
