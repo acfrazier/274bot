@@ -53,6 +53,16 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_cook_locations", cook_catalog)?;
     callback_v8::install(
         runtime,
+        "__rs2b0t_cook_location_options",
+        cook_location_options,
+    )?;
+    callback_v8::install(
+        runtime,
+        "__rs2b0t_find_cook_location",
+        find_cook_location,
+    )?;
+    callback_v8::install(
+        runtime,
         "__rs2b0t_nearest_cook_surface",
         nearest_cook_surface,
     )?;
@@ -421,6 +431,139 @@ fn cook_catalog<'s>(
         .collect();
     let result = serde_v8::to_v8(scope, rows)
         .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
+    callback_v8::finish(scope, rv, result);
+}
+
+/// Native projection of `['Auto', ...locations.map(l => l.name), custom]`.
+fn cook_location_options<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let locations = v8::Local::<v8::Array>::try_from(args.get(0))
+            .map_err(|_| callback_v8::type_error(scope, "cook locations are not an array"))?;
+        let options = v8::Array::new(scope, 0);
+        let auto = callback_v8::string(scope, "Auto");
+        set_array_data(scope, options, 0, auto)?;
+        for index in 0..locations.length() {
+            let location = callback_v8::get_index(scope, locations.into(), index)?;
+            let name = callback_v8::get(scope, location, "name")?;
+            set_array_data(scope, options, index + 1, name)?;
+        }
+        let custom = args.get(1);
+        set_array_data(scope, options, locations.length() + 1, custom)?;
+        Ok(options.into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn set_array_data<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    array: v8::Local<'s, v8::Array>,
+    index: u32,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, ()> {
+    let key = v8::Integer::new_from_unsigned(scope, index)
+        .to_string(scope)
+        .ok_or_else(|| callback_v8::type_error(scope, "cook location option index"))?;
+    let created = callback_v8::catching(scope, |scope| {
+        array.create_data_property(scope, key.cast(), value)
+    })?;
+    if created {
+        Ok(())
+    } else {
+        Err(callback_v8::type_error(
+            scope,
+            "could not create cook location option",
+        ))
+    }
+}
+
+fn string_constructor<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    callback_v8::get(scope, global.into(), "String")
+}
+
+fn call_string<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Value>,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let undefined = v8::undefined(scope).into();
+    callback_v8::call(scope, constructor, undefined, &[value], "String")
+}
+
+/// Preserve the frozen `String` conversions and caller-owned `find` method;
+/// the row-matching predicate itself runs in this native callback.
+fn find_cook_location<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let constructor = string_constructor(scope)?;
+        let wanted = call_string(scope, constructor, args.get(1))?;
+        let wanted = callback_v8::call_method(scope, wanted, "trim", &[], "String(name).trim")?;
+        let wanted = callback_v8::call_method(
+            scope,
+            wanted,
+            "toLowerCase",
+            &[],
+            "String(name).trim().toLowerCase",
+        )?;
+        let locations = args.get(0);
+        let locations = if callback_v8::truthy(scope, locations) {
+            locations
+        } else {
+            v8::Array::new(scope, 0).into()
+        };
+        let predicate = v8::Function::builder(cook_location_matches)
+            .data(wanted)
+            .build(scope)
+            .ok_or_else(|| {
+                callback_v8::type_error(scope, "could not create cook location matcher")
+            })?;
+        let found = callback_v8::call_method(
+            scope,
+            locations,
+            "find",
+            &[predicate.into()],
+            "locs.find",
+        )?;
+        Ok(if callback_v8::truthy(scope, found) {
+            found
+        } else {
+            v8::null(scope).into()
+        })
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+fn cook_location_matches<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let location = args.get(0);
+        if !callback_v8::truthy(scope, location) {
+            return Ok(location);
+        }
+        let constructor = string_constructor(scope)?;
+        let name = callback_v8::get(scope, location, "name")?;
+        let name = call_string(scope, constructor, name)?;
+        let name = callback_v8::call_method(
+            scope,
+            name,
+            "toLowerCase",
+            &[],
+            "String(l.name).toLowerCase",
+        )?;
+        Ok(v8::Boolean::new(scope, name.strict_equals(args.data())).into())
+    })();
     callback_v8::finish(scope, rv, result);
 }
 
