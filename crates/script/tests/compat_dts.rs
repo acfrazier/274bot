@@ -152,6 +152,59 @@ fn preserve_members_rejects_an_unbacked_extra_member() {
     );
 }
 
+fn inventory_item_members(authored: &mut script::compat_dts::AuthoredSurface) -> &mut Vec<Member> {
+    let module = authored
+        .modules
+        .iter_mut()
+        .find(|module| module.specifier == "*api/inventory/Inventory.js")
+        .expect("authored Inventory declaration module");
+    module
+        .exports
+        .iter_mut()
+        .find_map(|export| match export {
+            CompatExport::Class { name, members, .. } if name == "InvItem" => Some(members),
+            _ => None,
+        })
+        .expect("authored InvItem declaration")
+}
+
+#[test]
+fn preserve_members_accepts_only_the_native_inventory_field_schema() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    let mut fields: Vec<_> = inventory_item_members(&mut authored)
+        .iter()
+        .filter(|member| member.kind == MemberKind::Field)
+        .map(|member| member.name.as_str())
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["cert", "count", "id", "name", "noted", "slot"]);
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts.is_empty(),
+        "the six initialized fields must pass: {drifts:?}"
+    );
+}
+
+#[test]
+fn preserve_members_rejects_an_uninitialized_inventory_field() {
+    let mut authored = load_authored_dts().expect("generated compat declarations");
+    inventory_item_members(&mut authored).push(Member {
+        name: "unbackedInventoryField".to_string(),
+        kind: MemberKind::Field,
+        params: Vec::new(),
+        is_async: false,
+        allows_non_promise: true,
+        is_static: false,
+    });
+    let drifts = drift_against_shim(&authored, &script::compat_dts::collect_compat_surface());
+    assert!(
+        drifts.iter().any(|drift| {
+            drift.contains("InvItem extra authored member unbackedInventoryField")
+        }),
+        "preserveMembers must not waive fields outside the initializer schema: {drifts:?}"
+    );
+}
+
 #[test]
 fn preserve_members_rejects_an_emptied_class() {
     let mut authored = load_authored_dts().expect("generated compat declarations");
