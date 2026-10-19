@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use std::collections::HashSet;
 
 use super::*;
+use crate::bin::seam::Seam;
 
 fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
@@ -27,8 +28,9 @@ fn filter_terms_match_name_world_and_state() {
     let members = names(&["alice", "bob", "carol"]);
     let rows = vec![ready("alice", 2), queued("bob", 2, 5), ready("carol", 1)];
     let mut state = FleetState::default();
-    let shown = |state: &mut FleetState, filter: &str| {
-        state.filter = filter.into();
+    let mut seam = Seam::new();
+    let mut shown = |state: &mut FleetState, filter: &str| {
+        seam.filter(state, filter);
         state.sync_with_ids(&members, &[], &rows);
         state
             .shown()
@@ -65,16 +67,17 @@ fn the_cursor_stays_on_its_member_when_the_filter_or_fleet_changes() {
     let mut members = names(&["alice", "bob", "carol"]);
     let rows = Vec::new();
     let mut state = FleetState::default();
+    let mut seam = Seam::new();
     state.sync_with_ids(&members, &[], &rows);
     state.move_cursor(2, &members);
     assert_eq!(state.cursor_member(), Some(2), "cursor on carol");
-    state.filter = "o".into(); // bob, carol
+    seam.filter(&mut state, "o"); // bob, carol
     state.sync_with_ids(&members, &[], &rows);
     assert_eq!(
         state.cursor_member().map(|i| members[i].as_str()),
         Some("carol")
     );
-    state.filter.clear();
+    seam.filter(&mut state, "");
     members.remove(0); // alice leaves: carol moves up one row
     state.sync_with_ids(&members, &[], &rows);
     assert_eq!(
@@ -88,8 +91,12 @@ fn a_departed_member_loses_its_row_selection() {
     let mut members = names(&["alice", "bob"]);
     let mut state = FleetState::default();
     state.sync_with_ids(&members, &[], &[]);
-    state.toggle_mark(&members, 0);
-    state.toggle_mark(&members, 1);
+    state
+        .selection
+        .set_for_test(ProfileIdentity::synthetic("alice"), true);
+    state
+        .selection
+        .set_for_test(ProfileIdentity::synthetic("bob"), true);
     assert_eq!(state.selection.len(), 2);
     members.retain(|n| n != "bob");
     state.sync_with_ids(&members, &[], &[]);
@@ -118,7 +125,9 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
     let rows = vec![ready("alice", 2), queued("bob", 2, 5)];
     let mut state = FleetState::default();
     state.sync_with_ids(&members, &[], &rows);
-    state.toggle_mark(&members, 2);
+    state
+        .selection
+        .set_for_test(ProfileIdentity::synthetic("carol"), true);
     let restart_badges = HashSet::from([ProfileIdentity::synthetic("bob")]);
     state.move_cursor(1, &members);
     let (rows, hits) = render(

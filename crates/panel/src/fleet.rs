@@ -14,7 +14,7 @@ use dear_imgui_rs::{
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
     fill_visible_row_indices, marked_availability, marked_startable, FleetOrder, FleetRow,
-    MarkedAction, MarkedBlock, Scripts,
+    MarkedAction, MarkedBlock, OperatorCommand, Scripts, Targets,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
@@ -274,11 +274,20 @@ fn apply_settings_row(ui: &Ui, session: &mut Session, count: usize) {
     if let Some(scope) = session.scripts.prepared_settings_sync() {
         ui.text_wrapped(scope.prompt());
         if ui.button("Apply##fleet-apply") {
-            session.apply_settings_sync();
+            if let Some(kind) = session.scripts.stage_settings_sync_apply() {
+                session.submit_script_command(
+                    OperatorCommand::ApplySettingsToMarked(kind),
+                    Targets::Everyone,
+                );
+                session.apply_script_notice();
+            } else {
+                session.error = Some("Apply to all: no prepared copy".into());
+            }
         }
         ui.same_line();
         if ui.button("Cancel##fleet-apply") {
-            session.scripts.cancel_settings_sync();
+            session
+                .submit_script_command(OperatorCommand::CancelSettingsSync, Targets::Application);
         }
         return;
     }
@@ -361,12 +370,13 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
 fn sort_combo(ui: &Ui, session: &mut Session) {
     ui.text("Sort:");
     ui.set_next_item_width(-1.0);
-    let combo = ui.begin_combo("##fleet-sort", session.fleet_sort.label());
+    let order = session.fleet_filter.order();
+    let combo = ui.begin_combo("##fleet-sort", order.label());
     #[cfg(test)]
     record_sort_combo(ui);
     if let Some(_open) = combo {
         for sort in FleetOrder::PANEL_CHOICES {
-            let selected = sort == session.fleet_sort;
+            let selected = sort == order;
             let picked = ui
                 .selectable_config(sort.label())
                 .selected(selected)
@@ -374,7 +384,7 @@ fn sort_combo(ui: &Ui, session: &mut Session) {
             #[cfg(test)]
             record_sort_choice(ui);
             if picked {
-                session.fleet_sort = sort;
+                session.submit(OperatorCommand::SetFleetSort(sort), Targets::Application);
             }
             if selected {
                 ui.set_item_default_focus();
@@ -472,7 +482,10 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
             #[cfg(test)]
             record_cell(ui);
             if ui.checkbox(format!("##fleet-mark-{}", marked_id.raw()), &mut marked) {
-                session.fleet_selection.set(marked_id, marked);
+                session.submit(
+                    OperatorCommand::SetMark(marked),
+                    Targets::Profile(row.name()),
+                );
             }
             ui.table_next_column();
             #[cfg(test)]
@@ -560,9 +573,13 @@ pub fn window(ui: &Ui, session: &mut Session) {
         .build(|| {
             #[cfg(test)]
             record_content_edges(ui);
-            ui.input_text("Filter", &mut session.fleet_filter)
+            if ui
+                .input_text("Filter", session.fleet_filter.staged_mut())
                 .hint("name or status")
-                .build();
+                .build()
+            {
+                session.submit(OperatorCommand::SetFleetFilter, Targets::Application);
+            }
             sort_combo(ui, session);
             // The surface's universe is every vault profile; marks are
             // pruned to it at the session sync (see
@@ -572,7 +589,12 @@ pub fn window(ui: &Ui, session: &mut Session) {
             let rows = profile_rows(session);
             session.prune_fleet_marks();
             let mut shown = std::mem::take(&mut session.fleet_shown);
-            fill_visible_row_indices(&rows, &session.fleet_filter, session.fleet_sort, &mut shown);
+            fill_visible_row_indices(
+                &rows,
+                session.fleet_filter.text(),
+                session.fleet_filter.order(),
+                &mut shown,
+            );
             ui.separator();
             action_bar(ui, session);
             column_toggles(ui, session);
@@ -607,7 +629,7 @@ mod tests {
         install_vault(&mut session.core, vault);
         session.fleet_open = true;
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
             ctx.prepare_frame(
@@ -677,15 +699,19 @@ mod tests {
         assert_eq!(shown_names(&session), ["alice", "bob", "carol"]);
         // Filter: only bob's name matches "bob" (a bare "o" would also
         // match the offline status of every row).
-        session.fleet_filter = "bob".into();
+        session.fleet_filter.staged_mut().push_str("bob");
+        session.submit(
+            frontend_core::OperatorCommand::SetFleetFilter,
+            frontend_core::Targets::Application,
+        );
         frame(&mut session);
         assert_eq!(shown_names(&session), ["bob"]);
         // Marks: bob's stays; a mark outside the universe is pruned.
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         session
             .fleet_selection
-            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
         frame(&mut session);
         assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
         assert!(session.fleet_selection.contains(bob));
@@ -720,10 +746,10 @@ mod tests {
         install_vault(&mut session.core, vault);
         assert!(!session.fleet_open, "the Fleet window stays closed");
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         session
             .fleet_selection
-            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
         session.pump_status();
         assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
         assert!(session.fleet_selection.contains(bob));
@@ -756,7 +782,7 @@ mod tests {
         );
         for name in ["zed", "amy", "max", "bea", "kim"] {
             let id = session.core.profile_identity(name).unwrap();
-            session.fleet_selection.set(id, true);
+            session.fleet_selection.set_for_test(id, true);
         }
         session.pump_status();
         assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");

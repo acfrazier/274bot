@@ -9,11 +9,11 @@ use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::{
-    assign_and_restart_marked, assign_marked, combined_bulk_scope, login_marked, logout_marked,
-    marked_availability, prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction,
-    MarkedBlock, RestartScope,
+    assign_and_restart_marked, assign_marked, combined_bulk_scope, marked_availability,
+    prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
+    RestartScope,
 };
-use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, ScriptStartError, Scripts};
 use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
@@ -308,6 +308,48 @@ fn push_ready(f: &Fixture, name: &str) {
         });
 }
 
+/// The marked rows through the command seam (`Targets::Marked`), with
+/// `uids` marked and the fixture's scripts lent, as the Fleet window issues
+/// them; the per-row report the window shows.
+fn marked_row(f: &mut Fixture, command: crate::OperatorCommand, uids: &[i32]) -> crate::BulkReport {
+    struct Lend<'a> {
+        marks: &'a mut MarkedSelection,
+        scripts: &'a mut Scripts,
+    }
+    impl crate::SlotSurface for Lend<'_> {
+        type Io = ();
+        fn attach(
+            &mut self,
+            _name: &str,
+            profile: &mut crate::SpawnProfile<'_>,
+            _retained: Option<()>,
+        ) -> crate::SlotAttach<()> {
+            profile.set_raster(crate::command::RasterMode::Off);
+            crate::SlotAttach::new((), None, None)
+        }
+        fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
+        fn released(&mut self, _name: &str) {}
+        fn models(&mut self) -> crate::Models<'_> {
+            crate::Models::none()
+                .with_marks(self.marks)
+                .with_scripts(self.scripts)
+        }
+        fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+    }
+    let mut selection = marks(uids);
+    let mut lend = Lend {
+        marks: &mut selection,
+        scripts: &mut f.scripts,
+    };
+    let mut submitted = f
+        .core
+        .submit(command, crate::Targets::Marked, &mut lend)
+        .expect("marked command admitted");
+    submitted
+        .take_bulk()
+        .expect("a marked command reports per row")
+}
+
 /// Log out reaches the bots that are logged in and skips the ones that are
 /// not; Log in reaches the rest, loads a profile that was never loaded and
 /// skips a bot that is already in game.
@@ -317,7 +359,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     push_ready(&f, "alice");
     f.core.poll();
 
-    let out = logout_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts);
+    let out = marked_row(&mut f, crate::OperatorCommand::Logout, &[1, 2]);
     assert_eq!(
         out.summary(),
         "Log out marked: logging out 1, skipped 1: bob: not logged in"
@@ -329,7 +371,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     // Alice is out again and carol was never loaded; bob is offline.
     f.core.play().unwrap().statuses.lock().unwrap().clear();
     f.core.poll();
-    let login = login_marked(&marks(&[1, 3]), &mut f.core, &mut f.surface);
+    let login = marked_row(&mut f, crate::OperatorCommand::Login, &[1, 3]);
     assert_eq!(login.summary(), "Log in marked: logging in 2, skipped 0");
     assert!(
         f.core.members().iter().any(|m| m == "carol"),
@@ -340,7 +382,7 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
 
     push_ready(&f, "alice");
     f.core.poll();
-    let again = login_marked(&marks(&[1]), &mut f.core, &mut f.surface);
+    let again = marked_row(&mut f, crate::OperatorCommand::Login, &[1]);
     assert_eq!(
         again.summary(),
         "Log in marked: logging in 0, skipped 1: alice: already logged in"
@@ -373,7 +415,7 @@ fn marked_logout_cancels_a_memory_relog_login_half() {
     assert!(f.core.play().unwrap().arm("alice").unwrap().wants_login());
     assert!(f.core.memory_status("alice").unwrap().relog_pending);
 
-    let out = logout_marked(&marks(&[1, 2]), &mut f.core, &mut f.scripts);
+    let out = marked_row(&mut f, crate::OperatorCommand::Logout, &[1, 2]);
 
     assert_eq!(out.summary(), "Log out marked: logging out 2, skipped 0");
     for name in ["alice", "bob"] {
@@ -759,18 +801,24 @@ fn operator_apply_assign_start_does_not_start_on_defaults() {
         .scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap_err();
-    assert!(
-        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
-        "{blocked}"
-    );
+    match blocked {
+        ScriptStartError::Waiting(message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     let blocked = f
         .scripts
         .start_profile(&mut f.core, "bob", None)
         .unwrap_err();
-    assert!(
-        blocked.contains("blocked") && blocked.contains("waiting for Apply or Cancel"),
-        "{blocked}"
-    );
+    match blocked {
+        ScriptStartError::Waiting(message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     start_marked(&marked, &mut f.core, &mut f.scripts, Some(&sel), None);
     let bulk = f.scripts.last_bulk_report().unwrap();
     assert!(bulk.contains("blocked"), "{bulk}");

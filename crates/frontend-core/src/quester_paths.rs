@@ -294,6 +294,22 @@ pub struct QuesterPathsController {
     reload: ReloadPaths,
     notice: Option<Result<Arc<str>, Arc<str>>>,
     reload_when_ready: bool,
+    /// The `ReloadQuesterPaths` command the running reload answers.
+    reload_request: Option<api::identity::RequestId>,
+    /// That command's outcome, once the reload finished, until the
+    /// session settles it.
+    settled_reload: Option<(api::identity::RequestId, Result<(), String>)>,
+}
+
+/// Why an explicit Reload Paths was not started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ReloadRefused {
+    /// A reload is already running.
+    #[error("a Path reload is already running")]
+    Running,
+    /// No profile's game data is loaded yet.
+    #[error("load a profile before reloading quest Paths")]
+    NoGameData,
 }
 
 impl QuesterPathsController {
@@ -311,7 +327,7 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source.
-    pub fn apply_changed(
+    pub(crate) fn apply_changed(
         &mut self,
         preferences: &UiPreferences,
         after: &QuesterPathsView,
@@ -344,24 +360,56 @@ impl QuesterPathsController {
         Ok(())
     }
 
-    /// Handle an explicit Reload Paths action.
-    pub fn request_reload(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
+    /// Handle an explicit Reload Paths action (`ReloadQuesterPaths`
+    /// `request`): its outcome is kept for [`Self::take_settled_reload`].
+    pub(crate) fn request_reload_for(
+        &mut self,
+        request: api::identity::RequestId,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), ReloadRefused> {
         if self.reload.is_running() {
             self.set_notice(Ok(Arc::from("A Path reload is already running.")));
+            Err(ReloadRefused::Running)
         } else if let Some(selected) = selected {
             self.reload_when_ready = false;
             self.start_reload(selected);
+            if self.reload.is_running() || self.reload.pending.is_some() {
+                self.reload_request = Some(request);
+            } else {
+                let error = self
+                    .notice_text()
+                    .unwrap_or("Path reload refused")
+                    .to_string();
+                self.settled_reload = Some((request, Err(error)));
+            }
+            Ok(())
         } else {
             self.set_notice(Err(Arc::from(
                 "Load a profile before reloading quest Paths.",
             )));
+            Err(ReloadRefused::NoGameData)
         }
+    }
+
+    /// The explicit reload command that finished since the last call, with
+    /// its outcome.
+    pub(crate) fn take_settled_reload(
+        &mut self,
+    ) -> Option<(api::identity::RequestId, Result<(), String>)> {
+        self.settled_reload.take()
     }
 
     /// Start a saved-setting reload as soon as game data is ready and poll
     /// the worker without blocking the caller.
     pub fn advance(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
         if let Some(result) = self.reload.poll() {
+            let outcome = match &result {
+                Ok(_) => Ok(()),
+                Err(error) => Err(error.clone()),
+            };
+            if let Some(request) = self.reload_request.take() {
+                self.settled_reload = Some((request, outcome));
+            }
             match result {
                 Ok(message) => self.set_notice(Ok(message)),
                 Err(error) => self.set_notice(Err(reload_error(error))),
@@ -381,7 +429,12 @@ impl QuesterPathsController {
                     self.set_notice(Ok(Arc::from("Reloading quest Paths…")));
                 }
                 Ok(()) => {}
-                Err(error) => self.set_notice(Err(reload_error(error))),
+                Err(error) => {
+                    if let Some(request) = self.reload_request.take() {
+                        self.settled_reload = Some((request, Err(error.clone())));
+                    }
+                    self.set_notice(Err(reload_error(error)));
+                }
             }
         }
     }
@@ -404,7 +457,7 @@ impl QuesterPathsController {
         matches!(self.notice, Some(Err(_)))
     }
 
-    pub fn clear_notice(&mut self) {
+    pub(crate) fn clear_notice(&mut self) {
         self.notice = None;
     }
 

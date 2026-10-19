@@ -551,12 +551,12 @@ mod native_settings;
 pub(crate) mod prefs;
 mod scripts;
 mod vault_rows;
-pub use map::MapDesk;
-pub use prefs::DrawPolicy;
 pub(crate) use commands::StagedProfileWrite;
 pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
+pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
+pub use prefs::{DrawPolicy, Notice};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -756,7 +756,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Start the play session `launch` describes, with `hook` as the front
     /// end's per-frame client work on every slot, and adopt it with `vault`.
-    pub fn start_play(
+    pub(crate) fn start_play(
         &mut self,
         vault: Vault,
         launch: crate::launch::PlayLaunch,
@@ -816,7 +816,7 @@ impl<Io> OperatorSession<Io> {
     /// Open (or first-run create) the vault at `path` with `typed` and
     /// start the play session `launch` describes, with `hook` as the front
     /// end's per-frame client work.
-    pub fn unlock_vault(
+    pub(crate) fn unlock_vault(
         &mut self,
         path: &std::path::Path,
         typed: &str,
@@ -922,7 +922,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Project the persisted manual-movement pause setting onto the current
     /// Play and retain it for the next Play/session slot.
-    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
+    pub(crate) fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
         if self.pause_script_on_manual_walk_abort == enabled {
             return;
         }
@@ -933,7 +933,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Publish grants before or after Play installation.
-    pub fn set_walk_globals(&mut self, globals: crate::walk_permissions::WalkGlobals) {
+    pub(crate) fn set_walk_globals(&mut self, globals: crate::walk_permissions::WalkGlobals) {
         self.walk_globals = globals;
         if let Some(play) = self.play.as_ref() {
             play.set_walk_globals(globals.to_host());
@@ -942,7 +942,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Interactive frontends share the durable preferences even after
     /// Continue anyway: every admission reads the globals from them.
-    pub fn set_walk_globals_store(&mut self, preferences: crate::prefs::UiPreferences) {
+    pub(crate) fn set_walk_globals_store(&mut self, preferences: crate::prefs::UiPreferences) {
         let preferences = preferences.inner().clone();
         if let Some(play) = self.play.as_mut() {
             play.set_walk_globals_store(preferences.clone());
@@ -976,7 +976,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Drop the play (joins its workers). Final teardown only.
-    pub fn close_play(&mut self) {
+    pub(crate) fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
         self.play = None;
@@ -1077,7 +1077,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// What the front end is rendering, included in the capacity warning.
-    pub fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
+    pub(crate) fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
         self.capacity_render = render;
     }
 
@@ -1649,7 +1649,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Run an operator-typed debug command on `name`'s slot.
-    pub fn debug_command(&self, name: &str, cmd: &str) -> Result<(), String> {
+    pub(crate) fn debug_command(&self, name: &str, cmd: &str) -> Result<(), String> {
         let play = self.play.as_ref().ok_or("no active play session")?;
         play.cheat(name, cmd).map_err(|refusal| refusal.to_string())
     }
@@ -1834,7 +1834,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Adopt every running slot into the fleet (MultiBox on), cancelling
     /// their pending removals so the retained IO returns.
-    pub fn seed_running(&mut self) {
+    pub(crate) fn seed_running(&mut self) {
         let running: Vec<String> = self
             .play
             .as_ref()
@@ -1986,7 +1986,8 @@ impl<Io> OperatorSession<Io> {
         }
         self.capacity_due = Some(now + CAPACITY_EVAL_EVERY);
         let eval = self.play.as_ref().map_or(CapacityEval::Clear, |play| {
-            play.capacity().evaluate(now, self.capacity_render.to_host())
+            play.capacity()
+                .evaluate(now, self.capacity_render.to_host())
         });
         self.apply_capacity(eval);
     }
@@ -2832,7 +2833,20 @@ impl<Io> OperatorSession<Io> {
     /// or the operator's TutSkip through
     /// [`crate::OperatorCommand::MarkTutorialSkipped`]). Unchanged state
     /// writes nothing.
-    pub fn record_tutorial_state(
+    /// Adopt the engine's `getvar tutorial` reading of `name` as its
+    /// cached TutSkip state: an owner result, not an operator decision
+    /// (the operator's TutSkip is [`crate::OperatorCommand::MarkTutorialSkipped`]).
+    pub fn adopt_tutorial_reading(
+        &mut self,
+        name: &str,
+        skipped: bool,
+    ) -> Result<(), crate::profile_saves::ProfileWriteRefused> {
+        self.record_tutorial_state(name, skipped)
+            .map(|_| ())
+            .map_err(crate::profile_saves::ProfileWriteRefused)
+    }
+
+    pub(crate) fn record_tutorial_state(
         &mut self,
         name: &str,
         skipped: bool,

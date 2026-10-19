@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
-use frontend_core::scripts::Loadouts;
+use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsError};
 use host_play::local_state::{LocalStateService, StateRoot};
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
@@ -132,11 +132,11 @@ pub(crate) fn set_patiently(
 pub(crate) fn save_store_patiently(store: &mut Loadouts) {
     let start = std::time::Instant::now();
     loop {
-        match store.save() {
+        match store.save_for_test() {
             Ok(()) => return,
             Err(error)
-                if (error.contains("not durable within")
-                    || error.contains("changed since this list was loaded"))
+                if (error.to_string().contains("not durable within")
+                    || matches!(error, LoadoutsError::Conflict(_)))
                     && start.elapsed() < std::time::Duration::from_secs(60) =>
             {
                 std::thread::yield_now();
@@ -158,7 +158,7 @@ pub(crate) fn save_draft_patiently(session: &mut crate::session::Session) -> boo
         if saved {
             return true;
         }
-        let status = session.loadouts_status.clone();
+        let status = session.loadouts.status().to_string();
         if status.contains("not durable within") {
             timed_out_before = true;
         } else if !(timed_out_before && status.contains("changed since this list was loaded")) {
@@ -170,23 +170,23 @@ pub(crate) fn save_draft_patiently(session: &mut crate::session::Session) -> boo
         std::thread::yield_now();
     }
 }
-/// Re-read a loadouts store until `settled` holds (up to 60 s): recovery
+/// Re-read a loadouts form until `settled` holds (up to 60 s): recovery
 /// for a product save that stayed queued past its bounded wait, where a
 /// retry could double-apply (add/duplicate). Reload errors are transient
 /// (the writer is still draining the queued write); the final assert names
 /// the missing effect.
-pub(crate) fn reload_store_until(
-    store: &mut Loadouts,
+pub(crate) fn reload_form_until(
+    form: &mut LoadoutForm,
     label: &str,
-    mut settled: impl FnMut(&Loadouts) -> bool,
+    mut settled: impl FnMut(&LoadoutForm) -> bool,
 ) {
     let start = std::time::Instant::now();
-    while !settled(store) {
+    while !settled(form) {
         assert!(
             start.elapsed() < std::time::Duration::from_secs(60),
             "{label} never landed"
         );
-        let _ = store.reload();
+        let _ = form.reload_for_test();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

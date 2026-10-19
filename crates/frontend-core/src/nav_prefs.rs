@@ -41,45 +41,58 @@ impl NavPreference {
     }
 }
 
-/// Read or update one shared nested nav boolean through the process
-/// service's preferences. The read preserves legacy defaults; the write
-/// merges only that key, against the file as the service reads it then.
-pub fn nav_preference(
+/// Read one shared nested nav boolean through the process service's
+/// preferences, with its legacy default. (Changing it is the
+/// `SetNavPreference` command.)
+pub fn nav_preference(preferences: &UiPreferences, preference: NavPreference) -> io::Result<bool> {
+    let (key, default) = preference.key_and_default();
+    if preference == NavPreference::SurvivableRouting {
+        return Ok(host_play::WalkGlobals::read(preferences.inner())
+            .unwrap_or_else(|_| host_play::WalkGlobals::fail_closed())
+            .survivable_routing);
+    }
+    Ok(preferences
+        .value("nav")
+        .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
+        .unwrap_or(default))
+}
+
+/// Write one shared nested nav boolean: only that key is merged, against
+/// the file as the service reads it then.
+pub(crate) fn write_nav_preference(
     preferences: &UiPreferences,
     preference: NavPreference,
-    update: Option<bool>,
-) -> io::Result<bool> {
-    let (key, default) = preference.key_and_default();
-    if let Some(enabled) = update {
-        preferences.update(|document| {
-            let mut nav = document
-                .get("nav")
-                .filter(|value| value.is_object())
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            nav.as_object_mut()
-                .expect("a replacement nav object is always an object")
-                .insert(key.into(), serde_json::Value::Bool(enabled));
-            document.insert("nav".into(), nav);
-            Ok(())
-        })?;
-        Ok(enabled)
-    } else {
-        if preference == NavPreference::SurvivableRouting {
-            return Ok(host_play::WalkGlobals::read(preferences.inner())
-                .unwrap_or_else(|_| host_play::WalkGlobals::fail_closed())
-                .survivable_routing);
-        }
-        Ok(preferences
-            .value("nav")
-            .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
-            .unwrap_or(default))
-    }
+    enabled: bool,
+) -> io::Result<()> {
+    let (key, _) = preference.key_and_default();
+    preferences.update(|document| {
+        let mut nav = document
+            .get("nav")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        nav.as_object_mut()
+            .expect("a replacement nav object is always an object")
+            .insert(key.into(), serde_json::Value::Bool(enabled));
+        document.insert("nav".into(), nav);
+        Ok(())
+    })
+}
+
+/// Fixture seam: arrange a stored nav boolean as another writer would
+/// (front-end tests).
+#[cfg(any(test, feature = "test-support"))]
+pub fn write_nav_preference_for_test(
+    preferences: &UiPreferences,
+    preference: NavPreference,
+    enabled: bool,
+) -> io::Result<()> {
+    write_nav_preference(preferences, preference, enabled)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{nav_preference, NavPreference};
+    use super::{nav_preference, write_nav_preference, NavPreference};
     use crate::prefs::UiPreferences as Preferences;
     use host_play::local_state::{LocalStateService, StateRoot};
     use std::path::PathBuf;
@@ -110,10 +123,10 @@ mod tests {
         .unwrap();
         prefs.reload().unwrap();
 
-        assert!(!nav_preference(&prefs, NavPreference::ShowSpecialAreas, None).unwrap());
-        assert!(nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap());
+        assert!(!nav_preference(&prefs, NavPreference::ShowSpecialAreas).unwrap());
+        assert!(nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         assert!(
-            nav_preference(&prefs, NavPreference::SurvivableRouting, None).unwrap(),
+            nav_preference(&prefs, NavPreference::SurvivableRouting).unwrap(),
             "the new preference defaults on when absent from a valid old file"
         );
         for preference in [
@@ -125,21 +138,26 @@ mod tests {
             NavPreference::SurvivableRoutingNoticeAck,
         ] {
             assert!(
-                !nav_preference(&prefs, preference, None).unwrap(),
+                !nav_preference(&prefs, preference).unwrap(),
                 "missing {preference:?} defaults off"
             );
-            nav_preference(&prefs, preference, Some(true)).unwrap();
+            write_nav_preference(&prefs, preference, true)
+                .map(|()| true)
+                .unwrap();
         }
 
-        nav_preference(&prefs, NavPreference::SurvivableRouting, Some(false)).unwrap();
-        nav_preference(&prefs, NavPreference::SurvivableRouting, Some(true)).unwrap();
-        nav_preference(&prefs, NavPreference::ShowSpecialAreas, Some(true)).unwrap();
-        nav_preference(
-            &prefs,
-            NavPreference::PauseScriptOnManualWalkAbort,
-            Some(false),
-        )
-        .unwrap();
+        write_nav_preference(&prefs, NavPreference::SurvivableRouting, false)
+            .map(|()| false)
+            .unwrap();
+        write_nav_preference(&prefs, NavPreference::SurvivableRouting, true)
+            .map(|()| true)
+            .unwrap();
+        write_nav_preference(&prefs, NavPreference::ShowSpecialAreas, true)
+            .map(|()| true)
+            .unwrap();
+        write_nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort, false)
+            .map(|()| false)
+            .unwrap();
 
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
@@ -159,11 +177,9 @@ mod tests {
         let (missing_dir, missing) = scratch("legacy");
         std::fs::write(missing.path(), r#"{"last_focus":"bob","nav":{}}"#).unwrap();
         missing.reload().unwrap();
+        assert!(nav_preference(&missing, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         assert!(
-            nav_preference(&missing, NavPreference::PauseScriptOnManualWalkAbort, None).unwrap()
-        );
-        assert!(
-            nav_preference(&missing, NavPreference::SurvivableRouting, None).unwrap(),
+            nav_preference(&missing, NavPreference::SurvivableRouting).unwrap(),
             "an old file without the key migrates to the survivable middle level"
         );
         for preference in [
@@ -174,9 +190,9 @@ mod tests {
             NavPreference::ScriptScopeNoticeAck,
             NavPreference::SurvivableRoutingNoticeAck,
         ] {
-            assert!(!nav_preference(&missing, preference, None).unwrap());
+            assert!(!nav_preference(&missing, preference).unwrap());
         }
-        assert!(!nav_preference(&missing, NavPreference::ShowSpecialAreas, None).unwrap());
+        assert!(!nav_preference(&missing, NavPreference::ShowSpecialAreas).unwrap());
 
         std::fs::remove_dir_all(dir).unwrap();
         std::fs::remove_dir_all(missing_dir).unwrap();
@@ -190,12 +206,9 @@ mod tests {
         let prefs = Preferences::new(
             LocalStateService::open_process(StateRoot::new(blocked.clone())).preferences(),
         );
-        nav_preference(
-            &prefs,
-            NavPreference::PauseScriptOnManualWalkAbort,
-            Some(false),
-        )
-        .expect_err("the preference writer must report an inaccessible destination");
+        write_nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort, false)
+            .map(|()| false)
+            .expect_err("the preference writer must report an inaccessible destination");
         assert_eq!(std::fs::read(&blocked).unwrap(), b"not a directory");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -204,7 +217,7 @@ mod tests {
     fn survivable_preference_fails_closed_for_malformed_files() {
         let (dir, prefs) = scratch("malformed-survivable");
         std::fs::write(prefs.path(), b"{malformed").unwrap();
-        assert!(!nav_preference(&prefs, NavPreference::SurvivableRouting, None).unwrap());
+        assert!(!nav_preference(&prefs, NavPreference::SurvivableRouting).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

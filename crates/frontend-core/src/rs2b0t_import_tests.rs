@@ -171,6 +171,109 @@ fn session(vault: Vault) -> OperatorSession<u32> {
     session.start(vault, empty_play());
     session
 }
+struct ImportSurface<'a> {
+    scripts: &'a mut crate::scripts::Scripts,
+    import: &'a mut ProfileImport,
+}
+
+impl crate::SlotSurface for ImportSurface<'_> {
+    type Io = u32;
+
+    fn attach(
+        &mut self,
+        _name: &str,
+        profile: &mut crate::SpawnProfile<'_>,
+        retained: Option<u32>,
+    ) -> crate::SlotAttach<u32> {
+        profile.set_raster(crate::command::RasterMode::Off);
+        crate::SlotAttach::new(retained.unwrap_or_default(), None, None)
+    }
+
+    fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
+
+    fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> crate::Models<'_> {
+        crate::Models::none()
+            .with_scripts(self.scripts)
+            .with_import(self.import)
+    }
+
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+}
+
+fn submit_import_row(
+    core: &mut OperatorSession<u32>,
+    scripts: &mut crate::scripts::Scripts,
+    import: &mut ProfileImport,
+    command: crate::OperatorCommand,
+    targets: crate::Targets<'_>,
+) {
+    let mut surface = ImportSurface { scripts, import };
+    core.submit(command, targets, &mut surface).unwrap();
+}
+
+fn submit_planned_import_rows(
+    core: &mut OperatorSession<u32>,
+    scripts: &mut crate::scripts::Scripts,
+    import: &mut ProfileImport,
+) -> Result<(), ImportError> {
+    let planned = import
+        .planned_writes()
+        .map(|(index, name, command)| (index, name.to_owned(), command))
+        .collect::<Vec<_>>();
+    for (index, name, command) in planned {
+        match command {
+            crate::OperatorCommand::CreateProfile => {
+                import.stage_create_account(index)?;
+                submit_import_row(core, scripts, import, command, crate::Targets::Application);
+            }
+            crate::OperatorCommand::SaveProfile => {
+                import.stage_save_account(index)?;
+                submit_import_row(
+                    core,
+                    scripts,
+                    import,
+                    command,
+                    crate::Targets::Profile(&name),
+                );
+            }
+            _ => panic!("unexpected profile import writer: {command:?}"),
+        }
+        import.cancel_staged_account(index);
+    }
+    Ok(())
+}
+
+fn confirm_import(
+    core: &mut OperatorSession<u32>,
+    scripts: &mut crate::scripts::Scripts,
+    import: &mut ProfileImport,
+) {
+    import.prepare_confirmation(core, scripts).unwrap();
+    submit_planned_import_rows(core, scripts, import).unwrap();
+}
+
+fn apply_import(
+    core: &mut OperatorSession<u32>,
+    plan: ImportPlan,
+) -> Result<ImportRun, ImportError> {
+    static NEXT_SCRIPTS_DIR: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+    let id = NEXT_SCRIPTS_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = temp_dir(&format!("apply-import-{id}"));
+    let mut scripts = crate::scripts::Scripts::new(
+        script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+    );
+    let mut import = ProfileImport::new();
+    import.start_run(PathBuf::new(), plan);
+    submit_planned_import_rows(core, &mut scripts, &mut import)?;
+    let Some((_, run)) = import.run.take() else {
+        return Err(ImportFailure::NoPreview.into());
+    };
+    Ok(run)
+}
 
 fn account<'a>(plan: &'a ImportPlan, name: &str) -> &'a AccountPlan {
     plan.accounts()
@@ -1130,17 +1233,36 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     let path = dir.join(PROFILE_FILE_NAME);
     std::fs::write(&path, FIXTURE).unwrap();
     let mut core = session(vault_with("flow-vault", &[]));
-    let scripts = Scripts::new(
+    let mut scripts = Scripts::new(
         script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
     let mut flow = ProfileImport::new();
     assert_eq!(flow.stage(), Stage::Path);
-    flow.preview(&core, &scripts);
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::PreviewProfileImport,
+        crate::Targets::Application,
+    );
     assert!(flow.error().unwrap().contains(PROFILE_FILE_NAME));
 
     *flow.path_mut() = path.display().to_string();
-    flow.preview(&core, &scripts);
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::EditProfileImportPath,
+        crate::Targets::Application,
+    );
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::PreviewProfileImport,
+        crate::Targets::Application,
+    );
     assert_eq!(flow.error(), None);
     assert_eq!(flow.stage(), Stage::Preview);
     assert!(
@@ -1153,18 +1275,43 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
         .iter()
         .any(|line| line.contains("selected script 'CowKiller'") && line.contains("catalog")));
 
-    flow.confirm(&mut core, &scripts);
+    confirm_import(&mut core, &mut scripts, &mut flow);
     assert_eq!(flow.stage(), Stage::Report);
     core.flush_writes();
     assert!(core.vault().unwrap().get("alice").is_some());
     assert!(flow.can_delete(&core));
     assert!(path.exists(), "deleted without asking");
-    flow.ask_delete();
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::SetProfileImportDeletePrompt(true),
+        crate::Targets::Application,
+    );
     assert!(flow.delete_asked());
-    flow.cancel_delete();
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::SetProfileImportDeletePrompt(false),
+        crate::Targets::Application,
+    );
+    assert!(!flow.delete_asked());
     assert!(path.exists());
-    flow.ask_delete();
-    flow.confirm_delete(&core);
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::SetProfileImportDeletePrompt(true),
+        crate::Targets::Application,
+    );
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::DeleteProfileImportExport,
+        crate::Targets::Application,
+    );
     assert!(!path.exists());
     assert!(!flow.can_delete(&core));
     let report = flow.report_lines(&core).join("\n");
@@ -1183,7 +1330,7 @@ fn a_locked_vault_refuses_the_preview() {
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = "rs2b0t-profiles.json".into();
-    flow.preview(&core, &scripts);
+    assert!(flow.preview(&core, &scripts).is_err());
     assert!(flow.error().unwrap().contains("vault is locked"));
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1506,21 +1653,40 @@ fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     let path = dir.join(PROFILE_FILE_NAME);
     std::fs::write(&path, FIXTURE).unwrap();
     let mut core = failing_session("flow-failed-vault");
-    let scripts = Scripts::new(
+    let mut scripts = Scripts::new(
         script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();
-    flow.preview(&core, &scripts);
-    flow.confirm(&mut core, &scripts);
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::EditProfileImportPath,
+        crate::Targets::Application,
+    );
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::PreviewProfileImport,
+        crate::Targets::Application,
+    );
+    confirm_import(&mut core, &mut scripts, &mut flow);
     assert!(flow.writing(&core));
     core.flush_writes();
     assert!(flow.settled(&core));
     assert!(!flow.can_delete(&core));
-    flow.ask_delete();
-    flow.confirm_delete(&core);
-    assert!(path.exists(), "deleted after a failed import");
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::SetProfileImportDeletePrompt(true),
+        crate::Targets::Application,
+    );
+    assert!(!flow.delete_asked());
+    assert!(path.exists(), "a failed import cannot offer deletion");
     assert_no_password(&flow.report_lines(&core).join("\n"));
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1632,20 +1798,33 @@ fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
         "r4-input-b-vault",
         &[("r4bsource", 274_000_041)],
     ));
-    let scripts = Scripts::new(
+    let mut scripts = Scripts::new(
         script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();
-    flow.preview(&core, &scripts);
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::EditProfileImportPath,
+        crate::Targets::Application,
+    );
+    submit_import_row(
+        &mut core,
+        &mut scripts,
+        &mut flow,
+        crate::OperatorCommand::PreviewProfileImport,
+        crate::Targets::Application,
+    );
     assert_eq!(flow.error(), None);
     let mut leaks = Leaks::default();
     let plan = flow.plan().unwrap();
     assert_eq!(account(plan, "r4bsource").status(), AccountStatus::Exists);
     assert_eq!(account(plan, "r4btarget").status(), AccountStatus::New);
     leaks.check(SECRET, "the preview", &flow.preview_lines().join("\n"));
-    flow.confirm(&mut core, &scripts);
+    confirm_import(&mut core, &mut scripts, &mut flow);
     core.flush_writes();
     assert!(flow.settled(&core));
     leaks.check(SECRET, "the report", &flow.report_lines(&core).join("\n"));

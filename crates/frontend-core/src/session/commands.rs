@@ -119,6 +119,7 @@ pub struct Submitted {
     removal: Option<Removal>,
     added: usize,
     bulk: Option<crate::BulkReport>,
+    marked: Option<crate::MarkedCommandReport>,
 }
 
 impl Submitted {
@@ -156,6 +157,19 @@ impl Submitted {
 
     pub(crate) fn set_bulk(&mut self, bulk: crate::BulkReport) {
         self.bulk = Some(bulk);
+    }
+    /// The exact marked command's per-profile admission report.
+    pub fn marked(&self) -> Option<&crate::MarkedCommandReport> {
+        self.marked.as_ref()
+    }
+
+    /// Take the marked command's per-profile admission report.
+    pub fn take_marked(&mut self) -> Option<crate::MarkedCommandReport> {
+        self.marked.take()
+    }
+
+    pub(crate) fn set_marked(&mut self, marked: crate::MarkedCommandReport) {
+        self.marked = Some(marked);
     }
 }
 
@@ -262,6 +276,116 @@ pub(super) struct CommandDesk {
     names: Vec<String>,
     /// Members of the command being opened (reused buffer).
     targets: Vec<(Subject, Scope)>,
+    /// The notice the next AcknowledgeNotice answers.
+    notice: Option<super::prefs::Notice>,
+    /// The path and text the next SaveLog writes.
+    log_save: Option<(std::path::PathBuf, String)>,
+    /// SaveLog commands whose write is still running.
+    log_saves: Vec<(RequestId, crate::log::SaveTicket)>,
+    /// The Quester Paths settings (and whether to write them) the next
+    /// SetQuesterPaths applies.
+    quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
+    /// The bound profile's game data the next Quester Paths row reloads
+    /// with.
+    quester_game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    /// The rows the next MarkAll marks (reused buffer).
+    mark_all: Vec<crate::selection::ProfileIdentity>,
+    /// What the next vault row commits.
+    vault: Option<super::vault_rows::StagedVault>,
+    /// The next Select also brings the member's worker up (the panel's
+    /// chooser pick).
+    select_opens_slot: bool,
+}
+
+impl CommandDesk {
+    pub(super) fn stage_vault(&mut self, staged: super::vault_rows::StagedVault) {
+        self.vault = Some(staged);
+    }
+
+    pub(super) fn take_vault(&mut self) -> Option<super::vault_rows::StagedVault> {
+        self.vault.take()
+    }
+
+    pub(super) fn mark_all_staging(&mut self) -> &mut Vec<crate::selection::ProfileIdentity> {
+        &mut self.mark_all
+    }
+
+    pub(super) fn stage_notice(&mut self, notice: super::prefs::Notice) {
+        self.notice = Some(notice);
+    }
+
+    pub(super) fn take_notice(&mut self) -> Option<super::prefs::Notice> {
+        self.notice.take()
+    }
+
+    pub(super) fn stage_log_save(&mut self, path: std::path::PathBuf, text: String) {
+        self.log_save = Some((path, text));
+    }
+
+    pub(super) fn take_log_save(&mut self) -> Option<(std::path::PathBuf, String)> {
+        self.log_save.take()
+    }
+
+    pub(super) fn watch_log_save(&mut self, request: RequestId, ticket: crate::log::SaveTicket) {
+        self.log_saves.push((request, ticket));
+    }
+
+    pub(super) fn stage_quester_paths(
+        &mut self,
+        after: crate::quester_paths::QuesterPathsView,
+        persist: bool,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) {
+        self.quester_paths = Some((after, persist));
+        self.quester_game_data = selected;
+    }
+
+    pub(super) fn stage_quester_game_data(
+        &mut self,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) {
+        self.quester_game_data = selected;
+    }
+
+    pub(super) fn take_quester_game_data(
+        &mut self,
+    ) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.quester_game_data.take()
+    }
+
+    pub(super) fn take_quester_paths(
+        &mut self,
+    ) -> Option<(crate::quester_paths::QuesterPathsView, bool)> {
+        self.quester_paths.take()
+    }
+
+    /// Settle every SaveLog whose write finished.
+    fn settle_log_saves(&mut self) {
+        let book = &mut self.book;
+        self.log_saves.retain(|(request, ticket)| {
+            let Some(outcome) = ticket.poll() else {
+                return true;
+            };
+            let (terminal, detail) = match outcome {
+                Ok(_) => (Settlement::Completed(Completion::Done), None),
+                Err(reason) => (
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                    Some(reason),
+                ),
+            };
+            let _ = book.settle(*request, Subject::Application, terminal, detail.as_deref());
+            false
+        });
+    }
+
+    /// A handle on the running save of `request` (SaveLog), for the
+    /// front end's status line.
+    pub(super) fn log_save_ticket(&self, request: RequestId) -> Option<crate::log::SaveTicket> {
+        self.log_saves
+            .iter()
+            .find(|(r, _)| *r == request)
+            .map(|(_, ticket)| ticket.share())
+    }
 }
 
 impl<Io> OperatorSession<Io> {
@@ -289,14 +413,9 @@ impl<Io> OperatorSession<Io> {
         self.commands.profile_write = Some(write);
     }
 
-    /// Create the profile `username` with `password`, a fresh uid and
-    /// default settings, through [`OperatorCommand::CreateProfile`] (the
-    /// TUI's first-run `--user` profile).
-    pub fn create_profile_named(
-        &mut self,
-        username: &str,
-        password: &str,
-    ) -> Result<Submitted, SubmitError> {
+    /// Stage a new profile with `username`, `password`, a fresh uid and
+    /// default settings for the next [`OperatorCommand::CreateProfile`].
+    pub fn stage_new_profile(&mut self, username: &str, password: &str) {
         let uid = self.vault.as_ref().map_or(274_000_001, crate::fresh_uid);
         let profile = vault::Profile {
             username: username.to_string(),
@@ -311,13 +430,20 @@ impl<Io> OperatorSession<Io> {
             super::ArmMirror::none(),
             "profile",
         ));
-        self.submit_detached(OperatorCommand::CreateProfile, Targets::Application)
     }
 
     /// Stage the guardian edit the next [`OperatorCommand::SetGuardian`]
     /// commits.
     pub fn stage_guardian(&mut self, edit: GuardianEdit) {
         self.commands.guardian = Some(edit);
+    }
+
+    /// Stage that the next [`OperatorCommand::Select`] also brings the
+    /// member's worker up without changing its login intent (the panel's
+    /// chooser pick; a TUI focus change only selects). The submit needs
+    /// the surface's slot devices.
+    pub fn stage_select_opens_slot(&mut self) {
+        self.commands.select_opens_slot = true;
     }
 
     /// The name Load all prefers to select when nothing is selected (the
@@ -361,6 +487,7 @@ impl<Io> OperatorSession<Io> {
             removal: None,
             added: 0,
             bulk: None,
+            marked: None,
         };
         self.commands.posts.clear();
         self.commands.recording = command.settles() == Settles::IntentApplied;
@@ -582,11 +709,17 @@ impl<Io> OperatorSession<Io> {
                     submitted.removal = Some(removal);
                 }
             }
+            OperatorCommand::Login if matches!(targets, Targets::Marked) => {
+                self.login_marked(request, surface, submitted);
+            }
             OperatorCommand::Login => {
                 let names = self.admitted_names(request);
                 if !names.is_empty() {
                     submitted.operation = Some(self.login_members(&names, surface));
                 }
+            }
+            OperatorCommand::Logout if matches!(targets, Targets::Marked) => {
+                self.logout_marked(request, surface, submitted);
             }
             OperatorCommand::Logout => {
                 let names = self.admitted_names(request);
@@ -609,14 +742,29 @@ impl<Io> OperatorSession<Io> {
             }
             OperatorCommand::SetMemoryMode(mode) => {
                 let lowmem = mode == api::lifecycle::MemoryMode::Low;
+                let mut models = surface.models();
                 for name in self.admitted_names(request) {
                     let result = self.set_memory_mode(&name, lowmem);
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
+                    if let Some(form_save) = models.form_save.as_deref_mut() {
+                        match &result {
+                            Ok(op) => form_save.submitted(self, *op, Some(&name), &name),
+                            Err(reason) => form_save.refused(reason.clone()),
+                        }
+                    }
                     self.owner_result(request, command, &name, result);
                 }
             }
             OperatorCommand::Select => {
+                let open = std::mem::take(&mut self.commands.select_opens_slot);
                 for name in self.admitted_names(request) {
+                    if open {
+                        if let Err(reason) = self.open_slot(&name, surface) {
+                            let applied = Applied::Rejected(rejection(&reason), Some(reason));
+                            self.settle_member(request, command, &name, applied, submitted);
+                            continue;
+                        }
+                    }
                     self.select(&name);
                     self.settle_member(request, command, &name, Applied::Done, submitted);
                 }
@@ -662,14 +810,95 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             OperatorCommand::SaveProfile | OperatorCommand::CreateProfile => {
+                let names = if command == OperatorCommand::SaveProfile {
+                    self.admitted_names(request)
+                } else {
+                    Vec::new()
+                };
                 let admitted = if command == OperatorCommand::CreateProfile {
                     application_admitted
                 } else {
-                    !self.admitted_names(request).is_empty()
+                    !names.is_empty()
                 };
-                let staged = self.commands.profile_write.take();
-                match (admitted, staged) {
-                    (true, Some(write)) => {
+                if admitted {
+                    let mut models = surface.models();
+                    let imported = match models.import.as_deref_mut() {
+                        Some(import) => match import.take_staged_account(command) {
+                            Ok(imported) => imported,
+                            Err(error) => {
+                                let applied = Applied::Rejected(
+                                    Rejection::NotStaged,
+                                    Some(error.to_string()),
+                                );
+                                if command == OperatorCommand::CreateProfile {
+                                    self.settle_app(request, command, applied, submitted);
+                                } else {
+                                    for name in &names {
+                                        self.settle_member(
+                                            request,
+                                            command,
+                                            name,
+                                            Applied::Rejected(
+                                                Rejection::NotStaged,
+                                                Some(error.to_string()),
+                                            ),
+                                            submitted,
+                                        );
+                                    }
+                                }
+                                return;
+                            }
+                        },
+                        None => None,
+                    };
+                    if let Some(imported) = imported {
+                        let crate::rs2b0t_import::StagedImportAccount {
+                            index,
+                            username,
+                            write,
+                        } = imported;
+                        let matches_target = if command == OperatorCommand::CreateProfile {
+                            write.profile.username.as_str() == username
+                        } else {
+                            names.len() == 1 && names[0].as_str() == username
+                        };
+                        if !matches_target {
+                            let reason = format!(
+                                "profile import account {username} does not match the writer target"
+                            );
+                            if let Some(import) = models.import.as_deref_mut() {
+                                import.record_write_result(index, Err(&reason));
+                            }
+                            if command == OperatorCommand::CreateProfile {
+                                self.settle_app(
+                                    request,
+                                    command,
+                                    Applied::Rejected(Rejection::NotStaged, Some(reason)),
+                                    submitted,
+                                );
+                            } else {
+                                for name in &names {
+                                    self.settle_member(
+                                        request,
+                                        command,
+                                        name,
+                                        Applied::Rejected(
+                                            Rejection::NotStaged,
+                                            Some(reason.clone()),
+                                        ),
+                                        submitted,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+
+                        self.stage_profile_write(write);
+                        let write = self
+                            .commands
+                            .profile_write
+                            .take()
+                            .expect("the imported account was just staged");
                         let result = match write.rename_from.as_deref() {
                             Some(old) => {
                                 let old = old.to_string();
@@ -680,21 +909,195 @@ impl<Io> OperatorSession<Io> {
                             }
                             None => self.save_profile(write.profile, write.mirror, write.label),
                         };
-                        self.settle_form_write(request, command, result, submitted);
+                        if let Some(import) = models.import.as_deref_mut() {
+                            import.record_write_result(
+                                index,
+                                match &result {
+                                    Ok(op) => Ok(*op),
+                                    Err(reason) => Err(reason),
+                                },
+                            );
+                        }
+                        let applied = match &result {
+                            Ok(op) => Applied::Operation(*op),
+                            Err(reason) => {
+                                Applied::Rejected(rejection(reason), Some(reason.clone()))
+                            }
+                        };
+                        if command == OperatorCommand::CreateProfile {
+                            self.settle_app(request, command, applied, submitted);
+                        } else {
+                            self.settle_member(request, command, &username, applied, submitted);
+                        }
+                        return;
                     }
-                    (true, None) => self.settle_form_write(
-                        request,
-                        command,
-                        Err("nothing staged to save".to_string()),
-                        submitted,
-                    ),
-                    (false, _) => {}
+
+                    let editor_submission = if models.editor.is_some() {
+                        let Some(scripts) = models.scripts.as_deref() else {
+                            let applied = Applied::Rejected(
+                                Rejection::NoModel,
+                                Some("profile form save requires the script model".into()),
+                            );
+                            if command == OperatorCommand::CreateProfile {
+                                self.settle_app(request, command, applied, submitted);
+                            } else {
+                                for name in &names {
+                                    self.settle_member(
+                                        request,
+                                        command,
+                                        name,
+                                        Applied::Rejected(
+                                            Rejection::NoModel,
+                                            Some(
+                                                "profile form save requires the script model"
+                                                    .into(),
+                                            ),
+                                        ),
+                                        submitted,
+                                    );
+                                }
+                            }
+                            return;
+                        };
+                        let editor = models.editor.as_deref_mut().expect("checked above");
+                        match editor.save(self, scripts, command) {
+                            Ok(submission) => Some(submission),
+                            Err(error) => {
+                                let (reason, detail) = match error {
+                                    crate::SaveRefused::StillSaving => {
+                                        (Rejection::ProfileSaving, error.to_string())
+                                    }
+                                    crate::SaveRefused::Refused => (
+                                        Rejection::VaultRefused,
+                                        editor
+                                            .save_state()
+                                            .notice()
+                                            .and_then(|notice| notice.error())
+                                            .unwrap_or("profile form save was refused")
+                                            .to_owned(),
+                                    ),
+                                };
+                                if command == OperatorCommand::CreateProfile {
+                                    self.settle_app(
+                                        request,
+                                        command,
+                                        Applied::Rejected(reason, Some(detail)),
+                                        submitted,
+                                    );
+                                } else {
+                                    for name in &names {
+                                        self.settle_member(
+                                            request,
+                                            command,
+                                            name,
+                                            Applied::Rejected(reason, Some(detail.clone())),
+                                            submitted,
+                                        );
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let staged = self.commands.profile_write.take();
+                    match staged {
+                        Some(write) => {
+                            let (source, destination) = editor_submission.unwrap_or_else(|| {
+                                (write.rename_from.clone(), write.profile.username.clone())
+                            });
+                            let result = match write.rename_from.as_deref() {
+                                Some(old) => {
+                                    let old = old.to_string();
+                                    self.rename_profile(
+                                        &old,
+                                        write.profile,
+                                        write.mirror,
+                                        write.label,
+                                    )
+                                }
+                                None if write.creating => {
+                                    self.create_profile(write.profile, write.mirror, write.label)
+                                }
+                                None => self.save_profile(write.profile, write.mirror, write.label),
+                            };
+                            match &result {
+                                Ok(op) => {
+                                    if let Some(editor) = models.editor.as_deref_mut() {
+                                        editor.submitted(
+                                            self,
+                                            *op,
+                                            source.as_deref(),
+                                            &destination,
+                                        );
+                                    } else if let Some(form_save) = models.form_save.as_deref_mut()
+                                    {
+                                        form_save.submitted(
+                                            self,
+                                            *op,
+                                            source.as_deref(),
+                                            &destination,
+                                        );
+                                    }
+                                }
+                                Err(reason) => {
+                                    if let Some(editor) = models.editor.as_deref_mut() {
+                                        editor.refused(reason.clone());
+                                    } else if let Some(form_save) = models.form_save.as_deref_mut()
+                                    {
+                                        form_save.refused(reason.clone());
+                                    }
+                                }
+                            }
+                            self.settle_form_write(request, command, result, submitted);
+                        }
+                        None => {
+                            let applied = Applied::Rejected(
+                                Rejection::NotStaged,
+                                Some("nothing staged to save".into()),
+                            );
+                            if command == OperatorCommand::CreateProfile {
+                                self.settle_app(request, command, applied, submitted);
+                            } else {
+                                for name in &names {
+                                    self.settle_member(
+                                        request,
+                                        command,
+                                        name,
+                                        Applied::Rejected(
+                                            Rejection::NotStaged,
+                                            Some("nothing staged to save".into()),
+                                        ),
+                                        submitted,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             OperatorCommand::DeleteProfile => {
+                let mut models = surface.models();
                 for name in self.admitted_names(request) {
+                    if let Some(editor) = models.editor.as_deref_mut() {
+                        if !editor.before_delete(self, &name) {
+                            self.settle_member(
+                                request,
+                                command,
+                                &name,
+                                Applied::Skipped(SkipReason::DecisionStaged),
+                                submitted,
+                            );
+                            continue;
+                        }
+                    }
+                    let identity = self.profile_identity_or_synthetic(&name);
                     match self.vault_remove(&name) {
                         Ok(Some(op)) => {
+                            if let Some(marks) = models.marks.as_deref_mut() {
+                                marks.remove(identity);
+                            }
                             submitted.operation = Some(op);
                             self.own_member(request, command, &name, op);
                         }
@@ -712,6 +1115,7 @@ impl<Io> OperatorSession<Io> {
             }
             OperatorCommand::SetGuardian => {
                 let edit = self.commands.guardian.take();
+                let mut models = surface.models();
                 for name in self.admitted_names(request) {
                     let result = match edit.as_ref().map(|edit| &edit.0) {
                         Some(GuardianEditKind::Fields {
@@ -727,6 +1131,12 @@ impl<Io> OperatorSession<Io> {
                         None => Err("random: nothing staged".to_string()),
                     };
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
+                    if let Some(form_save) = models.form_save.as_deref_mut() {
+                        match &result {
+                            Ok(op) => form_save.submitted(self, *op, Some(&name), &name),
+                            Err(reason) => form_save.refused(reason.clone()),
+                        }
+                    }
                     self.owner_result(request, command, &name, result);
                 }
             }
@@ -769,15 +1179,24 @@ impl<Io> OperatorSession<Io> {
                 self.settle_app(request, command, applied, submitted);
             }
             // --- Vault ---
-            OperatorCommand::UnlockVault => {
-                self.vault_row(super::vault_rows::VaultRow::Unlock, request, application_admitted, submitted)
-            }
-            OperatorCommand::CreateVault => {
-                self.vault_row(super::vault_rows::VaultRow::Create, request, application_admitted, submitted)
-            }
-            OperatorCommand::ResetVault => {
-                self.vault_row(super::vault_rows::VaultRow::Reset, request, application_admitted, submitted)
-            }
+            OperatorCommand::UnlockVault => self.vault_row(
+                super::vault_rows::VaultRow::Unlock,
+                request,
+                application_admitted,
+                submitted,
+            ),
+            OperatorCommand::CreateVault => self.vault_row(
+                super::vault_rows::VaultRow::Create,
+                request,
+                application_admitted,
+                submitted,
+            ),
+            OperatorCommand::ResetVault => self.vault_row(
+                super::vault_rows::VaultRow::Reset,
+                request,
+                application_admitted,
+                submitted,
+            ),
             // --- Fleet view, marks, MultiBox ---
             OperatorCommand::SetFleetFilter => {
                 let row = super::fleet::FleetRow::Filter;
@@ -841,33 +1260,69 @@ impl<Io> OperatorSession<Io> {
                 self.pref_row(row, request, application_admitted, surface, submitted)
             }
             // --- Map, movement and game input ---
-            OperatorCommand::WalkTo => {
-                self.map_row(super::map::MapRow::WalkTo, request, surface, submitted)
-            }
-            OperatorCommand::GroupWalk => {
-                self.map_row(super::map::MapRow::GroupWalk, request, surface, submitted)
-            }
-            OperatorCommand::Teleport => {
-                self.map_row(super::map::MapRow::Teleport, request, surface, submitted)
-            }
-            OperatorCommand::DebugCommand => {
-                self.map_row(super::map::MapRow::DebugCommand, request, surface, submitted)
-            }
-            OperatorCommand::GameInput => {
-                self.map_row(super::map::MapRow::GameInput, request, surface, submitted)
-            }
-            OperatorCommand::OpenMapDemand => {
-                self.map_row(super::map::MapRow::OpenDemand, request, surface, submitted)
-            }
-            OperatorCommand::ReleaseMapDemand => {
-                self.map_row(super::map::MapRow::ReleaseDemand, request, surface, submitted)
-            }
-            OperatorCommand::BakeMapNow => {
-                self.map_row(super::map::MapRow::BakeNow, request, surface, submitted)
-            }
-            OperatorCommand::DeclineMapBake => {
-                self.map_row(super::map::MapRow::DeclineBake, request, surface, submitted)
-            }
+            OperatorCommand::WalkTo => self.map_row(
+                super::map::MapRow::WalkTo,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::GroupWalk => self.map_row(
+                super::map::MapRow::GroupWalk,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::Teleport => self.map_row(
+                super::map::MapRow::Teleport,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::DebugCommand => self.map_row(
+                super::map::MapRow::DebugCommand,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::GameInput => self.map_row(
+                super::map::MapRow::GameInput,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::OpenMapDemand => self.map_row(
+                super::map::MapRow::OpenDemand,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::ReleaseMapDemand => self.map_row(
+                super::map::MapRow::ReleaseDemand,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::BakeMapNow => self.map_row(
+                super::map::MapRow::BakeNow,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::DeclineMapBake => self.map_row(
+                super::map::MapRow::DeclineBake,
+                targets,
+                request,
+                surface,
+                submitted,
+            ),
             // --- Script runs and the script coordinator ---
             OperatorCommand::StartScript => {
                 let row = super::scripts::ScriptRow::Start;
@@ -968,18 +1423,27 @@ impl<Io> OperatorSession<Io> {
             OperatorCommand::OpenNewProfileForm => {
                 self.form_row(super::form::FormRow::OpenNew, request, surface, submitted)
             }
-            OperatorCommand::EditProfileDraft(field) => {
-                self.form_row(super::form::FormRow::Edit(field), request, surface, submitted)
-            }
+            OperatorCommand::EditProfileDraft(field) => self.form_row(
+                super::form::FormRow::Edit(field),
+                request,
+                surface,
+                submitted,
+            ),
             OperatorCommand::DiscardProfileEdits => {
                 self.form_row(super::form::FormRow::Discard, request, surface, submitted)
             }
-            OperatorCommand::KeepEditing => {
-                self.form_row(super::form::FormRow::KeepEditing, request, surface, submitted)
-            }
-            OperatorCommand::CloseProfileForm(close) => {
-                self.form_row(super::form::FormRow::Close(close), request, surface, submitted)
-            }
+            OperatorCommand::KeepEditing => self.form_row(
+                super::form::FormRow::KeepEditing,
+                request,
+                surface,
+                submitted,
+            ),
+            OperatorCommand::CloseProfileForm(close) => self.form_row(
+                super::form::FormRow::Close(close),
+                request,
+                surface,
+                submitted,
+            ),
             OperatorCommand::EditProfileImportPath => {
                 let row = super::form::FormRow::ImportPath;
                 self.form_row(row, request, surface, submitted)
@@ -1058,9 +1522,10 @@ impl<Io> OperatorSession<Io> {
             Applied::Later => return,
             Applied::Done => (Settlement::Completed(Completion::Done), None),
             Applied::Skipped(reason) => (Settlement::Completed(Completion::Skipped(reason)), None),
-            Applied::Rejected(rejection, detail) => {
-                (Settlement::Failed(CommandFailure::Rejected(rejection)), detail)
-            }
+            Applied::Rejected(rejection, detail) => (
+                Settlement::Failed(CommandFailure::Rejected(rejection)),
+                detail,
+            ),
             Applied::Failed(kind, detail) => {
                 (Settlement::Failed(CommandFailure::Failed(kind)), detail)
             }
@@ -1091,9 +1556,10 @@ impl<Io> OperatorSession<Io> {
             }
             Applied::Done => (Settlement::Completed(Completion::Done), None),
             Applied::Skipped(reason) => (Settlement::Completed(Completion::Skipped(reason)), None),
-            Applied::Rejected(rejection, detail) => {
-                (Settlement::Failed(CommandFailure::Rejected(rejection)), detail)
-            }
+            Applied::Rejected(rejection, detail) => (
+                Settlement::Failed(CommandFailure::Rejected(rejection)),
+                detail,
+            ),
             Applied::Failed(kind, detail) => {
                 (Settlement::Failed(CommandFailure::Failed(kind)), detail)
             }
@@ -1110,7 +1576,144 @@ impl<Io> OperatorSession<Io> {
         terminal: Settlement<Completion, CommandFailure>,
         detail: Option<&str>,
     ) {
-        let _ = self.commands.book.settle(request, subject, terminal, detail);
+        let _ = self
+            .commands
+            .book
+            .settle(request, subject, terminal, detail);
+    }
+
+    /// The marks whose profile is gone, as the bulk report's skipped rows.
+    fn gone_marks(&self, marks: Option<&crate::MarkedSelection>) -> Vec<crate::BulkRow> {
+        let Some(marks) = marks else {
+            return Vec::new();
+        };
+        let rows = crate::selection::profile_rows(self);
+        marks
+            .iter()
+            .filter(|identity| !rows.iter().any(|(_, id)| id == identity))
+            .map(|identity| {
+                crate::BulkRow::new(
+                    format!("profile#{}", identity.raw()),
+                    crate::BulkOutcome::skipped("profile unavailable"),
+                )
+            })
+            .collect()
+    }
+
+    /// Log in the marked profiles (the Fleet window's *Log in marked*):
+    /// one already logged in or logging in is skipped with its reason; one
+    /// not loaded yet is loaded first. The per-row report goes to
+    /// [`Submitted::bulk`].
+    fn login_marked<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        surface: &mut S,
+        submitted: &mut Submitted,
+    ) {
+        use crate::views::Phase;
+        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let mut eligible = Vec::new();
+        for name in self.admitted_names(request) {
+            let phase = self.fleet_view().row(&name).map(|row| row.phase());
+            let member = self.members().contains(&name);
+            let skip = match phase.filter(|_| member) {
+                Some(Phase::Ready) => Some((SkipReason::AlreadyLoggedIn, "already logged in")),
+                Some(
+                    Phase::Preparing
+                    | Phase::Waiting
+                    | Phase::Queued
+                    | Phase::Connecting
+                    | Phase::Loading,
+                ) => Some((SkipReason::AlreadyLoggingIn, "already logging in")),
+                _ => None,
+            };
+            match skip {
+                Some((reason, text)) => {
+                    rows.push(crate::BulkRow::new(
+                        &name,
+                        crate::BulkOutcome::skipped(text),
+                    ));
+                    let command = OperatorCommand::Login;
+                    self.settle_member(
+                        request,
+                        command,
+                        &name,
+                        Applied::Skipped(reason),
+                        submitted,
+                    );
+                }
+                None => {
+                    if !member {
+                        let op = self.operations.open(crate::operations::ActionKind::Load);
+                        self.load_member(op, &name, surface);
+                    }
+                    eligible.push(name);
+                }
+            }
+        }
+        if !eligible.is_empty() {
+            submitted.operation = Some(self.login_members(&eligible, surface));
+            rows.extend(
+                eligible
+                    .into_iter()
+                    .map(|name| crate::BulkRow::new(name, crate::BulkOutcome::Done)),
+            );
+        }
+        submitted.set_bulk(crate::BulkReport::new(
+            "Log in marked",
+            "logging in",
+            rows,
+            None,
+        ));
+    }
+
+    /// Log out the marked profiles that are logged in or logging in (the
+    /// Fleet window's *Log out marked*); a queued Start of each is dropped
+    /// with the logout. The per-row report goes to [`Submitted::bulk`].
+    fn logout_marked<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        surface: &mut S,
+        submitted: &mut Submitted,
+    ) {
+        use crate::views::Phase;
+        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let mut eligible = Vec::new();
+        for name in self.admitted_names(request) {
+            let phase = self.fleet_view().row(&name).map(|row| row.phase());
+            let member = self.members().contains(&name);
+            match phase.filter(|_| member) {
+                None | Some(Phase::Offline | Phase::LoggedOut | Phase::Failed) => {
+                    rows.push(crate::BulkRow::new(
+                        &name,
+                        crate::BulkOutcome::skipped("not logged in"),
+                    ));
+                    let skipped = Applied::Skipped(SkipReason::NotLoggedIn);
+                    self.settle_member(request, OperatorCommand::Logout, &name, skipped, submitted);
+                }
+                Some(_) => eligible.push(name),
+            }
+        }
+        if !eligible.is_empty() {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                for name in &eligible {
+                    scripts.cancel_queued_as(name, "logged out");
+                }
+                scripts.publish_start_places(self);
+            }
+            submitted.operation = Some(self.logout_members(&eligible));
+            rows.extend(
+                eligible
+                    .into_iter()
+                    .map(|name| crate::BulkRow::new(name, crate::BulkOutcome::Done)),
+            );
+        }
+        submitted.set_bulk(crate::BulkReport::new(
+            "Log out marked",
+            "logging out",
+            rows,
+            None,
+        ));
     }
 
     /// Quit: shut every member's slot down and close the play session.
@@ -1124,12 +1727,9 @@ impl<Io> OperatorSession<Io> {
                     self.post(name, &arm, Intent::ProcessShutdown);
                     slots.push(arm.slot());
                 }
-                None => self.settle_name(
-                    request,
-                    name,
-                    Settlement::Completed(Completion::Done),
-                    None,
-                ),
+                None => {
+                    self.settle_name(request, name, Settlement::Completed(Completion::Done), None)
+                }
             }
         }
         self.close_play();
@@ -1140,11 +1740,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist `name`'s world preference for its next handshake (the
     /// profile form's world field), mirrored onto a running slot's arm.
-    fn set_world_preference(
-        &mut self,
-        name: &str,
-        world: api::lifecycle::WorldChoice,
-    ) -> Applied {
+    fn set_world_preference(&mut self, name: &str, world: api::lifecycle::WorldChoice) -> Applied {
         let Some(vault) = self.vault.as_ref() else {
             return Applied::Rejected(Rejection::NoHost, Some("world: vault locked".into()));
         };
@@ -1499,6 +2095,7 @@ impl<Io> OperatorSession<Io> {
     pub(super) fn settle_commands(&mut self) {
         self.drain_watched();
         self.settle_owned();
+        self.commands.settle_log_saves();
         if !self.commands.book.has_pending() {
             return;
         }

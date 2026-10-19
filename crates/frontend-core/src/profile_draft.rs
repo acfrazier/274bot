@@ -243,12 +243,6 @@ impl ProfileDraft {
         &mut self.password
     }
 
-    /// Empty the username and password fields.
-    pub fn clear_credentials(&mut self) {
-        self.username.clear();
-        self.password.clear();
-    }
-
     /// The draft's settings.
     pub fn settings(&self) -> &SettingsDraft {
         &self.settings

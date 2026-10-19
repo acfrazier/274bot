@@ -13,8 +13,7 @@ use crate::scripts::{CompiledCardId, ScriptChoice};
 use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
 use crate::session::{OperatorSession, Targets};
-use crate::surface::SlotSurface;
-use crate::views::{FleetRow, Phase};
+use crate::views::FleetRow;
 
 const UNAVAILABLE: &str = "profile unavailable";
 
@@ -635,104 +634,6 @@ fn fail_pending_catalog_assignment<Io>(
         scripts.show(report.summary());
     }
     let _ = core;
-}
-
-/// Log in every marked profile, loading the ones not loaded yet. A bot that
-/// is already logging in or logged in is skipped.
-pub fn login_marked<Io, S: SlotSurface<Io = Io>>(
-    selection: &MarkedSelection,
-    core: &mut OperatorSession<Io>,
-    surface: &mut S,
-) -> BulkReport {
-    const LABEL: &str = "Log in marked";
-    const DONE: &str = "logging in";
-    let Resolved { names, gone } = resolve(selection, core);
-    let mut rows = unavailable_rows(gone);
-    let mut eligible = Vec::new();
-    for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase());
-        let member = core.members().contains(&name);
-        match phase.filter(|_| member) {
-            Some(Phase::Ready) => rows.push(BulkRow::new(
-                name,
-                BulkOutcome::skipped("already logged in"),
-            )),
-            Some(
-                Phase::Preparing
-                | Phase::Waiting
-                | Phase::Queued
-                | Phase::Connecting
-                | Phase::Loading,
-            ) => rows.push(BulkRow::new(
-                name,
-                BulkOutcome::skipped("already logging in"),
-            )),
-            _ => {
-                if !member {
-                    let _ = core.submit(OperatorCommand::Load, Targets::Profile(&name), surface);
-                }
-                eligible.push(name);
-            }
-        }
-    }
-    if !eligible.is_empty() {
-        let refused = core
-            .submit(
-                OperatorCommand::Login,
-                Targets::Profiles(&eligible),
-                surface,
-            )
-            .err()
-            .map(|error| error.to_string());
-        rows.extend(eligible.into_iter().map(|name| {
-            let outcome = refused
-                .as_ref()
-                .map_or(BulkOutcome::Done, BulkOutcome::failed);
-            BulkRow::new(name, outcome)
-        }));
-    }
-    BulkReport::new(LABEL, DONE, rows, None)
-}
-
-/// Log out every marked profile that is logged in or logging in. A bot still
-/// waiting for its Start is cancelled with the logout.
-pub fn logout_marked<Io>(
-    selection: &MarkedSelection,
-    core: &mut OperatorSession<Io>,
-    scripts: &mut Scripts,
-) -> BulkReport {
-    const LABEL: &str = "Log out marked";
-    const DONE: &str = "logging out";
-    let Resolved { names, gone } = resolve(selection, core);
-    let mut rows = unavailable_rows(gone);
-    let mut eligible = Vec::new();
-    for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase());
-        let member = core.members().contains(&name);
-        match phase.filter(|_| member) {
-            None | Some(Phase::Offline | Phase::LoggedOut | Phase::Failed) => {
-                rows.push(BulkRow::new(name, BulkOutcome::skipped("not logged in")))
-            }
-            Some(_) => eligible.push(name),
-        }
-    }
-    if !eligible.is_empty() {
-        for name in &eligible {
-            scripts.cancel_queued_as(name, "logged out");
-        }
-        scripts.publish_start_places(core);
-        let refused = core
-            .submit_detached(OperatorCommand::Logout, Targets::Profiles(&eligible))
-            .err()
-            .map(|error| error.to_string());
-        rows.extend(eligible.into_iter().map(|name| {
-            let outcome = refused
-                .as_ref()
-                .map_or(BulkOutcome::Done, BulkOutcome::failed);
-            BulkRow::new(name, outcome)
-        }));
-    }
-    BulkReport::new(LABEL, DONE, rows, None)
 }
 
 /// Freeze *Apply focused bot's settings to marked* for `card`: the parameters

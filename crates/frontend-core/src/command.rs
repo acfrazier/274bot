@@ -138,38 +138,28 @@ pub enum OperatorCommand {
     /// start_all}`; `selection::start_marked`).
     StartScript,
     /// Pause the running script (`OperatorSession::toggle_pause`,
-    /// `session.rs:1728-1750`; native `NativeCommand::Pause`).
+    /// `session.rs:1728-1750`).
     PauseScript,
-    /// Resume a paused script (same paths; native `NativeCommand::Resume`).
+    /// Resume a paused script through the same operator row.
     ResumeScript,
     /// Stop the script (`OperatorSession::{stop_script, stop_scripts}`,
-    /// `session.rs:1754-1796`; `Scripts::stop_all`; `selection::stop_marked`;
-    /// native `NativeCommand::Stop`).
+    /// `session.rs:1754-1796`; `Scripts::stop_all`; `selection::stop_marked`).
     StopScript,
     /// Drop a queued Start-all/marked Start before it is admitted
     /// (`Scripts::{cancel_queued, cancel_queued_as}`, `scripts/mod.rs:973-998`).
     CancelQueuedStart,
-    /// Make a card the shared Browse selection: the application's one
-    /// `script_sel` both surfaces show (panel `select_script_selection`,
-    /// `session_catalog.rs:128-129`, `app.rs:2709-2710`; TUI Browse pick
-    /// into `app.script_sel`, `app.rs:1481-1482,1581-1582`). It needs no
-    /// profile. Today's handlers compose it with a focused profile's
-    /// [`Self::SelectScriptCard`] and, for a loaded card on the panel, with
-    /// [`Self::PrepareScriptCard`]; each of the three has its own report.
+    /// Make a card the shared Browse selection displayed by both surfaces.
+    /// This row is application-scoped and needs no profile. A focused-profile
+    /// handler may then submit [`Self::SelectScriptCard`]; a loaded card may
+    /// also submit [`Self::PrepareScriptCard`]. Each row has its own settlement.
     PickBrowseCard,
-    /// Make the shared Browse card the member's pending script choice
-    /// (`Scripts::set_pending_browse`, `scripts/mod.rs:598-599`; panel
-    /// `session_catalog.rs:130-132` for the focused profile; TUI
-    /// `bin.rs:2420-2424` for the profile whose heading it replaced). It
-    /// neither persists the assignment ([`Self::AssignScript`]) nor starts
+    /// Apply the staged Browse card to the member's pending profile selection.
+    /// This neither persists the assignment ([`Self::AssignScript`]) nor starts
     /// a run ([`Self::StartScript`]).
     SelectScriptCard,
-    /// Queue the preparation (transpile) of one loaded card: the warm-up
-    /// the panel queues for a picked loaded card (`enqueue_transpile`,
-    /// `session_catalog.rs:133-135`, pumped one `ensure_js` per armed
-    /// frame by `pump_script_transpile`). A preparation job with its own
-    /// admission and terminal; neither [`Self::PickBrowseCard`]'s terminal
-    /// nor a single-card [`Self::TranspileAll`].
+    /// Queue worker preparation (transpilation) of one staged loaded card. It
+    /// has its own admission and terminal; unlike [`Self::TranspileAll`], it
+    /// prepares only the selected card, not every unwarmed catalog card.
     PrepareScriptCard,
     /// Assign the staged script selection (`Scripts::persist_assignment`,
     /// `scripts/mod.rs:638`; `marked::assign_marked`).
@@ -320,37 +310,48 @@ pub enum OperatorCommand {
     DeleteProfileImportExport,
 
     // --- Loadouts ---
-    /// Make the selected loadout the editing draft (panel Loadouts list,
-    /// `loadouts.rs:240-246`, `sync_draft`; TUI loadouts popup row 0,
-    /// `tui/src/loadouts.rs:111-115`, `sync_scratch_from_selection`).
-    /// Unsaved draft edits of the previous selection are dropped, as today.
+    /// Make the selected loadout the editing draft (panel Loadouts list and
+    /// opener, `loadouts::select`; TUI loadouts popup row 0 and its open).
+    /// The front end stages the index (`LoadoutForm::stage_selection`).
+    /// Unsaved draft edits of the previous selection are dropped, as today;
+    /// `Skipped(NothingSelected)` when the index names no loadout.
     SelectLoadout,
     /// A staged edit of the loadout draft (panel name, worn slot, supplies,
     /// Clear unassigned: `loadouts.rs:267,277-281,311-434` and the item
-    /// search popup; TUI scratch rows 1-4, typed or erased character by
-    /// character, `tui/src/loadouts.rs:200-225`). It changes the draft
-    /// only; [`Self::SaveLoadout`] writes it.
+    /// search popup). The widget edits the draft in place through
+    /// `LoadoutForm::draft_mut`; the row commits the edit: a status about
+    /// the draft's last save or copy no longer describes it. It changes the
+    /// draft only; [`Self::SaveLoadout`] writes it. `Rejected(NotStaged)`
+    /// without a draft. The TUI edits its scratch text itself and stages
+    /// the parsed draft for [`Self::SaveLoadout`].
     EditLoadoutDraft(LoadoutField),
     /// Copy the member's current equipment into the loadout draft, keeping
-    /// its supplies (`copy_equipment`, `loadouts.rs:134-148`): a draft edit,
-    /// nothing is written. Skipped `NotLoggedIn` without an in-game focused
-    /// character, `NothingSelected` without a draft.
+    /// its supplies (panel `copy_equipment`; `OperatorSession::observed_equipment`):
+    /// a draft edit, nothing is written. Skipped `NotLoggedIn` without an
+    /// in-game focused character, `NothingSelected` without a draft.
     CopyEquipmentToLoadout,
     /// Create a loadout and write the loadout file at once, the in-memory
     /// set rolled back if the write fails (panel `add_loadout`,
     /// `loadouts.rs:65-80`; TUI row 5, `tui/src/loadouts.rs:123-140`).
+    /// Settles `Done`, or `Failed(WriteFailed)` with the store's reason.
     CreateLoadout,
     /// Duplicate the selected loadout and write at once, rolled back if the
     /// write fails (panel `duplicate_loadout`, `loadouts.rs:82-106`; TUI
     /// row 6, `tui/src/loadouts.rs:141-166`). `Skipped(NothingSelected)`
-    /// without a selection.
+    /// without a selection; `Failed(WriteFailed)` when the write is rolled
+    /// back.
     DuplicateLoadout,
     /// Save the edited loadout draft (panel `save_draft`, `loadouts.rs:37-63`;
     /// TUI Enter on a scratch row or row 8, `commit_scratch`,
-    /// `tui/src/loadouts.rs:56-85`).
+    /// `tui/src/loadouts.rs:56-85`). `Rejected(NotStaged)` without a draft,
+    /// `Rejected(NotApplicable)` for a blank name or a name another loadout
+    /// has, `Failed(WriteFailed)` when the write is rolled back (the draft is
+    /// kept).
     SaveLoadout,
     /// Delete the selected loadout, written at once (panel `delete_loadout`,
     /// `loadouts.rs:108-132`; TUI row 7, `tui/src/loadouts.rs:167-190`).
+    /// `Skipped(NothingSelected)` without a selection;
+    /// `Failed(WriteFailed)` when the write is rolled back.
     DeleteLoadout,
 
     // --- Selection and marks ---

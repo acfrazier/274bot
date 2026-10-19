@@ -14,7 +14,7 @@ use crate::command::OperatorCommand;
 use crate::profile_draft::ProfileDraft;
 use crate::profile_form::{FormSettled, ProfileFormSave};
 use crate::scripts::Scripts;
-use crate::session::{OperatorSession, StagedProfileWrite, Targets};
+use crate::session::{OperatorSession, StagedProfileWrite};
 
 /// What Discard does on a staged Discard / Keep editing prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +124,16 @@ impl ProfileEditor {
         &mut self.draft
     }
 
+    /// The staged username buffer for `EditProfileDraft(Username)`.
+    pub fn username_mut(&mut self) -> &mut String {
+        self.draft.username_mut()
+    }
+
+    /// The staged password buffer for `EditProfileDraft(Password)`.
+    pub fn password_mut(&mut self) -> &mut String {
+        self.draft.password_mut()
+    }
+
     /// Bumped on every switch of the form's target.
     pub fn generation(&self) -> usize {
         self.generation
@@ -141,13 +151,8 @@ impl ProfileEditor {
 
     /// A form edit: a stale refusal or save notice no longer describes the
     /// form.
-    pub fn edited(&mut self) {
+    pub(crate) fn edited(&mut self) {
         self.save.edited();
-    }
-
-    /// Empty the username and password fields; the vault row is untouched.
-    pub fn clear_credentials(&mut self) {
-        self.draft.clear_credentials();
     }
 
     /// Whether the form's own save is still being written.
@@ -168,7 +173,11 @@ impl ProfileEditor {
     /// Open the form on `target` (`""`: a new profile). The same target
     /// keeps its draft; unsaved edits or an unsettled save stage the
     /// Discard / Keep editing prompt instead.
-    pub fn request_open<Io>(&mut self, core: &OperatorSession<Io>, target: &str) -> FormOpen {
+    pub(crate) fn request_open<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        target: &str,
+    ) -> FormOpen {
         if self.target.as_deref() == Some(target) {
             return FormOpen::Kept;
         }
@@ -187,7 +196,7 @@ impl ProfileEditor {
 
     /// Switch the form to `target`, reloading its draft. Unconditional:
     /// the Discard path and clean opens come through here.
-    pub fn open<Io>(&mut self, core: &OperatorSession<Io>, target: &str) {
+    pub(crate) fn open<Io>(&mut self, core: &OperatorSession<Io>, target: &str) {
         if target.is_empty() {
             self.draft = ProfileDraft::default();
             self.target = Some(String::new());
@@ -205,7 +214,7 @@ impl ProfileEditor {
     /// Stage the Discard / Keep editing prompt for leaving the form to
     /// `then` (`target` matters to [`FormLeave::Switch`] and
     /// [`FormLeave::DeleteTarget`]).
-    pub fn stage_leave<Io>(
+    pub(crate) fn stage_leave<Io>(
         &mut self,
         core: &OperatorSession<Io>,
         leave: FormLeave,
@@ -232,7 +241,7 @@ impl ProfileEditor {
     /// the front end does its own part ([`FormLeave`]); a
     /// [`FormLeave::DeleteTarget`] still needs its
     /// [`OperatorCommand::DeleteProfile`]. `None` when no prompt waited.
-    pub fn discard<Io>(&mut self, core: &OperatorSession<Io>) -> Option<LeavePrompt> {
+    pub(crate) fn discard<Io>(&mut self, core: &OperatorSession<Io>) -> Option<LeavePrompt> {
         let prompt = self.pending.take()?;
         match prompt.leave {
             FormLeave::Switch => self.open(core, &prompt.target),
@@ -246,15 +255,18 @@ impl ProfileEditor {
     }
 
     /// Keep editing: drop the pending prompt, the form untouched.
-    pub fn keep_editing(&mut self) {
+    pub(crate) fn keep_editing(&mut self) {
         self.pending = None;
     }
 
-    /// Close the form (its Cancel, or the window's Close) unless its save
-    /// is still being written, which stages the prompt instead. Returns
-    /// whether the form closed.
-    pub fn request_close<Io>(&mut self, core: &OperatorSession<Io>, leave: FormLeave) -> bool {
-        if self.saving(core) {
+    /// Close the form unless it has unsaved edits or a save still being
+    /// written, which stages the prompt instead. Returns whether it closed.
+    pub(crate) fn request_close<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        leave: FormLeave,
+    ) -> bool {
+        if self.dirty(core) || self.saving(core) {
             let then = match leave {
                 FormLeave::CloseWindow => "close Profiles",
                 _ => "close the form",
@@ -268,19 +280,18 @@ impl ProfileEditor {
 
     /// Close the form, whatever it holds. A save it submitted still
     /// settles, but a failure of it shows only on the banner.
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.target = None;
         self.pending = None;
         self.save.form_changed();
     }
 
     /// Before the vault row `name` is deleted: the form editing it closes,
-    /// unless its save has not settled, which stages the prompt (the write
-    /// can still fail and put the profile back). Returns whether the delete
-    /// may go ahead.
-    pub fn before_delete<Io>(&mut self, core: &OperatorSession<Io>, name: &str) -> bool {
+    /// unless it has unsaved edits or its save has not settled, which stages
+    /// the prompt instead. Returns whether the delete may go ahead.
+    pub(crate) fn before_delete<Io>(&mut self, core: &OperatorSession<Io>, name: &str) -> bool {
         let editing = self.target.as_deref() == Some(name);
-        if editing && self.saving(core) {
+        if editing && (self.dirty(core) || self.saving(core)) {
             self.stage_leave(
                 core,
                 FormLeave::DeleteTarget,
@@ -295,19 +306,14 @@ impl ProfileEditor {
         true
     }
 
-    /// Save the draft: the username is the key, the password the secret,
-    /// and an existing profile's uid and settings are kept (the form edits
-    /// only its world and clue partner). A new profile or a rename onto a
-    /// taken username is refused, never an overwrite. The write is staged
-    /// and committed through the command seam; the form keeps its target
-    /// until the write is durable ([`Self::settle`]). `Err` is the refusal
-    /// (shown in the form and on the banner); a Save while this form's
-    /// previous save is unsettled is refused without a notice.
-    pub fn save<Io>(
+    /// Stage the form's profile write for the SaveProfile/CreateProfile
+    /// dispatch. The handler selects that row; this method never submits it.
+    pub(crate) fn save<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         scripts: &Scripts,
-    ) -> Result<(), SaveRefused> {
+        command: OperatorCommand,
+    ) -> Result<(Option<String>, String), SaveRefused> {
         if self.saving(core) {
             return Err(SaveRefused::StillSaving);
         }
@@ -319,22 +325,25 @@ impl ProfileEditor {
         if !core.vault_open() {
             return refused(self, "credentials: vault locked".to_string());
         }
+        let Some(form_target) = self.target.as_deref() else {
+            return refused(self, "credentials: form is closed".to_string());
+        };
         let username = self.draft.username().trim().to_string();
         if username.is_empty() {
             return refused(self, "credentials: username required".to_string());
         }
-        let rename_from = self
-            .target
-            .as_deref()
-            .filter(|old| !old.is_empty() && old.trim() != username)
-            .map(str::to_string);
-        let creating = rename_from.is_none() && self.target.as_deref() == Some("");
-        let Some(profile) = core.compose_profile(
-            rename_from.as_deref(),
-            &username,
-            &self.draft,
-            self.target.is_some(),
-        ) else {
+        let rename_from = (!form_target.is_empty() && form_target.trim() != username)
+            .then(|| form_target.to_string());
+        let creating = form_target.is_empty();
+        if creating != (command == OperatorCommand::CreateProfile) {
+            return refused(
+                self,
+                "credentials: wrong save row for this form".to_string(),
+            );
+        }
+        let Some(profile) =
+            core.compose_profile(rename_from.as_deref(), &username, &self.draft, true)
+        else {
             return refused(self, "credentials: vault locked".to_string());
         };
         // A running slot learns the next-handshake settings once the write
@@ -343,7 +352,6 @@ impl ProfileEditor {
             .is_none()
             .then(|| scripts.profile_save_live(core, &profile.username, &profile.settings))
             .flatten();
-        let target = rename_from.clone().unwrap_or_else(|| username.clone());
         core.stage_profile_write(StagedProfileWrite::new(
             profile,
             rename_from,
@@ -351,30 +359,25 @@ impl ProfileEditor {
             crate::ArmMirror::remember(live),
             "credentials",
         ));
-        let command = if creating {
-            OperatorCommand::CreateProfile
-        } else {
-            OperatorCommand::SaveProfile
-        };
-        let targets = if creating {
-            Targets::Application
-        } else {
-            Targets::Profile(&target)
-        };
-        let submitted = match core.submit_detached(command, targets) {
-            Ok(submitted) => submitted,
-            Err(error) => return refused(self, error.to_string()),
-        };
-        if let Some(reason) = core.command_failure(submitted.request()) {
-            let reason = reason.to_string();
-            return refused(self, reason);
-        }
-        let Some(op) = submitted.operation() else {
-            return refused(self, "credentials: nothing was queued".to_string());
-        };
-        let source = self.target.as_deref().filter(|t| !t.is_empty());
-        self.save.submitted(core, op, source, username);
-        Ok(())
+        let source = (!form_target.is_empty()).then(|| form_target.to_string());
+        Ok((source, username))
+    }
+
+    /// Register the form's accepted write with its operation.
+    pub(crate) fn submitted<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        op: crate::OperationId,
+        source: Option<&str>,
+        destination: &str,
+    ) {
+        self.save
+            .submitted(core, op, source, destination.to_string());
+    }
+
+    /// Show a refusal from the profile writer.
+    pub(crate) fn refused(&mut self, reason: impl Into<String>) {
+        self.save.refused(reason);
     }
 
     /// Settle the form's saves being written. A durable one moves the form

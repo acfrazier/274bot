@@ -6,8 +6,6 @@
 //! model, and Esc clears or closes the map. The optional wilderness layer is
 //! toggled from the command palette.
 
-use std::io;
-
 use frontend_core::UiPreferences as Preferences;
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -34,22 +32,10 @@ pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
 /// Read the shared panel/TUI special-area preference from the process
 /// service's preferences. `MapView::new` does not touch the operator's home.
+/// (Changing it is the `SetNavPreference` command.)
 fn persisted_wilderness(preferences: &Preferences) -> bool {
-    frontend_core::nav_preference(
-        preferences,
-        frontend_core::NavPreference::ShowSpecialAreas,
-        None,
-    )
-    .unwrap_or(false)
-}
-
-fn persist_wilderness(preferences: &Preferences, enabled: bool) -> io::Result<()> {
-    frontend_core::nav_preference(
-        preferences,
-        frontend_core::NavPreference::ShowSpecialAreas,
-        Some(enabled),
-    )
-    .map(|_| ())
+    frontend_core::nav_preference(preferences, frontend_core::NavPreference::ShowSpecialAreas)
+        .unwrap_or(false)
 }
 
 const WILDERNESS_BG: Color = Color::Rgb(72, 16, 72);
@@ -139,19 +125,6 @@ impl MapView {
     /// Restore the wilderness toggle from the shared preferences.
     pub fn restore_persisted_wilderness(&mut self, preferences: &Preferences) {
         self.layers.wilderness = persisted_wilderness(preferences);
-    }
-}
-
-impl MapView {
-    pub(crate) fn toggle_wilderness(
-        &mut self,
-        preferences: Option<&Preferences>,
-    ) -> io::Result<()> {
-        self.layers.wilderness = !self.layers.wilderness;
-        if let Some(preferences) = preferences {
-            persist_wilderness(preferences, self.layers.wilderness)?;
-        }
-        Ok(())
     }
 }
 

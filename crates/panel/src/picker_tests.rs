@@ -536,11 +536,12 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
 /// preferences re-read.
 fn peer_sets_danger_zones(peer: &frontend_core::UiPreferences, session: &Session, enabled: bool) {
     crate::test_support::patiently(|| {
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             peer,
             frontend_core::NavPreference::AllowDangerZones,
-            Some(enabled),
+            enabled,
         )
+        .map(|()| enabled)
         .map(|_| ())
         .map_err(|error| error.to_string())
     })
@@ -1389,7 +1390,7 @@ fn pending_selection_draws_no_dest_marker_until_a_walk_is_armed() {
         !picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
         "a pending selection must not draw the armed dest marker"
     );
-    s.walk_dest = Some(hit);
+    s.map_desk.set_walk_dest_for_test(Some(hit));
     assert!(
         picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
         "the armed walk destination draws its marker"

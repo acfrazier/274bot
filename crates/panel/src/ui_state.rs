@@ -215,14 +215,33 @@ fn prefs_log(level: Level, message: String) {
     frontend_core::log::global().process_line(Source::Host, level, &message);
 }
 
-const MERGED_NAV_KEYS: &[&str] = &[
-    "allow_teleports",
-    "allow_wilderness",
-    "allow_bank_fetch",
-    "allow_danger_zones",
-    "survivable_routing",
-    "script_scope_notice_ack",
-    "survivable_routing_notice_ack",
+/// The `nav` keys the core writes (walk permissions, notices, the manual
+/// movement pause, the special-area paint): a panel save keeps the
+/// document's value, or the key's default when the document has none.
+const MERGED_NAV_KEYS: &[(&str, bool)] = &[
+    ("allow_teleports", false),
+    ("allow_wilderness", false),
+    ("allow_bank_fetch", false),
+    ("allow_danger_zones", false),
+    ("survivable_routing", true),
+    ("script_scope_notice_ack", false),
+    ("survivable_routing_notice_ack", false),
+    ("pause_script_on_manual_walk_abort", true),
+    ("show_special_areas", false),
+];
+
+/// Top-level operator preferences only the core writes, through their
+/// commands (`SetDraw`, `AcknowledgeNotice`, `SetMapBakeChoice`,
+/// `SetSessionLog`): a panel save never writes them; the document keeps
+/// what it holds.
+const CORE_OWNED_KEYS: &[&str] = &[
+    "capture",
+    "sidecar_50",
+    "focused_50",
+    "render_all_warning_ack",
+    "background_bots_ack",
+    "map_bake",
+    "session_log_file",
 ];
 
 /// Merge the panel's own keys (`replacement`, the serialized state) into the
@@ -256,16 +275,29 @@ fn merge_saved_panel_state(
             .expect("serialized PanelUiState always has a nav object")
             .clone(),
     );
-    for key in MERGED_NAV_KEYS {
-        let default = *key == "survivable_routing";
+    for (key, default) in MERGED_NAV_KEYS {
         let enabled = previous_nav
             .and_then(|nav| nav.get(*key))
             .and_then(Value::as_bool)
-            .unwrap_or(default);
+            .unwrap_or(*default);
         merged_nav.insert((*key).into(), Value::Bool(enabled));
     }
+    let kept: Vec<(&str, Option<Value>)> = CORE_OWNED_KEYS
+        .iter()
+        .map(|key| (*key, document.get(*key).cloned()))
+        .collect();
     document.extend(replacement.clone());
     document.insert("nav".into(), Value::Object(merged_nav));
+    for (key, value) in kept {
+        match value {
+            Some(value) => {
+                document.insert(key.into(), value);
+            }
+            None => {
+                document.remove(key);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -440,11 +472,12 @@ mod tests {
         };
         save_to(&prefs, &state);
 
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &prefs,
             frontend_core::NavPreference::ShowSpecialAreas,
-            Some(true),
+            true,
         )
+        .map(|()| true)
         .unwrap();
         let loaded = load_from(&prefs);
         assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
@@ -455,11 +488,12 @@ mod tests {
         );
         assert!(loaded.nav.show_special_areas);
 
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &prefs,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            Some(true),
+            true,
         )
+        .map(|()| true)
         .unwrap();
         let loaded = load_from(&prefs);
         assert!(loaded.nav.pause_script_on_manual_walk_abort);

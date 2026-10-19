@@ -550,11 +550,11 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let own_root = root.join(".274bot");
     assert_ne!(own_root.as_path(), thread_state_root().path());
     let mut own = Loadouts::operator(&crate::test_support::scratch_service(&own_root));
-    own.upsert(api::loadout::Loadout::new("melee"));
+    own.upsert_for_test(api::loadout::Loadout::new("melee"));
     save_store_patiently(&mut own);
 
     assert!(session.unlock("prepared-pass"));
-    let handle = session.core.live_runner();
+    let handle = session.core.live_runner().share();
     let start = || {
         let mut bag = serde_json::Map::new();
         bag.insert("loadout".into(), serde_json::json!("melee"));
@@ -565,8 +565,11 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
 
     // The Loadouts form saves through the session's service: the Start
     // leases that row.
-    session.loadouts.upsert(api::loadout::Loadout::new("melee"));
-    save_store_patiently(&mut session.loadouts);
+    session
+        .loadouts
+        .stage_draft(api::loadout::Loadout::new("melee"));
+    let saved = crate::test_support::save_draft_patiently(&mut session);
+    assert!(saved, "{}", session.loadouts.status());
     start().expect("the Start leases the row the form saved");
 }
 
@@ -600,7 +603,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     let mut session = Session::new();
     await_readback(session.core.local_state_for_test().unwrap());
     session.preferences.reload().unwrap();
-    session.loadouts.reload().unwrap();
+    session.loadouts.reload_for_test().unwrap();
     assert!(
         session.loadouts.load_error().is_none(),
         "initial loadouts readback must complete"
@@ -610,11 +613,13 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         ..Default::default()
     };
     crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
-    session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
+    session
+        .loadouts
+        .stage_draft(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 5));
     assert!(
         crate::loadouts::save_draft(&mut session),
         "{}",
-        session.loadouts_status
+        session.loadouts.status()
     );
 
     // Another 274bot process on this home: its own service, same files.
@@ -645,23 +650,25 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     peer.preferences()
         .set("peer_marker", serde_json::json!({"kept": 7}))
         .unwrap();
-    peer_form.upsert(api::loadout::Loadout::new("peer-row"));
-    peer_form.save().unwrap();
+    peer_form.upsert_for_test(api::loadout::Loadout::new("peer-row"));
+    peer_form.save_for_test().unwrap();
     session.preferences.reload().unwrap();
     assert_eq!(
         session.preferences.value("peer_marker"),
         Some(serde_json::json!({"kept": 7}))
     );
-    session.loadouts.reload().unwrap();
+    session.loadouts.reload_for_test().unwrap();
     assert_eq!(session.loadouts.names(), ["roundtrip", "peer-row"]);
 
     // The panel's next saves keep the peer's row and preference.
-    session.loadouts_sel = 0;
-    session.loadouts_draft = Some(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
+    session.loadouts.stage_selection(0);
+    session
+        .loadouts
+        .stage_draft(api::loadout::Loadout::new("roundtrip").with_carry("Lobster", 6));
     assert!(
         crate::loadouts::save_draft(&mut session),
         "{}",
-        session.loadouts_status
+        session.loadouts.status()
     );
     let state = crate::ui_state::PanelUiState {
         last_focus: Some("bob".into()),
@@ -669,7 +676,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     };
     crate::ui_state::save_to_checked(&session.preferences, &state).unwrap();
     let mut reread = Loadouts::operator(&peer);
-    reread.reload().unwrap();
+    reread.reload_for_test().unwrap();
     assert_eq!(reread.names(), ["roundtrip", "peer-row"]);
     assert_eq!(reread.get("roundtrip").unwrap().carry[0].qty, 6);
     let prefs = peer.preferences();
@@ -950,12 +957,10 @@ fn settle_catalog_work(session: &mut Session) {
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
-        session.pump_script_transpile();
         thread::sleep(Duration::from_millis(5));
     }
     session.core.poll();
     session.poll_scripts();
-    session.pump_script_transpile();
     assert!(
         !session.scripts.catalog_work_pending(),
         "catalog preparation did not settle"
@@ -964,14 +969,13 @@ fn settle_catalog_work(session: &mut Session) {
 
 fn settle_transpile_queue(session: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
-    while !session.transpile_queue.is_empty() && Instant::now() < deadline {
+    while session.transpile_front().is_some() && Instant::now() < deadline {
         session.core.poll();
         session.poll_scripts();
-        session.pump_script_transpile();
         thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        session.transpile_queue.is_empty(),
+        session.transpile_front().is_none(),
         "transpile queue did not settle"
     );
 }
@@ -1201,8 +1205,24 @@ fn getvar_drain_session() -> (Session, frontend_core::surface::InputProbe) {
     );
     s.set_focus_for_test("alice");
     let (tx, rx) = InputSender::probe();
-    s.capture_tx = Some(tx);
+    s.map_desk.set_input_sender(Some(tx));
     (s, rx)
+}
+
+fn submit_staged_capture(s: &mut Session) {
+    if !s.map_desk.has_staged_game_input() {
+        return;
+    }
+    let submitted = s
+        .submit(
+            frontend_core::OperatorCommand::GameInput,
+            frontend_core::Targets::Selected,
+        )
+        .expect("submit staged capture input");
+    assert!(
+        s.core.command_failure(submitted.request()).is_none(),
+        "staged capture input was refused"
+    );
 }
 
 /// One ingame scene-2 status row for `alice` with this chat head and
@@ -1251,29 +1271,61 @@ fn assert_drain_click(clicks: &[frontend_core::surface::InputEv]) {
 }
 
 #[test]
+fn game_input_overflow_is_reported_by_row() {
+    let iso = IsolatedStores::enter("game-input-overflow");
+    let (mut session, _rx) = getvar_drain_session();
+    let event = frontend_core::GameInputEvent::Captured(frontend_core::surface::InputEv::Up);
+    let mut overflowed = false;
+    for _ in 0..1024 {
+        if !session.map_desk.stage_game_input(event) {
+            overflowed = true;
+            break;
+        }
+    }
+    assert!(overflowed, "test input exceeds the frame buffer capacity");
+
+    let submitted = session
+        .submit(
+            frontend_core::OperatorCommand::GameInput,
+            frontend_core::Targets::Selected,
+        )
+        .expect("submit overflowed game input frame");
+    assert_eq!(
+        session.core.command_failure(submitted.request()),
+        Some("game input frame is full")
+    );
+    let _iso = iso;
+}
+
+#[test]
 fn getvar_drain_clicks_pending_box_once() {
     let iso = IsolatedStores::enter("getvar-drain-once");
     let (mut s, rx) = getvar_drain_session();
     // The probe goes out on the first ingame scene-2 pump (TutSkip unknown).
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     // The reply's pending box drains with exactly one chat click, keyed on
     // the box — not on the head text.
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert_drain_click(&drain_capture(&rx));
     // The same box on later pumps never clicks again.
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty(), "the box drains exactly once");
     // The box going away re-arms the slot, so the next box drains again —
     // even when the chat head shows unrelated text.
     push_alice_row(&mut s, "get tutorial: 1", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     push_alice_row(&mut s, "Welcome to RuneScape", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert_drain_click(&drain_capture(&rx));
     let _iso = iso;
 }
@@ -1284,6 +1336,7 @@ fn getvar_drain_needs_the_pending_box() {
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     // The chat head parses as our reply, but the box is absent (tutorial
     // overlay down: the reply is a plain MESSAGE_GAME). A click at the
@@ -1292,6 +1345,7 @@ fn getvar_drain_needs_the_pending_box() {
     // it, so the drain must not click. Fails on the chat-head-keyed drain.
     push_alice_row(&mut s, "get tutorial: 1000", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(
         drain_capture(&rx).is_empty(),
         "no click without the pending box, even for our own reply text"
@@ -1305,12 +1359,14 @@ fn getvar_drain_survives_chat_head_turnover() {
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     // Another line arrives before the drain runs: the head no longer shows
     // our reply, but the box is still present and must still drain. Fails
     // on the chat-head-keyed drain, which never sees the reply.
     push_alice_row(&mut s, "Welcome to RuneScape", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert_drain_click(&drain_capture(&rx));
     let _iso = iso;
 }
@@ -1321,21 +1377,26 @@ fn getvar_drain_retries_when_capture_returns() {
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     // Capture off (pane closed / capture toggle): the box persists until a
     // left click or login, so the drain waits instead of losing the box.
-    s.capture_tx = None;
+    s.map_desk.set_input_sender(None);
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     // Capture back on: the still-present box drains, exactly once.
     let (tx, rx2) = InputSender::probe();
-    s.capture_tx = Some(tx);
+    s.map_desk.set_input_sender(Some(tx));
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert_drain_click(&drain_capture(&rx2));
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(
         drain_capture(&rx2).is_empty(),
         "the deferred box still drains exactly once"
@@ -1356,6 +1417,7 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
     );
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(drain_capture(&rx).is_empty());
     // Focus moves to bob before alice's reply box drains. The capture
     // channel feeds the focused slot's client only, so clicking now would
@@ -1384,6 +1446,7 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
         });
     }
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(
         drain_capture(&rx).is_empty(),
         "no click for another slot's box while bob is focused"
@@ -1391,8 +1454,9 @@ fn getvar_drain_waits_for_its_slot_to_focus() {
     // Focusing alice again with capture on drains her still-present box.
     s.set_focus_for_test("alice");
     let (tx, rx2) = InputSender::probe();
-    s.capture_tx = Some(tx);
+    s.map_desk.set_input_sender(Some(tx));
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert_drain_click(&drain_capture(&rx2));
     let _iso = iso;
 }
@@ -1403,6 +1467,7 @@ fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
     let (mut s, rx) = getvar_drain_session();
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     // No pending box: none of these drains, whatever the head says — a
     // chat line, the setvar reply, or a getvar reply for another var.
     for head in [
@@ -1412,6 +1477,7 @@ fn getvar_drain_leaves_unrelated_dialogue_text_alone() {
     ] {
         push_alice_row(&mut s, head, false);
         s.pump_status();
+        submit_staged_capture(&mut s);
         assert!(
             drain_capture(&rx).is_empty(),
             "no click for unrelated text {head:?}"
@@ -1437,6 +1503,7 @@ fn getvar_drain_ignores_matching_text_without_probe() {
     );
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(
         drain_capture(&rx).is_empty(),
         "only the dialogue our own probe caused drains"
@@ -1452,8 +1519,10 @@ fn getvar_drain_stays_local_only() {
     s.set_map_host("192.168.1.2");
     push_alice_row(&mut s, "", false);
     s.pump_status();
+    submit_staged_capture(&mut s);
     push_alice_row(&mut s, "get tutorial: 1", true);
     s.pump_status();
+    submit_staged_capture(&mut s);
     assert!(
         drain_capture(&rx).is_empty(),
         "the probe drain keeps its local-engine gating"
@@ -2910,11 +2979,12 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
     // session's files, seen once the session's preferences re-read.
     let peer = thread_preferences();
     let peer_sets_danger_zones = |session: &Session, enabled: bool| {
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &peer,
             frontend_core::NavPreference::AllowDangerZones,
-            Some(enabled),
+            enabled,
         )
+        .map(|()| enabled)
         .unwrap();
         session.preferences.reload().unwrap();
     };
@@ -3136,11 +3206,12 @@ fn walk_permissions_projection_follows_a_peer_write() {
     let mut session = Session::new();
     // The other frontend: a second service on the same files.
     let peer = thread_preferences();
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &peer,
         frontend_core::NavPreference::AllowTeleports,
-        Some(false),
+        false,
     )
+    .map(|()| false)
     .unwrap();
     session.preferences.reload().unwrap();
     session.refresh_walk_permissions();
@@ -3156,11 +3227,12 @@ fn walk_permissions_projection_follows_a_peer_write() {
     // The peer's write lands next to a key the panel knows nothing about;
     // the projection follows once the session's preferences re-read.
     patiently(|| {
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &peer,
             frontend_core::NavPreference::AllowTeleports,
-            Some(true),
+            true,
         )
+        .map(|()| true)
         .map(|_| ())
         .map_err(|error| error.to_string())
     })
@@ -3181,6 +3253,58 @@ fn walk_permissions_projection_follows_a_peer_write() {
         session.preferences.value("peer_marker"),
         Some(serde_json::json!("written by the other frontend"))
     );
+}
+
+#[test]
+fn map_rows_settle_empty_release_and_wrong_state_decline_explicitly() {
+    let iso = IsolatedStores::enter("map-row-guard");
+    let mut session = Session::new();
+    let released = session
+        .submit(
+            frontend_core::OperatorCommand::ReleaseMapDemand,
+            frontend_core::Targets::Application,
+        )
+        .expect("submit empty map release");
+    let terminal = session
+        .core
+        .commands()
+        .report(released.request())
+        .and_then(|report| report.member(frontend_core::command::Subject::Application))
+        .and_then(|member| member.terminal());
+    assert_eq!(
+        terminal,
+        Some(&api::identity::Settlement::Completed(
+            frontend_core::command::Completion::Skipped(
+                frontend_core::command::SkipReason::NotReady,
+            ),
+        ))
+    );
+
+    let declined = session
+        .submit(
+            frontend_core::OperatorCommand::DeclineMapBake,
+            frontend_core::Targets::Application,
+        )
+        .expect("submit decline without a prompt");
+    let decline_terminal = session
+        .core
+        .commands()
+        .report(declined.request())
+        .and_then(|report| report.member(frontend_core::command::Subject::Application))
+        .and_then(|member| member.terminal());
+    assert_eq!(
+        decline_terminal,
+        Some(&api::identity::Settlement::Failed(
+            frontend_core::command::CommandFailure::Rejected(
+                frontend_core::command::Rejection::NotApplicable,
+            ),
+        ))
+    );
+    assert_eq!(
+        session.core.command_failure(declined.request()),
+        Some("map bake prompt is not asking")
+    );
+    let _iso = iso;
 }
 
 fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
@@ -3264,9 +3388,9 @@ fn picker_without_observed_origin_refuses_and_consumes_selection() {
             level: 0,
         },
     );
-    assert_eq!(s.walk_dest, None);
+    assert_eq!(s.map_desk.walk_dest(), None);
     assert!(!s.confirm_picker_walk(&world));
-    assert_eq!(s.walk_dest, None);
+    assert_eq!(s.map_desk.walk_dest(), None);
     assert!(!s.core.walk_route_armed("alice"));
     assert!(s.map_model.pending().is_none());
     assert!(!s.confirm_picker_walk(&world));
@@ -3289,10 +3413,10 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     let _fixture = bind_picker_session(&mut s, &world, origin);
     let generation = s.route_gen();
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
-    assert_eq!(s.walk_dest, None);
+    assert_eq!(s.map_desk.walk_dest(), None);
     assert!(!s.core.walk_route_armed("alice"));
     assert!(s.confirm_picker_walk(&world));
-    assert_eq!(s.walk_dest, Some(dest));
+    assert_eq!(s.map_desk.walk_dest(), Some(dest));
     assert!(s.error.is_none());
     assert!(s.map_model.pending().is_none());
     let armed_generation = s.route_gen();
@@ -3469,7 +3593,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
     assert_eq!(s.walk_send.walk_label(), "Walk 2 bots");
     assert!(s.confirm_picker_group_walk(&world));
     assert!(s.map_model.pending().is_none());
-    assert_eq!(s.walk_dest, Some(dest));
+    assert_eq!(s.map_desk.walk_dest(), Some(dest));
     assert_eq!(
         s.core.manual_walk_route("alice").unwrap().dest,
         world_tile(dest)
@@ -3532,7 +3656,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     for name in ["alice", "bob", "logged-out", "nopos"] {
         s.core.fleet_mut().add(name);
         let identity = s.fleet_identity(name);
-        s.fleet_selection.set(identity, true);
+        s.fleet_selection.set_for_test(identity, true);
     }
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     s.refresh_walk_send();
@@ -3579,7 +3703,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         s.core.fleet_mut().add(name);
     }
     let alice = s.fleet_identity("alice");
-    s.fleet_selection.set(alice, true);
+    s.fleet_selection.set_for_test(alice, true);
 
     s.open_walkto_for_marked();
 
@@ -3628,7 +3752,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         s.core.fleet_mut().add(name);
     }
     let (alice, bob) = (s.fleet_identity("alice"), s.fleet_identity("bob"));
-    s.fleet_selection.set(alice, true);
+    s.fleet_selection.set_for_test(alice, true);
     s.open_walkto_for_marked();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
@@ -3649,11 +3773,11 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
     // Another surface marks bob; Send was not pressed and the list was not
     // rebuilt.
-    s.fleet_selection.set(bob, true);
+    s.fleet_selection.set_for_test(bob, true);
     assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
-    s.fleet_selection.set(alice, false);
+    s.fleet_selection.set_for_test(alice, false);
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
-    s.fleet_selection.clear();
+    s.fleet_selection.clear_for_test();
     assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
 }
 
@@ -4069,7 +4193,7 @@ fn picker_confirm_no_path_keeps_destination_without_arming() {
         },
         dest
     ));
-    assert_eq!(s.walk_dest, Some(dest));
+    assert_eq!(s.map_desk.walk_dest(), Some(dest));
     assert!(
         !s.core.walk_route_armed("alice"),
         "no route must be armed when find fails"
@@ -4326,19 +4450,21 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         level: 0,
     };
     session.ui.nav.allow_teleports = false;
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
-        Some(false),
+        false,
     )
+    .map(|()| false)
     .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
-        Some(true),
+        true,
     )
+    .map(|()| true)
     .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let route = session.core.manual_walk_route("alice").expect("walk route");
@@ -4360,17 +4486,19 @@ fn picker_confirm_uses_find_with_options() {
     session.set_focus_for_test("alice");
     session.ui.nav.allow_teleports = false;
     session.ui.nav.allow_wilderness = false;
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
-        Some(false),
+        false,
     )
+    .map(|()| false)
     .unwrap();
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowWilderness,
-        Some(false),
+        false,
     )
+    .map(|()| false)
     .unwrap();
     let mut flags = vec![0u32; 5 * 12];
     for z in 0..12 {
@@ -4458,19 +4586,21 @@ fn picker_confirm_uses_find_with_options() {
     session.ui.nav.allow_wilderness = false;
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_teleports = true;
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowTeleports,
-        Some(true),
+        true,
     )
+    .map(|()| true)
     .unwrap();
     assert!(!confirm_map_walk(&mut session, &world, origin, dest_tile));
     session.ui.nav.allow_wilderness = true;
-    frontend_core::nav_preference(
+    frontend_core::nav_prefs::write_nav_preference_for_test(
         &session.preferences,
         frontend_core::NavPreference::AllowWilderness,
-        Some(true),
+        true,
     )
+    .map(|()| true)
     .unwrap();
     assert!(confirm_map_walk(&mut session, &world, origin, dest_tile));
     let route = session.core.manual_walk_route("alice").expect("walk route");
@@ -5641,7 +5771,7 @@ fn closing_game_pane_leaves_capture_pref_on() {
     assert!(!f.game_pane_open);
     assert!(f.capture, "pane close must not clear the capture pref");
     assert!(
-        s.capture_tx.is_none(),
+        !s.map_desk.input_connected(),
         "drain drops while the pane is closed"
     );
 }
@@ -5658,11 +5788,11 @@ fn reopening_game_pane_resumes_capture_drain() {
     );
     s.select("alice");
     s.set_capture(true);
-    assert!(s.capture_tx.is_some());
+    assert!(s.map_desk.input_connected());
     s.set_game_pane_open(false);
-    assert!(s.capture_tx.is_none());
+    assert!(!s.map_desk.input_connected());
     s.set_game_pane_open(true);
-    assert!(s.capture_tx.is_some(), "pref on resumes the drain");
+    assert!(s.map_desk.input_connected(), "pref on resumes the drain");
 }
 
 #[test]
@@ -7910,7 +8040,7 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     let identity = s.core.profile_identity("alice").unwrap();
-    s.fleet_selection.set(identity, true);
+    s.fleet_selection.set_for_test(identity, true);
     assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
     assert!(
         !s.fleet_selection.contains(identity),
@@ -8274,9 +8404,8 @@ fn select_script_card_queues_only_that_card_through_worker() {
         s.script_sel,
         Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"))
     );
-    assert_eq!(s.transpile_queue.len(), 1);
     assert_eq!(
-        s.transpile_queue.front().map(|q| q.1.as_str()),
+        s.transpile_front().map(|(_, name)| name),
         Some("BoneBurier")
     );
     assert!(
@@ -8296,25 +8425,6 @@ fn select_script_card_queues_only_that_card_through_worker() {
         "a click must not warm the rest of the catalog"
     );
 
-    s.pump_script_transpile();
-    assert!(
-        s.scripts
-            .card_snapshot(CardSource::Catalog, "BoneBurier")
-            .unwrap()
-            .js()
-            .is_empty(),
-        "first pump only arms so the UI can paint transpiling"
-    );
-    s.pump_script_transpile();
-    assert!(
-        s.scripts
-            .card_snapshot(CardSource::Catalog, "BoneBurier")
-            .unwrap()
-            .js()
-            .is_empty(),
-        "second pump submits worker work; it does not compile inline"
-    );
-    assert!(s.scripts.transpile_pending());
     settle_transpile_queue(&mut s);
     assert!(!s
         .scripts
@@ -8346,15 +8456,9 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
         .expect("catalog");
 
     s.queue_transpile_all();
-    assert_eq!(s.transpile_queue.len(), 2);
-    assert_eq!(s.transpile_total, 2);
+    assert!(s.transpile_front().is_some());
+    assert_eq!(s.transpile_progress().1, 2);
 
-    s.pump_script_transpile();
-    s.pump_script_transpile();
-    assert!(
-        s.scripts.transpile_pending(),
-        "the first request is queued on WorkAdmission"
-    );
     assert_eq!(
         s.scripts
             .cards()
@@ -8363,7 +8467,6 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
         0,
         "the click frame does not compile any card"
     );
-    assert_eq!(s.transpile_queue.len(), 2);
 
     settle_transpile_queue(&mut s);
     assert_eq!(
@@ -8409,15 +8512,10 @@ fn select_script_card_queues_cached_output_through_worker() {
     ));
 
     s.select_script_card(CardSource::Catalog, "BoneBurier");
-    assert_eq!(s.transpile_queue.len(), 1);
-    assert!(s
-        .scripts
-        .card_snapshot(CardSource::Catalog, "BoneBurier")
-        .unwrap()
-        .js()
-        .is_empty());
-    s.pump_script_transpile();
-    s.pump_script_transpile();
+    assert_eq!(
+        s.transpile_front().map(|(_, name)| name),
+        Some("BoneBurier")
+    );
     assert!(s
         .scripts
         .card_snapshot(CardSource::Catalog, "BoneBurier")
@@ -8683,9 +8781,30 @@ fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser(
     s.set_multibox(true);
     let gate = s.core.write_gate();
     let held = gate.lock().unwrap();
-    s.profile_editor.open(&s.core, "");
-    *s.profile_editor.draft_mut().username_mut() = "bob".into();
-    *s.profile_editor.draft_mut().password_mut() = "pw".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::OpenNewProfileForm,
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.username_mut() = "bob".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Username,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.password_mut() = "pw".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Password,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
     assert!(s.save_credentials());
     // The writer may already hold bob's job, but it cannot commit it yet.
 
@@ -8884,7 +9003,7 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
     session.core.set_spawn_workers(false);
     install_vault(&mut session.core, vault);
     session.core.set_play(Some(play));
-    session.fleet_selection.mark_all([
+    session.fleet_selection.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(11),
         frontend_core::ProfileIdentity::uid(22),
         frontend_core::ProfileIdentity::uid(33),

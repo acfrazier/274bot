@@ -129,7 +129,16 @@ pub fn load_map_bake_choice(preferences: &crate::prefs::UiPreferences) -> MapBak
 
 /// Write the remembered choice into the shared preferences, keeping every
 /// other one.
-pub fn persist_map_bake_choice(
+/// Fixture seam: [`persist_map_bake_choice`] for integration tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn persist_map_bake_choice_for_test(
+    preferences: &crate::prefs::UiPreferences,
+    choice: MapBakeChoice,
+) -> io::Result<()> {
+    persist_map_bake_choice(preferences, choice)
+}
+
+pub(crate) fn persist_map_bake_choice(
     preferences: &crate::prefs::UiPreferences,
     choice: MapBakeChoice,
 ) -> io::Result<()> {
@@ -173,7 +182,7 @@ impl MapBakeGate {
     }
 
     /// Update the remembered choice (the caller persists it).
-    pub fn set_choice(&mut self, choice: MapBakeChoice) {
+    pub(crate) fn set_choice(&mut self, choice: MapBakeChoice) {
         self.choice = choice;
     }
 
@@ -183,21 +192,33 @@ impl MapBakeGate {
 
     /// Consent to the local bake for the rest of this process; reopen the
     /// demand through [`Self::open`] to start it.
-    pub fn accept(&mut self) {
+    pub(crate) fn accept(&mut self) {
         self.accepted = true;
         self.prompt = MapBakePrompt::None;
     }
 
     /// Not now: keep the catalogue-only demand. Later opens stay quiet until
     /// the operator accepts.
-    pub fn decline(&mut self) {
+    pub(crate) fn decline(&mut self) {
         if self.prompt == MapBakePrompt::Asking {
             self.prompt = MapBakePrompt::Declined;
         }
     }
 
+    /// Fixture seam: [`Self::accept`] for integration tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn accept_for_test(&mut self) {
+        self.accept();
+    }
+
+    /// Fixture seam: [`Self::decline`] for integration tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn decline_for_test(&mut self) {
+        self.decline();
+    }
+
     /// [`Self::open`] against the process map cache for the bound profile.
-    pub fn open_profile(
+    pub(crate) fn open_profile(
         &mut self,
         profile: &BoundProfile,
         demand: WalkMapDemand,

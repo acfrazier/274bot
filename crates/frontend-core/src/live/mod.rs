@@ -986,7 +986,7 @@ impl RunnerHandle {
                 }
                 if let Err(error) = scripts.start_selected(core, &account, selection.as_ref(), None)
                 {
-                    watch.fail_start(error);
+                    watch.fail_start(error.to_string());
                 }
             }
             Some(Operation::Stop) => {

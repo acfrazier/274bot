@@ -238,7 +238,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     session.mainland = true;
     session.persist_ui = false;
     session.unlock_at(&vault_path, &passphrase)?;
-    session.set_pause_script_on_manual_walk_abort(pause_owner);
+    session.set_pause_script_on_manual_walk_abort(pause_owner)?;
     if !session.load_and_login(&name) {
         return Err(format!("TUI load/login failed: {:?}", session.error));
     }

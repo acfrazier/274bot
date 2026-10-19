@@ -6,13 +6,12 @@
 //! view does not use is reported unconsumed.
 
 use std::io::Write as _;
+use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use frontend_core::log::{
-    default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
+    default_save_path, global, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
-use frontend_core::log_file::{apply_session_log, persist_session_log_setting};
-use frontend_core::UiPreferences as Preferences;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -34,6 +33,20 @@ impl PaneScope {
             PaneScope::All => PaneScope::Bot,
         }
     }
+}
+
+/// What a key did in the log view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogKey {
+    /// Not a log key: the router handles it.
+    Ignored,
+    /// The view used it (search editing, a filter, the scope, follow or
+    /// scrolling).
+    Used,
+    /// `w`: save the rows the view shows (the `SaveLog` command).
+    Save,
+    /// `F`: flip the session-file preference (the `SetSessionLog` command).
+    ToggleSessionFile,
 }
 
 pub struct LogPaneState {
@@ -146,15 +159,11 @@ impl LogPaneState {
         self.view.rows().back()
     }
 
-    /// One key while the view has keyboard focus. Returns whether the view
-    /// used it; Esc outside the search line is left to the router. The
-    /// session-file toggle writes through the process service's preferences.
-    pub fn on_key(
-        &mut self,
-        key: KeyEvent,
-        focused: Option<&str>,
-        preferences: Option<&Preferences>,
-    ) -> bool {
+    /// One key while the view has keyboard focus. Esc outside the search
+    /// line is left to the router. Save and the session-file toggle are
+    /// operator commands: the key reports them ([`LogKey::Save`],
+    /// [`LogKey::ToggleSessionFile`]) and the router submits them.
+    pub fn on_key(&mut self, key: KeyEvent) -> LogKey {
         let text = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
@@ -169,9 +178,9 @@ impl LogPaneState {
                     self.search.push(c);
                     self.apply_search();
                 }
-                _ => return false,
+                _ => return LogKey::Ignored,
             }
-            return true;
+            return LogKey::Used;
         }
         match key.code {
             KeyCode::Char('/') if text => self.editing = true,
@@ -197,38 +206,35 @@ impl LogPaneState {
                 self.scroll = 0;
                 self.view.set_follow(true);
             }
-            KeyCode::Char('w') if text => self.save(focused),
-            KeyCode::Char('F') if text => self.toggle_session_file(preferences),
-            _ => return false,
+            KeyCode::Char('w') if text => return LogKey::Save,
+            KeyCode::Char('F') if text => return LogKey::ToggleSessionFile,
+            _ => return LogKey::Ignored,
         }
-        true
+        LogKey::Used
     }
 
-    /// Save the rows the view shows (off the UI thread).
-    pub fn save(&mut self, focused: Option<&str>) {
+    /// The file and the text a Save of the rows the view shows writes:
+    /// what the `SaveLog` command is staged with.
+    pub fn save_request(&self, focused: Option<&str>) -> (PathBuf, String) {
         let label = match self.scope {
             PaneScope::Bot => focused.unwrap_or("process"),
             PaneScope::Process => "process",
             PaneScope::All => "all",
         };
-        self.save = Some(save_text(default_save_path(label), self.view.to_text()));
+        (default_save_path(label), self.view.to_text())
+    }
+
+    /// The write the `SaveLog` command started (off the UI thread): the
+    /// status line follows it.
+    pub fn saving(&mut self, ticket: SaveTicket) {
+        self.save = Some(ticket);
         self.status = Some("saving…".into());
     }
 
-    /// Flip the shared session-file preference and apply it.
-    pub fn toggle_session_file(&mut self, preferences: Option<&Preferences>) {
-        let on = !global().file_open();
-        let Some(preferences) = preferences else {
-            self.status = Some("session file setting: preferences not bound".into());
-            return;
-        };
-        self.status = Some(match persist_session_log_setting(preferences, on) {
-            Ok(()) => match apply_session_log(on) {
-                Some(path) => format!("session file {}", path.display()),
-                None => "session file off".into(),
-            },
-            Err(e) => format!("session file setting: {e}"),
-        });
+    /// The session-file preference the toggle sets: the opposite of what
+    /// this process holds open now.
+    pub fn session_file_toggled() -> bool {
+        !global().file_open()
     }
 
     /// Wheel or keyboard scroll by `rows` (negative is up, toward older).

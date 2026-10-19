@@ -339,12 +339,26 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   "renderer refused: render head cap of 128 is full" in its own tile.
 - Clients without a drawn view retain less render scratch memory. Hiding a view
   releases that scratch, and showing it again keeps the same game connection.
+- Every panel action that changes state goes through the shared command
+  path that the TUI and the headless driver also use. This includes Start,
+  the draw switches, the Nav config grants, session log, map bake, Quest
+  Paths, marks, the filter, the vault and Quit. Each action returns a typed
+  report.
+- Saved draw preferences (capture input, sidecar and focused 50 fps), the
+  render-all and background-bots acknowledgements, the map-bake choice and
+  the session log file are written only when you change them. Saving the
+  panel's own window state no longer rewrites them.
+- A capture frame that fills the input queue is reported, instead of
+  dropping events silently.
 
 ### TUI
 
 - The Assign & restart confirmation names the bots whose running script
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
+- Marks, the fleet filter, log saving, the session log file, the Nav and
+  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
+  through the same command path as the panel.
 
 ### Profiles
 

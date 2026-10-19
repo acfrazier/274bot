@@ -64,22 +64,22 @@ pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
 pub use fleet::{
-    FleetFilter,
     contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
-    state_label, Fleet,
+    state_label, Fleet, FleetFilter,
 };
-pub use group_walk::{walk_marked, MarkedWalk, WalkInputs};
+pub use group_walk::{MarkedWalk, WalkInputs};
 pub use map_bake::{
-    load_map_bake_choice, persist_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt,
-    MAP_BAKE_TITLE, MAP_BAKE_WARNING,
+    load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
+    MAP_BAKE_WARNING,
 };
 pub use map_decode::{WalkMapDecodeController, WalkMapDecodeError, WalkMapDecodeResult};
 pub use marked::{
-    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope, login_marked,
-    logout_marked, marked_availability, prepare_apply_settings_marked, restart_scope,
-    run_marked_command, BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope,
-    ASSIGN_NO_CARD, ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
+    assign_and_restart_marked, assign_marked, bounded_names, combined_bulk_scope,
+    marked_availability, prepare_apply_settings_marked, restart_scope, run_marked_command,
+    BulkScope, MarkedAction, MarkedBlock, MarkedCommandReport, RestartScope, ASSIGN_NO_CARD,
+    ASSIGN_RESTART_NO_CARD, PROMPT_NAMES_SHOWN,
 };
+pub use models::Models;
 pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use prefs::UiPreferences;
@@ -99,16 +99,15 @@ pub use quester_paths::{
 pub use resources::{Metric, ResourceView};
 pub use scripts::{Notice, Scripts};
 pub use selection::{
-    marked_startable, profile_id_at, profile_id_for_name, start_marked, stop_marked, BulkSkip,
-    MarkedSelection, ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
+    marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,
+    ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
 };
 pub use session::{
-    pick_focus, ArmMirror, DrawPolicy, MapDesk, GuardianEdit, MemoryNotice, OperatorSession, Removal, ScriptStart,
-    Selection, SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition,
-    SLOT_REMOVE_TIMEOUT,
+    pick_focus, ArmMirror, DrawPolicy, GameInputEvent, GuardianEdit, MapDesk, MemoryNotice,
+    Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
+    StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use slot_view::{SlotView, StatusBuf};
-pub use models::Models;
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{

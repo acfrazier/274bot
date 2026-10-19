@@ -57,14 +57,14 @@ fn events() -> usize {
 /// Allocation events of one draw of the open popup with `notice`, and the
 /// screen it drew.
 fn draw(notice: Option<&FormNotice>, area: Rect) -> (usize, Buffer) {
-    let mut settings = SettingsDraft::default();
+    let settings = SettingsDraft::default();
     let mut nav = WalkGlobals::default();
     let mut bake = MapBakeChoice::Ask;
     let mut state = SettingsState {
         open: true,
         ..Default::default()
     };
-    let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+    let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
     pane.notice = notice;
     let mut buf = Buffer::empty(area);
     let before = events();

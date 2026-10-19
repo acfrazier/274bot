@@ -725,7 +725,13 @@ fn persist_special_area_toggle(session: &mut Session, map: &WalkMapRenderer) {
     }
     session.ui.nav.show_special_areas = map.show_special_areas;
     if session.persist_ui {
-        crate::ui_state::save(&session.preferences, &session.ui);
+        session.submit(
+            frontend_core::OperatorCommand::SetNavPreference(
+                frontend_core::NavPreference::ShowSpecialAreas,
+                map.show_special_areas,
+            ),
+            frontend_core::Targets::Application,
+        );
     }
 }
 
@@ -1654,7 +1660,7 @@ fn picker_nested_in_game(
 /// are frontend-core's [`frontend_core::MapBakeGate`], which the TUI's map
 /// demand also goes through.
 fn draw_map_bake_banner(ui: &Ui, session: &mut Session) {
-    match session.map_bake.prompt() {
+    match session.map_desk.bake_gate().prompt() {
         MapBakePrompt::None => {}
         MapBakePrompt::Asking => {
             ui.text_colored(session.ui.chrome.warn_rgba(), MAP_BAKE_TITLE);
@@ -2131,7 +2137,7 @@ fn draw_canvas(
             });
             // Only an armed walk draws the dest cross; a pending selection
             // keeps its own outline (`pending_highlight`).
-            let dest_tile = session.walk_dest;
+            let dest_tile = session.map_desk.walk_dest();
             let dest = dest_tile.map(|t| WorldTile {
                 x: t.x,
                 z: t.z,
