@@ -4,12 +4,13 @@
 use std::sync::Arc;
 
 use api::game_data::SelectedGameData;
-use api::named_banks::{NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
 use api::snapshot::WorldTile;
 use script::{LoadIsolate, LoadShape};
 
 const COW_MODULE: &str = r#"
 import Tile from '../../geometry/Tile.js';
+import * as Root from '@rs2b0t/api';
 import {
     AL_KHARID_BANK,
     ARDOUGNE_WEST_BANK,
@@ -27,6 +28,15 @@ import {
 } from '../../data/cowKillerLocations.js';
 
 globalThis.__cow = {
+    rootIdentity: Root.COW_LOCATIONS === COW_LOCATIONS &&
+        Root.COW_LOCATION_OPTIONS === COW_LOCATION_OPTIONS &&
+        Root.AL_KHARID_BANK === AL_KHARID_BANK &&
+        Root.TOLL_COIN_TARGET === TOLL_COIN_TARGET &&
+        Root.isCowFieldLootTile === isCowFieldLootTile &&
+        Root.resolveCowLocation === resolveCowLocation &&
+        Root.nearestCowLocation === nearestCowLocation &&
+        Root.needsTollCoins === needsTollCoins &&
+        Root.shouldBootstrapTollCoins === shouldBootstrapTollCoins,
     locations: COW_LOCATIONS,
     options: COW_LOCATION_OPTIONS,
     bankConstants: [AL_KHARID_BANK, DRAYNOR_BANK, FALADOR_EAST_BANK, ARDOUGNE_WEST_BANK],
@@ -58,11 +68,28 @@ fn selected_data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).expect("R289 selected game data")
 }
 
-fn selected_banks(data: &SelectedGameData) -> NamedBankFacts {
-    let placements = data
-        .bank_placements()
-        .expect("R289 selected bank placements");
-    nav::named_banks::resolve(BANK_CATALOG, &placements.rows, |_| true)
+fn bound_banks() -> NamedBankFacts {
+    let names = ["Al Kharid", "Draynor", "Falador East", "Ardougne West"];
+    NamedBankFacts::from_banks(
+        names
+            .into_iter()
+            .map(|name| {
+                let definition = BANK_CATALOG
+                    .iter()
+                    .find(|bank| bank.name == name)
+                    .expect("Cow destination is in the public bank catalog");
+                // Non-fallback coordinates prove that the supplied facts are read.
+                NamedBank::new(
+                    name,
+                    WorldTile {
+                        x: definition.tile.x + 1,
+                        z: definition.tile.z + 2,
+                        level: definition.tile.level,
+                    },
+                )
+            })
+            .collect(),
+    )
 }
 
 fn bank_tile(facts: &NamedBankFacts, name: &str) -> WorldTile {
@@ -70,7 +97,7 @@ fn bank_tile(facts: &NamedBankFacts, name: &str) -> WorldTile {
         .banks()
         .iter()
         .find(|bank| bank.name == name)
-        .unwrap_or_else(|| panic!("selected named-bank facts omit {name}"))
+        .unwrap_or_else(|| panic!("bound named-bank facts omit {name}"))
         .tile
 }
 
@@ -98,6 +125,10 @@ fn probe(isolate: &LoadIsolate, expression: &str) -> serde_json::Value {
 #[test]
 fn public_catalog_exports_every_location_option_and_fallback_bank_identity() {
     let isolate = load(None, NamedBankFacts::empty());
+    assert_eq!(
+        probe(&isolate, "__cow.rootIdentity"),
+        serde_json::json!(true)
+    );
 
     assert_eq!(
         probe(
@@ -245,9 +276,9 @@ fn toll_helpers_honor_enablement_coin_and_distance_boundaries() {
 }
 
 #[test]
-fn selected_named_bank_content_feeds_exports_and_nested_destinations() {
+fn bound_named_bank_facts_override_fallbacks_and_keep_destination_identity() {
     let data = selected_data();
-    let banks = selected_banks(&data);
+    let banks = bound_banks();
     let expected = [
         xyz(bank_tile(&banks, "Al Kharid")),
         xyz(bank_tile(&banks, "Draynor")),
@@ -259,7 +290,7 @@ fn selected_named_bank_content_feeds_exports_and_nested_destinations() {
     assert_eq!(
         probe(&isolate, "__cow.bankConstants.map(__cow.xyz)"),
         serde_json::json!(expected),
-        "public bank constants must use the selected named-bank tiles"
+        "public bank constants must use the bound named-bank tiles"
     );
     assert_eq!(
         probe(
@@ -278,7 +309,7 @@ fn selected_named_bank_content_feeds_exports_and_nested_destinations() {
             "[__cow.locations[1].bankDestination.tile === __cow.draynor, __cow.locations[2].bankDestination.tile === __cow.faladorEast, __cow.locations[3].bankDestination.tile === __cow.ardougneWest, __cow.bankDestination(__cow.locations[0], true).tile === __cow.alKharid]"
         ),
         serde_json::json!([true, true, true, true]),
-        "selected bank tiles must retain one shared object identity in the public module"
+        "bound bank tiles must retain one shared object identity in the public module"
     );
 
     isolate.join();
