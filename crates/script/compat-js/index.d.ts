@@ -2822,6 +2822,12 @@ import { Npc } from "*api/model/Npc.js";
 export function backpackSnapshots(): InvItemSnapshot[];
 export function backpackCapacity(): number;
 export class InvItem {
+    readonly name: string | null;
+    readonly count: number;
+    readonly id: number;
+    readonly slot: number;
+    readonly noted: boolean;
+    readonly cert: number;
     constructor(snapshot: ______adapter_ClientAdapter_js.InvItemSnapshot);
     actions(): string[];
     interact(action: string): boolean;
