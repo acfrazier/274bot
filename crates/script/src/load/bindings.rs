@@ -758,6 +758,7 @@ pub(super) fn wire_runtime(
     super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
     super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
     super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
+    super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
     super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
     super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
     super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;

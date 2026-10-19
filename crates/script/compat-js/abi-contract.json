@@ -13454,8 +13454,9 @@
       "id": "scene-inventory-item-handle",
       "module": "api/inventory/Inventory.js",
       "selector": "InvItem",
-      "reason": "Inventory emits row-backed InvItem instances with noted, copied actions, synchronous interactions, and the host-supported useOn targets.",
-      "runtime": "crates/script/src/shim/inventory.js:40",
+      "reason": "The native initializer supplies all six InvItem fields. cert is an existing served-only extension, defaulting to -1, absent from the frozen Inventory.ts:25-42 members. Row-backed instances preserve noted, copied actions, synchronous interactions, and host-supported useOn targets.",
+      "runtime": "crates/script/src/shim/inventory.js:15",
+      "preserveMembers": true,
       "declaration": "export class InvItem { readonly name: string | null; readonly count: number; readonly id: number; readonly slot: number; readonly noted: boolean; readonly cert: number; constructor(snapshot: import('../../adapter/ClientAdapter.js').InvItemSnapshot); actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }",
       "family_id": "inventory",
       "nav_consuming": false
@@ -13765,28 +13766,6 @@
       "async": false,
       "family_id": "clues",
       "nav_consuming": true
-    },
-    {
-      "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackSnapshots",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:19",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackCapacity",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:23",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
     },
     {
       "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
@@ -23680,26 +23659,6 @@
       "overlay_id": "not-impl:api/ai/clues/duelTravel.js:resetClueDuelSearch"
     },
     {
-      "family_id": "inventory",
-      "member": "backpackSnapshots",
-      "selector": "backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:19",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackSnapshots"
-    },
-    {
-      "family_id": "inventory",
-      "member": "backpackCapacity",
-      "selector": "backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:23",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackCapacity"
-    },
-    {
       "family_id": "trade",
       "member": "stableClosedPoll",
       "selector": "stableClosedPoll",
@@ -25339,6 +25298,7 @@
     "cooking",
     "cow",
     "gathering",
+    "inventory",
     "runecrafting",
     "skills",
     "world-primitives"
@@ -25618,7 +25578,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "loadouts",

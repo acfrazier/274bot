@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use script::isolate_fb::{encode_snapshot_with_native, ItemRowInput, NativeFactsInput};
 use script::{transpile_ts, LoadIsolate, LoadShape, Ready};
+use serde_json::json;
 
 mod common;
 
@@ -381,7 +383,15 @@ import { ENCLAVE_TARGET_OPTIONS as options, GUTANOTH_BLUE, enclaveTargets as sel
 import { chasesTarget, Fight } from '#/bot/api/combat/hunting/combat.js';
 import { ClueDuelSearch } from '#/bot/api/duel/ClueDuel.js';
 import { resetClueDuelSearch } from '#/bot/api/ai/clues/duelTravel.js';
-import { toolAttackLevel as rootToolAttackLevel, toolsNeedingEquip as rootToolsNeedingEquip, shouldBankNow as rootShouldBankNow, bankDistance as rootBankDistance, bestHeldToolNames as rootBestHeldToolNames, surplusHeldToolNames as rootSurplusHeldToolNames, resolveBankOpenRoute as rootResolveBankOpenRoute, NEARBY_BANK_RADIUS as rootNearbyBankRadius, NAV_PURE_WALK as rootNavPureWalk, InvItem as RootInvItem } from '@rs2b0t/api';
+import {
+    toolAttackLevel as rootToolAttackLevel, toolsNeedingEquip as rootToolsNeedingEquip,
+    shouldBankNow as rootShouldBankNow, bankDistance as rootBankDistance,
+    bestHeldToolNames as rootBestHeldToolNames, surplusHeldToolNames as rootSurplusHeldToolNames,
+    resolveBankOpenRoute as rootResolveBankOpenRoute, NEARBY_BANK_RADIUS as rootNearbyBankRadius,
+    NAV_PURE_WALK as rootNavPureWalk, Inventory as RootInventory, InvItem as RootInvItem,
+    Equipment as RootEquipment,
+} from '@rs2b0t/api';
+import * as rootApi from '@rs2b0t/api';
 import { toolAttackLevel, toolsNeedingEquip } from '#/bot/api/acquisition/Tools.js';
 import { shouldBankNow, parseBankStrategy, matchesCommonBankLoot, RANDOM_EVENT_CASKET_ID } from '#/bot/api/bank/Banking.js';
 import type { EventMap, Task, InvItem as InvItemType } from '@rs2b0t/api';
@@ -389,6 +399,8 @@ import type { BankOpts, CombatHost } from '#/bot/api/combat/hunting/supply.js';
 import { RETALIATE_VARP, PLAYER_FACE_BASE, retaliateOnFromVarp, facingPlayer } from '#/bot/api/game/Game.js';
 import { reader } from '#/bot/adapter/ClientAdapter.js';
 import { backpackSnapshots, backpackCapacity } from '#/bot/api/inventory/Inventory.js';
+import { Inventory as ModuleInventory } from '#/bot/api/inventory/Inventory.js';
+import { Equipment as ModuleEquipment } from '#/bot/api/equipment/Equipment.js';
 import { bestHeldToolNames, surplusHeldToolNames } from '#/bot/api/acquisition/Tools.js';
 import { resolveBankOpenRoute, NEARBY_BANK_RADIUS } from '#/bot/api/bank/Banking.js';
 import { RANDOM_EVENT_CASKET_ID as bankRulesCasket } from '#/bot/api/bank/bankRules.js';
@@ -437,6 +449,16 @@ check(
 check(ModuleInvItem === RootInvItem, 'InvItem root re-export differs from module');
 check(new ModuleInvItem({ id: 1, name: 'Shark', count: 1, slot: 0, noted: true }).noted === true, 'InvItem.noted missing');
 check(foodIsEdible({ name: 'Shark', noted: false }, 'Shark') === true, 'isEdibleFood false for unnoted food');
+globalThis.__inventoryBackpackProbe = () => {
+    const moduleRows = backpackSnapshots();
+    return {
+        rootHelpersAbsent: !('backpackSnapshots' in rootApi) && !('backpackCapacity' in rootApi),
+        rootValues: RootInventory === ModuleInventory && RootInvItem === ModuleInvItem &&
+            RootEquipment === ModuleEquipment,
+        moduleName: moduleRows[0]?.name,
+        moduleCapacity: backpackCapacity(),
+    };
+};
 check(foodIsEdible({ name: 'Shark', noted: true }, 'Shark') === false, 'isEdibleFood accepted a noted item');
 const locked = lockedBankAt({ x: 3185, z: 3440, level: 0 });
 check(locked === null || typeof locked === 'object', 'lockedBankAt result shape');
@@ -817,8 +839,6 @@ await refuses('Fight.hasChaseTarget', () => Fight.prototype.hasChaseTarget.call(
 await refuses('ClueDuelSearch.constructor', () => new ClueDuelSearch());
 await refuses('ClueDuelSearch.tick', () => ClueDuelSearch.prototype.tick.call({}));
 await refuses('resetClueDuelSearch', () => resetClueDuelSearch());
-await refuses('backpackSnapshots', () => backpackSnapshots());
-await refuses('backpackCapacity', () => backpackCapacity());
 await refuses('stableClosedPoll', () => stableClosedPoll());
 await refuses('nearestWalkableBank', () => nearestWalkableBank());
 await refuses('nearestWalkableBankAsync', () => nearestWalkableBankAsync());
@@ -853,6 +873,56 @@ export default class RefreezeProbe extends LoopingBot { loop() {} }
     let isolate = LoadIsolate::spawn_with_game_data(js, LoadShape::CompatClass, vec![], game_data)
         .expect("spawn refreeze probe with selected game data");
     let ready = wait_ready(&isolate);
+    let inventory_rows = [ItemRowInput {
+        name: Some("Shark"),
+        id: 385,
+        count: 2,
+        slot: 0,
+        component_id: 503,
+        noted: false,
+        cert: -1,
+        ops: &[],
+    }];
+    let side_rows = [ItemRowInput {
+        name: Some("Deposit note"),
+        id: 99,
+        count: 1,
+        slot: 2,
+        component_id: 701,
+        noted: false,
+        cert: -1,
+        ops: &[],
+    }];
+    let mut snapshot = common::ingame_snapshot();
+    snapshot.tick = 2;
+    snapshot.inv = &inventory_rows;
+    snapshot.inv_size = 4;
+    snapshot.bank_side = &side_rows;
+    common::post_snapshot_input(&isolate, &snapshot);
+    isolate.on_game_tick(snapshot.tick);
+    let closed = isolate
+        .probe("__inventoryBackpackProbe()")
+        .expect("closed-backpack compatibility probe");
+    assert_eq!(closed["rootHelpersAbsent"], json!(true));
+    assert_eq!(closed["rootValues"], json!(true));
+    assert_eq!(closed["moduleName"], json!("Shark"));
+    assert_eq!(closed["moduleCapacity"], json!(4));
+
+    snapshot.tick = 3;
+    snapshot.bank_open = true;
+    let native = NativeFactsInput {
+        side_modal_id: Some(700),
+        ..NativeFactsInput::default()
+    };
+    isolate.post_snapshot(encode_snapshot_with_native(&snapshot, native));
+    isolate.on_game_tick(snapshot.tick);
+    let open = isolate
+        .probe("__inventoryBackpackProbe()")
+        .expect("bank-open backpack compatibility probe");
+    assert_eq!(open["rootHelpersAbsent"], json!(true));
+    assert_eq!(open["rootValues"], json!(true));
+    assert_eq!(open["moduleName"], json!("Deposit note"));
+    assert_eq!(open["moduleCapacity"], json!(28));
     let logs = isolate.join();
     assert!(
         ready.is_ok(),
