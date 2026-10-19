@@ -982,7 +982,7 @@ fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     let preferences = frontend_core::UiPreferences::of_service_for_test(
         &crate::test_support::scratch_service(&dir),
     );
-    std::fs::write(
+    crate::test_support::write_private_fixture(
         preferences.path(),
         r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
     )

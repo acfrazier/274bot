@@ -561,9 +561,7 @@ pub(crate) mod seam {
         /// size bound), as a damaged store does.
         pub(crate) fn refuse_preference_writes(&mut self) {
             let path = self.session.preferences.path().to_path_buf();
-            std::fs::create_dir_all(path.parent().expect("a preferences directory"))
-                .expect("create the preferences directory");
-            std::fs::write(
+            crate::test_support::write_private_fixture(
                 &path,
                 vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
             )
@@ -574,7 +572,8 @@ pub(crate) mod seam {
         /// Undo [`Self::refuse_preference_writes`]: a valid empty document.
         pub(crate) fn allow_preference_writes(&mut self) {
             let path = self.session.preferences.path().to_path_buf();
-            std::fs::write(&path, b"{}").expect("write an empty preferences document");
+            crate::test_support::write_private_fixture(&path, b"{}")
+                .expect("write an empty preferences document");
             self.session
                 .preferences
                 .reload()
