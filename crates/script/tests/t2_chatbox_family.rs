@@ -71,7 +71,7 @@ fn value(iso: &LoadIsolate, expression: &str) -> Value {
 }
 
 #[test]
-fn page_queries_and_history_keep_their_distinct_sources_and_identities() {
+fn all_readers_share_original_history_rows_in_recording_order() {
     let iso = spawn();
     let rows = [row(12, "host newer"), row(11, "host older")];
     let input = lines(&rows);
@@ -81,62 +81,79 @@ fn page_queries_and_history_keep_their_distinct_sources_and_identities() {
         value(
             &iso,
             r#"(() => {
-                const page = globalThis.__rs2b0t_host.snapshot.chat_lines;
+                const posted = globalThis.__rs2b0t_host.snapshot.chat_lines;
                 const mark = __gameMessages.mark();
-                const pageRows = __gameMessages.since(10);
-                const history = __gameMessages.recent(64);
+                const rows = __gameMessages.since(0);
+                const again = __gameMessages.since(0);
+                const recent = __gameMessages.recent(64);
                 const first = __gameMessages.firstSince(0, /host/);
-                const localMark = __gameMessages.mark();
                 __gameMessages.record('script local');
-                const local = __gameMessages.firstSince(2, /script local/);
+                const local = __gameMessages.since(mark);
+                const localFirst = __gameMessages.firstSince(mark, /script local/);
                 const localRecent = __gameMessages.recent(1);
-                const separated = !__gameMessages.sawSince(12, /script local/) &&
-                    __gameMessages.since(12).length === 0;
+                const localMark = __gameMessages.mark();
+                const localIsVisible = local.length === 1 && __gameMessages.sawSince(mark, /script local/);
+                const original = rows[0];
+                original.text = 'caller-edited history';
+                const originalIsMutable = __gameMessages.since(0)[0] === original &&
+                    __gameMessages.sawSince(0, /caller-edited/) &&
+                    __gameMessages.firstSince(0, /caller-edited/) === original;
                 __gameMessages.reset();
                 const resetMark = __gameMessages.mark();
-                const emptyAfterReset = __gameMessages.recent().length === 0;
+                const emptyAfterReset = __gameMessages.recent().length === 0 &&
+                    __gameMessages.since(0).length === 0 &&
+                    !__gameMessages.sawSince(0, /host/) &&
+                    __gameMessages.firstSince(0, /host/) === undefined;
                 __gameMessages.record('after reset');
-                const resetSequence = __gameMessages.recent(1)[0].seq;
                 return {
                     mark,
-                    page: pageRows.map(row => [row.seq, row.text]),
-                    pageRowsAreCopies: pageRows.every((row, i) => row !== page[i]),
-                    history: history.map(row => [row.seq, row.text]),
-                    firstText: first.text,
-                    firstIsOriginal: first === history[1],
+                    order: rows.map(row => row.seq),
+                    originalRows: rows[0] === recent[1] && rows[1] === recent[0] &&
+                        rows.every((row, index) => row === again[index]),
+                    freshResultArray: rows !== again,
+                    hostTextOrder: recent.map(row => row.text),
+                    notPostedDtos: rows.every(row => !posted.includes(row)),
+                    firstIsOriginal: first === rows[0],
                     localMark,
-                    localIsOriginal: local === localRecent[0],
-                    separated,
+                    localOrder: local.map(row => [row.seq, row.text]),
+                    localIsOriginal: local[0] === localFirst && localFirst === localRecent[0],
+                    localIsVisible,
+                    originalIsMutable,
                     cantReach: __cantReach.test("I can't reach that!"),
                     wrongSide: __wrongSide.test('You cannot do that from here.'),
                     resetMark,
                     emptyAfterReset,
-                    resetSequence,
+                    resetSequence: __gameMessages.mark(),
+                    postedPageUnchanged: posted[0].seq === 12 && posted[1].seq === 11,
                 };
             })()"#,
         ),
         json!({
-            "mark": 12,
-            "page": [[12, "host newer"], [11, "host older"]],
-            "pageRowsAreCopies": true,
-            "history": [[2, "host newer"], [1, "host older"]],
-            "firstText": "host older",
+            "mark": 2,
+            "order": [1, 2],
+            "originalRows": true,
+            "freshResultArray": true,
+            "hostTextOrder": ["host newer", "caller-edited history"],
+            "notPostedDtos": true,
             "firstIsOriginal": true,
-            "localMark": 12,
+            "localMark": 3,
+            "localOrder": [[3, "script local"]],
             "localIsOriginal": true,
-            "separated": true,
+            "localIsVisible": true,
+            "originalIsMutable": true,
             "cantReach": true,
             "wrongSide": true,
-            "resetMark": 12,
+            "resetMark": 0,
             "emptyAfterReset": true,
             "resetSequence": 1,
+            "postedPageUnchanged": true,
         })
     );
     iso.join();
 }
 
 #[test]
-fn foreign_page_methods_getters_coercion_and_thrown_values_are_preserved() {
+fn foreign_history_methods_getters_coercion_and_thrown_values_are_preserved() {
     let iso = spawn();
     let initial = [row(1, "initial")];
     let input = lines(&initial);
@@ -146,68 +163,47 @@ fn foreign_page_methods_getters_coercion_and_thrown_values_are_preserved() {
         value(
             &iso,
             r#"(() => {
+                let postedPageReads = 0;
+                Object.defineProperty(globalThis.__rs2b0t_host.snapshot, 'chat_lines', {
+                    configurable: true,
+                    get() { postedPageReads++; throw new Error('history reader used posted page'); },
+                });
+                const markBefore = __gameMessages.mark();
                 const events = [];
+                const mark = { valueOf() { events.push('mark'); return 6; } };
                 const row = {
-                    get seq() { events.push('seq'); return 7; },
+                    get seq() { events.push('seq'); return '7'; },
                     get text() { events.push('text'); return 'kept'; },
                 };
-                const page = {
-                    length: 1,
-                    reduce(callback, initial) {
-                        globalThis.__reduceReceiver = this === page;
-                        globalThis.__reduceArgs = arguments.length;
-                        globalThis.__reduceCallbackLength = callback.length;
-                        const partial = callback(initial, { seq: 'not numeric' }, 0, this);
-                        let seqGetterReads = 0;
-                        const changingSeq = {
-                            get seq() { seqGetterReads++; return seqGetterReads === 1 ? 13 : 9; },
+                const filterDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'filter');
+                let filterReceiver = false;
+                let filterArgs;
+                let filterCallbackLength;
+                let includesGetterRecord = false;
+                let stringSequenceAccepted = false;
+                Object.defineProperty(Array.prototype, 'filter', {
+                    configurable: true,
+                    get() {
+                        events.push('filter-get');
+                        const receiver = this;
+                        __gameMessages.record('recorded during filter getter');
+                        return function (predicate) {
+                            filterReceiver = this === receiver;
+                            filterArgs = arguments.length;
+                            filterCallbackLength = predicate.length;
+                            includesGetterRecord = this.length === 2 &&
+                                this[1].text === 'recorded during filter getter';
+                            stringSequenceAccepted = predicate({ seq: '100' });
+                            return predicate(row) ? [row] : [];
                         };
-                        const next = callback(partial, changingSeq, 1, this);
-                        globalThis.__markSeqGetterReads = seqGetterReads;
-                        return callback(next, { seq: 13 }, 2, this);
                     },
-                    filter(callback) {
-                        globalThis.__filterReceiver = this === page;
-                        globalThis.__filterArgs = arguments.length;
-                        globalThis.__filterCallbackLength = callback.length;
-                        const filtered = {
-                            map(mapper) {
-                                globalThis.__mapReceiver = this === filtered;
-                                globalThis.__mapArgs = arguments.length;
-                                globalThis.__mapCallbackLength = mapper.length;
-                                return [mapper(row, 0, this)];
-                            },
-                        };
-                        globalThis.__nonNumericSinceAccepted =
-                            callback({ seq: '100', text: 'wrong' }, 0, this);
-                        return callback(row, 1, this) ? filtered : { map() { return []; } };
-                    },
-                    some(callback) {
-                        globalThis.__someReceiver = this === page;
-                        globalThis.__someArgs = arguments.length;
-                        globalThis.__someCallbackLength = callback.length;
-                        globalThis.__nonNumericSawAccepted =
-                            callback({ seq: '100', text: 'wrong' }, 0, this);
-                        return callback(row, 1, this);
-                    },
-                };
-                globalThis.__rs2b0t_host.snapshot.chat_lines = page;
-
-                const originalMax = Math.max;
-                Math.max = function (a, b) {
-                    globalThis.__mathMaxReceiver = this === Math;
-                    globalThis.__mathMaxArgs = arguments.length;
-                    return originalMax(a, b);
-                };
-                const numericGuardMark = __gameMessages.mark();
-                Math.max = originalMax;
-                events.length = 0;
-                const mark = {
-                    valueOf() { events.push('mark'); return 6; },
-                };
-                const copied = __gameMessages.since(mark);
+                });
+                let result;
+                try { result = __gameMessages.since(mark); }
+                finally { Object.defineProperty(Array.prototype, 'filter', filterDescriptor); }
                 const sinceEvents = events.slice();
                 events.length = 0;
+
                 const pattern = {
                     lastIndex: 9,
                     test(text) {
@@ -215,23 +211,47 @@ fn foreign_page_methods_getters_coercion_and_thrown_values_are_preserved() {
                         return text === 'kept';
                     },
                 };
-                const saw = __gameMessages.sawSince(mark, pattern);
+                const someDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'some');
+                let someReceiver = false;
+                let someArgs;
+                let someCallbackLength;
+                Object.defineProperty(Array.prototype, 'some', {
+                    configurable: true,
+                    get() {
+                        events.push('some-get');
+                        const receiver = this;
+                        return function (predicate) {
+                            someReceiver = this === receiver;
+                            someArgs = arguments.length;
+                            someCallbackLength = predicate.length;
+                            return predicate(row);
+                        };
+                    },
+                });
+                let saw;
+                try { saw = __gameMessages.sawSince(mark, pattern); }
+                finally { Object.defineProperty(Array.prototype, 'some', someDescriptor); }
                 const sawEvents = events.slice();
 
                 const getterThrow = {};
-                Object.defineProperty(page, 'reduce', {
+                let getterIdentity = false;
+                Object.defineProperty(Array.prototype, 'filter', {
                     configurable: true,
                     get() { throw getterThrow; },
                 });
-                let getterIdentity = false;
-                try { __gameMessages.mark(); } catch (error) { getterIdentity = error === getterThrow; }
+                try { __gameMessages.since(0); }
+                catch (error) { getterIdentity = error === getterThrow; }
+                finally { Object.defineProperty(Array.prototype, 'filter', filterDescriptor); }
                 const coercionThrow = {};
                 const coercionMark = { valueOf() { throw coercionThrow; } };
-                let coercionIdentity = false;
-                try { __gameMessages.since(coercionMark); }
-                catch (error) { coercionIdentity = error === coercionThrow; }
-
-                globalThis.__rs2b0t_host.snapshot.chat_lines = [{ seq: 2, text: 'throw' }];
+                const coercionIdentity = [
+                    () => __gameMessages.since(coercionMark),
+                    () => __gameMessages.sawSince(coercionMark, /./),
+                    () => __gameMessages.firstSince(coercionMark, /./),
+                ].every(invoke => {
+                    try { invoke(); } catch (error) { return error === coercionThrow; }
+                    return false;
+                });
                 const setterThrow = {};
                 const setterPattern = new Proxy({ test() { return true; } }, {
                     set(target, key, value) {
@@ -242,7 +262,6 @@ fn foreign_page_methods_getters_coercion_and_thrown_values_are_preserved() {
                 let setterIdentity = false;
                 try { __gameMessages.sawSince(0, setterPattern); }
                 catch (error) { setterIdentity = error === setterThrow; }
-
                 const testThrow = {};
                 const testPattern = {
                     set lastIndex(value) { globalThis.__lastIndexWasReset = value === 0; },
@@ -263,101 +282,43 @@ fn foreign_page_methods_getters_coercion_and_thrown_values_are_preserved() {
                 let callIdentity = false;
                 try { __gameMessages.sawSince(0, callPattern); }
                 catch (error) { callIdentity = error === callThrow; }
-
+                __gameMessages.record('repeat');
+                const regex = /repeat/g;
+                regex.lastIndex = 99;
+                const repeated = [__gameMessages.sawSince(2, regex), __gameMessages.sawSince(2, regex)];
                 let badOpcodeRejected = false;
                 let unknownOpcodeRejected = false;
                 try { __rs2b0t_game_messages(1.5); } catch (error) { badOpcodeRejected = error instanceof TypeError; }
                 try { __rs2b0t_game_messages(99); } catch (error) { unknownOpcodeRejected = error instanceof TypeError; }
                 return {
-                    numericGuardMark,
-                    markSeqGetterReads: __markSeqGetterReads,
-                    copied: copied.map(item => [item.seq, item.text]),
-                    sinceEvents,
-                    saw,
-                    sawEvents,
-                    lastIndex: pattern.lastIndex,
-                    getterIdentity,
-                    setterIdentity,
-                    coercionIdentity,
-                    testIdentity,
-                    lastIndexWasReset: __lastIndexWasReset,
-                    callIdentity,
-                    callReceiver: __callReceiver,
-                    callSawReset: __callSawReset,
-                    reduceReceiver: __reduceReceiver,
-                    reduceArgs: __reduceArgs,
-                    reduceCallbackLength: __reduceCallbackLength,
-                    filterReceiver: __filterReceiver,
-                    filterArgs: __filterArgs,
-                    filterCallbackLength: __filterCallbackLength,
-                    nonNumericSinceAccepted: __nonNumericSinceAccepted,
-                    mapReceiver: __mapReceiver,
-                    mapArgs: __mapArgs,
-                    mapCallbackLength: __mapCallbackLength,
-                    someReceiver: __someReceiver,
-                    someArgs: __someArgs,
-                    someCallbackLength: __someCallbackLength,
-                    nonNumericSawAccepted: __nonNumericSawAccepted,
+                    markBefore, markAfter: __gameMessages.mark(), postedPageReads,
+                    originalForeignRow: result[0] === row,
+                    sinceEvents, saw, sawEvents, lastIndex: pattern.lastIndex,
+                    filterReceiver, filterArgs, filterCallbackLength, includesGetterRecord,
+                    stringSequenceAccepted, someReceiver, someArgs, someCallbackLength,
                     testReceiver: __testReceiver,
-                    mathMaxReceiver: __mathMaxReceiver,
-                    mathMaxArgs: __mathMaxArgs,
-                    badOpcodeRejected,
-                    unknownOpcodeRejected,
+                    getterIdentity, coercionIdentity, setterIdentity, testIdentity,
+                    lastIndexWasReset: __lastIndexWasReset,
+                    callIdentity, callReceiver: __callReceiver, callSawReset: __callSawReset,
+                    repeated, repeatedLastIndex: regex.lastIndex,
+                    badOpcodeRejected, unknownOpcodeRejected,
                 };
             })()"#,
         ),
         json!({
-            "numericGuardMark": 13,
-            "markSeqGetterReads": 2,
-            "copied": [[7, "kept"]],
-            "sinceEvents": ["seq", "seq", "mark", "seq", "text"],
-            "saw": true,
-            "sawEvents": ["seq", "seq", "mark", "text"],
-            "lastIndex": 0,
-            "getterIdentity": true,
-            "coercionIdentity": true,
-            "setterIdentity": true,
-            "testIdentity": true,
-            "lastIndexWasReset": true,
-            "reduceReceiver": true,
-            "reduceArgs": 2,
-            "reduceCallbackLength": 2,
-            "callIdentity": true,
-            "callReceiver": true,
-            "callSawReset": true,
-            "filterReceiver": true,
-            "filterArgs": 1,
-            "filterCallbackLength": 1,
-            "mapReceiver": true,
-            "mapArgs": 1,
-            "mapCallbackLength": 1,
-            "someReceiver": true,
-            "someArgs": 1,
-            "someCallbackLength": 1,
-            "testReceiver": true,
-            "badOpcodeRejected": true,
-            "unknownOpcodeRejected": true,
-            "nonNumericSinceAccepted": false,
-            "nonNumericSawAccepted": false,
-            "mathMaxReceiver": true,
-            "mathMaxArgs": 2,
+            "markBefore": 1, "markAfter": 3, "postedPageReads": 0,
+            "originalForeignRow": true,
+            "sinceEvents": ["filter-get", "mark", "seq", "mark"],
+            "saw": true, "sawEvents": ["some-get", "seq", "mark", "text"], "lastIndex": 0,
+            "filterReceiver": true, "filterArgs": 1, "filterCallbackLength": 1,
+            "includesGetterRecord": true, "stringSequenceAccepted": true,
+            "someReceiver": true, "someArgs": 1, "someCallbackLength": 1, "testReceiver": true,
+            "getterIdentity": true, "coercionIdentity": true, "setterIdentity": true,
+            "testIdentity": true, "lastIndexWasReset": true,
+            "callIdentity": true, "callReceiver": true, "callSawReset": true,
+            "repeated": [true, true], "repeatedLastIndex": 6,
+            "badOpcodeRejected": true, "unknownOpcodeRejected": true,
         })
-    );
-
-    assert_eq!(
-        value(
-            &iso,
-            r#"(() => {
-                globalThis.__rs2b0t_host.snapshot.chat_lines = [{ seq: 4, text: 'repeat' }];
-                const pattern = /repeat/g;
-                pattern.lastIndex = 99;
-                const first = __gameMessages.sawSince(0, pattern);
-                const firstLastIndex = pattern.lastIndex;
-                const second = __gameMessages.sawSince(0, pattern);
-                return [first, second, firstLastIndex, pattern.lastIndex];
-            })()"#,
-        ),
-        json!([true, true, 6, 6])
     );
     iso.join();
 }
@@ -371,6 +332,7 @@ fn history_capacity_order_limits_and_foreign_slice_reverse_semantics_match() {
             r#"(() => {
                 for (let i = 0; i < 70; i++) __gameMessages.record(`line-${i}`);
                 const all = __gameMessages.recent(NaN);
+                const since = __gameMessages.since(0);
                 const first = __gameMessages.firstSince(0, /line-/);
                 const defaults = __gameMessages.recent();
                 const fractional = __gameMessages.recent(1.5);
@@ -432,6 +394,9 @@ fn history_capacity_order_limits_and_foreign_slice_reverse_semantics_match() {
 
                 return {
                     count: all.length,
+                    mark: __gameMessages.mark(),
+                    sinceOrder: [since.length, since[0].seq, since[63].seq],
+                    sinceOriginals: since.every((row, index) => row === all[63 - index]),
                     oldest: [all[63].seq, all[63].text],
                     newest: [all[0].seq, all[0].text],
                     firstIsOldestRetained: first === all[63],
@@ -456,6 +421,9 @@ fn history_capacity_order_limits_and_foreign_slice_reverse_semantics_match() {
         ),
         json!({
             "count": 64,
+            "mark": 70,
+            "sinceOrder": [64, 7, 70],
+            "sinceOriginals": true,
             "oldest": [7, "line-6"],
             "newest": [70, "line-69"],
             "firstIsOldestRetained": true,
