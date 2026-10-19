@@ -115,7 +115,11 @@ impl GameTlsTicket {
     /// demand's original deadline but release exclusive lane eligibility, so
     /// later WSS demand can progress. `poll` remains an atomic-only predicate.
     pub fn release_for_insufficient_time(&self) {
-        let mut admission = self.lane.admission.lock().unwrap();
+        let mut admission = self
+            .lane
+            .admission
+            .lock()
+            .expect("game TLS admission mutex is not poisoned");
         if admission
             .granted
             .as_ref()
@@ -141,7 +145,11 @@ impl GameTlsTicket {
 
 impl Drop for GameTlsTicket {
     fn drop(&mut self) {
-        let mut admission = self.lane.admission.lock().unwrap();
+        let mut admission = self
+            .lane
+            .admission
+            .lock()
+            .expect("game TLS admission mutex is not poisoned");
         if admission
             .granted
             .as_ref()
@@ -350,7 +358,10 @@ impl GameTlsLane {
             ));
         }
         let waiter = {
-            let mut admission = self.admission.lock().unwrap();
+            let mut admission = self
+                .admission
+                .lock()
+                .expect("game TLS admission mutex is not poisoned");
             if admission.closed {
                 return Err(io::Error::new(
                     io::ErrorKind::NotConnected,
@@ -389,14 +400,23 @@ impl GameTlsLane {
     /// Publish a wake after handoff acceptance or actual worker-owned close.
     /// Never hold the admission mutex while taking the handoff mutex or K2.
     pub fn notify_capacity(&self) {
-        if self.admission.lock().unwrap().pending.is_empty() {
+        if self
+            .admission
+            .lock()
+            .expect("game TLS admission mutex is not poisoned")
+            .pending
+            .is_empty()
+        {
             return;
         }
         let available = self.cell.can_admit();
         let now = Instant::now();
         let mut wake = Vec::new();
         {
-            let mut admission = self.admission.lock().unwrap();
+            let mut admission = self
+                .admission
+                .lock()
+                .expect("game TLS admission mutex is not poisoned");
             if admission.closed {
                 return;
             }
@@ -437,7 +457,10 @@ impl GameTlsLane {
     pub fn shutdown(&self) -> io::Result<()> {
         let revoked = self.cell.stop_and_revoke_current();
         let wake = {
-            let mut admission = self.admission.lock().unwrap();
+            let mut admission = self
+                .admission
+                .lock()
+                .expect("game TLS admission mutex is not poisoned");
             admission.closed = true;
             let mut wake = Vec::with_capacity(
                 admission.pending.len() + usize::from(admission.granted.is_some()),

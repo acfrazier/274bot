@@ -1496,6 +1496,7 @@ fn empty_play() -> host_play::Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("Play construction succeeds")
 }
 
 /// A `w`×`h` all-walkable level-0 world at (0,0).
@@ -5958,7 +5959,8 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(7, false);
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));
@@ -6034,19 +6036,22 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
         .upsert(profile("alice", "pw", 42))
         .unwrap();
     session.core.set_spawn_workers(false);
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+    session.core.set_play(Some(
+        host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+        .expect("Play construction succeeds"),
+    ));
     let input = SlotInput::new();
     session.core.insert_slot_io(
         "alice",
@@ -6170,19 +6175,22 @@ fn explicit_login_arms_a_fresh_non_auto_profile() {
     alice.settings.auto_login = false;
     session.core.vault_mut().unwrap().upsert(alice).unwrap();
     session.core.set_spawn_workers(false);
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: "/tmp".into(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+    session.core.set_play(Some(
+        host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+        .expect("Play construction succeeds"),
+    ));
 
     session.login("alice");
 
@@ -6495,7 +6503,8 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
     session.core.set_play(Some(play));
@@ -6981,7 +6990,8 @@ fn set_random_settings_mirrors_running_arm() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, false);
     assert!(arm.random_events.load(Ordering::Relaxed), "default on");
     assert!(
@@ -7095,7 +7105,8 @@ fn set_auto_login_mirrors_running_arm() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, false);
     play.attach_arm("alice", Arc::clone(&arm));
     s.core.set_play(Some(play));

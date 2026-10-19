@@ -3,6 +3,9 @@ name = "client-adapter"
 version.workspace = true
 edition = "2021"
 
+[lints]
+workspace = true
+
 [features]
 test-support = []
 

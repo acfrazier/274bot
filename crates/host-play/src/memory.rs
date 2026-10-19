@@ -2568,7 +2568,8 @@ mod tests {
                 vec![],
                 |_| (None, None),
                 |_, _, _| {},
-            );
+            )
+            .expect("Play construction succeeds");
             let name = &run.names[0];
             play.attach_arm(name, crate::SlotArm::new(1, false));
             let hold = play.hold_script_starts("waiting for settings copy confirmation".into());

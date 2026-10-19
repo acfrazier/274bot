@@ -116,7 +116,8 @@ fn live_channel_walk_focuses_every_slot() {
     let n = parse_n();
     let names: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
     println!("channel_walk: spawn n={n} Client slots");
-    let mut play = run_channels(&options(), walk_profiles(n), 1);
+    let mut play =
+        run_channels(&options(), walk_profiles(n), 1).expect("Play construction succeeds");
     wait_up(&play, n, Duration::from_secs(600), "channel_walk login");
     dump(&play, "all-up");
 

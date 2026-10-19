@@ -65,7 +65,10 @@ impl ResourceLedger {
         self: &Arc<Self>,
         known_bytes: usize,
     ) -> Result<ConnectionCharge, ResourceRefusal> {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         if counts.connections == MAX_CONNECTIONS {
             return Err(ResourceRefusal::ConnectionsFull);
         }
@@ -92,7 +95,10 @@ impl ResourceLedger {
     }
 
     pub fn admit_handshake(self: &Arc<Self>) -> Result<HandshakeCharge, ResourceRefusal> {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         if counts.handshake_lane_occupied {
             return Err(ResourceRefusal::HandshakeLaneBusy);
         }
@@ -105,7 +111,10 @@ impl ResourceLedger {
     /// Reactor-only admission into the de-duplicated FIFO. No byte payload
     /// or additional command cell is allocated for a duplicate kick.
     pub fn enqueue_local_work(&self) -> Result<(), ResourceRefusal> {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         if counts.local_work == MAX_LOCAL_WORK {
             return Err(ResourceRefusal::LocalWorkFull);
         }
@@ -116,19 +125,29 @@ impl ResourceLedger {
     /// Reactor-only removal when a queued connection takes its fair turn or
     /// is closed. A bit in that connection prevents double enqueue/removal.
     pub fn dequeue_local_work(&self) {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         assert!(counts.local_work > 0);
         counts.local_work -= 1;
     }
 
     pub fn snapshot(&self) -> ResourceSnapshot {
-        *self.counts.lock().unwrap()
+        *self
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned")
     }
 }
 
 impl Drop for ConnectionCharge {
     fn drop(&mut self) {
-        let mut counts = self.ledger.counts.lock().unwrap();
+        let mut counts = self
+            .ledger
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         assert!(counts.connections > 0);
         counts.connections -= 1;
         counts.known_rust_bytes -= self.known_bytes;
@@ -139,7 +158,11 @@ impl Drop for ConnectionCharge {
 
 impl Drop for HandshakeCharge {
     fn drop(&mut self) {
-        let mut counts = self.ledger.counts.lock().unwrap();
+        let mut counts = self
+            .ledger
+            .counts
+            .lock()
+            .expect("resource ledger mutex is not poisoned");
         assert!(counts.handshake_lane_occupied);
         counts.handshake_lane_occupied = false;
     }

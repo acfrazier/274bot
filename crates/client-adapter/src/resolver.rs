@@ -163,7 +163,10 @@ pub enum ResolverLookupError {
 
 /// Addresses and failures are Copy transport values; boxing the ready result
 /// would add allocation and indirection to resolver polling.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep up to eight resolved addresses inline without ticket polling allocation"
+)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResolvePoll {
     Pending,
@@ -267,7 +270,10 @@ pub struct ResolverProfileReceipt {
 }
 
 impl ResolverProfileReceipt {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A profile receipt retains independent provider and configuration identities"
+    )]
     pub fn new(
         configuration_digest: [u8; 32],
         provider: &str,
@@ -581,6 +587,11 @@ impl Resolver {
     }
 
     pub fn health(&self) -> ResolverHealth {
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            !super::park::in_k2_predicate(),
+            "resolver health must never take its state lock under K2"
+        );
         let state = mutex_lock(&self.inner.state);
         health_snapshot(&state)
     }
@@ -792,7 +803,10 @@ impl Eq for ResolveKey {}
 
 // Keep completed resolver results inline and Copy: boxing would allocate on
 // the resolver completion path.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Resolver completion carries bounded addresses inline without allocation"
+)]
 #[derive(Clone, Copy)]
 enum ResolverOutcome {
     Resolved(ResolvedAddresses),
@@ -810,7 +824,10 @@ impl ResolverOutcome {
 
 // Ticket state is Copy and polled on the transport path; boxing the result
 // would impose allocation/indirection on that path.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "A terminal ticket carries bounded addresses inline without allocation"
+)]
 #[derive(Clone, Copy)]
 enum TicketTerminal {
     Pending,
@@ -1582,6 +1599,25 @@ mod tests {
         )
         .expect("valid test slot cap");
         (resolver, clock, backend)
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "resolver health must never take its state lock under K2")]
+    fn resolver_health_rejects_a_nested_park_predicate() {
+        let (resolver, _, _) = immediate(1);
+        let park = super::super::park::Park::new();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        park.wait(
+            deadline,
+            Instant::now,
+            || resolver.health().unavailable.is_some(),
+            || false,
+            || false,
+            || Some(()),
+            false,
+            None,
+        );
     }
 
     fn ticket(

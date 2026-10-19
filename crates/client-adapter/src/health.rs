@@ -42,7 +42,12 @@ impl ReactorLoss {
 pub struct ReactorHealth {
     epoch: Instant,
     progress_ns: AtomicU64,
-    progress_count: AtomicU64,
+    /// Previous checker turn, encoded as elapsed nanoseconds plus one. Zero
+    /// means no checker has sampled this reactor yet.
+    last_check_ns: AtomicU64,
+    /// A whole-process pause cannot establish a reactor-only stall. Resume
+    /// the observation window at the first checker turn after that gap.
+    check_window_ns: AtomicU64,
     latched: AtomicU8,
 }
 
@@ -51,7 +56,8 @@ impl ReactorHealth {
         Self {
             epoch,
             progress_ns: AtomicU64::new(0),
-            progress_count: AtomicU64::new(0),
+            last_check_ns: AtomicU64::new(0),
+            check_window_ns: AtomicU64::new(0),
             latched: AtomicU8::new(0),
         }
     }
@@ -65,23 +71,30 @@ impl ReactorHealth {
             return;
         };
         self.progress_ns.store(nanos, Ordering::Release);
-        self.progress_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A driver independent of a status consumer calls this at least once
-    /// per requested 100 ms interval; cheap due-checks may call it more often.
+    /// The checker must sample continuously for a full stall window before
+    /// declaring that the reactor alone stopped. A long gap between checker
+    /// turns is a process pause, not evidence of a reactor stall.
     pub fn maintain(&self, now: Instant) -> Option<ReactorLoss> {
         if let Some(loss) = self.loss() {
             return Some(loss);
         }
-        let elapsed = now.saturating_duration_since(self.epoch);
+        let elapsed_ns = now.saturating_duration_since(self.epoch).as_nanos();
+        let sample = u64::try_from(elapsed_ns.min(u128::from(u64::MAX - 1)))
+            .expect("sample clamped to u64 range");
+        let previous = self.last_check_ns.fetch_max(sample + 1, Ordering::AcqRel);
+        if previous == 0
+            || elapsed_ns.saturating_sub(u128::from(previous - 1)) > REACTOR_STALL_LIMIT.as_nanos()
+        {
+            self.check_window_ns.fetch_max(sample, Ordering::AcqRel);
+            return self.loss();
+        }
         let observed = self.progress_ns.load(Ordering::Acquire);
-        // The count distinguishes a reactor that never entered Poll from one
-        // that made an initial t=0 progress mark.
-        let stale = self.progress_count.load(Ordering::Acquire) == 0
-            || elapsed.as_nanos().saturating_sub(u128::from(observed))
-                >= REACTOR_STALL_LIMIT.as_nanos();
-        if stale && elapsed >= REACTOR_STALL_LIMIT {
+        let window = self.check_window_ns.load(Ordering::Acquire);
+        let stale = elapsed_ns.saturating_sub(u128::from(observed.max(window)))
+            >= REACTOR_STALL_LIMIT.as_nanos();
+        if stale {
             self.latch(ReactorLoss::ProgressLost);
         }
         self.loss()
@@ -109,6 +122,7 @@ mod tests {
         let base = Instant::now();
         let health = ReactorHealth::new(base);
         health.progress(base);
+        assert_eq!(health.maintain(base), None);
         assert_eq!(
             health.maintain(base + REACTOR_STALL_LIMIT - Duration::from_nanos(1)),
             None
@@ -122,6 +136,30 @@ mod tests {
             health.maintain(base + Duration::from_secs(30)),
             Some(ReactorLoss::ProgressLost)
         );
+    }
+
+    #[test]
+    fn process_pause_restarts_stall_window_but_reactor_stall_does_not() {
+        let base = Instant::now();
+        let health = ReactorHealth::new(base);
+        health.progress(base);
+        assert_eq!(health.maintain(base), None);
+        let resumed = base + Duration::from_secs(20);
+        assert_eq!(health.maintain(resumed), None);
+        health.progress(resumed + Duration::from_millis(50));
+        assert_eq!(health.maintain(resumed + Duration::from_secs(4)), None);
+        assert_eq!(health.maintain(resumed + Duration::from_secs(5)), None);
+
+        let stalled = ReactorHealth::new(base);
+        stalled.progress(base);
+        assert_eq!(stalled.maintain(base), None);
+        for tenth in 1..=50 {
+            let now = base + Duration::from_millis(tenth * 100);
+            assert_eq!(
+                stalled.maintain(now),
+                (tenth == 50).then_some(ReactorLoss::ProgressLost)
+            );
+        }
     }
 
     #[test]

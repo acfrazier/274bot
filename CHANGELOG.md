@@ -13,8 +13,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   HTTPS asset and public-world key fetches use a separate fixed TLS worker;
   cancellation and deadlines no longer wait for an OS certificate verifier.
 - A hosted login keeps its prepared endpoint, cancellation identity and
-  queue retirement bound through the final session commit. Embedded callers
-  start the network composition explicitly and retain its maintenance driver.
+  queue retirement bound through the final session commit. Play starts the
+  network composition and retains its maintenance driver for every frontend.
 - A fast TCP login refusal remains a current queue result even if the reactor
   closes the socket before the slot returns; clean-logout code 5 still follows
   the five-second release cadence.
@@ -438,6 +438,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
+
+#### Network transport
+
+- A busy reactor no longer disconnects a bot when its record queue or output
+  ring fills. The client retains encoded packets and sends them once capacity
+  returns. An exhausted packet buffer still ends the session.
+- A pause of the whole application no longer looks like a stalled network
+  reactor. A stalled reactor while the application runs still requires restart.
 
 #### Login
 

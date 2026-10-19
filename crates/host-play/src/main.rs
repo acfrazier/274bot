@@ -103,6 +103,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let preparation_composition = match host_play::PlayComposition::start() {
+        Ok(composition) => composition,
+        Err(error) => {
+            eprintln!("host-play: network composition startup: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let template = match selection.prepare_template() {
         Ok(template) => template,
         Err(msg) => {
@@ -110,6 +117,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    drop(preparation_composition);
     let profile = template.profile().clone();
     if let Err(msg) = profile.require_bot_operation() {
         eprintln!("host-play: {msg}");

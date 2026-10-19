@@ -31,6 +31,7 @@ fn empty_play() -> crate::Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("Play construction succeeds")
 }
 
 #[test]

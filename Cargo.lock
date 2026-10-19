@@ -1486,7 +1486,6 @@ version = "0.2.3"
 dependencies = [
  "api",
  "client",
- "client-adapter",
  "host",
  "host-play",
  "image",
@@ -1703,7 +1702,6 @@ version = "0.2.3"
 dependencies = [
  "api",
  "client",
- "client-adapter",
  "frontend-core",
  "host",
  "host-play",
@@ -3400,7 +3398,6 @@ dependencies = [
  "api",
  "arboard",
  "client",
- "client-adapter",
  "dear-imgui-rs",
  "dear-imgui-wgpu",
  "dear-imgui-winit",
@@ -5681,7 +5678,6 @@ version = "0.2.3"
 dependencies = [
  "api",
  "client",
- "client-adapter",
  "crossterm",
  "frontend-core",
  "host",

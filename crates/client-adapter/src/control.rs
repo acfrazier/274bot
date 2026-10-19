@@ -44,7 +44,10 @@ pub struct ConnectCommand {
 }
 // ConnectCommand owns the transport ticket and cancellation state. Boxing it
 // would add a heap allocation to command submission, so retain the inline form.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Inline connect ticket avoids an allocation in command submission"
+)]
 #[derive(Debug)]
 pub enum PrimaryCommand {
     Connect(ConnectCommand),
@@ -167,13 +170,23 @@ impl ControlCells {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(if self.primary_reply.lock().unwrap().is_some() {
-                SubmitError::ReplyOccupied
-            } else {
-                SubmitError::PrimaryOccupied
-            });
+            return Err(
+                if self
+                    .primary_reply
+                    .lock()
+                    .expect("primary reply cell mutex is not poisoned")
+                    .is_some()
+                {
+                    SubmitError::ReplyOccupied
+                } else {
+                    SubmitError::PrimaryOccupied
+                },
+            );
         }
-        *self.primary.lock().unwrap() = Some(command);
+        *self
+            .primary
+            .lock()
+            .expect("primary command mutex is not poisoned") = Some(command);
         bus.schedule(self.id, &self.queued)
             .map_err(SubmitError::Wake)
     }
@@ -182,11 +195,19 @@ impl ControlCells {
     /// A newly accepted Rebind may replace an older stale Close in this same
     /// cell. A new attempt that has not been accepted cannot replace it.
     pub fn post_close(&self, command: CloseCommand, bus: &CommandBus) -> Result<(), SubmitError> {
-        if self.close_reply.lock().unwrap().is_some() {
+        if self
+            .close_reply
+            .lock()
+            .expect("close reply cell mutex is not poisoned")
+            .is_some()
+        {
             return Err(SubmitError::CloseOccupied);
         }
         {
-            let mut pending = self.immediate_close.lock().unwrap();
+            let mut pending = self
+                .immediate_close
+                .lock()
+                .expect("immediate close mutex is not poisoned");
             if let Some(previous) = pending.as_ref() {
                 let accepted = self.accepted_binding.load(Ordering::Acquire);
                 if command.binding.connection != self.id
@@ -230,11 +251,17 @@ impl ControlCells {
 
     /// Reactor-only take. Prioritize immediate close before any old primary.
     pub fn take_close(&self) -> Option<CloseCommand> {
-        self.immediate_close.lock().unwrap().take()
+        self.immediate_close
+            .lock()
+            .expect("immediate close mutex is not poisoned")
+            .take()
     }
 
     pub fn take_primary(&self) -> Option<PrimaryCommand> {
-        self.primary.lock().unwrap().take()
+        self.primary
+            .lock()
+            .expect("primary command mutex is not poisoned")
+            .take()
     }
 
     pub fn take_resume_read(&self) -> u64 {
@@ -249,7 +276,10 @@ impl ControlCells {
     /// consumes each exact-generation reply exactly once.
     pub fn publish_primary(&self, reply: PrimaryReply) {
         {
-            let mut cell = self.primary_reply.lock().unwrap();
+            let mut cell = self
+                .primary_reply
+                .lock()
+                .expect("primary reply cell mutex is not poisoned");
             assert!(cell.is_none(), "primary reply cell cannot overwrite");
             *cell = Some(reply);
             self.primary_ready.store(true, Ordering::Release);
@@ -263,7 +293,10 @@ impl ControlCells {
     }
 
     pub fn take_primary_reply(&self) -> Option<PrimaryReply> {
-        let mut cell = self.primary_reply.lock().unwrap();
+        let mut cell = self
+            .primary_reply
+            .lock()
+            .expect("primary reply cell mutex is not poisoned");
         let reply = cell.take();
         if reply.is_some() {
             self.primary_ready.store(false, Ordering::Release);
@@ -276,7 +309,10 @@ impl ControlCells {
     /// after the separate post-C committed-detachment disposition.
     pub fn publish_closed(&self, binding: BindingId) {
         {
-            let mut cell = self.close_reply.lock().unwrap();
+            let mut cell = self
+                .close_reply
+                .lock()
+                .expect("close reply cell mutex is not poisoned");
             assert!(cell.is_none(), "close reply cell cannot overwrite");
             *cell = Some(binding);
             self.close_ready.store(true, Ordering::Release);
@@ -289,7 +325,10 @@ impl ControlCells {
     }
 
     pub fn take_closed(&self) -> Option<BindingId> {
-        let mut cell = self.close_reply.lock().unwrap();
+        let mut cell = self
+            .close_reply
+            .lock()
+            .expect("close reply cell mutex is not poisoned");
         let reply = cell.take();
         if reply.is_some() {
             self.close_ready.store(false, Ordering::Release);
@@ -325,7 +364,10 @@ impl CommandBus {
     fn schedule(&self, id: u64, queued: &AtomicBool) -> io::Result<()> {
         if !queued.swap(true, Ordering::AcqRel) {
             {
-                let mut queue = self.queue.lock().unwrap();
+                let mut queue = self
+                    .queue
+                    .lock()
+                    .expect("command queue mutex is not poisoned");
                 // Each live connection owns exactly one bit. A bit can enter
                 // the FIFO only once until the reactor clears it after pop.
                 assert!(
@@ -342,7 +384,10 @@ impl CommandBus {
     /// Reactor pop by ID when the connection registry is separate. The caller
     /// must clear the corresponding cell's bit *before* taking its commands.
     pub fn pop_id(&self) -> Option<u64> {
-        self.queue.lock().unwrap().pop_front()
+        self.queue
+            .lock()
+            .expect("command queue mutex is not poisoned")
+            .pop_front()
     }
 
     pub fn mark_taken(&self, cell: &ControlCells) {

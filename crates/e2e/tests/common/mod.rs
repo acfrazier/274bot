@@ -14,8 +14,7 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client_adapter::service::{MaintenanceDriver, NetworkService};
-use host_play::{Play, PlayOptions};
+use host_play::{Play, PlayComposition, PlayOptions};
 use scenario::ScenarioRunner;
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -25,24 +24,20 @@ pub fn fail(msg: &str) -> ! {
     std::process::exit(1);
 }
 
-/// `LIVE=1` gates the ignored tests and starts the process network service
-/// before this harness can construct a Play or prepare a client cache.
+/// `LIVE=1` gates the ignored tests and starts the host-play composition
+/// before the harness can prepare a client cache.
 pub fn live() -> bool {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return false;
     }
-    network_driver();
+    if let Err(error) = LIVE_COMPOSITION.as_ref() {
+        fail(&format!("network service startup failed: {error}"));
+    }
     true
 }
 
-static NETWORK_DRIVER: LazyLock<MaintenanceDriver> = LazyLock::new(|| {
-    NetworkService::start_composition()
-        .unwrap_or_else(|error| fail(&format!("network service startup failed: {error:?}")))
-});
-
-fn network_driver() -> &'static MaintenanceDriver {
-    &NETWORK_DRIVER
-}
+static LIVE_COMPOSITION: LazyLock<Result<PlayComposition, host_play::PlayError>> =
+    LazyLock::new(PlayComposition::start);
 
 /// A throwaway encrypted vault holding `user`/`pass` profiles with stable
 /// distinct uids. The engine auto-registers unknown accounts. Accepts

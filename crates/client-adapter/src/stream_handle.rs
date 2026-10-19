@@ -20,6 +20,22 @@ enum ReadResult {
     End,
 }
 
+fn session_append_result(result: AppendResult) -> io::Result<()> {
+    match result {
+        AppendResult::Accepted => Ok(()),
+        // The record already belongs to the reactor. Poll wakes it within
+        // 100 ms; health maintenance reports lasting loss.
+        AppendResult::AcceptedWakeFailed(_error) => Ok(()),
+        AppendResult::Refused(AppendRefusal::Backpressured) => {
+            Err(io::ErrorKind::WouldBlock.into())
+        }
+        AppendResult::Refused(reason) => Err(io::Error::new(
+            io::ErrorKind::NotConnected,
+            format!("record refused: {reason:?}"),
+        )),
+    }
+}
+
 #[derive(Debug)]
 pub struct ConnectionHandle {
     shared: Arc<SharedConnection>,
@@ -35,7 +51,10 @@ pub struct ConnectionHandle {
 }
 
 impl ConnectionHandle {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A connection binding retains distinct queue, health, and cancellation owners"
+    )]
     pub fn new(
         shared: Arc<SharedConnection>,
         bus: Arc<CommandBus>,
@@ -281,7 +300,7 @@ impl ConnectionHandle {
 
     /// Append exactly one already-encoded semantic record. During login a
     /// full ring sleeps under K2 with its generation-scoped writer marker;
-    /// a session pump instead returns WouldBlock to retain its encoded action.
+    /// a session pump returns WouldBlock so the client retains its bytes.
     pub fn write(&mut self, record: &[u8], len: usize) -> io::Result<()> {
         if self.closed_locally {
             return Ok(());
@@ -303,17 +322,11 @@ impl ConnectionHandle {
                     "game transport unavailable",
                 ));
             }
-            return match self.shared.append_record(self.binding, record, &self.bus) {
-                AppendResult::Accepted => Ok(()),
-                AppendResult::AcceptedWakeFailed(error) => Err(error),
-                AppendResult::Refused(AppendRefusal::Backpressured) => {
-                    Err(io::ErrorKind::WouldBlock.into())
-                }
-                AppendResult::Refused(reason) => Err(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    format!("record refused: {reason:?}"),
-                )),
-            };
+            return session_append_result(self.shared.append_record(
+                self.binding,
+                record,
+                &self.bus,
+            ));
         }
         let deadline = self.deadline.expect("uncommitted session cannot write");
         let token = self.token.as_ref();
@@ -395,5 +408,26 @@ impl ConnectionHandle {
 impl Drop for ConnectionHandle {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn committed_record_survives_failed_wake_without_client_retry() {
+        assert!(
+            session_append_result(AppendResult::AcceptedWakeFailed(io::Error::other(
+                "injected waker failure"
+            )))
+            .is_ok()
+        );
+        assert_eq!(
+            session_append_result(AppendResult::Refused(AppendRefusal::Backpressured))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
 }

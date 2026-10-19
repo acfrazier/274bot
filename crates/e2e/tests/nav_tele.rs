@@ -74,7 +74,8 @@ fn nav_tele() {
     let seed = [("test", "test")];
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {});
+    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_tele");
 
     let world = NavWorld::load_pack(&default_pack_path())
@@ -230,7 +231,8 @@ fn nav_tele_follow() {
                 r.companion_tick(index, c);
             }
         }
-    });
+    })
+    .expect("Play construction succeeds");
     runner.lock().unwrap().set_obj_names(play.obj_names());
 
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_tele_follow");

@@ -9,7 +9,6 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 host = { path = "../host" }
-client-adapter = { path = "../client-adapter" }
 host-play = { path = "../host-play" }
 nav = { path = "../nav" }
 script = { path = "../script" }

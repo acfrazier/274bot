@@ -22,7 +22,6 @@ vault = { path = "../vault" }
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
-client-adapter = { path = "../client-adapter" }
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
 host = { path = "../host" }
 host-play = { path = "../host-play", features = ["test-support", "live-probe"] }

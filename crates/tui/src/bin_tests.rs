@@ -917,8 +917,8 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
 
 #[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
-    let _network_driver = client_adapter::service::NetworkService::start_composition()
-        .expect("TUI fixture starts its network composition");
+    let _network_driver =
+        host_play::PlayComposition::start().expect("TUI fixture starts its network composition");
     for revision in [274_u16, 289] {
         let (root, cache, manifest) = checked_fixture(revision);
         let args = parse_args_from([
@@ -1474,7 +1474,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
             .unwrap();
     }
     session.core.set_vault(Some(vault));
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.attach_arm("bob", SlotArm::new(8, false));
     session.inject_play(play);
@@ -1591,7 +1592,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
 /// panel's `script_toggle_pause` (Resume when Paused, Pause when Running).
 #[test]
 fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
     play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
@@ -1621,7 +1623,8 @@ fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
 
 #[test]
 fn paint_button_action_does_not_queue_a_wire_cmd() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
     play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
@@ -2576,6 +2579,7 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
 
 fn empty_play() -> Play {
     run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds")
 }
 
 fn two_arm_play() -> Play {
@@ -3046,12 +3050,10 @@ fn load_all_keeps_focus_when_others_log_in() {
             .unwrap();
     }
     session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
+    session.inject_play(
+        run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+            .expect("Play construction succeeds"),
+    );
     let mut surface = HeadlessSurface::new();
     session.core.load("alice", &mut surface);
     session.core.select("alice");
@@ -3131,12 +3133,10 @@ fn load_all_picks_focus_when_none_was_focused() {
             .unwrap();
     }
     session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
+    session.inject_play(
+        run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+            .expect("Play construction succeeds"),
+    );
     let mut app = TuiApp::new("tui");
     session.pump(&mut app);
     assert_eq!(session.core.selected(), None);
@@ -3344,12 +3344,10 @@ fn tui_with_profiles(iso: &IsolatedEnv, names: &[&str]) -> (TuiSession, TuiApp) 
             .unwrap();
     }
     session.core.set_vault(Some(vault));
-    session.inject_play(run_with_io(
-        &dummy_options(),
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ));
+    session.inject_play(
+        run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+            .expect("Play construction succeeds"),
+    );
     session.scripts.set_js(script::JsLibrary::with_cache(
         iso.dir.join("js-scripts.json"),
         iso.dir.join("js-cache"),
@@ -4509,7 +4507,8 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
 
 #[test]
 fn memory_relog_confirms_while_a_script_runs() {
-    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     let alice = SlotArm::new(7, false);
     play.attach_arm("alice", Arc::clone(&alice));
     play.script_start_load(

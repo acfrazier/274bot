@@ -1281,7 +1281,10 @@ impl SlotArm {
 
     /// Phase C publishes session authority under K4. The receipt is committed
     /// by the reactor only after this lock has been released.
-    #[allow(clippy::too_many_arguments)] // command identity, cancellation and Q/R/C receipt remain explicit
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Phase Q/R/C retains explicit command identity, cancellation, and receipt"
+    )]
     fn finish_attempt_after_q(
         &self,
         command: IntentCommand,
@@ -2862,7 +2865,10 @@ fn wss_wait_for_deadline_or_cancel(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // park, slot authorization and frame observation must stay borrowed
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Park, slot authorization, and frame observation must stay borrowed"
+)]
 fn wss_wait_for_ready(
     ticket: &GameTlsTicket,
     park: &Park,
@@ -2952,7 +2958,10 @@ fn wss_wait_for_ready(
 
 /// Wait for initial TLS capacity before entering the login queue. The
 /// caller keeps its K4-published prequeue token through this reservation.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The WSS permit checks independent queue, identity, and cancellation owners"
+)]
 pub(super) fn wait_for_wss_permit(
     queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
@@ -3064,7 +3073,10 @@ pub(super) fn wait_for_permit_with_cancel(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Permit wait rechecks independent queue, identity, and cancellation owners"
+)]
 fn wait_for_permit_inner(
     queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,

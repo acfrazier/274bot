@@ -98,7 +98,10 @@ pub struct PreparedGameAttempt {
 }
 
 impl PreparedGameAttempt {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Attempt identity and each independently owned connection resource stay explicit"
+    )]
     pub fn new(
         service: Arc<TransportService>,
         park: Arc<Park>,
@@ -142,7 +145,10 @@ impl PreparedGameAttempt {
 
     /// Mint the next attempt on an already committed socket. No second
     /// descriptor, ring or connection charge enters this reservation.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Rebind preserves separate existing identity, cancellation, and retirement resources"
+    )]
     pub fn new_for_rebind(
         service: Arc<TransportService>,
         previous: &client::io::host_network::HostStreamIdentity,
@@ -354,7 +360,10 @@ impl ResolverWake for ResolveWake {
 /// caller's captured world/identity and exact generation after the wait.
 // These are the eight independently owned values at the DNS admission boundary;
 // bundling them would only move the same arguments into a disposable struct.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "DNS admission owns eight distinct address, identity, and cancellation values"
+)]
 pub fn resolve_game(
     resolver: &Resolver,
     service: &TransportService,
@@ -428,10 +437,13 @@ pub fn resolve_game(
             }
             ResolvePoll::Pending => {}
         }
+        // Resolver health takes its own state mutex; sample it before K2.
+        // Resolver terminal publication wakes this Park for the next turn.
+        let resolver_unavailable = resolver.health().unavailable.is_some();
         let outcome = park.wait(
             ticket.deadline(),
             Instant::now,
-            || service.health().loss().is_some() || resolver.health().unavailable.is_some(),
+            || service.health().loss().is_some() || resolver_unavailable,
             || false,
             || cancel.is_cancelled(),
             || wake.ready.swap(false, Ordering::AcqRel).then_some(()),
@@ -491,13 +503,11 @@ impl HostLookupTicket for ColdFillLookup {
                 ResolvePoll::Pending => {}
             }
             let deadline = until.min(self.ticket.deadline());
+            let resolver_unavailable = self.resolver.health().unavailable.is_some();
             match self.park.wait(
                 deadline,
                 Instant::now,
-                || {
-                    self.service.health().loss().is_some()
-                        || self.resolver.health().unavailable.is_some()
-                },
+                || self.service.health().loss().is_some() || resolver_unavailable,
                 || false,
                 || false,
                 || self.wake.ready.swap(false, Ordering::AcqRel).then_some(()),
@@ -652,10 +662,11 @@ impl HostHttpFetch for ResolvingHttpFetch {
             }
             let deadline = ticket.deadline();
             let wake = &self.wake;
+            let resolver_unavailable = self.resolver.health().unavailable.is_some();
             let outcome = self.park.wait(
                 deadline.min(until),
                 Instant::now,
-                || self.resolver.health().unavailable.is_some(),
+                || resolver_unavailable,
                 || false,
                 || false,
                 || wake.ready.swap(false, Ordering::AcqRel).then_some(()),

@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)]
-
 //! Shared dev/candidate local-WSS soak. The launcher supplies the effective
 //! configuration, isolated HOME, local proxy and output directory. This test
 //! starts ordinary production Play slots; it never launches the Engine or
@@ -1355,7 +1353,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     #[cfg(feature = "soak-observers")]
     let candidate_payloads = candidate_observers::CandidateObservers::install(&output)?;
     #[cfg(feature = "soak-observers")]
-    let _network_driver = client_adapter::service::NetworkService::start_composition()
+    let _network_driver = host_play::PlayComposition::start()
         .map_err(|error| format!("T1.4 network composition startup: {error}"))?;
 
     let (_profile, template) = load_profile(&config)?;
@@ -1425,7 +1423,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
             };
             drive_frame(&mut actor, client, frame, &frame_writer, run_started);
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
 
     let mut unexpected_exits = 0u64;
     let run_start_monotonic_ns = monotonic_now_ns()?;

@@ -72,7 +72,8 @@ fn nav_seers_crabs() {
         profiles(&[("test", "test")]),
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_seers_crabs");
 
     // Find the same OD on the pack the process loaded.

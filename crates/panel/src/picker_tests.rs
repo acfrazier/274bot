@@ -83,19 +83,22 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let _nav = super::lock_nav_statics();
     let mut session = Session::new();
     session.set_focus_for_test("alice");
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+    session.core.set_play(Some(
+        host_play::run_with_io(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+        .expect("Play construction succeeds"),
+    ));
     let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
         route: Some(Arc::new(test_route())),
         route_generation: 42,

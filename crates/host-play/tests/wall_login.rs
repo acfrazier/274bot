@@ -29,7 +29,8 @@ fn wall_login_fifo_logout_all() {
     // Two armed slots on a shared login FIFO, no panel window. The
     // `want_login = false` arm holds each slot on the title like a wall
     // load; Login all flips it later.
-    let mut play = run_with_io(&options(), vec![], |_| (None, None), |_, _, _| {});
+    let mut play = run_with_io(&options(), vec![], |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     for p in profiles(&[("test", "test"), ("test2", "test2")]) {
         play.spawn_slot(p.clone(), None, None, Some(SlotArm::new(p.uid, false)));
     }

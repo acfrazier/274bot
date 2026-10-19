@@ -57,7 +57,8 @@ fn nav_door() {
                 r.companion_tick(index, c);
             }
         }
-    });
+    })
+    .expect("Play construction succeeds");
     runner.lock().unwrap().set_obj_names(play.obj_names());
 
     // The fleet gate: both slots ingame with scene 2 (the walker's own

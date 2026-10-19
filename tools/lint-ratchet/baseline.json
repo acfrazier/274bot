@@ -11,6 +11,16 @@
         "test": 0
       }
     },
+    "client-adapter": {
+      "clippy::large_enum_variant": {
+        "non_test": 5,
+        "test": 0
+      },
+      "clippy::too_many_arguments": {
+        "non_test": 8,
+        "test": 0
+      }
+    },
     "e2e": {
       "clippy::too_many_arguments": {
         "non_test": 1,
@@ -75,7 +85,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 39,
+        "non_test": 43,
         "test": 17
       },
       "dead_code": {

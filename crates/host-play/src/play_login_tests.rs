@@ -26,13 +26,6 @@ fn tcp_client(port: u16) -> Client {
     )
 }
 
-// Preserve genuine OS errors as typed login receipts without invoking the native client.
-fn os_transport_error(stage: client::client::LoginStage, error: std::io::Error) -> LoginError {
-    let mut receipt = LoginError::response(-1, "", "");
-    receipt.transport = Some(client::client::LoginTransportError::from_io(stage, &error));
-    receipt
-}
-
 // The host hook is process-scoped; isolate hosted cases from sibling native-client tests.
 fn run_hosted_test_in_child(test_name: &str, marker: &str) -> bool {
     if std::env::var_os(marker).is_some() {
@@ -163,38 +156,6 @@ fn run_hosted_client_login(
     client_adapter::host_network::with_prepared_game_attempt(prepared, || {
         client.login("alice", "secret", reconnect)
     })
-}
-
-fn run_os_read_seed(listener: std::net::TcpListener, timeout: Option<Duration>) -> std::io::Error {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-
-    let port = listener.local_addr().unwrap().port();
-    let (release, held) = std::sync::mpsc::channel::<()>();
-    let server = thread::spawn(move || {
-        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
-        let mut hello = [0; 2];
-        socket.read_exact(&mut hello).unwrap();
-        socket.write_all(&[0; 9 + 2]).unwrap();
-        if timeout.is_some() {
-            held.recv_timeout(Duration::from_secs(2)).unwrap();
-        }
-    });
-    let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    if timeout.is_some() {
-        socket.set_read_timeout(timeout).unwrap();
-    }
-    socket.write_all(&[14, 0]).unwrap();
-    // Consume the server prelude and its two real seed bytes without copying the client parser.
-    let mut response_and_partial_seed = [0; 9 + 2];
-    socket.read_exact(&mut response_and_partial_seed).unwrap();
-    let mut remaining_seed = [0; 6];
-    let error = socket.read_exact(&mut remaining_seed).unwrap_err();
-    if timeout.is_some() {
-        release.send(()).unwrap();
-    }
-    server.join().unwrap();
-    error
 }
 
 // Bound accept so a failed host fence cannot strand a test server indefinitely.
@@ -1087,7 +1048,7 @@ fn assert_transport_event(
     let transport = error
         .transport
         .as_ref()
-        .expect("real client transport error");
+        .expect("Client::login preserves the real transport error");
     assert_eq!(transport.stage, stage);
     assert_eq!(transport.kind, kind);
     let arm = SlotArm::new(7, true);
@@ -1119,13 +1080,27 @@ fn assert_transport_event(
 
 #[test]
 fn os_connect_refusal_maps_to_connect_transport_event() {
+    if run_hosted_test_in_child(
+        "release_tests::os_connect_refusal_maps_to_connect_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    let network = HostedNetworkFixture::start();
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
-    let error = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap_err();
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, false).unwrap_err();
+    let transport = error.transport.as_ref().expect("login transport error");
+    assert!(
+        transport.errno.is_some(),
+        "the refused socket's OS error number must survive Client::login: {transport:?}"
+    );
     assert_transport_event(
-        os_transport_error(client::client::LoginStage::Connect, error),
+        error,
         client::client::LoginStage::Connect,
         std::io::ErrorKind::ConnectionRefused,
         TransportFailure::Connect,
@@ -1134,30 +1109,69 @@ fn os_connect_refusal_maps_to_connect_transport_event() {
 
 #[test]
 fn os_partial_seed_timeout_maps_to_read_transport_event() {
+    if run_hosted_test_in_child(
+        "release_tests::os_partial_seed_timeout_maps_to_read_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    use std::io::{Read, Write};
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let error = run_os_read_seed(listener, Some(Duration::from_millis(150)));
-    let kind = error.kind();
-    assert!(
-        matches!(
-            kind,
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-        ),
-        "a blocking timed read must expire rather than fail for another reason: {error}"
-    );
+    let port = listener.local_addr().unwrap().port();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        socket.write_all(&[0; 9]).unwrap();
+        held.recv_timeout(Duration::from_secs(3)).unwrap();
+    });
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let prepared = network.prepared_attempt(&arm, port);
+    let cancel = client::io::client_stream::LoginCancel::new();
+    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
+    client.set_login_cancel(cancel);
+    client.set_login_deadline(Instant::now() + Duration::from_millis(150));
+    let error = client_adapter::host_network::with_prepared_game_attempt(prepared, || {
+        client.login("alice", "secret", false)
+    })
+    .unwrap_err();
+    release.send(()).unwrap();
+    server.join().unwrap();
     assert_transport_event(
-        os_transport_error(client::client::LoginStage::ReadSeed, error),
+        error,
         client::client::LoginStage::ReadSeed,
-        kind,
+        std::io::ErrorKind::TimedOut,
         TransportFailure::Read,
     );
 }
 
 #[test]
 fn os_partial_seed_eof_maps_to_closed_transport_event() {
+    if run_hosted_test_in_child(
+        "release_tests::os_partial_seed_eof_maps_to_closed_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    use std::io::{Read, Write};
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let error = run_os_read_seed(listener, None);
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        socket.write_all(&[0; 9 + 2]).unwrap();
+    });
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, false).unwrap_err();
+    server.join().unwrap();
     assert_transport_event(
-        os_transport_error(client::client::LoginStage::ReadSeed, error),
+        error,
         client::client::LoginStage::ReadSeed,
         std::io::ErrorKind::UnexpectedEof,
         TransportFailure::Closed,
@@ -1167,14 +1181,29 @@ fn os_partial_seed_eof_maps_to_closed_transport_event() {
 #[cfg(unix)]
 #[test]
 fn os_reset_write_maps_to_write_transport_event() {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
+    if run_hosted_test_in_child(
+        "release_tests::os_reset_write_maps_to_write_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    use client::io::client_stream::ClientStream;
     use std::os::fd::AsRawFd;
-
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let (accepted, _) = listener.accept().unwrap();
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let prepared = network.prepared_attempt(&arm, port);
+    let cancel = client::io::client_stream::LoginCancel::new();
+    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
+    client.set_login_cancel(cancel);
+    client.set_login_deadline(Instant::now() + Duration::from_secs(3));
+    let mut stream = client_adapter::host_network::with_prepared_game_attempt(prepared, || {
+        ClientStream::connect("127.0.0.1", port)
+    })
+    .unwrap();
+    let (accepted, _) = accept_local_with_timeout(&listener).unwrap();
     let linger = libc::linger {
         l_onoff: 1,
         l_linger: 0,
@@ -1193,29 +1222,29 @@ fn os_reset_write_maps_to_write_transport_event() {
     };
     assert_eq!(set, 0, "SO_LINGER: {}", std::io::Error::last_os_error());
     drop(accepted);
-    stream.set_nonblocking(true).unwrap();
     let until = Instant::now() + Duration::from_secs(2);
     loop {
-        let mut byte = [0; 1];
-        match stream.read(&mut byte) {
+        match stream.available() {
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
             Ok(0) if Instant::now() < until => thread::yield_now(),
-            Err(error)
-                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
-            {
-                thread::yield_now()
-            }
             result => panic!("expected local server reset before the login write: {result:?}"),
         }
     }
-    let error = stream.write_all(&[14, 0]).unwrap_err();
-    let kind = error.kind();
+    client.stream = Some(stream);
+    client.baton = true;
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, true).unwrap_err();
+    let transport = error.transport.as_ref().expect("login transport error");
+    assert!(
+        transport.errno.is_some(),
+        "the adopted socket's OS error number must survive Client::login: {transport:?}"
+    );
+    let kind = transport.kind;
     assert!(matches!(
         kind,
         std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
     ));
     assert_transport_event(
-        os_transport_error(client::client::LoginStage::SendHello, error),
+        error,
         client::client::LoginStage::SendHello,
         kind,
         TransportFailure::Write,

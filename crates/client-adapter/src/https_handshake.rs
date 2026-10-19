@@ -91,7 +91,10 @@ enum Phase {
 
 // Keep the worker's completed TLS connection inline: boxing every successful
 // HTTPS handshake would add an allocation solely to shrink this short-lived enum.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep the established TLS state inline across the worker handoff"
+)]
 enum Outcome {
     Success(EstablishedTls),
     Failure,

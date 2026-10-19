@@ -61,7 +61,8 @@ fn nav_wildy() {
     let seed = [("test", "test")];
     let mut opts = options();
     opts.mainland = true;
-    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {});
+    let play = run_with_io(&opts, profiles(&seed), |_| (None, None), |_, _, _| {})
+        .expect("Play construction succeeds");
     wait_ingame(&play, 1, Duration::from_secs(150), "nav_wildy");
 
     let world = NavWorld::load_pack(&default_pack_path())

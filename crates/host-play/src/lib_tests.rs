@@ -998,7 +998,8 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, true);
     arm.set_lowmem_handshake(false);
     arm.bypass_asset_startup_for_test();
@@ -1141,7 +1142,8 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
                 }
             }
         },
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, true);
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
@@ -1233,7 +1235,8 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
                 }
             }
         },
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, true);
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
@@ -1367,7 +1370,8 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", Arc::clone(&arm));
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -1651,7 +1655,8 @@ fn run_with_io_empty_profiles_starts_no_slots() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     assert!(play.statuses().is_empty());
 }
 
@@ -1674,7 +1679,8 @@ fn obj_names_getter_shares_the_play_table() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     assert!(play.obj_names().name(526).is_none());
     assert!(play.obj_names().by_name("Bones").is_none());
 }
@@ -1692,7 +1698,8 @@ fn run_channels_empty_profiles_starts_no_slots() {
         },
         vec![],
         1,
-    );
+    )
+    .expect("Play construction succeeds");
     assert!(play.statuses().is_empty());
 }
 
@@ -1710,7 +1717,8 @@ fn stop_slot_sets_stop_and_forgets_name() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // No real client: fake arm (uid 7) and a handle that exits only
     // once `stop_slot` flags it.
     let arm = SlotArm::new(7, false);
@@ -1769,7 +1777,8 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let profile = Profile {
         username: "alice".into(),
         password: "pw".into(),
@@ -1847,7 +1856,8 @@ fn begin_stop_slot_retires_without_joining_live_worker() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(7, false);
     play.arms.insert("alice".into(), Arc::clone(&arm));
     play.spawned.insert("alice".into());
@@ -1894,7 +1904,8 @@ fn stop_slot_wakes_a_parked_thread_before_joining() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // A fake parked slot: blocks on the control park fd with a long
     // poll (like the real idle scheduler) and only exits once `stop`
     // is set *and* the wake fires it out of the poll.
@@ -1945,7 +1956,8 @@ fn stop_slot_interrupts_login_backoff() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(9, true);
     play.arms.insert("bob".into(), Arc::clone(&arm));
     play.spawned.insert("bob".into());
@@ -2020,7 +2032,8 @@ fn generic_wake_does_not_shorten_login_backoff() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(9, true);
     play.attach_arm("bob", Arc::clone(&arm));
     let started = Instant::now();
@@ -2053,7 +2066,8 @@ fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (accepted, waiting) = mpsc::channel();
@@ -2110,7 +2124,8 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // The profile uid 42 sits queued behind a full address window;
     // stopping must drop 42 from the FIFO, not the arm's stale uid 0.
     {
@@ -3479,7 +3494,8 @@ fn spawned_worker_unwinding_after_its_grant_frees_the_next_login() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // A sibling's login holds the only slot while alice queues.
     assert_eq!(
         request_shared(&play.queue, 99, Instant::now()),
@@ -3723,7 +3739,8 @@ fn spawned_worker_login_to_a_silent_server_ends_at_its_deadline() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let hold = Duration::from_millis(500);
     *play.queue.lock() = LoginQueue::default().with_handshake_hold(hold);
     let arm = SlotArm::new(42, true);
@@ -3828,7 +3845,8 @@ fn uid_save_on_running_slot_connects_without_requeue_spin() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, false);
     arm.set_lowmem_handshake(false);
     arm.bypass_asset_startup_for_test();
@@ -4004,7 +4022,8 @@ fn status_readers_recover_before_terminal_publication() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -4044,7 +4063,8 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let window_started = fill_address_window(&play.queue);
     let dead = SlotArm::new(7, true);
     dead.bypass_asset_startup_for_test();
@@ -4124,7 +4144,8 @@ fn finished_worker_is_reaped_before_explicit_respawn() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let stale = SlotArm::new(7, false);
     play.arms.insert("dead".into(), Arc::clone(&stale));
     play.spawned.insert("dead".into());
@@ -4342,7 +4363,8 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let alice = SlotArm::new(1, true);
     let bob = SlotArm::new(2, false);
     // Duplicate device UIDs are legal throttle identities but distinct slots.
@@ -4424,7 +4446,8 @@ fn focus_selects_the_sampled_slot() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     assert_eq!(play.focused(), None, "no slot is focused before focus()");
     let b = SlotArm::new(11, false);
     let c = SlotArm::new(12, false);
@@ -4478,7 +4501,8 @@ fn stop_slot_clears_focus_on_the_stopped_name() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // No real client: fake arm + a handle that exits only once
     // `stop_slot` flags it.
     let arm = SlotArm::new(7, false);
@@ -7355,7 +7379,8 @@ fn two_profiles_spawn_two_client_slots() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // `auto_login = false` arms sit on the title (no TCP), so both
     // threads idle on a 20 ms sleep until `stop_slot` joins them.
     play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
@@ -7412,7 +7437,8 @@ fn script_stop_clears_offline_published_paint() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     script_slot_or_insert(&play.scripts, "alice");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -7448,7 +7474,8 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_start_load(
         "alice",
@@ -7494,7 +7521,8 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // alice is a real (armed) slot, so the error is about the picker id.
     let mut play = run_with_io(
         &PlayOptions {
@@ -7508,7 +7536,8 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let err = play
         .script_start(
@@ -7533,7 +7562,8 @@ fn compiled_start_play() -> Play {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.bind_script_test_data(
         api::game_data::for_revision(client::io::ClientRevision::R289).unwrap(),
     );
@@ -7645,7 +7675,8 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
     play.script_start_load(
@@ -7697,7 +7728,8 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
     let t0 = Instant::now();
@@ -7746,7 +7778,8 @@ fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let done = Arc::new(AtomicBool::new(false));
     let observer = {
@@ -7814,7 +7847,8 @@ fn script_start_handle_explicit_loadouts_starts() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let mut bag = serde_json::Map::new();
     bag.insert("loadout".into(), serde_json::json!("Memory food"));
@@ -7849,7 +7883,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let start = play.script_start_handle();
     let rows = [
@@ -7948,7 +7983,8 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
     let service = local_state::LocalStateService::open(
         root.clone(),
@@ -8020,7 +8056,8 @@ fn live_start_retains_the_card_for_a_second_start() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let handle = play.script_start_handle();
     let arming = || crate::live_start::StartArming {
@@ -8077,7 +8114,8 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_click("alice", "gobank", 0);
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
@@ -8107,7 +8145,8 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_select("alice", "strip:k", "Options", 0);
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
@@ -8163,7 +8202,8 @@ fn script_start_unknown_slot_errors_without_phantom_entry() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     let err = play
         .script_start(
             "ghost",
@@ -8193,7 +8233,8 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     assert_eq!(play.script_state("ghost"), script::RunState::Idle);
     assert_eq!(play.script_last_error("ghost"), None);
     play.script_pause("ghost");
@@ -8238,7 +8279,8 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.spawned.insert("alice".into());
     let slot = script_slot_or_insert(&play.scripts, "alice");
     let poisoner = {
@@ -8345,7 +8387,8 @@ fn queue_wire_lands_on_the_named_slots_queue() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     // `auto_login = false` arm sits on the title (no TCP).
     play.spawn_slot(profile("a", 1), None, None, Some(SlotArm::new(1, false)));
     assert!(
@@ -8391,7 +8434,8 @@ fn disconnected_slot_rejects_new_wire_and_cheat_work() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         ingame: false,
@@ -8436,7 +8480,8 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
         ingame: true,
@@ -8538,7 +8583,8 @@ fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
             vec![],
             |_| (None, None),
             |_, _, _| {},
-        );
+        )
+        .expect("Play construction succeeds");
         // No slots or sockets: vary the admission metadata after constructing
         // the TCP-only offline fixture, including the production WSS transport.
         let crate::play_bootstrap::PlayConnection::Direct(options) = &mut play.connection else {
@@ -21037,7 +21083,8 @@ fn pause_clears_live_recovery_walk() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_start_load(
         "alice",
@@ -21132,7 +21179,8 @@ fn operator_stop_stops_the_script_walk() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_start_load(
         "alice",
@@ -21171,7 +21219,8 @@ fn operator_pause_stops_an_ordinary_script_walk() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_start_load(
         "alice",
@@ -23244,6 +23293,7 @@ fn offline_play(endpoint: std::net::SocketAddr) -> Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("Play construction succeeds")
 }
 
 #[test]
@@ -23411,7 +23461,8 @@ fn a_code_5_retry_wait_keeps_the_title_animating() {
         vec![],
         |_| (None, None),
         |c, _, _| c.set_draw(true),
-    );
+    )
+    .expect("Play construction succeeds");
     let arm = SlotArm::new(42, true);
     arm.bypass_asset_startup_for_test();
     let input = SlotInput::new();
@@ -23490,6 +23541,7 @@ fn run_worker_play(
         |_| (None, None),
         per_frame,
     )
+    .expect("Play construction succeeds")
 }
 
 fn logout_first_worker_session() -> (

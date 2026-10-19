@@ -2173,7 +2173,7 @@ impl Session {
         self.profile_generation
     }
 
-    pub(crate) fn profile_preparation(&self) -> Result<(u64, ProfilePreparation), String> {
+    pub(crate) fn profile_preparation(&mut self) -> Result<(u64, ProfilePreparation), String> {
         let options = self
             .profile_options
             .clone()
@@ -2182,6 +2182,9 @@ impl Session {
             .profile_environment
             .clone()
             .ok_or_else(|| "no profile environment was configured".to_string())?;
+        self.core
+            .start_network_composition()
+            .map_err(|error| error.to_string())?;
         Ok((
             self.profile_generation,
             ProfilePreparation {
@@ -2329,9 +2332,11 @@ impl Session {
             .profile_options
             .as_ref()
             .ok_or_else(|| "no production server profile was configured".to_string())?;
-        let template = options
-            .resolve_with_env(Some(self.ui.server_revision), env)?
-            .prepare_template()?;
+        let selection = options.resolve_with_env(Some(self.ui.server_revision), env)?;
+        self.core
+            .start_network_composition()
+            .map_err(|error| error.to_string())?;
+        let template = selection.prepare_template()?;
         self.install_prepared_template(template);
         Ok(())
     }
@@ -3439,7 +3444,8 @@ impl Session {
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
-            )?,
+            )
+            .map_err(|error| error.to_string())?,
             None => match self.template.clone() {
                 Some(template) => run_with_template(
                     template,
@@ -3447,8 +3453,10 @@ impl Session {
                     Vec::new(),
                     |_| (None, None),
                     per_frame,
-                )?,
-                None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+                )
+                .map_err(|error| error.to_string())?,
+                None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame)
+                    .map_err(|error| error.to_string())?,
             },
         };
         // Before any handle is taken from the Play: the Start handle and the
@@ -5681,7 +5689,8 @@ mod fleet_hold_tests {
             iso.dir.join("js-cache"),
         ));
         let mut play =
-            host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {});
+            host_play::run_with_io(&session.options, vec![], |_| (None, None), |_, _, _| {})
+                .expect("Play construction succeeds");
         play.attach_arm("alice", host_play::SlotArm::new(1, false));
         session.core.set_play(Some(play));
         session.core.fleet_mut().add("alice");

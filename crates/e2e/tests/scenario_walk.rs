@@ -47,7 +47,8 @@ fn scenario_walk() {
                 r.tick_with_hold(c, hold);
             }
         }
-    });
+    })
+    .expect("Play construction succeeds");
     runner.lock().unwrap().set_obj_names(play.obj_names());
 
     // Poll the shared runner for a terminal status; a FAIL or a timeout

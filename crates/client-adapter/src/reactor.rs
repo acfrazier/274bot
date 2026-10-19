@@ -45,17 +45,26 @@ struct Registration {
 impl Registration {
     /// Sender Arc clones must not keep physical capacity charged after close.
     fn release_charge(&self) {
-        self.charge.lock().unwrap().take();
+        self.charge
+            .lock()
+            .expect("TLS connection charge mutex is not poisoned")
+            .take();
     }
 
     /// During the initial TLS worker call the registered socket and its
     /// physical capacity charge move together, including after queue release.
     fn take_charge(&self) -> Option<ConnectionCharge> {
-        self.charge.lock().unwrap().take()
+        self.charge
+            .lock()
+            .expect("TLS connection charge mutex is not poisoned")
+            .take()
     }
 
     fn restore_charge(&self, charge: Option<ConnectionCharge>) {
-        let mut slot = self.charge.lock().unwrap();
+        let mut slot = self
+            .charge
+            .lock()
+            .expect("TLS connection charge mutex is not poisoned");
         assert!(slot.is_none(), "returned TLS charge already registered");
         *slot = charge;
     }
@@ -163,7 +172,12 @@ impl TransportService {
                     health.latch(ReactorLoss::Panicked);
                 }
             }) {
-            Ok(worker) => *service.worker.lock().unwrap() = Some(worker),
+            Ok(worker) => {
+                *service
+                    .worker
+                    .lock()
+                    .expect("reactor worker mutex is not poisoned") = Some(worker)
+            }
             Err(_) => service.health.latch(ReactorLoss::StartFailed),
         }
         Ok(service)
@@ -188,7 +202,10 @@ impl TransportService {
         if !self.loss_notified.swap(true, Ordering::AcqRel) {
             for slot in 0..MAX_CONNECTIONS {
                 let park = {
-                    self.registry.lock().unwrap().entries[slot]
+                    self.registry
+                        .lock()
+                        .expect("connection registry mutex is not poisoned")
+                        .entries[slot]
                         .as_ref()
                         .map(|entry| Arc::clone(&entry.shared.control.park))
                 };
@@ -202,7 +219,10 @@ impl TransportService {
 
     /// Install the fixed handshake owner before the host hook can admit TCP.
     pub fn install_tls_lane(&self, lane: Arc<GameTlsLane>) {
-        let mut slot = self.tls_lane.lock().unwrap();
+        let mut slot = self
+            .tls_lane
+            .lock()
+            .expect("game TLS lane mutex is not poisoned");
         assert!(slot.is_none(), "the process has only one game TLS worker");
         *slot = Some(lane);
         drop(slot);
@@ -211,9 +231,14 @@ impl TransportService {
     /// Reserve the immutable transfer sequence before the FIFO's physical
     /// WSS attempt starts; the handoff cell checks it again on submission.
     pub fn tls_transfer_seq(&self) -> io::Result<u64> {
-        let lane = self.tls_lane.lock().unwrap().clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
-        })?;
+        let lane = self
+            .tls_lane
+            .lock()
+            .expect("game TLS lane mutex is not poisoned")
+            .clone()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
+            })?;
         lane.cell()
             .next_transfer_seq()
             .ok_or_else(|| io::Error::other("game TLS transfer sequence exhausted"))
@@ -234,16 +259,21 @@ impl TransportService {
                 "game TLS service unavailable",
             ));
         }
-        let lane = self.tls_lane.lock().unwrap().clone().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
-        })?;
+        let lane = self
+            .tls_lane
+            .lock()
+            .expect("game TLS lane mutex is not poisoned")
+            .clone()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotConnected, "game TLS worker unavailable")
+            })?;
         lane.waiter(park, deadline, token)
     }
 
     pub fn owns_tls_ticket(&self, ticket: &GameTlsTicket) -> bool {
         self.tls_lane
             .lock()
-            .unwrap()
+            .expect("game TLS lane mutex is not poisoned")
             .as_ref()
             .is_some_and(|lane| lane.owns_ticket(ticket))
     }
@@ -283,7 +313,10 @@ impl TransportService {
             .ledger
             .admit_connection(known_bytes)
             .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "game connection cap"))?;
-        let mut registry = self.registry.lock().unwrap();
+        let mut registry = self
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned");
         for _ in 0..MAX_CONNECTIONS {
             let id = self
                 .next_id
@@ -342,7 +375,7 @@ impl TransportService {
         let entry = self
             .registry
             .lock()
-            .unwrap()
+            .expect("connection registry mutex is not poisoned")
             .get(expected.connection)
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::NotConnected, "old connection not registered")
@@ -404,7 +437,10 @@ impl TransportService {
         {
             return Err(SubmitError::StaleIdentity);
         }
-        let registry = self.registry.lock().unwrap();
+        let registry = self
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned");
         let Some(registration) = registry.get(command.binding.connection) else {
             return Err(SubmitError::StaleIdentity);
         };
@@ -452,7 +488,7 @@ impl TransportService {
         let entry = self
             .registry
             .lock()
-            .unwrap()
+            .expect("connection registry mutex is not poisoned")
             .get(expected.connection)
             .ok_or(SubmitError::StaleIdentity)?;
         if entry.shared.binding() != expected.binding
@@ -481,7 +517,10 @@ impl TransportService {
             return false;
         }
         let registration = {
-            let mut registry = self.registry.lock().unwrap();
+            let mut registry = self
+                .registry
+                .lock()
+                .expect("connection registry mutex is not poisoned");
             let Some(registration) = registry.get(binding.connection) else {
                 return false;
             };
@@ -506,7 +545,12 @@ impl Drop for TransportService {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
         let _ = self.bus.wake();
-        if let Some(worker) = self.worker.lock().unwrap().take() {
+        if let Some(worker) = self
+            .worker
+            .lock()
+            .expect("reactor worker mutex is not poisoned")
+            .take()
+        {
             let _ = worker.join();
         }
     }
@@ -606,7 +650,10 @@ impl Endpoint {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Rebind needs explicit identity, token, retirement, and deadline"
+    )]
     fn rebind(
         &mut self,
         expected: BindingId,
@@ -873,7 +920,12 @@ impl Reactor {
     /// A worker completion wakes the shared Mio waker, not a per-connection
     /// event. Schedule its exact pending binding on the next reactor turn.
     fn enqueue_tls_return(&mut self) {
-        let Some(lane) = self.tls_lane.lock().unwrap().clone() else {
+        let Some(lane) = self
+            .tls_lane
+            .lock()
+            .expect("game TLS lane mutex is not poisoned")
+            .clone()
+        else {
             return;
         };
         lane.notify_capacity();
@@ -949,7 +1001,11 @@ impl Reactor {
                         TcpStep::Failed(error) => EventStep::Failed(error),
                     },
                     Endpoint::InitialTls(key) => {
-                        let lane = self.tls_lane.lock().unwrap().clone();
+                        let lane = self
+                            .tls_lane
+                            .lock()
+                            .expect("game TLS lane mutex is not poisoned")
+                            .clone();
                         if let Some(lane) = lane {
                             if readable {
                                 lane.cell().publish_ready(*key, ReadyDirection::Read);
@@ -1001,7 +1057,12 @@ impl Reactor {
             let Some(id) = self.bus.pop_id() else {
                 break;
             };
-            let Some(registration) = self.registry.lock().unwrap().get(id) else {
+            let Some(registration) = self
+                .registry
+                .lock()
+                .expect("connection registry mutex is not poisoned")
+                .get(id)
+            else {
                 continue;
             };
             let control = &registration.shared.control;
@@ -1104,7 +1165,11 @@ impl Reactor {
                                 binding,
                                 reason: RejectedCommand::StaleIdentity,
                             });
-                        let _ = self.registry.lock().unwrap().remove(id);
+                        let _ = self
+                            .registry
+                            .lock()
+                            .expect("connection registry mutex is not poisoned")
+                            .remove(id);
                         return;
                     }
                 };
@@ -1141,7 +1206,11 @@ impl Reactor {
                                 binding,
                                 kind: error.kind(),
                             });
-                        let _ = self.registry.lock().unwrap().remove(id);
+                        let _ = self
+                            .registry
+                            .lock()
+                            .expect("connection registry mutex is not poisoned")
+                            .remove(id);
                     }
                 }
             }
@@ -1235,7 +1304,12 @@ impl Reactor {
     }
 
     fn handle_close(&mut self, id: u64, command: CloseCommand) -> bool {
-        let Some(registration) = self.registry.lock().unwrap().get(id) else {
+        let Some(registration) = self
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned")
+            .get(id)
+        else {
             return false;
         };
         let current = self.live[index(id)]
@@ -1304,13 +1378,26 @@ impl Reactor {
             } else {
                 RevocationReason::Cancelled
             };
-            let lane = self.tls_lane.lock().unwrap().clone();
+            let lane = self
+                .tls_lane
+                .lock()
+                .expect("game TLS lane mutex is not poisoned")
+                .clone();
             live.endpoint
                 .close(self.poll.registry(), lane.as_deref(), reason);
-        } else if let Some(registration) = self.registry.lock().unwrap().get(id) {
+        } else if let Some(registration) = self
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned")
+            .get(id)
+        {
             registration.shared.publish_closed();
         }
-        let registration = self.registry.lock().unwrap().remove(id);
+        let registration = self
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned")
+            .remove(id);
         if let Some(registration) = registration {
             if let Some(command) = registration.shared.control.take_primary() {
                 Self::reject_command(&registration.shared, command, RejectedCommand::Closed);
@@ -1385,7 +1472,11 @@ impl Reactor {
             live.queued = false;
             let mut failed_connect = None;
             let outcome = if !live.connected_reply {
-                let lane = self.tls_lane.lock().unwrap().clone();
+                let lane = self
+                    .tls_lane
+                    .lock()
+                    .expect("game TLS lane mutex is not poisoned")
+                    .clone();
                 match Self::advance_connect(live, self.poll.registry(), lane.as_deref()) {
                     ConnectProgress::Connected => {
                         live.connected_reply = true;
@@ -1558,13 +1649,23 @@ impl Drop for Reactor {
                 let pending_connect = !live.connected_reply;
                 let rebind = live.rebind.take();
                 let close_ack = live.close_ack;
-                let lane = self.tls_lane.lock().unwrap().clone();
+                let lane = self
+                    .tls_lane
+                    .lock()
+                    .expect("game TLS lane mutex is not poisoned")
+                    .clone();
                 live.endpoint.close(
                     self.poll.registry(),
                     lane.as_deref(),
                     RevocationReason::Shutdown,
                 );
-                let registration = { self.registry.lock().unwrap().entries[slot].take() };
+                let registration = {
+                    self.registry
+                        .lock()
+                        .expect("connection registry mutex is not poisoned")
+                        .entries[slot]
+                        .take()
+                };
                 if let Some(registration) = registration {
                     if let Some(command) = shared.control.take_primary() {
                         Self::reject_command(&shared, command, RejectedCommand::Unavailable);
@@ -1601,7 +1702,13 @@ impl Drop for Reactor {
             self.ledger.dequeue_local_work();
         }
         for slot in 0..MAX_CONNECTIONS {
-            let registration = { self.registry.lock().unwrap().entries[slot].take() };
+            let registration = {
+                self.registry
+                    .lock()
+                    .expect("connection registry mutex is not poisoned")
+                    .entries[slot]
+                    .take()
+            };
             if let Some(registration) = registration {
                 if let Some(command) = registration.shared.control.take_primary() {
                     Self::reject_command(

@@ -15,6 +15,8 @@
 //! and TCP queue release must still progress, but physical close/ack cannot be
 //! required until that verifier call returns. Poll has a bounded timeout in the
 //! correct model. No wall-time or OS-scheduling claim follows from this model.
+//! The mutation test below mutates this model only. It does not test production
+//! behavior. `production_transport_state.rs` exercises the real adapter types.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -2755,7 +2757,7 @@ fn assert_shortest_mutant(
     }
     assert!(result.explored_states <= MAX_EXPLORED_STATES_PER_SCENARIO);
     println!(
-        "mutant={mutation:?} scenario={} explored_states={} transitions={} shortest_trace_len={} violation={}\n{}",
+        "model_mutant={mutation:?} scenario={} explored_states={} transitions={} shortest_trace_len={} violation={}\n{}",
         result.scenario,
         result.explored_states,
         result.explored_transitions,
@@ -2847,7 +2849,7 @@ fn game_tls_model_exhaustively_explores_bounded_interleavings_and_invariants() {
 }
 
 #[test]
-fn mandatory_game_tls_mutants_have_shortest_counterexamples() {
+fn abstract_game_tls_model_mutations_have_shortest_counterexamples() {
     assert_shortest_mutant(
         READ_EDGE_RACE,
         Mutation::WrongClear,

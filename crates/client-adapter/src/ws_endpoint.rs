@@ -430,7 +430,10 @@ impl WssEndpoint {
     /// The socket remains the original registered Mio socket.
     // The handoff keeps all eight independently owned inputs; avoid allocating
     // a temporary argument bundle on every WSS transfer only for lint shape.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A WSS transfer retains explicit binding, TLS, and resource owners"
+    )]
     pub fn new(
         binding: BindingId,
         host: &str,

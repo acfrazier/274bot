@@ -744,6 +744,7 @@ mod tests {
             |_| (None, None),
             |_, _, _| {},
         )
+        .expect("Play construction succeeds")
     }
 
     /// A close never waits for the publication: memory and UI reads proceed

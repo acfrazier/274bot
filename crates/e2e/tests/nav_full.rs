@@ -58,7 +58,8 @@ fn nav_full() {
                 r.tick_with_hold(c, hold);
             }
         }
-    });
+    })
+    .expect("Play construction succeeds");
     runner.lock().unwrap().set_obj_names(play.obj_names());
 
     // The mainland gate: wait for `ingame && scene_state == 2` (the

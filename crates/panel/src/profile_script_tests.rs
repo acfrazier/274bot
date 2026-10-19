@@ -241,6 +241,7 @@ fn empty_play() -> host_play::Play {
         |_| (None, None),
         |_, _, _| {},
     )
+    .expect("Play construction succeeds")
 }
 
 fn session_with_play(names: &[&str]) -> (Session, TestDir) {

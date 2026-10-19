@@ -365,13 +365,16 @@ impl<T: Send> HandoffCell<T> {
 
     /// Observe the next admissible sequence. `submit` checks it again under K.
     pub fn next_transfer_seq(&self) -> Option<u64> {
-        self.state.lock().unwrap().next_transfer_seq
+        self.state
+            .lock()
+            .expect("handoff state mutex is not poisoned")
+            .next_transfer_seq
     }
 
     pub fn phase(&self) -> HandoffPhase {
         self.state
             .lock()
-            .unwrap()
+            .expect("handoff state mutex is not poisoned")
             .attempt
             .as_ref()
             .map_or(HandoffPhase::Empty, |attempt| attempt.phase)
@@ -381,7 +384,10 @@ impl<T: Send> HandoffCell<T> {
     /// could enter the handoff cell. Released attempts retain their physical
     /// charge until their worker has stopped and retirement was acknowledged.
     pub fn can_admit(&self) -> bool {
-        let state = self.state.lock().unwrap();
+        let state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
         !state.worker_stopped
             && state.next_transfer_seq.is_some()
             && state.attempt.as_ref().is_none_or(|attempt| {
@@ -408,7 +414,10 @@ impl<T: Send> HandoffCell<T> {
         resource: T,
     ) -> Result<Arc<QueueReleaseProof>, SubmitError<T>> {
         let receipt = Arc::clone(&proof);
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
 
         let kind = match state.next_transfer_seq {
             None => Some(SubmitErrorKind::SequenceExhausted),
@@ -495,7 +504,10 @@ impl<T: Send> HandoffCell<T> {
     /// the worker is notified, so an edge cannot be cleared by an old syscall.
     pub fn publish_ready(&self, key: HandoffKey, direction: ReadyDirection) -> bool {
         let publish = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             let Some(attempt) = state.attempt.as_mut() else {
                 return false;
             };
@@ -550,7 +562,10 @@ impl<T: Send> HandoffCell<T> {
         let mut retirement_to_ack = None;
         let mut notify_worker = stop_worker;
         let proof = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             if stop_worker {
                 state.worker_stopped = true;
             }
@@ -624,7 +639,10 @@ impl<T: Send> HandoffCell<T> {
     /// deadline on each wake. Returns `None` after shutdown revokes the current
     /// attempt and stops future worker claims.
     pub fn worker_claim(&self) -> Option<WorkerWork<'_, T>> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
         loop {
             if state.worker_stopped {
                 return None;
@@ -648,7 +666,10 @@ impl<T: Send> HandoffCell<T> {
             if let Some((key, reason)) = expired {
                 drop(state);
                 let _ = self.revoke(key, reason);
-                state = self.state.lock().unwrap();
+                state = self
+                    .state
+                    .lock()
+                    .expect("handoff state mutex is not poisoned");
                 continue;
             }
             if let Some(attempt) = state.attempt.as_mut() {
@@ -686,7 +707,11 @@ impl<T: Send> HandoffCell<T> {
                         .saturating_duration_since(Instant::now())
                         .min(MAX_HANDOFF_WAIT)
                 });
-            state = self.worker_wake.wait_timeout(state, timeout).unwrap().0;
+            state = self
+                .worker_wake
+                .wait_timeout(state, timeout)
+                .expect("handoff state mutex is not poisoned")
+                .0;
         }
     }
 
@@ -703,7 +728,10 @@ impl<T: Send> HandoffCell<T> {
         if !std::ptr::eq(self, work.cell) {
             return WorkerYield::Stale;
         }
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
         let mut proof_wake = false;
         let mut requeued = false;
         let first = {
@@ -781,7 +809,11 @@ impl<T: Send> HandoffCell<T> {
                         .saturating_duration_since(Instant::now())
                         .min(MAX_HANDOFF_WAIT)
                 });
-            state = self.worker_wake.wait_timeout(state, timeout).unwrap().0;
+            state = self
+                .worker_wake
+                .wait_timeout(state, timeout)
+                .expect("handoff state mutex is not poisoned")
+                .0;
             proof_wake = false;
             requeued = false;
             let result = {
@@ -835,7 +867,10 @@ impl<T: Send> HandoffCell<T> {
     pub fn worker_success(&self, mut work: WorkerWork<'_, T>) -> io::Result<WorkerFinish> {
         let mut resource = Some(work.resource.take().expect("worker owns its resource"));
         work.armed = false;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
         let valid = state.attempt.as_ref().is_some_and(|attempt| {
             attempt.key == work.key
                 && attempt.worker_active
@@ -874,7 +909,10 @@ impl<T: Send> HandoffCell<T> {
         if let Some(resource) = resource.take() {
             drop(resource);
             work.retirement.ack();
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             if let Some(attempt) = state.attempt.as_mut() {
                 if attempt.key == work.key {
                     attempt.worker_active = false;
@@ -895,7 +933,10 @@ impl<T: Send> HandoffCell<T> {
     ) -> io::Result<WorkerFinish> {
         let mut proof_wake = false;
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             if let Some(attempt) = state.attempt.as_mut() {
                 if attempt.key == work.key
                     && attempt.worker_active
@@ -924,7 +965,10 @@ impl<T: Send> HandoffCell<T> {
         drop(resource);
         work.retirement.ack();
         let finish = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             match state.attempt.as_mut() {
                 Some(attempt)
                     if attempt.key == work.key
@@ -966,7 +1010,10 @@ impl<T: Send> HandoffCell<T> {
         let mut retirement_to_ack = None;
         let mut revoked_proof = None;
         let result = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             let Some(attempt) = state.attempt.as_mut() else {
                 return Err(TakeReturnError::Stale);
             };
@@ -1023,7 +1070,10 @@ impl<T: Send> HandoffCell<T> {
     /// lane immediately; the returned retirement cell is acknowledged
     /// separately after committed detachment or actual close.
     pub fn finish_accept(&self, key: HandoffKey) -> Result<(), FinishAcceptError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .expect("handoff state mutex is not poisoned");
         let Some(attempt) = state.attempt.as_ref() else {
             return Err(FinishAcceptError::Stale);
         };
@@ -1118,7 +1168,10 @@ impl<T: Send> Drop for WorkerWork<'_, T> {
         let cell = self.cell;
         let mut proof_wake = false;
         {
-            let mut state = cell.state.lock().unwrap();
+            let mut state = cell
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             if let Some(attempt) = state.attempt.as_mut() {
                 if attempt.key == self.key && attempt.worker_active {
                     let now = Instant::now();
@@ -1142,7 +1195,10 @@ impl<T: Send> Drop for WorkerWork<'_, T> {
         self.retirement.ack();
 
         {
-            let mut state = cell.state.lock().unwrap();
+            let mut state = cell
+                .state
+                .lock()
+                .expect("handoff state mutex is not poisoned");
             if let Some(attempt) = state.attempt.as_mut() {
                 if attempt.key == self.key && attempt.worker_active {
                     let now = Instant::now();

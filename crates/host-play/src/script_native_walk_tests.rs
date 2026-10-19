@@ -2821,7 +2821,8 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("Play construction succeeds");
     play.attach_arm("alice", SlotArm::new(7, false));
     let source = "export function tick(api) {}";
     play.script_start_load(

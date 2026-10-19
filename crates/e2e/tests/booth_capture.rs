@@ -62,7 +62,8 @@ fn capture_bank_sweep() {
         |c, _, _hold| {
             c.set_draw(true);
         },
-    );
+    )
+    .expect("Play construction succeeds");
 
     wait_ingame(&play, 1, Duration::from_secs(90), "booth_capture");
     service_wait(&play, Duration::from_secs(3));
@@ -140,96 +141,91 @@ fn dump_bank_locs() {
 
     let dumped = Arc::new(AtomicBool::new(false));
     let dumped_flag = Arc::clone(&dumped);
-    let mut play = run_with_io(
-        &options(),
-        profiles(&[("test", "test")]),
-        |_| (None, None),
-        move |c, _, _hold| {
-            c.set_draw(true);
-            if !(c.ingame && c.scene_state == 2) {
-                return;
+    let mut play = run_with_io(&options(), profiles(&[("test", "test")]), |_| (None, None), move |c, _, _hold| {
+        c.set_draw(true);
+        if !(c.ingame && c.scene_state == 2) {
+            return;
+        }
+        if dumped_flag.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(c);
+        let me = snap.tile();
+        eprintln!("player tile={me:?}");
+        let mut walls = Vec::new();
+        let mut booths = Vec::new();
+        for loc in snap.locs() {
+            let keep = loc.id == 1602
+                || loc.id == 2213
+                || loc.id == 2214
+                || loc.id == 2215
+                || loc.id == 961;
+            if !keep {
+                continue;
             }
-            if dumped_flag.swap(true, Ordering::Relaxed) {
-                return;
-            }
-            let mut snap = GameSnapshot::new();
-            snap.rebuild(c);
-            let me = snap.tile();
-            eprintln!("player tile={me:?}");
-            let mut walls = Vec::new();
-            let mut booths = Vec::new();
-            for loc in snap.locs() {
-                let keep = loc.id == 1602
-                    || loc.id == 2213
-                    || loc.id == 2214
-                    || loc.id == 2215
-                    || loc.id == 961;
-                if !keep {
+            if let Some((px, pz, _)) = me {
+                let dx = (loc.tile.x - px).abs();
+                let dz = (loc.tile.z - pz).abs();
+                if dx > 20 || dz > 20 {
                     continue;
                 }
-                if let Some((px, pz, _)) = me {
-                    let dx = (loc.tile.x - px).abs();
-                    let dz = (loc.tile.z - pz).abs();
-                    if dx > 20 || dz > 20 {
-                        continue;
-                    }
-                }
-                eprintln!(
-                    "loc id={} name={:?} tile=({},{},{}) shape={} ({}) angle={} ({}) layer={:?} dist={}",
+            }
+            eprintln!(
+                "loc id={} name={:?} tile=({},{},{}) shape={} ({}) angle={} ({}) layer={:?} dist={}",
+                loc.id,
+                loc.name,
+                loc.tile.x,
+                loc.tile.z,
+                loc.tile.level,
+                loc.shape,
+                shape_name(loc.shape),
+                loc.angle,
+                angle_name(loc.angle),
+                loc.layer,
+                loc.distance
+            );
+            if loc.id == 1602 {
+                walls.push((loc.tile.x, loc.tile.z, loc.tile.level, loc.shape, loc.angle));
+            }
+            if loc.id == 2213 || loc.id == 2214 || loc.id == 2215 {
+                booths.push((
                     loc.id,
-                    loc.name,
                     loc.tile.x,
                     loc.tile.z,
                     loc.tile.level,
                     loc.shape,
-                    shape_name(loc.shape),
                     loc.angle,
-                    angle_name(loc.angle),
-                    loc.layer,
-                    loc.distance
-                );
-                if loc.id == 1602 {
-                    walls.push((loc.tile.x, loc.tile.z, loc.tile.level, loc.shape, loc.angle));
-                }
-                if loc.id == 2213 || loc.id == 2214 || loc.id == 2215 {
-                    booths.push((
-                        loc.id,
-                        loc.tile.x,
-                        loc.tile.z,
-                        loc.tile.level,
-                        loc.shape,
-                        loc.angle,
-                    ));
-                }
+                ));
             }
-            eprintln!("booths={} walls_1602={}", booths.len(), walls.len());
-            for (bid, bx, bz, bl, bshape, bangle) in &booths {
-                let same: Vec<_> = walls
-                    .iter()
-                    .filter(|(wx, wz, wl, _, _)| *wx == *bx && *wz == *bz && *wl == *bl)
-                    .copied()
-                    .collect();
-                let west = walls.iter().any(|(wx, wz, wl, sh, an)| {
-                    *wl == *bl
-                        && *sh == 0
-                        && (*an == 2 || *an == 0)
-                        && *wz == *bz
-                        && (*wx == *bx - 1 || *wx == *bx)
-                });
-                let south = walls.iter().any(|(wx, wz, wl, sh, an)| {
-                    *wl == *bl
-                        && *sh == 0
-                        && *an == 3
-                        && *wx == *bx
-                        && (*wz == *bz || *wz == *bz - 1)
-                });
-                eprintln!(
-                    "booth {bid} @({bx},{bz},{bl}) shape={bshape} angle={} same_tile_1602={same:?} west_adj_or_same={west} south_adj_or_same={south}",
-                    angle_name(*bangle)
-                );
-            }
-        },
-    );
+        }
+        eprintln!("booths={} walls_1602={}", booths.len(), walls.len());
+        for (bid, bx, bz, bl, bshape, bangle) in &booths {
+            let same: Vec<_> = walls
+                .iter()
+                .filter(|(wx, wz, wl, _, _)| *wx == *bx && *wz == *bz && *wl == *bl)
+                .copied()
+                .collect();
+            let west = walls.iter().any(|(wx, wz, wl, sh, an)| {
+                *wl == *bl
+                    && *sh == 0
+                    && (*an == 2 || *an == 0)
+                    && *wz == *bz
+                    && (*wx == *bx - 1 || *wx == *bx)
+            });
+            let south = walls.iter().any(|(wx, wz, wl, sh, an)| {
+                *wl == *bl
+                    && *sh == 0
+                    && *an == 3
+                    && *wx == *bx
+                    && (*wz == *bz || *wz == *bz - 1)
+            });
+            eprintln!(
+                "booth {bid} @({bx},{bz},{bl}) shape={bshape} angle={} same_tile_1602={same:?} west_adj_or_same={west} south_adj_or_same={south}",
+                angle_name(*bangle)
+            );
+        }
+    }).expect("Play construction succeeds");
 
     wait_ingame(&play, 1, Duration::from_secs(90), "dump_bank_locs");
     // Let one rebuild land in the hook.

@@ -85,7 +85,7 @@ fn live_channel_ladder_client_wall() {
         Err(msg) => fail(msg),
     };
     // Every profile spawns one full Client slot.
-    let play = run_channels(&options(), ladder_profiles(n), 1);
+    let play = run_channels(&options(), ladder_profiles(n), 1).expect("Play construction succeeds");
     wait_all_up(&play, n);
     // Give the wall a beat to settle before sampling peak RSS.
     maintain_for(&play, Duration::from_secs(10));

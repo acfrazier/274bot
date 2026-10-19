@@ -175,6 +175,57 @@ pub struct ProfilePlayOptions {
     pub mainland: bool,
 }
 
+/// Play-owned process-network startup retained by a frontend while it prepares
+/// a profile before constructing the corresponding `Play`.
+pub struct PlayComposition {
+    driver: client_adapter::service::MaintenanceDriver,
+}
+
+impl PlayComposition {
+    /// Start the process network before any profile/cache preparation.
+    pub fn start() -> Result<Self, PlayError> {
+        let driver = client_adapter::service::NetworkService::start_composition()?;
+        Ok(Self { driver })
+    }
+
+    /// Keep the process network healthy while preparation runs without a Play.
+    pub fn maintain_services(&self, now: std::time::Instant) {
+        self.driver.maintain(now);
+    }
+}
+
+/// A typed failure while constructing Play or admitting its initial slots.
+#[derive(Debug, thiserror::Error)]
+pub enum PlayError {
+    #[error("network composition startup failed: {0}")]
+    NetworkStart(#[source] client_adapter::service::NetworkStartError),
+    #[error("Play startup failed: {0}")]
+    Startup(String),
+    #[error("Play slot admission failed: {0}")]
+    Slot(#[source] crate::PlaySpawnError),
+}
+
+impl From<client_adapter::service::NetworkStartError> for PlayError {
+    fn from(error: client_adapter::service::NetworkStartError) -> Self {
+        Self::NetworkStart(error)
+    }
+}
+
+impl From<String> for PlayError {
+    fn from(error: String) -> Self {
+        Self::Startup(error)
+    }
+}
+
+impl From<crate::PlaySpawnError> for PlayError {
+    fn from(error: crate::PlaySpawnError) -> Self {
+        match error {
+            crate::PlaySpawnError::NetworkStart(error) => Self::NetworkStart(error),
+            error => Self::Slot(error),
+        }
+    }
+}
+
 /// One validated asset decode for a process profile. Preparing clients clones
 /// only the shared Arcs; mutable interface overlays remain per client.
 pub struct SharedClientTemplate {
@@ -505,7 +556,7 @@ impl Play {
 /// permit, sends the handshake, then drives `mainloop` at the host cadence
 /// while mirroring its state into the shared status list. Slots run with no
 /// input and no frame mailbox; [`run_with_io`] adds per-slot channels.
-pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Play {
+pub fn run(options: &PlayOptions, profiles: Vec<Profile>) -> Result<Play, PlayError> {
     run_with_io(options, profiles, |_| (None, None), |_, _, _| {})
 }
 
@@ -521,26 +572,20 @@ pub fn run_with_io<F, G>(
     profiles: Vec<Profile>,
     per_slot: F,
     per_frame: G,
-) -> Play
+) -> Result<Play, PlayError>
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
-    let driver = match client_adapter::service::NetworkService::start_composition() {
-        Ok(driver) => Some(driver),
-        Err(error) => {
-            host_log!(stderr; Category::Lifecycle, Level::Error, "network startup: {error}");
-            None
-        }
-    };
+    let composition = PlayComposition::start()?;
     let mut play = Play::new(options);
-    play._headless_composition_driver = driver;
+    play._headless_composition_driver = Some(composition.driver);
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (slot_input, slot_mailbox) = per_slot(&profile.username);
-        play.spawn_slot(profile, slot_input, slot_mailbox, None);
+        play.try_spawn_slot(profile, slot_input, slot_mailbox, None)?;
     }
-    play
+    Ok(play)
 }
 
 /// Checked production path. Callers can load the template before opening a
@@ -551,19 +596,18 @@ pub fn run_with_template<F, G>(
     profiles: Vec<Profile>,
     per_slot: F,
     per_frame: G,
-) -> Result<Play, String>
+) -> Result<Play, PlayError>
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
-    let driver = client_adapter::service::NetworkService::start_composition()
-        .map_err(|error| error.to_string())?;
+    let composition = PlayComposition::start()?;
     if !profiles.is_empty() {
         template.profile().require_bot_operation()?;
     }
     let validated = template.validate_for_play()?;
-    let mut play = run_prepared_template(validated, mainland, profiles, per_slot, per_frame)?;
-    play._headless_composition_driver = Some(driver);
+    let mut play = run_prepared_template_inner(validated, mainland, profiles, per_slot, per_frame)?;
+    play._headless_composition_driver = Some(composition.driver);
     Ok(play)
 }
 
@@ -576,7 +620,24 @@ pub fn run_prepared_template<F, G>(
     profiles: Vec<Profile>,
     per_slot: F,
     per_frame: G,
-) -> Result<Play, String>
+) -> Result<Play, PlayError>
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
+{
+    let composition = PlayComposition::start()?;
+    let mut play = run_prepared_template_inner(validated, mainland, profiles, per_slot, per_frame)?;
+    play._headless_composition_driver = Some(composition.driver);
+    Ok(play)
+}
+
+fn run_prepared_template_inner<F, G>(
+    validated: ValidatedTemplate,
+    mainland: bool,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Result<Play, PlayError>
 where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
@@ -589,8 +650,7 @@ where
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (input, mailbox) = per_slot(&profile.username);
-        play.try_spawn_slot(profile, input, mailbox, None)
-            .map_err(|error| error.to_string())?;
+        play.try_spawn_slot(profile, input, mailbox, None)?;
     }
     Ok(play)
 }
@@ -598,48 +658,45 @@ where
 pub fn run_with_profile(
     options: &ProfilePlayOptions,
     profiles: Vec<Profile>,
-) -> Result<Play, String> {
-    let driver = client_adapter::service::NetworkService::start_composition()
-        .map_err(|error| error.to_string())?;
+) -> Result<Play, PlayError> {
+    let composition = PlayComposition::start()?;
     if !profiles.is_empty() {
         options.profile.require_bot_operation()?;
     }
     let template = SharedClientTemplate::load(Arc::clone(&options.profile))?;
     let validated = template.validate_for_play()?;
-    let mut play = run_prepared_template(
+    let mut play = run_prepared_template_inner(
         validated,
         options.mainland,
         profiles,
         |_| (None, None),
         |_, _, _| {},
     )?;
-    play._headless_composition_driver = Some(driver);
+    play._headless_composition_driver = Some(composition.driver);
     Ok(play)
 }
 
 /// Wall spawn for the e2e ladder: every profile spawns one full `Client`
 /// slot (the old `1 fat + N lean` split is gone). `heads` only selects
 /// whether the first profile gets the login-FIFO front.
-pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
-    let driver = match client_adapter::service::NetworkService::start_composition() {
-        Ok(driver) => Some(driver),
-        Err(error) => {
-            host_log!(stderr; Category::Lifecycle, Level::Error, "network startup: {error}");
-            None
-        }
-    };
+pub fn run_channels(
+    options: &PlayOptions,
+    profiles: Vec<Profile>,
+    heads: usize,
+) -> Result<Play, PlayError> {
+    let composition = PlayComposition::start()?;
     let mut play = Play::new(options);
-    play._headless_composition_driver = driver;
+    play._headless_composition_driver = Some(composition.driver);
     let tv_name = profiles.first().map(|p| p.username.clone());
     for profile in profiles {
-        play.spawn_slot(profile, None, None, None);
+        play.try_spawn_slot(profile, None, None, None)?;
     }
     if heads >= 1 {
         if let Some(name) = tv_name {
             play.prefer_login(&name);
         }
     }
-    play
+    Ok(play)
 }
 
 /// Slot client config: connection fields from `options`, memory profile

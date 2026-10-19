@@ -106,14 +106,20 @@ impl SharedConnection {
     /// Publish the first typed failure before `publish_closed` wakes the
     /// slot. A later close/error cannot overwrite the original exit cause.
     pub(crate) fn publish_exit_reason(&self, reason: StreamExitReason) {
-        let mut pending = self.exit_reason.lock().unwrap();
+        let mut pending = self
+            .exit_reason
+            .lock()
+            .expect("stream exit reason mutex is not poisoned");
         if pending.is_none() {
             *pending = Some(reason);
         }
     }
 
     pub(crate) fn take_exit_reason(&self) -> Option<StreamExitReason> {
-        self.exit_reason.lock().unwrap().take()
+        self.exit_reason
+            .lock()
+            .expect("stream exit reason mutex is not poisoned")
+            .take()
     }
 
     /// Called by the reactor after socket close/deregister/drop, before its

@@ -18,9 +18,8 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
 use api::identity::SessionKey;
-use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host::{CapacityEval, FrameBuf, SlotInput};
-use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
+use host_play::{InstancePermit, Play, PlayComposition, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
 
 use crate::capacity::{CapacityNotice, RenderPolicyLabel};
@@ -611,9 +610,9 @@ pub struct OperatorSession<Io> {
     /// opened; every `Play` this session adopts uses it, so the process has
     /// one writer for its state files.
     local_state: Option<Arc<host_play::local_state::LocalStateService>>,
-    /// Registration that keeps process network maintenance under this
-    /// composition's event loop from construction onward.
-    network_driver: Option<MaintenanceDriver>,
+    /// Play's composition-root driver retained during profile/cache
+    /// preparation, before a Play takes ownership of maintenance.
+    network_driver: Option<PlayComposition>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -640,10 +639,8 @@ enum CapacityKind {
 impl<Io> OperatorSession<Io> {
     pub fn new(instance: InstancePermit) -> Self {
         crate::log::global();
-        // Start before the session can prepare profiles or admit network work.
-        // Startup failure is cached by the service and later admissions report
-        // its typed error; construction remains infallible.
-        let network_driver = NetworkService::start_composition().ok();
+        // Service construction is owned by Play; the session does not start
+        // process networking until a profile-preparation or Play path needs it.
         Self {
             vault: None,
             play: None,
@@ -686,7 +683,7 @@ impl<Io> OperatorSession<Io> {
             walk_globals: host_play::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
-            network_driver,
+            network_driver: None,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -710,10 +707,24 @@ impl<Io> OperatorSession<Io> {
         if let Some(preferences) = self.walk_globals_store.as_ref() {
             play.set_walk_globals_store(preferences.clone());
         }
-        play.statuses_into(&mut self.statuses);
         self.play = Some(play);
+        self.network_driver = None;
         self.vault = Some(vault);
         self.writer = None;
+    }
+
+    /// Start the Play-owned network composition before profile/cache
+    /// preparation. Construction errors remain typed for the caller.
+    pub fn start_network_composition(&mut self) -> Result<(), host_play::PlayError> {
+        if self.network_driver.is_none() {
+            self.network_driver = Some(PlayComposition::start()?);
+        }
+        Ok(())
+    }
+
+    /// Adopt a composition started before this session was constructed.
+    pub fn adopt_network_composition(&mut self, composition: PlayComposition) {
+        self.network_driver = Some(composition);
     }
 
     /// Bind the process local-state service the front end's composition
@@ -1566,8 +1577,8 @@ impl<Io> OperatorSession<Io> {
         // publication semantics and maintains the same process service.
         if let Some(play) = self.play.as_ref() {
             play.maintain_services(now);
-        } else if let Some(driver) = self.network_driver.as_ref() {
-            driver.maintain(now);
+        } else if let Some(composition) = self.network_driver.as_ref() {
+            composition.maintain_services(now);
         }
         if let Some(play) = self.play.as_ref() {
             play.pump_script_lifecycles();
@@ -2787,6 +2798,9 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub fn set_play(&mut self, play: Option<Play>) {
+        if play.is_some() {
+            self.network_driver = None;
+        }
         self.play = play;
     }
 

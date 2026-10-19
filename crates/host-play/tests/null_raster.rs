@@ -60,7 +60,8 @@ fn live_draw_off_never_paints() {
                 c.set_draw(name == "test");
             }
         },
-    );
+    )
+    .expect("Play construction succeeds");
     wait_ingame(&play, 2, Duration::from_secs(120), "null_raster");
 
     let before: HashMap<String, u64> = frames.lock().unwrap().clone();

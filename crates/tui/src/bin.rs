@@ -955,8 +955,10 @@ impl TuiSession {
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
-            )?,
-            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
+            )
+            .map_err(|error| error.to_string())?,
+            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame)
+                .map_err(|error| error.to_string())?,
         };
         // `script_start_handle()` below captures the Play's state composition
         // when called, before `core.start` adopts the bound service: adopt it
@@ -3308,8 +3310,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
+    let composition = host_play::PlayComposition::start().map_err(|error| error.to_string())?;
     let template = selection.prepare_template()?;
     let mut session = TuiSession::new_bound(template, permit);
+    session.core.adopt_network_composition(composition);
     if frontend_core::log_file::session_log_setting(&session.preferences) {
         frontend_core::log_file::apply_session_log(true);
     }

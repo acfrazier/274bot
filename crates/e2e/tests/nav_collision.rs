@@ -125,7 +125,8 @@ fn nav_collision() {
                 }
             }
         }
-    });
+    })
+    .expect("Play construction succeeds");
 
     // The tutorial island reaches scene 2 first; the slot's mainland hop
     // fires on that edge, so give the capture generous deadlines.

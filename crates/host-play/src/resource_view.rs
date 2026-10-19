@@ -130,6 +130,7 @@ mod tests {
             |_| (None, None),
             |_, _, _| {},
         )
+        .expect("Play construction succeeds")
     }
 
     #[test]
