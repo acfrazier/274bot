@@ -175,8 +175,31 @@ fn iteration_advances_a_pending_removal(mode: Loop) {
 
 scenario!(pending_removal, iteration_advances_a_pending_removal);
 
-/// Every iteration persists what the operator changed: the pump writes the
-/// preference in the same pass.
+/// The saved manual-walk pause, once the preferences file holds one.
+fn saved_pause(rig: &Rig) -> Option<bool> {
+    let bytes = std::fs::read(rig.session.preferences.path()).ok()?;
+    let saved: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    saved["nav"]["pause_script_on_manual_walk_abort"].as_bool()
+}
+
+/// Iterations until the preferences file holds `want`. A write the disk
+/// holds past the bounded wait stays queued and the following iterations
+/// settle it; [`HANG_GUARD`] only ends a test whose writer hung.
+fn iterate_until_saved(rig: &mut Rig, want: bool) {
+    let start = std::time::Instant::now();
+    while saved_pause(rig) != Some(want) {
+        assert!(
+            start.elapsed() < HANG_GUARD,
+            "no iteration settled the preference write before the hang guard"
+        );
+        assert_eq!(rig.iterate(), None);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Every iteration persists what the operator changed: the pump submits
+/// the preference write in the same pass, and the iterations settle it
+/// when the disk confirms it.
 fn iteration_settles_a_preference_write(mode: Loop) {
     let _iso = IsolatedStores::enter("tui-loop-preference");
     let (session, _arm) = session_with_alice();
@@ -187,19 +210,20 @@ fn iteration_settles_a_preference_write(mode: Loop) {
     rig.iterate();
     assert!(
         !rig.app.pause_script_on_manual_walk_abort_dirty,
-        "one iteration must persist the changed preference"
+        "one iteration must submit the changed preference"
     );
     assert_eq!(rig.app.error, None);
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(rig.session.preferences.path()).unwrap()).unwrap();
-    assert_eq!(saved["nav"]["pause_script_on_manual_walk_abort"], true);
+    iterate_until_saved(&mut rig, true);
 
     rig.app.pause_script_on_manual_walk_abort = false;
     rig.app.pause_script_on_manual_walk_abort_dirty = true;
     rig.iterate();
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(rig.session.preferences.path()).unwrap()).unwrap();
-    assert_eq!(saved["nav"]["pause_script_on_manual_walk_abort"], false);
+    assert!(
+        !rig.app.pause_script_on_manual_walk_abort_dirty,
+        "one iteration must submit the changed preference"
+    );
+    assert_eq!(rig.app.error, None);
+    iterate_until_saved(&mut rig, false);
 }
 
 scenario!(preference_write, iteration_settles_a_preference_write);
@@ -216,9 +240,9 @@ fn selected_game_data() -> Arc<api::game_data::SelectedGameData> {
     .expect("selected data worker")
 }
 
-/// Hang guard for the reload worker; the pass condition is the command's
-/// own terminal.
-const RELOAD_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
+/// Hang guard for a worker (the preference writer, the Path reload); the
+/// pass condition is the product's own signal.
+const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Every iteration advances a Quester Paths reload (T3.3 r5, review
 /// finding 9), before the headed iteration draws: the iteration that
@@ -259,7 +283,7 @@ fn iteration_settles_a_quester_paths_reload(mode: Loop) {
         .is_some_and(|member| member.terminal().is_some())
     {
         assert!(
-            start.elapsed() < RELOAD_HANG_GUARD,
+            start.elapsed() < HANG_GUARD,
             "no iteration settled the Path reload before the hang guard"
         );
         assert_eq!(rig.iterate(), None);
