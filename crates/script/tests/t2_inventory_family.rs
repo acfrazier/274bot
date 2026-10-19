@@ -219,6 +219,8 @@ globalThis.__packRules = () => {
         someThrownIdentity,
     };
 };
+globalThis.__invItemClass = InvItem;
+globalThis.__inventoryObject = Inventory;
 
 export default class T extends LoopingBot { loop() {} }
 "#;
@@ -308,7 +310,9 @@ fn as_use_on(
 fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
     let iso = spawn();
     let unknown = iso.probe("__tryBackpack()").unwrap();
-    assert!(unknown.as_str().is_some_and(|message| message.contains("not impl")));
+    assert!(unknown
+        .as_str()
+        .is_some_and(|message| message.contains("not impl")));
 
     let empty: [ItemRowInput<'_>; 0] = [];
     let mut snapshot = common::ingame_snapshot();
@@ -326,14 +330,18 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
     snapshot.bank_open = true;
     snapshot.bank_side = &side_only;
     post(&iso, &snapshot, Some(700));
-    assert_eq!(iso.probe("__tryBackpack()[0].name").unwrap(), json!("Deposit note"));
+    assert_eq!(
+        iso.probe("__tryBackpack()[0].name").unwrap(),
+        json!("Deposit note")
+    );
     assert_eq!(iso.probe("__backpackCapacity()").unwrap(), json!(28));
     assert_eq!(
         iso.probe("__capacityWithoutHostRead()").unwrap(),
         json!({ "capacity": 28, "reads": 0 })
     );
     assert_eq!(iso.probe("__countApple()").unwrap(), json!(0));
-    iso.probe("delete globalThis.__rs2b0t_host.invSize").unwrap();
+    iso.probe("delete globalThis.__rs2b0t_host.invSize")
+        .unwrap();
 
     // A bank-open flag without an observed side root is unknown, not an empty backpack.
     snapshot.tick = 3;
@@ -427,14 +435,20 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
     snapshot.bank_side = &side_only;
     post(&iso, &snapshot, Some(700));
     assert_eq!(iso.probe("__countApple()").unwrap(), json!(3));
-    assert_eq!(iso.probe("__tryBackpack()[0].name").unwrap(), json!("Deposit note"));
+    assert_eq!(
+        iso.probe("__tryBackpack()[0].name").unwrap(),
+        json!("Deposit note")
+    );
     assert_eq!(iso.probe("__backpackCapacity()").unwrap(), json!(28));
 
     // A retained side page is not selected after the bank closes.
     snapshot.tick = 8;
     snapshot.bank_open = false;
     post(&iso, &snapshot, Some(-1));
-    assert_eq!(iso.probe("__tryBackpack()[0].name").unwrap(), json!("Apple"));
+    assert_eq!(
+        iso.probe("__tryBackpack()[0].name").unwrap(),
+        json!("Apple")
+    );
     assert_eq!(iso.probe("__countApple()").unwrap(), json!(3));
     iso.join();
 }
@@ -454,7 +468,10 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
 
     let result = iso.probe("__useTargets()").unwrap();
     assert_eq!(result["interactResult"], json!(true));
-    assert_eq!(result["result"], json!([true, true, true, true, true, false]));
+    assert_eq!(
+        result["result"],
+        json!([true, true, true, true, true, false])
+    );
     assert!(result["unsupported"]
         .as_str()
         .is_some_and(|message| message.contains("not impl")));
@@ -467,23 +484,83 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     ));
     assert_eq!(
         as_use_on(&requests[1]),
-        Some(("Apple", "inv", Some("Apple"), 0, 0, 0, None, Some(10), Some(0), Some(10), Some(1)))
+        Some((
+            "Apple",
+            "inv",
+            Some("Apple"),
+            0,
+            0,
+            0,
+            None,
+            Some(10),
+            Some(0),
+            Some(10),
+            Some(1)
+        ))
     );
     assert_eq!(
         as_use_on(&requests[2]),
-        Some(("Apple", "npc", Some("Goblin"), 1, 2, 0, Some(7), Some(10), Some(0), None, None))
+        Some((
+            "Apple",
+            "npc",
+            Some("Goblin"),
+            1,
+            2,
+            0,
+            Some(7),
+            Some(10),
+            Some(0),
+            None,
+            None
+        ))
     );
     assert_eq!(
         as_use_on(&requests[3]),
-        Some(("Apple", "loc", Some("Door"), 3, 4, 1, None, Some(10), Some(0), None, None))
+        Some((
+            "Apple",
+            "loc",
+            Some("Door"),
+            3,
+            4,
+            1,
+            None,
+            Some(10),
+            Some(0),
+            None,
+            None
+        ))
     );
     assert_eq!(
         as_use_on(&requests[4]),
-        Some(("Apple", "obj", Some("Coins"), 5, 6, 0, None, Some(10), Some(0), None, None))
+        Some((
+            "Apple",
+            "obj",
+            Some("Coins"),
+            5,
+            6,
+            0,
+            None,
+            Some(10),
+            Some(0),
+            None,
+            None
+        ))
     );
     assert_eq!(
         as_use_on(&requests[5]),
-        Some(("Apple", "player", Some("Rival"), 7, 8, 0, None, Some(10), Some(0), None, None))
+        Some((
+            "Apple",
+            "player",
+            Some("Rival"),
+            7,
+            8,
+            0,
+            None,
+            Some(10),
+            Some(0),
+            None,
+            None
+        ))
     );
     iso.join();
 }
@@ -501,7 +578,9 @@ fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     post(&iso, &snapshot, None);
 
     iso.probe("__startEquip('Apple')").unwrap();
-    assert!(matches!(iso.drain_interacts().as_slice(), [InteractReq::Wear { name }] if name == "Apple"));
+    assert!(
+        matches!(iso.drain_interacts().as_slice(), [InteractReq::Wear { name }] if name == "Apple")
+    );
     assert_eq!(iso.probe("__equipResult").unwrap(), json!("pending"));
 
     let equipped = [row(Some("Apple"), 10, 1, 0, 600, false, -1, &[])];
@@ -518,7 +597,9 @@ fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     assert!(iso.drain_interacts().is_empty());
 
     iso.probe("__startUnequip('Apple')").unwrap();
-    assert!(matches!(iso.drain_interacts().as_slice(), [InteractReq::Unequip { name }] if name == "Apple"));
+    assert!(
+        matches!(iso.drain_interacts().as_slice(), [InteractReq::Unequip { name }] if name == "Apple")
+    );
     assert_eq!(iso.probe("__unequipResult").unwrap(), json!("pending"));
     snapshot.tick = 3;
     snapshot.equipment = &empty;
@@ -566,5 +647,244 @@ fn pack_rules_keep_javascript_coercion_short_circuit_and_error_identity() {
     assert_eq!(result["shouldPanicStrictFood"], json!(false));
     assert_eq!(result["thrownIdentity"], json!(true));
     assert_eq!(result["someThrownIdentity"], json!(true));
+    iso.join();
+}
+
+#[test]
+fn item_constructor_keeps_getter_setter_metadata_and_strict_write_order() {
+    let iso = spawn();
+    let result = iso
+        .probe(
+            r#"(() => {
+        const InvItem = globalThis.__invItemClass;
+        const events = [];
+        const written = {};
+        let ids = 0;
+        let slots = 0;
+        const row = {
+            get id() { events.push('id.get'); return 9 + ++ids; },
+            get slot() { events.push('slot.get'); return 1 + ++slots; },
+            get name() { events.push('name.get'); return 'Manual'; },
+            get count() { events.push('count.get'); return 7; },
+            get noted() { events.push('noted.get'); return 1; },
+            get cert() { events.push('cert.get'); return null; },
+        };
+        class WithSetters extends InvItem {}
+        for (const field of ['name', 'count', 'id', 'slot', 'noted', 'cert']) {
+            Object.defineProperty(WithSetters.prototype, field, {
+                set(value) { events.push(field + '.set'); written[field] = value; },
+            });
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(Number, 'isInteger');
+        const original = descriptor.value;
+        let integerReceivers = true;
+        Object.defineProperty(Number, 'isInteger', {
+            configurable: true,
+            get() {
+                events.push('integer.get');
+                return function(value) {
+                    events.push('integer.call');
+                    integerReceivers &&= this === Number;
+                    return original(value);
+                };
+            },
+        });
+        let item;
+        try { item = new WithSetters(row); }
+        finally { Object.defineProperty(Number, 'isInteger', descriptor); }
+        const keys = Object.getOwnPropertySymbols(item);
+        const identity = keys.map(key => item[key]).find(value => value !== row);
+        const metadata = keys.length === 2
+            && keys.some(key => item[key] === row)
+            && keys.every(key => {
+                const property = Object.getOwnPropertyDescriptor(item, key);
+                return property.enumerable && property.writable && property.configurable;
+            });
+        class ReadOnly extends InvItem {}
+        Object.defineProperty(ReadOnly.prototype, 'name', {
+            value: 'read only', writable: false,
+        });
+        let strictWrite = false;
+        try { new ReadOnly({name: 'new'}); }
+        catch (error) { strictWrite = error instanceof TypeError; }
+        const sentinel = {};
+        class ThrowingSetter extends InvItem {}
+        Object.defineProperty(ThrowingSetter.prototype, 'count', {
+            set() { throw sentinel; },
+        });
+        let setterIdentity = false;
+        try { new ThrowingSetter({name: 'new', count: 1}); }
+        catch (error) { setterIdentity = error === sentinel; }
+        let nullThrows = false;
+        try { new InvItem(null); }
+        catch (error) { nullThrows = error instanceof TypeError; }
+        return {
+            events, written, integerReceivers, metadata, strictWrite,
+            setterIdentity, nullThrows, identity,
+        };
+    })()"#,
+        )
+        .unwrap();
+    assert_eq!(
+        result["events"],
+        json!([
+            "integer.get",
+            "id.get",
+            "integer.call",
+            "integer.get",
+            "slot.get",
+            "integer.call",
+            "slot.get",
+            "name.get",
+            "name.set",
+            "count.get",
+            "count.set",
+            "id.get",
+            "id.set",
+            "slot.get",
+            "slot.set",
+            "noted.get",
+            "noted.set",
+            "cert.get",
+            "cert.set",
+            "id.get",
+            "slot.get",
+        ])
+    );
+    assert_eq!(
+        result["written"],
+        json!({
+            "name": "Manual", "count": 7, "id": 11, "slot": 4, "noted": false, "cert": -1,
+        })
+    );
+    assert_eq!(result["identity"], json!({"id": 12, "slot": 5}));
+    for key in [
+        "integerReceivers",
+        "metadata",
+        "strictWrite",
+        "setterIdentity",
+        "nullThrows",
+    ] {
+        assert_eq!(result[key], true, "{key}: {result}");
+    }
+    iso.join();
+}
+
+#[test]
+fn item_actions_and_contains_keep_overridable_callees_and_original_rows() {
+    let iso = spawn();
+    let result = iso.probe(r#"(() => {
+        const InvItem = globalThis.__invItemClass;
+        const Inventory = globalThis.__inventoryObject;
+        const events = [];
+        const token = {};
+        let opsReads = 0;
+        let receivers = true;
+        const secondOps = {
+            get slice() {
+                events.push('slice.get');
+                return function() {
+                    events.push('slice.call');
+                    receivers &&= this === secondOps;
+                    return token;
+                };
+            },
+        };
+        const row = {
+            get ops() {
+                events.push('ops.' + ++opsReads);
+                return opsReads === 1 ? [] : secondOps;
+            },
+        };
+        const item = new InvItem(row);
+        const descriptor = Object.getOwnPropertyDescriptor(Array, 'isArray');
+        const original = descriptor.value;
+        Object.defineProperty(Array, 'isArray', {
+            configurable: true,
+            get() {
+                events.push('isArray.get');
+                return function(value) {
+                    events.push('isArray.call');
+                    receivers &&= this === Array;
+                    return original(value);
+                };
+            },
+        });
+        let actionsIdentity;
+        try { actionsIdentity = item.actions() === token; }
+        finally { Object.defineProperty(Array, 'isArray', descriptor); }
+        const emptyItem = new InvItem({ops: false});
+        const emptyA = emptyItem.actions();
+        const emptyB = emptyItem.actions();
+        const freshEmpty = Array.isArray(emptyA) && emptyA.length === 0 && emptyA !== emptyB;
+        const retained = {ops: ['first']};
+        const retainedItem = new InvItem(retained);
+        retained.ops = ['second'];
+        const retainedRow = retainedItem.actions()[0] === 'second';
+        const sentinel = {};
+        let unread = 0;
+        const unreadItem = new InvItem({get ops() { unread++; return []; }});
+        Object.defineProperty(Array, 'isArray', {
+            configurable: true, get() { throw sentinel; },
+        });
+        let calleeErrorIdentity = false;
+        try { unreadItem.actions(); }
+        catch (error) { calleeErrorIdentity = error === sentinel; }
+        finally { Object.defineProperty(Array, 'isArray', descriptor); }
+        const firstDescriptor = Object.getOwnPropertyDescriptor(Inventory, 'first');
+        const name = {};
+        let containsReceiver = true;
+        Object.defineProperty(Inventory, 'first', {
+            configurable: true,
+            value(value) { containsReceiver &&= this === Inventory && value === name; return undefined; },
+        });
+        let containsUndefined;
+        let containsNull;
+        let containsZero;
+        let containsErrorIdentity = false;
+        try {
+            containsUndefined = Inventory.contains(name);
+            Inventory.first = () => null;
+            containsNull = Inventory.contains(name);
+            Inventory.first = () => 0;
+            containsZero = Inventory.contains(name);
+            Object.defineProperty(Inventory, 'first', {get() { throw sentinel; }});
+            try { Inventory.contains(name); }
+            catch (error) { containsErrorIdentity = error === sentinel; }
+        } finally {
+            Object.defineProperty(Inventory, 'first', firstDescriptor);
+        }
+        return {
+            events, receivers, actionsIdentity, freshEmpty, retainedRow,
+            calleeErrorIdentity, unread, containsReceiver,
+            containsUndefined, containsNull, containsZero, containsErrorIdentity,
+        };
+    })()"#).unwrap();
+    assert_eq!(
+        result["events"],
+        json!([
+            "isArray.get",
+            "ops.1",
+            "isArray.call",
+            "ops.2",
+            "slice.get",
+            "slice.call",
+        ])
+    );
+    assert_eq!(result["unread"], 0);
+    assert_eq!(result["containsNull"], false);
+    for key in [
+        "receivers",
+        "actionsIdentity",
+        "freshEmpty",
+        "retainedRow",
+        "calleeErrorIdentity",
+        "containsReceiver",
+        "containsUndefined",
+        "containsZero",
+        "containsErrorIdentity",
+    ] {
+        assert_eq!(result[key], true, "{key}: {result}");
+    }
     iso.join();
 }

@@ -1,50 +1,37 @@
 // Inventory row handles are materialized by the native snapshot adapter.
-import { host, notImpl, queue, proxy } from '../../shim/_kernel.js';
+import { host, notImpl, queue } from '../../shim/_kernel.js';
 
 const inventoryIdentity = Symbol('inventoryIdentity');
 const inventoryRow = Symbol('inventoryRow');
 
 export function backpackSnapshots() {
-    return globalThis.__rs2b0t_inventory('backpackSnapshots');
+    return globalThis.__rs2b0t_inventory(0);
 }
 
 export function backpackCapacity() {
-    return globalThis.__rs2b0t_inventory('backpackCapacity', host());
+    return globalThis.__rs2b0t_inventory(1, host());
 }
 
 export class InvItem {
     constructor(row) {
-        const hasIdentity =
-            Number.isInteger(row.id) && Number.isInteger(row.slot) && row.slot >= 0;
-        this.name = row.name;
-        this.count = row.count;
-        this.id = row.id ?? 0;
-        this.slot = row.slot ?? 0;
-        this.noted = row.noted === true;
-        this.cert = row.cert ?? -1;
-        this[inventoryIdentity] = hasIdentity ? { id: row.id, slot: row.slot } : null;
-        this[inventoryRow] = row;
+        globalThis.__rs2b0t_inventory(15, this, row, inventoryIdentity, inventoryRow);
     }
 
     actions() {
-        const row = this[inventoryRow];
-        return Array.isArray(row.ops) ? row.ops.slice() : [];
+        return globalThis.__rs2b0t_inventory(16, this[inventoryRow]);
     }
 
     interact(action) {
-        const request = globalThis.__rs2b0t_inventory('interact', this[inventoryRow], action);
+        const request = globalThis.__rs2b0t_inventory(9, this[inventoryRow], action);
         queue(request);
         return true;
     }
 
     useOn(target) {
-        const request = globalThis.__rs2b0t_inventory(
-            'useOn',
-            this,
-            this[inventoryRow],
-            target,
-            inventoryIdentity,
-        );
+        const request = globalThis.__rs2b0t_inventory(10, this,
+        this[inventoryRow],
+        target,
+        inventoryIdentity,);
         if (!request) return false;
         queue(request);
         return true;
@@ -54,28 +41,28 @@ export class InvItem {
 export const Inventory = new Proxy(
     {
         count(name) {
-            return globalThis.__rs2b0t_inventory('count', name);
+            return globalThis.__rs2b0t_inventory(5, name);
         },
         countById(id) {
-            return globalThis.__rs2b0t_inventory('countById', id);
+            return globalThis.__rs2b0t_inventory(6, id);
         },
         first(name) {
-            return globalThis.__rs2b0t_inventory('first', name, InvItem);
+            return globalThis.__rs2b0t_inventory(3, name, InvItem);
         },
         items() {
-            return globalThis.__rs2b0t_inventory('items', InvItem);
+            return globalThis.__rs2b0t_inventory(2, InvItem);
         },
         contains(name) {
-            return Inventory.first(name) !== null;
+            return globalThis.__rs2b0t_inventory(17, Inventory, name);
         },
         used() {
-            return globalThis.__rs2b0t_inventory('used');
+            return globalThis.__rs2b0t_inventory(4);
         },
         isFull() {
-            return globalThis.__rs2b0t_inventory('isFull', Inventory, host());
+            return globalThis.__rs2b0t_inventory(7, Inventory, host());
         },
         free() {
-            return globalThis.__rs2b0t_inventory('free', Inventory, host());
+            return globalThis.__rs2b0t_inventory(8, Inventory, host());
         },
     },
     {

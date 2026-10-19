@@ -339,12 +339,14 @@ enum Op {
     Mul,
     Div,
     Poll,
+    Assign,
 }
 
 /// One arrow function per [`Op`], in order. `Poll` does nothing: entering it
 /// is what lets V8 service a pending termination request.
 const OPS_SOURCE: &str = "[(a, b) => a >= b, (a, b) => a <= b, (a, b) => a > b, (a, b) => a < b, \
-     (a, b) => a + b, (a, b) => a - b, (a, b) => a * b, (a, b) => a / b, () => undefined]";
+     (a, b) => a + b, (a, b) => a - b, (a, b) => a * b, (a, b) => a / b, () => undefined, \
+     (a, b, c) => { 'use strict'; return a[b] = c; }]";
 
 /// Private (script-invisible) key of the operator table on the context global.
 const OPS_KEY: &str = "rs2b0t.callback_v8.ops";
@@ -384,6 +386,16 @@ fn op<'s>(
     };
     let recv = v8::undefined(scope).into();
     catching(scope, |s| func.call(s, recv, args))
+}
+
+/// Strict `target[key] = value`, including setters and read-only failures.
+pub(crate) fn assign<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Value>,
+    key: v8::Local<'s, v8::Value>,
+    value: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, ()> {
+    op(scope, Op::Assign, &[target, key, value]).map(|_| ())
 }
 
 fn relation<'s>(

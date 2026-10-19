@@ -32,62 +32,35 @@ fn pack_rules_callback<'s>(
     cb::finish(scope, rv, result);
 }
 
-fn operation_is(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, name: &str) -> bool {
-    let name = cb::string(scope, name);
-    value.strict_equals(name)
-}
-
 fn inventory<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let operation = args.get(0);
-    if operation_is(scope, operation, "backpackSnapshots") {
-        return backpack_rows(scope);
+    if !operation.is_int32() {
+        return Err(cb::not_impl(scope, "Inventory operation"));
     }
-    if operation_is(scope, operation, "backpackCapacity") {
-        return backpack_capacity(scope, args.get(1));
+    match operation.int32_value(scope).unwrap_or(-1) {
+        0 => backpack_rows(scope),
+        1 => backpack_capacity(scope, args.get(1)),
+        2 => inventory_items(scope, args.get(1)),
+        3 => inventory_first(scope, args.get(1), args.get(2)),
+        4 => inventory_used(scope),
+        5 => inventory_count(scope, args.get(1)),
+        6 => inventory_count_by_id(scope, args.get(1)),
+        7 => inventory_is_full(scope, args.get(1), args.get(2)),
+        8 => inventory_free(scope, args.get(1), args.get(2)),
+        9 => inventory_interact(scope, args.get(1), args.get(2)),
+        10 => inventory_use_on(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
+        11 => equipment_items(scope),
+        12 => equipment_contains(scope, args.get(1)),
+        13 => equipment_equip(scope, args.get(1), args.get(2), args.get(3)),
+        14 => equipment_unequip(scope, args.get(1), args.get(2)),
+        15 => inventory_item_init(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
+        16 => inventory_item_actions(scope, args.get(1)),
+        17 => inventory_contains(scope, args.get(1), args.get(2)),
+        _ => Err(cb::not_impl(scope, "Inventory operation")),
     }
-    if operation_is(scope, operation, "items") {
-        return inventory_items(scope, args.get(1));
-    }
-    if operation_is(scope, operation, "first") {
-        return inventory_first(scope, args.get(1), args.get(2));
-    }
-    if operation_is(scope, operation, "used") {
-        return inventory_used(scope);
-    }
-    if operation_is(scope, operation, "count") {
-        return inventory_count(scope, args.get(1));
-    }
-    if operation_is(scope, operation, "countById") {
-        return inventory_count_by_id(scope, args.get(1));
-    }
-    if operation_is(scope, operation, "isFull") {
-        return inventory_is_full(scope, args.get(1), args.get(2));
-    }
-    if operation_is(scope, operation, "free") {
-        return inventory_free(scope, args.get(1), args.get(2));
-    }
-    if operation_is(scope, operation, "interact") {
-        return inventory_interact(scope, args.get(1), args.get(2));
-    }
-    if operation_is(scope, operation, "useOn") {
-        return inventory_use_on(scope, args.get(1), args.get(2), args.get(3), args.get(4));
-    }
-    if operation_is(scope, operation, "equipmentItems") {
-        return equipment_items(scope);
-    }
-    if operation_is(scope, operation, "equipmentContains") {
-        return equipment_contains(scope, args.get(1));
-    }
-    if operation_is(scope, operation, "equipmentEquip") {
-        return equipment_equip(scope, args.get(1), args.get(2), args.get(3));
-    }
-    if operation_is(scope, operation, "equipmentUnequip") {
-        return equipment_unequip(scope, args.get(1), args.get(2));
-    }
-    Err(cb::not_impl(scope, "Inventory operation"))
 }
 
 fn pack_rules<'s>(
@@ -95,29 +68,121 @@ fn pack_rules<'s>(
     args: v8::FunctionCallbackArguments<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let operation = args.get(0);
-    if operation_is(scope, operation, "matchesAny") {
-        return matches_any(scope, args.get(1), args.get(2));
+    if !operation.is_int32() {
+        return Err(cb::not_impl(scope, "PackRules operation"));
     }
-    if operation_is(scope, operation, "countMatching") {
-        return count_matching(scope, args.get(1), args.get(2));
+    match operation.int32_value(scope).unwrap_or(-1) {
+        0 => matches_any(scope, args.get(1), args.get(2)),
+        1 => count_matching(scope, args.get(1), args.get(2)),
+        2 => slots_matching(scope, args.get(1), args.get(2)),
+        3 => should_bank(scope, args.get(1), args.get(2), args.get(3)),
+        4 => {
+            let should = cb::lt(scope, args.get(1), args.get(2))?;
+            Ok(v8::Boolean::new(scope, should).into())
+        }
+        5 => {
+            let hp_is_low = cb::lt(scope, args.get(1), args.get(2))?;
+            let zero = cb::num(scope, 0.0);
+            let no_food = args.get(3).strict_equals(zero);
+            Ok(v8::Boolean::new(scope, hp_is_low && no_food).into())
+        }
+        _ => Err(cb::not_impl(scope, "PackRules operation")),
     }
-    if operation_is(scope, operation, "slotsMatching") {
-        return slots_matching(scope, args.get(1), args.get(2));
-    }
-    if operation_is(scope, operation, "shouldBank") {
-        return should_bank(scope, args.get(1), args.get(2), args.get(3));
-    }
-    if operation_is(scope, operation, "shouldRestock") {
-        let should = cb::lt(scope, args.get(1), args.get(2))?;
-        return Ok(v8::Boolean::new(scope, should).into());
-    }
-    if operation_is(scope, operation, "shouldPanic") {
-        let hp_is_low = cb::lt(scope, args.get(1), args.get(2))?;
+}
+
+fn integer_field<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    row: v8::Local<'s, v8::Value>,
+    field: &str,
+) -> cb::JsResult<'s, bool> {
+    let global = scope.get_current_context().global(scope);
+    let number = cb::get(scope, global.into(), "Number")?;
+    let function = cb::get(scope, number, "isInteger")?;
+    let value = cb::get(scope, row, field)?;
+    let result = cb::call(scope, function, number, &[value], "Number.isInteger")?;
+    Ok(cb::truthy(scope, result))
+}
+
+fn assign_item_field<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Value>,
+    field: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, ()> {
+    let key = cb::string(scope, field);
+    cb::assign(scope, target, key, value)
+}
+
+fn inventory_item_init<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<'s, v8::Value>,
+    row: v8::Local<'s, v8::Value>,
+    identity_key: v8::Local<'s, v8::Value>,
+    row_key: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    // Read both isInteger callees before their corresponding argument getters.
+    // Identity eligibility precedes ordinary field writes; its retained values
+    // are read again only after those writes, as in the original constructor.
+    let has_identity = integer_field(scope, row, "id")? && integer_field(scope, row, "slot")? && {
+        let slot = cb::get(scope, row, "slot")?;
         let zero = cb::num(scope, 0.0);
-        let no_food = args.get(3).strict_equals(zero);
-        return Ok(v8::Boolean::new(scope, hp_is_low && no_food).into());
+        cb::ge(scope, slot, zero)?
+    };
+    for field in ["name", "count"] {
+        let value = cb::get(scope, row, field)?;
+        assign_item_field(scope, target, field, value)?;
     }
-    Err(cb::not_impl(scope, "PackRules operation"))
+    for field in ["id", "slot"] {
+        let mut value = cb::get(scope, row, field)?;
+        if value.is_null_or_undefined() {
+            value = cb::num(scope, 0.0);
+        }
+        assign_item_field(scope, target, field, value)?;
+    }
+    let noted = cb::get(scope, row, "noted")?;
+    let noted = v8::Boolean::new(scope, noted.is_true()).into();
+    assign_item_field(scope, target, "noted", noted)?;
+    let mut cert = cb::get(scope, row, "cert")?;
+    if cert.is_null_or_undefined() {
+        cert = cb::num(scope, -1.0);
+    }
+    assign_item_field(scope, target, "cert", cert)?;
+    let identity = if has_identity {
+        let id = cb::get(scope, row, "id")?;
+        let slot = cb::get(scope, row, "slot")?;
+        cb::object(scope, &[("id", id), ("slot", slot)])?
+    } else {
+        v8::null(scope).into()
+    };
+    cb::assign(scope, target, identity_key, identity)?;
+    cb::assign(scope, target, row_key, row)?;
+    Ok(v8::undefined(scope).into())
+}
+
+fn inventory_item_actions<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    row: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let array = cb::get(scope, global.into(), "Array")?;
+    let function = cb::get(scope, array, "isArray")?;
+    let ops = cb::get(scope, row, "ops")?;
+    let is_array = cb::call(scope, function, array, &[ops], "Array.isArray")?;
+    if cb::truthy(scope, is_array) {
+        let ops = cb::get(scope, row, "ops")?;
+        cb::call_method(scope, ops, "slice", &[], "slice")
+    } else {
+        Ok(v8::Array::new(scope, 0).into())
+    }
+}
+
+fn inventory_contains<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    inventory: v8::Local<'s, v8::Value>,
+    name: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let first = cb::call_method(scope, inventory, "first", &[name], "Inventory.first")?;
+    Ok(v8::Boolean::new(scope, !first.is_null()).into())
 }
 
 fn global_call<'s>(
@@ -183,7 +248,10 @@ fn create_property<'s>(
     if cb::catching(scope, |s| object.create_data_property(s, key.cast(), value))? {
         Ok(())
     } else {
-        Err(cb::type_error(scope, "inventory row materialization failed"))
+        Err(cb::type_error(
+            scope,
+            "inventory row materialization failed",
+        ))
     }
 }
 
@@ -200,7 +268,10 @@ fn create_index<'s>(
     if cb::catching(scope, |s| array.create_data_property(s, key.into(), value))? {
         Ok(())
     } else {
-        Err(cb::type_error(scope, "inventory array materialization failed"))
+        Err(cb::type_error(
+            scope,
+            "inventory array materialization failed",
+        ))
     }
 }
 
@@ -319,7 +390,6 @@ fn backpack_rows<'s>(
     })
 }
 
-
 fn inventory_rows<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
@@ -412,9 +482,9 @@ fn inventory_items<'s>(
     array_map(scope, filtered, mapper, "map")
 }
 
-fn inventory_named_row(
-    scope: &mut v8::HandleScope,
-    args: v8::FunctionCallbackArguments,
+fn inventory_named_row<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
@@ -444,7 +514,13 @@ fn inventory_first<'s>(
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let wanted = lower_string(scope, name)?;
     let rows = inventory_rows(scope)?;
-    let predicate = callback_function(scope, inventory_name_matches, wanted, 1, "Inventory.first find")?;
+    let predicate = callback_function(
+        scope,
+        inventory_name_matches,
+        wanted,
+        1,
+        "Inventory.first find",
+    )?;
     let find = cb::get(scope, rows, "find")?;
     let row = cb::call(scope, find, rows, &[predicate], "find")?;
     if !cb::truthy(scope, row) {
@@ -488,7 +564,13 @@ fn inventory_count<'s>(
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     let wanted = lower_string(scope, name)?;
     let rows = inventory_rows(scope)?;
-    let predicate = callback_function(scope, inventory_name_matches, wanted, 1, "Inventory.count filter")?;
+    let predicate = callback_function(
+        scope,
+        inventory_name_matches,
+        wanted,
+        1,
+        "Inventory.count filter",
+    )?;
     let filtered = array_filter(scope, rows, predicate, "filter")?;
     reduce_item_counts(scope, filtered)
 }
@@ -502,14 +584,25 @@ fn inventory_count_by_id<'s>(
     if cb::number(scope, length)? == 0.0 {
         return Ok(cb::num(scope, 0.0));
     }
-    let has_id = callback_without_data(scope, inventory_has_nonzero_id, 1, "Inventory.countById some")?;
+    let has_id = callback_without_data(
+        scope,
+        inventory_has_nonzero_id,
+        1,
+        "Inventory.countById some",
+    )?;
     let some = cb::get(scope, rows, "some")?;
     let any_id = cb::call(scope, some, rows, &[has_id], "some")?;
     if !cb::truthy(scope, any_id) {
         return Err(cb::not_impl(scope, "Inventory.countById"));
     }
     let id = global_call(scope, "Number", &[id])?;
-    let predicate = callback_function(scope, inventory_id_matches, id, 1, "Inventory.countById filter")?;
+    let predicate = callback_function(
+        scope,
+        inventory_id_matches,
+        id,
+        1,
+        "Inventory.countById filter",
+    )?;
     let filtered = array_filter(scope, rows, predicate, "filter")?;
     reduce_item_counts(scope, filtered)
 }
@@ -647,7 +740,10 @@ fn symbol_property<'s>(
     key: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
     if target.is_null_or_undefined() {
-        return Err(cb::type_error(scope, "Cannot read properties of nullish value"));
+        return Err(cb::type_error(
+            scope,
+            "Cannot read properties of nullish value",
+        ));
     }
     let object = cb::catching(scope, |s| target.to_object(s))?;
     cb::catching(scope, |s| object.get(s, key))
@@ -828,7 +924,11 @@ fn equipment_item<'s>(
             cb::num(scope, 1.0)
         };
         let id = cb::get(scope, row, "id")?;
-        let id = if id.is_number() { id } else { cb::num(scope, 0.0) };
+        let id = if id.is_number() {
+            id
+        } else {
+            cb::num(scope, 0.0)
+        };
         cb::object(scope, &[("name", name), ("count", count), ("id", id)])
     })();
     cb::finish(scope, rv, result);
@@ -905,8 +1005,6 @@ fn equipment_unequip<'s>(
     let op = cb::string(scope, "unequip").into();
     cb::object(scope, &[("op", op), ("name", name)])
 }
-
-
 
 fn matches_any<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1046,8 +1144,51 @@ mod allocation_tests {
     use crate::observed::{ItemRow, Ops, Text};
     use rustyscript::{Runtime, RuntimeOptions};
 
-    #[test]
-    fn first_bridge_read_is_attributed_and_warmed_local_batches_allocate_nothing() {
+    const INVENTORY_SETUP: &str = r#"
+const identity = Symbol('inventoryIdentity');
+const sourceRow = Symbol('inventoryRow');
+globalThis.__InventoryTestItem = class {
+    constructor(row) {
+        globalThis.__rs2b0t_inventory(15, this, row, identity, sourceRow);
+    }
+    actions() {
+        return globalThis.__rs2b0t_inventory(16, this[sourceRow]);
+    }
+};
+globalThis.checkInventory = () => {
+    const call = globalThis.__rs2b0t_inventory;
+    const rule = globalThis.__rs2b0t_pack_rules;
+    const snapshots = call(0);
+    const items = call(2, globalThis.__InventoryTestItem);
+    const first = call(3, 'apple', globalThis.__InventoryTestItem);
+    const used = call(4);
+    const count = call(5, 'apple');
+    const countById = call(6, 10);
+    const host = { invSize: 28 };
+    const capacity = call(1, host);
+    const inventory = { used() { return used; }, first() { return first; } };
+    const full = call(7, inventory, host);
+    const free = call(8, inventory, host);
+    const equipment = call(11);
+    const equipped = call(12, 'apple');
+    const contains = call(17, inventory, 'apple');
+    const actions = first.actions();
+    const ruleItems = [{name: 'Apple', count: 2}];
+    const rules = rule(1, ruleItems, ['apple']);
+    const slots = rule(2, ruleItems, ['apple']);
+    const bank = rule(3, 1, 2, true);
+    const restock = rule(4, 1, 2);
+    const panic = rule(5, 0.1, 0.2, 0);
+    const matches = rule(0, 'Apple', [' apple ']);
+    return snapshots.length === 1 && items.length === 1 && first.name === 'Apple'
+        && used === 1 && count === 2 && countById === 2 && capacity === 28
+        && !full && free === 27 && equipment.length === 1 && equipped && contains
+        && actions.length === 1 && actions[0] === 'Eat' && first.actions() !== actions
+        && rules === 2 && slots === 1 && bank && restock && panic && matches;
+};
+"#;
+
+    fn setup() -> Runtime {
         crate::load::platform::bootstrap_test_v8_platform();
         let row = ItemRow {
             id: 10,
@@ -1067,63 +1208,146 @@ mod allocation_tests {
                 .equipment(vec![row.clone()])
                 .side_modal_id(700);
         });
-
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();
+        runtime.eval::<()>(INVENTORY_SETUP).unwrap();
         runtime
-            .eval::<()>(
-                r#"
-globalThis.__InventoryTestItem = class {
-    constructor(row) { this.row = row; }
-};
-void 0;
-"#,
-            )
-            .unwrap();
+    }
+
+    #[test]
+    fn first_bridge_read_is_attributed_and_warmed_local_batches_allocate_nothing() {
+        let mut runtime = setup();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkInventory");
+        let function =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
         let cold = allocation_counter::measure(|| {
-            runtime
-                .eval::<()>("void globalThis.__rs2b0t_inventory('backpackSnapshots')")
-                .unwrap();
+            assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
         });
         let warm = allocation_counter::measure(|| {
-            runtime
-                .eval::<()>(
-                    r#"
-for (let i = 0; i < 100; i++) {
-    const snapshots = globalThis.__rs2b0t_inventory('backpackSnapshots');
-    const items = globalThis.__rs2b0t_inventory('items', globalThis.__InventoryTestItem);
-    const first = globalThis.__rs2b0t_inventory('first', 'apple', globalThis.__InventoryTestItem);
-    const used = globalThis.__rs2b0t_inventory('used');
-    const count = globalThis.__rs2b0t_inventory('count', 'apple');
-    const countById = globalThis.__rs2b0t_inventory('countById', 10);
-    const host = { invSize: 28 };
-    const capacity = globalThis.__rs2b0t_inventory('backpackCapacity', host);
-    const inventory = { used() { return used; } };
-    const full = globalThis.__rs2b0t_inventory('isFull', inventory, host);
-    const free = globalThis.__rs2b0t_inventory('free', inventory, host);
-    const equipment = globalThis.__rs2b0t_inventory('equipmentItems');
-    const contains = globalThis.__rs2b0t_inventory('equipmentContains', 'apple');
-    const ruleItems = [{name: 'Apple', count: 2}];
-    const rules = globalThis.__rs2b0t_pack_rules('countMatching', ruleItems, ['apple']);
-    const slots = globalThis.__rs2b0t_pack_rules('slotsMatching', ruleItems, ['apple']);
-    const bank = globalThis.__rs2b0t_pack_rules('shouldBank', 1, 2, true);
-    const restock = globalThis.__rs2b0t_pack_rules('shouldRestock', 1, 2);
-    const panic = globalThis.__rs2b0t_pack_rules('shouldPanic', 0.1, 0.2, 0);
-    const matches = globalThis.__rs2b0t_pack_rules('matchesAny', 'Apple', [' apple ']);
-    if (snapshots.length !== 1 || items.length !== 1 || first.name !== 'Apple'
-        || used !== 1 || count !== 2 || countById !== 2 || capacity !== 28
-        || full || free !== 27 || equipment.length !== 1 || !contains || rules !== 2
-        || slots !== 1 || !bank || !restock || !panic || !matches) {
-        throw new Error('inventory local-read batch mismatch');
-    }
-}
-void 0;
-"#,
-                )
-                .unwrap();
+            for _ in 0..1_000 {
+                assert!(function.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
         });
-        eprintln!(
-            "inventory first bridge read cold={cold:?}; warmed native local-read batch x100={warm:?}"
+        println!("Inventory local-read callbacks cold={cold:?}; warm1000={warm:?}");
+        // The raw five-scope control below attributes these cache cells without
+        // calling Inventory or pack-rule policy.
+        assert!(cold.count_total <= 3);
+        assert!(cold.count_current <= 3);
+        assert!(cold.count_max <= 3);
+        assert!(cold.bytes_total <= 336);
+        assert!(cold.bytes_current <= 336);
+        assert!(cold.bytes_max <= 336);
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
+
+    fn scope_cache_control<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        args: v8::FunctionCallbackArguments<'s>,
+        mut rv: v8::ReturnValue,
+    ) {
+        let first = &mut v8::TryCatch::new(scope);
+        let second = &mut v8::TryCatch::new(first);
+        let third = &mut v8::TryCatch::new(second);
+        let fourth = &mut v8::TryCatch::new(third);
+        let fifth = &mut v8::TryCatch::new(fourth);
+        if args.get(0).is_true() {
+            let sixth = &mut v8::TryCatch::new(fifth);
+            rv.set(v8::Boolean::new(sixth, true).into());
+        } else {
+            rv.set(v8::Boolean::new(fifth, true).into());
+        }
+    }
+
+    #[test]
+    fn inventory_cold_charge_reuses_independent_scope_cache_cells() {
+        let mut runtime = setup();
+        cb::install(&mut runtime, "__inventoryScopeControl", scope_cache_control).unwrap();
+        runtime
+            .eval::<()>(
+                "globalThis.checkInventoryPure = () => true; \
+                 globalThis.checkInventoryScopes = () => __inventoryScopeControl(false); \
+                 globalThis.checkInventoryExtraScope = () => __inventoryScopeControl(true);",
+            )
+            .unwrap();
+        let context = runtime.deno_runtime().main_context();
+        let mut scope = runtime.deno_runtime().handle_scope();
+        let global = context.open(&mut scope).global(&mut scope);
+        let key = cb::string(&mut scope, "checkInventoryPure");
+        let pure_js =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkInventoryScopes");
+        let five_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkInventoryExtraScope");
+        let six_scopes =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let key = cb::string(&mut scope, "checkInventory");
+        let inventory =
+            v8::Local::<v8::Function>::try_from(global.get(&mut scope, key).unwrap()).unwrap();
+        let receiver = v8::undefined(&mut scope).into();
+        let pure = allocation_counter::measure(|| {
+            assert!(pure_js.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let cold = allocation_counter::measure(|| {
+            assert!(five_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let inventory_after_control = allocation_counter::measure(|| {
+            assert!(inventory.call(&mut scope, receiver, &[]).unwrap().is_true());
+        });
+        let extra_depth = allocation_counter::measure(|| {
+            assert!(six_scopes
+                .call(&mut scope, receiver, &[])
+                .unwrap()
+                .is_true());
+        });
+        let warm = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(six_scopes
+                    .call(&mut scope, receiver, &[])
+                    .unwrap()
+                    .is_true());
+                assert!(inventory.call(&mut scope, receiver, &[]).unwrap().is_true());
+            }
+        });
+        println!(
+            "Inventory scope-cache control pure={pure:?}; five scopes={cold:?}; \
+             inventory after control={inventory_after_control:?}; \
+             extra scope={extra_depth:?}; warm1000={warm:?}"
+        );
+        assert_eq!(pure, allocation_counter::AllocationInfo::default());
+        assert_eq!(
+            cold,
+            allocation_counter::AllocationInfo {
+                count_total: 3,
+                count_current: 3,
+                count_max: 3,
+                bytes_total: 336,
+                bytes_current: 336,
+                bytes_max: 336,
+            }
+        );
+        assert_eq!(
+            inventory_after_control,
+            allocation_counter::AllocationInfo::default()
+        );
+        assert_eq!(
+            extra_depth,
+            allocation_counter::AllocationInfo {
+                count_total: 1,
+                count_current: 1,
+                count_max: 1,
+                bytes_total: 112,
+                bytes_current: 112,
+                bytes_max: 112,
+            }
         );
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
