@@ -481,9 +481,13 @@ fn secret_push_wall_uses_the_verified_content_crossing() {
     write_barrier_square(&fx, &[46], "0 5 46: 900 0 2\n");
     let (graph, wc) = derive_stage(&fx, &[900]);
     assert_eq!(door_crossings(&graph, 900).len(), 2);
+    // The wall is one tile long in this fixture, so a longer walk can go
+    // round its end at the same cost as the door. Each crossing starts on
+    // its near side (the loc tile east-bound, the tile across the wall
+    // west-bound), where the door is cheaper than the way round.
     for (from, to) in [
-        (tile(2818, 3438), tile(2824, 3438)),
-        (tile(2824, 3438), tile(2818, 3438)),
+        (tile(2821, 3438), tile(2822, 3438)),
+        (tile(2822, 3438), tile(2821, 3438)),
     ] {
         assert_eq!(
             crosses(&graph, &wc, from, to, &WorldState::empty(), 900),

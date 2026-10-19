@@ -210,7 +210,8 @@ pub fn validate_case_baseline_with_preparation(
                 && loc_at(baseline, WOODEN_GATE_CLOSED_ID, LUMBRIDGE_GATE, 1)
                     .is_some_and(|loc| loc.open)
         }
-        CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => near(baseline.tile, GNOME_START, 2),
+        CoreCase::GnomeCourse => near(baseline.tile, GNOME_START, 2),
+        CoreCase::GnomeCourseRadius => near(baseline.tile, GNOME_RADIUS_START, 0),
         CoreCase::WildyAgility => {
             near(baseline.tile, WILDY_START, 2)
                 && baseline.level("agility") >= 52
@@ -701,8 +702,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::DoorOpenerGate => {
             "adjacent stand (3213,3260,0) and shut wooden gate 1551 offering Open"
         }
-        CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
-            "Gnome Stronghold start (2474,3436,0)"
+        CoreCase::GnomeCourse => "Gnome Stronghold start (2474,3436,0)",
+        CoreCase::GnomeCourseRadius => {
+            "off-course start (2474,3446,0), 11 tiles from the Log balance"
         }
         CoreCase::WildyAgility => {
             "south ridge stand (2998,3916,0), Agility 52, base/effective Hitpoints 40, and five Lobsters 379"

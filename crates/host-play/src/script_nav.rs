@@ -4285,6 +4285,9 @@ impl ScriptWalkArm {
             let navs = self.navs.lock().unwrap();
             let bot = navs.get(&self.name);
             input.off_debt = bot.is_some_and(|bot| bot.walk_guard_off.is_some());
+            // A v1 card keeps frozen danger routing on the machine-owned
+            // native walks too, as on its compiled walks (`compiled_options`).
+            let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
             crate::admission::Admission {
                 policy,
                 enforce: enforce || !request.cross.is_empty(),
@@ -4292,7 +4295,7 @@ impl ScriptWalkArm {
                 allow: request.allow,
                 input,
                 generation: authority.request_id().get(),
-                compat_v1: false,
+                compat_v1,
                 escape: None,
             }
         };
@@ -4431,12 +4434,16 @@ impl ScriptWalkArm {
             request.options,
             session_permissions,
         );
-        let off_debt = self
+        // A v1 card keeps frozen danger routing on the machine-owned native
+        // walks too (Banking.open's stand walk), as on its compiled walks.
+        let (off_debt, compat_v1) = self
             .navs
             .lock()
             .unwrap()
             .get(&self.name)
-            .is_some_and(|bot| bot.walk_guard_off.is_some());
+            .map_or((false, false), |bot| {
+                (bot.walk_guard_off.is_some(), bot.compat_v1)
+            });
         let admission = crate::admission::Admission {
             policy,
             enforce: enforce || !request.cross.is_empty(),
@@ -4449,7 +4456,7 @@ impl ScriptWalkArm {
                 off_debt,
             ),
             generation: 0,
-            compat_v1: false,
+            compat_v1,
             escape: None,
         };
         if let (Some(provider), Some(family)) = (
