@@ -192,6 +192,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   not pulled it before. The walk now answers the lever's Wilderness warning
   with "Yes I'm brave." and does not change the account's "don't show this
   message again" choice.
+- Fixed: a walk no longer gives up when the game ignores a walk click, for
+  example right after the bot pays the Al Kharid toll gate on the way from
+  the Shantay Pass to Varrock. The walk now sends the click again once the
+  bot has stood on the same tile for five game ticks, even while its
+  on-screen character is still catching up.
 
 ### Random-event guardian
 

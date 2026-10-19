@@ -186,9 +186,20 @@ impl FollowRun {
         }
     }
 
-    /// True after enough *distinct* game ticks without movement at the
-    /// latest observed position. Progress away from `sent_tile` still
-    /// qualifies once the player stops; that tile is only for Dropped/Expired.
+    /// True after enough *distinct* game ticks at the latest observed
+    /// server tile. Progress away from `sent_tile` still qualifies once the
+    /// player stops; that tile is only for Dropped/Expired.
+    ///
+    /// The client actor's `moving` (a non-empty client route queue) is not a
+    /// stop signal: the client drains that queue in its own animation cycles,
+    /// which can lag the server by several tiles, so it can stay true for
+    /// tens of game ticks after the server stopped the player. One case is a
+    /// walk sent while a content script still delays the player: the engine
+    /// drops the click and unsets the map flag (`MoveClickHandler.ts`
+    /// `if (player.delayed)`), for example right after the Al Kharid toll
+    /// gate's `p_teleport` and `p_delay(0)` (`border_gate.rs2`). The server
+    /// tile changes on every tick the server moves the player, so an
+    /// unchanged tile is the stop.
     pub(super) fn should_recover_stalled_walk(
         &self,
         hop: &WalkHop,
@@ -196,12 +207,6 @@ impl FollowRun {
         here: WorldTile,
     ) -> bool {
         if hop.sent_tile.is_none() {
-            return false;
-        }
-        if snapshot
-            .local_player()
-            .is_some_and(|p| p.player.actor.moving)
-        {
             return false;
         }
         let idle = if hop.stall_idle_at != Some(here) {
@@ -217,18 +222,15 @@ impl FollowRun {
     }
 
     /// Advance or clear the stalled-walk idle counter. Only distinct
-    /// snapshot ticks count; actor movement or an actual tile change resets
-    /// the window. Partial-hop progress can recover once movement stops.
+    /// snapshot ticks count; a server tile change resets the window.
+    /// Partial-hop progress can recover once movement stops.
     pub(super) fn note_walk_stall_idle(
         &self,
         hop: &mut WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) {
-        let moving = snapshot
-            .local_player()
-            .is_some_and(|p| p.player.actor.moving);
-        if hop.sent_tile.is_none() || moving {
+        if hop.sent_tile.is_none() {
             hop.stall_idle_ticks = 0;
             hop.stall_idle_last_tick = None;
             hop.stall_idle_at = None;
