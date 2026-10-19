@@ -38,8 +38,6 @@ fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPag
         hold: false,
         ours: false,
         npcs: &[],
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         locs: &[],

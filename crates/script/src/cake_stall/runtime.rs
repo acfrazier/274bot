@@ -661,10 +661,10 @@ impl CakeStall {
             Reply::Value(value) => {
                 match self.pending.take() {
                     Some(PendingHook::Abort) => {
-                        self.abort = crate::bank_deposit::truthy(&value);
+                        self.abort = crate::bank::compat::truthy(&value);
                     }
                     Some(PendingHook::ShouldEat) => {
-                        self.should_eat = crate::bank_deposit::truthy(&value);
+                        self.should_eat = crate::bank::compat::truthy(&value);
                     }
                     Some(PendingHook::Lockout) => {
                         self.locked_out_until = value.as_i64().unwrap_or(0);

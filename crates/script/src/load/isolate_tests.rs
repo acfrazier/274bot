@@ -1053,6 +1053,25 @@ fn spawn_machine_card(body: &str) -> LoadIsolate {
     LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap()
 }
 
+fn spawn_bank_machine_card(body: &str) -> LoadIsolate {
+    let src = format!(
+        "import {{ runMachine, queue }} from '../../shim/_kernel.js';\n\
+             import {{ Execution }} from '../../api/execution/Execution.js';\n\
+             export default class T extends LoopingBot {{\n\
+             async loop() {{\n\
+             if (globalThis.__did) return;\n\
+             globalThis.__did = true;\n\
+             {body}\n\
+             }}\n}}\n"
+    );
+    let execution = api::identity::ExecutionId::first(api::selected::RunKey {
+        slot: 1,
+        run: 1,
+        session: 1,
+    });
+    LoadIsolate::spawn_with_execution(src, LoadShape::CompatClass, vec![], execution).unwrap()
+}
+
 #[test]
 fn machine_ops_join_the_batch_in_order_and_the_await_settles_once() {
     let iso = spawn_machine_card(
@@ -1295,6 +1314,429 @@ fn sync_step_promises_are_opaque_while_ask_promises_fail() {
             .is_some_and(|error| error
                 .contains("not impl: a synchronous machine callback returned a promise")),
         "Cx::ask rejects a Promise instead of returning an opaque value: {outcomes:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn bank_call_sync_members_preserve_values_promises_and_thrown_identity() {
+    use crate::native::abi::{HookPath, HOOK_CHARACTERIZATIONS};
+
+    let mut cases = Vec::new();
+    for descriptor in crate::machine::BANK_FAMILY_DESCRIPTORS {
+        for &member in descriptor.callbacks {
+            let row = HOOK_CHARACTERIZATIONS
+                .iter()
+                .find(|row| row.families().contains(&descriptor.name) && row.member() == member)
+                .unwrap_or_else(|| panic!("missing bank ABI row {} / {member}", descriptor.name));
+            if row.path() == HookPath::CallSync {
+                cases.push((descriptor.name, member, row.value()));
+            }
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        9,
+        "all frozen synchronous bank callback members need the three outcomes"
+    );
+
+    for (family, member, value) in cases {
+        exercise_bank_sync_prompt(family, member, value);
+    }
+}
+
+#[test]
+fn bank_nearest_two_prompts_stay_ordered_and_invoke_once() {
+    use crate::native::request::NativeKind;
+    use api::script_contract::DecisionSequence;
+
+    let iso = spawn_bank_machine_card(
+        "globalThis.__bankEvents = [];
+         globalThis.__bankResult = null;
+         runMachine('bank_nearest', {}, {
+             deposit(name) {
+                 globalThis.__bankEvents.push(['deposit', name]);
+                 return false;
+             },
+             async afterDeposit(name) {
+                 globalThis.__bankEvents.push(['after-start', name]);
+                 await Execution.delayTicks(2);
+                 globalThis.__bankEvents.push(['after-done', name]);
+                 return 'after-result';
+             },
+             log(message) { globalThis.__bankEvents.push(['log', message]); },
+         }).then(
+             value => { globalThis.__bankResult = { kind: 'done', value }; },
+             error => { globalThis.__bankResult = { kind: 'threw', error: String(error) }; },
+         );",
+    );
+    machine_tick(&iso, 1);
+    let batches = iso.drain_seat_batches();
+    let starts: Vec<_> = batches
+        .iter()
+        .flat_map(|batch| &batch.batch.starts)
+        .collect();
+    assert_eq!(starts.len(), 1, "bank_nearest start: {batches:?}");
+    let id = starts[0].id;
+    assert_eq!(starts[0].kind, NativeKind::BankNearest);
+    drop(batches);
+
+    let mut buffer = crate::isolate_fb::IsolateBuf::default();
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        2,
+        id,
+        NativeKind::BankNearest,
+        0,
+        (1, "deposit", &serde_json::json!(["Feather"])),
+    );
+    let first = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__bankEvents").unwrap(),
+        serde_json::json!([["deposit", "Feather"]])
+    );
+    let first_decisions: Vec<_> = first
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(first_decisions.len(), 1, "deposit prompt batch: {first:?}");
+    assert_eq!(
+        crate::channel::decode(&first_decisions[0].answer).unwrap(),
+        serde_json::json!(false)
+    );
+    assert_eq!(first_decisions[0].sequence, DecisionSequence::FIRST);
+
+    // A retained prompt is level-triggered until the seat acknowledges its
+    // answer. Replaying it must resend the same decision, not call JS again.
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        3,
+        id,
+        NativeKind::BankNearest,
+        0,
+        (1, "deposit", &serde_json::json!(["Feather"])),
+    );
+    let repeated = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__bankEvents").unwrap(),
+        serde_json::json!([["deposit", "Feather"]])
+    );
+    let repeated_decisions: Vec<_> = repeated
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(
+        repeated_decisions.len(),
+        1,
+        "repeated prompt batch: {repeated:?}"
+    );
+    assert_eq!(repeated_decisions[0].sequence, DecisionSequence::FIRST);
+
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        4,
+        id,
+        NativeKind::BankNearest,
+        1,
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
+    );
+    let waiting = iso.drain_seat_batches();
+    assert!(
+        waiting.iter().all(|batch| batch.batch.decisions.is_empty()),
+        "pending afterDeposit has no answer yet: {waiting:?}"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__bankEvents").unwrap(),
+        serde_json::json!([["deposit", "Feather"], ["after-start", "Feather"]])
+    );
+
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        5,
+        id,
+        NativeKind::BankNearest,
+        1,
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
+    );
+    let waiting = iso.drain_seat_batches();
+    assert!(
+        waiting.iter().all(|batch| batch.batch.decisions.is_empty()),
+        "pending afterDeposit has no answer yet: {waiting:?}"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__bankEvents").unwrap(),
+        serde_json::json!([["deposit", "Feather"], ["after-start", "Feather"]]),
+        "the pending callback is polled, not reinvoked"
+    );
+
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        6,
+        id,
+        NativeKind::BankNearest,
+        1,
+        (2, "afterDeposit", &serde_json::json!(["Feather"])),
+    );
+    let completed = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__bankEvents").unwrap(),
+        serde_json::json!([
+            ["deposit", "Feather"],
+            ["after-start", "Feather"],
+            ["after-done", "Feather"],
+        ])
+    );
+    let completed_decisions: Vec<_> = completed
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(
+        completed_decisions.len(),
+        1,
+        "second prompt batch: {completed:?}"
+    );
+    assert_eq!(
+        completed_decisions[0].sequence,
+        DecisionSequence::from_raw(2).unwrap()
+    );
+    assert_eq!(
+        crate::channel::decode(&completed_decisions[0].answer).unwrap(),
+        serde_json::json!("after-result")
+    );
+    assert_eq!(
+        iso.probe("globalThis.__bankResult").unwrap(),
+        serde_json::Value::Null,
+        "the parent still waits for the native terminal"
+    );
+    iso.join();
+}
+
+fn bank_start_args(family: &str) -> serde_json::Value {
+    match family {
+        "bank_deposit" | "bank_nearest" | "banking_open" => serde_json::json!({}),
+        "bank_access" => serde_json::json!({ "name": "Bank chest", "op": "Open" }),
+        "bank_npc_access" => serde_json::json!({ "name": "Banker", "op": "Talk-to" }),
+        "bank_open_access" => {
+            serde_json::json!({ "access": { "name": "Bank chest", "op": "Open" } })
+        }
+        "bank_wait" => serde_json::json!({ "kind": "ready" }),
+        _ => panic!("no bank prompt test arguments for {family}"),
+    }
+}
+
+fn exercise_bank_sync_prompt(
+    family: &str,
+    member: &str,
+    value_kind: crate::native::abi::HookValue,
+) {
+    use crate::native::request::NativeKind;
+    use api::script_contract::DecisionSequence;
+
+    let callback_names = crate::machine::callbacks_of(family).unwrap();
+    let target = serde_json::to_string(member).unwrap();
+    let callbacks = callback_names
+        .iter()
+        .map(|callback| {
+            let key = serde_json::to_string(callback).unwrap();
+            format!(
+                "{key}: (...args) => {{ \
+                    globalThis.__calls.push([{key}, args]); \
+                    if ({key} === {target}) {{ \
+                        globalThis.__targetCalls += 1; \
+                        if (globalThis.__targetCalls === 1) return globalThis.__value; \
+                        if (globalThis.__targetCalls === 2) return globalThis.__pending; \
+                        throw globalThis.__thrown; \
+                    }} \
+                    return false; \
+                }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let value = match value_kind {
+        crate::native::abi::HookValue::Used => serde_json::json!(false),
+        crate::native::abi::HookValue::Ignored => serde_json::json!("ignored"),
+    };
+    let family_json = serde_json::to_string(family).unwrap();
+    let source = format!(
+        "globalThis.__calls = [];
+         globalThis.__targetCalls = 0;
+         globalThis.__result = null;
+         globalThis.__value = {};
+         globalThis.__pending = new Promise(() => {{}});
+         globalThis.__thrown = {{ family: {}, member: {} }};
+         const hooks = {{{}}};
+         runMachine({}, {}, hooks).then(
+             value => {{ globalThis.__result = {{ kind: 'done', value }}; }},
+             error => {{ globalThis.__result = {{ kind: 'threw', same: error === globalThis.__thrown }}; }},
+         );",
+        serde_json::to_string(&value).unwrap(),
+        family_json,
+        target,
+        callbacks,
+        family_json,
+        serde_json::to_string(&bank_start_args(family)).unwrap(),
+    );
+    let iso = spawn_bank_machine_card(&source);
+    machine_tick(&iso, 1);
+    let starts = iso.drain_seat_batches();
+    let started: Vec<_> = starts
+        .iter()
+        .flat_map(|batch| &batch.batch.starts)
+        .collect();
+    assert_eq!(started.len(), 1, "{family}/{member} start: {starts:?}");
+    let id = started[0].id;
+    let kind = started[0].kind;
+    assert_eq!(
+        kind,
+        if family == "bank_nearest" {
+            NativeKind::BankNearest
+        } else {
+            NativeKind::BankPlan
+        }
+    );
+    drop(starts);
+
+    let mut buffer = crate::isolate_fb::IsolateBuf::default();
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        2,
+        id,
+        kind,
+        0,
+        (1, member, &serde_json::json!(["bank-prompt"])),
+    );
+    let value_batches = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__calls").unwrap(),
+        serde_json::json!([[member, ["bank-prompt"]]]),
+        "{family}/{member} value callback"
+    );
+    let value_decisions: Vec<_> = value_batches
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(
+        value_decisions.len(),
+        1,
+        "{family}/{member}: {value_batches:?}"
+    );
+    assert_eq!(value_decisions[0].of, id);
+    assert_eq!(value_decisions[0].sequence, DecisionSequence::FIRST);
+    assert_eq!(
+        crate::channel::decode(&value_decisions[0].answer).unwrap(),
+        value,
+        "{family}/{member} callback value"
+    );
+
+    // The seat still retains the unacknowledged point; mirroring it must
+    // retransmit one decision without invoking the callback a second time.
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        3,
+        id,
+        kind,
+        0,
+        (1, member, &serde_json::json!(["bank-prompt"])),
+    );
+    let repeated_batches = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__calls").unwrap(),
+        serde_json::json!([[member, ["bank-prompt"]]])
+    );
+    let repeated_decisions: Vec<_> = repeated_batches
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(
+        repeated_decisions.len(),
+        1,
+        "{family}/{member} repeated point: {repeated_batches:?}"
+    );
+    assert_eq!(repeated_decisions[0].sequence, DecisionSequence::FIRST);
+
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        4,
+        id,
+        kind,
+        1,
+        (2, member, &serde_json::json!(["bank-prompt"])),
+    );
+    let promise_batches = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__calls").unwrap(),
+        serde_json::json!([[member, ["bank-prompt"]], [member, ["bank-prompt"]],])
+    );
+    let promise_decisions: Vec<_> = promise_batches
+        .iter()
+        .flat_map(|batch| &batch.batch.decisions)
+        .collect();
+    assert_eq!(
+        promise_decisions.len(),
+        1,
+        "{family}/{member} Promise point: {promise_batches:?}"
+    );
+    assert_eq!(
+        promise_decisions[0].sequence,
+        DecisionSequence::from_raw(2).unwrap()
+    );
+    assert_eq!(
+        crate::channel::decode(&promise_decisions[0].answer).unwrap(),
+        serde_json::json!({}),
+        "{family}/{member} CallSync must preserve the opaque empty object"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__result").unwrap(),
+        serde_json::Value::Null,
+        "{family}/{member} remains pending for its native terminal"
+    );
+
+    post_bank_prompt_page(
+        &iso,
+        &mut buffer,
+        5,
+        id,
+        kind,
+        2,
+        (3, member, &serde_json::json!(["bank-prompt"])),
+    );
+    let thrown_batches = iso.drain_seat_batches();
+    assert_eq!(
+        iso.probe("globalThis.__calls").unwrap(),
+        serde_json::json!([
+            [member, ["bank-prompt"]],
+            [member, ["bank-prompt"]],
+            [member, ["bank-prompt"]],
+        ])
+    );
+    assert!(
+        thrown_batches
+            .iter()
+            .flat_map(|batch| &batch.machine_events)
+            .any(|event| {
+                event.id == id && event.kind == crate::machine::MachineEventKind::Failed
+            }),
+        "{family}/{member} throw must fail the row: {thrown_batches:?}"
+    );
+    assert!(
+        thrown_batches
+            .iter()
+            .all(|batch| batch.batch.decisions.is_empty()),
+        "{family}/{member} throw must not answer its prompt"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__result").unwrap(),
+        serde_json::json!({ "kind": "threw", "same": true }),
+        "{family}/{member} must preserve exact thrown JS identity"
     );
     iso.join();
 }
@@ -1881,6 +2323,40 @@ fn post_execution_seat_page<'a>(
     );
     isolate.post_snapshot(bytes);
     machine_tick(isolate, tick);
+}
+
+fn post_bank_prompt_page(
+    isolate: &LoadIsolate,
+    buffer: &mut crate::isolate_fb::IsolateBuf,
+    tick: u64,
+    id: api::identity::RequestId,
+    kind: crate::native::request::NativeKind,
+    decisions_consumed: u32,
+    (sequence, point, args): (u32, &str, &serde_json::Value),
+) {
+    use api::script_contract::{ChildOrigin, DecisionSequence};
+
+    let sequence = DecisionSequence::from_raw(sequence).expect("nonzero prompt sequence");
+    let args = crate::channel::encode(args).expect("bounded prompt arguments");
+    let live = [crate::native::seat::SeatEntry {
+        id,
+        parent: None,
+        kind,
+        origin: ChildOrigin::Started,
+        depth: 0,
+        decisions_consumed,
+        prompt: Some(sequence.get()),
+    }];
+    let details = [crate::isolate_fb::SeatLiveDetails {
+        id,
+        phase: crate::native::NativePhase::Waiting,
+        prompt: Some(crate::isolate_fb::SeatPromptInput {
+            sequence,
+            point,
+            args: &args,
+        }),
+    }];
+    post_execution_seat_page(isolate, buffer, tick, &live, &[], &details, None);
 }
 
 fn post_execution_gather_page<'a>(

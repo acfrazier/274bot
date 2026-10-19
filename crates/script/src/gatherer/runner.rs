@@ -593,6 +593,7 @@ impl Gatherer {
                     options: WalkOptions::default(),
                     explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
                         .then(|| Arc::from(self.settings().bank.as_str())),
+                    allow_air_fallback: false,
                 };
                 match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Select(handle),

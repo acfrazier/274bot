@@ -24,6 +24,7 @@ use std::time::Duration;
 /// Active-time floor for a required side-view wait, paired with its observed
 /// server-tick bound. Separate from the 1.2 s until-empty side-view wait.
 const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
+const SELECT_BOUND: Duration = Duration::from_secs(5);
 /// Re-opens of a lost session within one transfer request (deposit or
 /// withdrawal), after the first open; exhausted, the loss is terminal with
 /// its original message.
@@ -53,6 +54,26 @@ const DEPOSIT_SIDE_VIEW_WAIT_MS: u64 = 12_000;
 /// reconnect, `Player.ts:562`; an operator cheat, `ClientCheatHandler.ts`).
 pub const MAX_BANK_REOPENS: u8 = 2;
 
+pub(crate) fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
+    let dx = i64::from(a.x) - i64::from(b.x);
+    let dz = i64::from(a.z) - i64::from(b.z);
+    dx * dx + dz * dz
+}
+
+#[cfg(feature = "load")]
+pub(crate) fn nearest_eligible_bank(
+    facts: &NamedBankFacts,
+    from: WorldTile,
+    mut eligible: impl FnMut(&NamedBank) -> bool,
+) -> Option<NamedBank> {
+    facts
+        .banks()
+        .iter()
+        .filter(|bank| eligible(bank))
+        .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
+        .copied()
+}
+
 #[derive(Clone)]
 pub struct BankSelector {
     facts: Arc<NamedBankFacts>,
@@ -64,7 +85,12 @@ impl BankSelector {
         Self { facts, preferences }
     }
 
-    fn eligible(&self, bank: &NamedBank, stats: &[StatView], quests: &[QuestStatusView]) -> bool {
+    pub(crate) fn eligible(
+        &self,
+        bank: &NamedBank,
+        stats: &[StatView],
+        quests: &[QuestStatusView],
+    ) -> bool {
         bank.eligible(
             |id| {
                 stats
@@ -184,9 +210,13 @@ pub struct BankPickRequest {
     pub preferences: BankPreferences,
     pub options: WalkOptions,
     /// Roster indices already proven eligible from this run's live facts.
+    /// Air-ranked, with stable catalog ties, when `allow_air_fallback` is true.
     pub eligible: Arc<[u16]>,
     /// When present, no other eligible bank may be selected.
     pub explicit_bank: Option<u16>,
+    /// Select-only compatibility may return an eligible air-ranked bank after
+    /// bounded routing fails. Native callers leave this false.
+    pub allow_air_fallback: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankPickReceipt {
@@ -209,6 +239,8 @@ pub struct SelectArgs {
     pub preferences: BankPreferences,
     pub options: WalkOptions,
     pub explicit: Option<Arc<str>>,
+    /// Opt in only for select-only contracts that promise an air fallback.
+    pub allow_air_fallback: bool,
 }
 
 pub struct OpenArgs {
@@ -2382,6 +2414,12 @@ pub struct Select {
     request: Option<BankPickRequest>,
     request_id: Option<u64>,
     immediate: Option<SelectedBank>,
+    fallback: Option<SelectFallback>,
+}
+
+struct SelectFallback {
+    selected: SelectedBank,
+    deadline: BankDeadline,
 }
 
 impl NativeMachine for Select {
@@ -2393,20 +2431,41 @@ impl NativeMachine for Select {
         let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
         let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
         let selector = BankSelector::new(Arc::clone(&args.facts), args.preferences);
-        let eligible = selector.eligible_indices(stats, quests);
+        let mut eligible = selector.eligible_indices(stats, quests);
         let explicit_bank = args
             .explicit
             .as_deref()
             .and_then(|name| selector.named(name, stats, quests));
         let explicit_unavailable = args.explicit.is_some() && explicit_bank.is_none();
+        if args.allow_air_fallback {
+            eligible.sort_by_key(|&index| {
+                air_distance_squared(args.from, args.facts.banks()[usize::from(index)].air_tile())
+            });
+        }
         let eligible: Arc<[u16]> = Arc::from(eligible);
         if eligible.is_empty() || explicit_unavailable {
             return Ok(Self {
                 request: None,
                 request_id: None,
                 immediate: Some(SelectedBank::no_candidate()),
+                fallback: None,
             });
         }
+        let fallback = if args.allow_air_fallback {
+            explicit_bank
+                .or_else(|| eligible.first().copied())
+                .map(|bank_index| SelectFallback {
+                    selected: SelectedBank {
+                        bank_index,
+                        access_tile: args.facts.banks()[usize::from(bank_index)].air_tile(),
+                        kind: PickKind::AirFallback,
+                        access: None,
+                    },
+                    deadline: BankDeadline::wall(cx.active_now().saturating_add(SELECT_BOUND)),
+                })
+        } else {
+            None
+        };
         Ok(Self {
             request: Some(BankPickRequest {
                 facts: args.facts,
@@ -2415,9 +2474,11 @@ impl NativeMachine for Select {
                 options: args.options,
                 eligible,
                 explicit_bank,
+                allow_air_fallback: args.allow_air_fallback,
             }),
             request_id: None,
             immediate: None,
+            fallback,
         })
     }
 
@@ -2425,7 +2486,22 @@ impl NativeMachine for Select {
         if let Some(selected) = self.immediate.take() {
             return Poll::Ready(Ok(selected));
         }
-        let Some(request_id) = self.request_id else {
+        if let Some(receipt) = self.request_id.and_then(|id| cx.bank_pick_receipt(id)) {
+            if receipt.selected.kind == PickKind::NoCandidate {
+                if let Some(fallback) = self.fallback.take() {
+                    return Poll::Ready(Ok(fallback.selected));
+                }
+            }
+            return Poll::Ready(Ok(receipt.selected.clone()));
+        }
+        if self.fallback.as_ref().is_some_and(|fallback| {
+            fallback
+                .deadline
+                .reached(cx.evidence().tick, cx.active_now())
+        }) {
+            return Poll::Ready(Ok(self.fallback.take().expect("checked fallback").selected));
+        }
+        if self.request_id.is_none() {
             let Some(request) = self.request.take() else {
                 return Poll::Ready(Err(ActionError::Stale));
             };
@@ -2436,11 +2512,8 @@ impl NativeMachine for Select {
                 }
                 Err(error) => Poll::Ready(Err(error)),
             };
-        };
-        match cx.bank_pick_receipt(request_id) {
-            Some(receipt) => Poll::Ready(Ok(receipt.selected.clone())),
-            None => Poll::Pending,
         }
+        Poll::Pending
     }
 
     fn cancel(&mut self) {}
@@ -2609,6 +2682,199 @@ mod tests {
             tile: definition.tile,
             definition: Some(definition),
             routable: true,
+        }
+    }
+
+    type PickLedger = Option<Box<crate::native::ledger::Ledger>>;
+    type PickHandle = crate::native::ActionHandle<Select>;
+
+    fn select_waiter(allow_air_fallback: bool) -> (GameSnapshot, PickLedger, PickHandle) {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let facts = Arc::new(NamedBankFacts::from_banks(vec![
+            NamedBank::new(
+                "far",
+                WorldTile {
+                    x: 10,
+                    z: 5,
+                    level: 0,
+                },
+            ),
+            NamedBank::new(
+                "first tie",
+                WorldTile {
+                    x: 6,
+                    z: 5,
+                    level: 3,
+                },
+            ),
+            NamedBank::new(
+                "second tie",
+                WorldTile {
+                    x: 4,
+                    z: 5,
+                    level: 0,
+                },
+            ),
+        ]));
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
+            frame.cx.active_now = Duration::ZERO;
+            let handle = frame
+                .actions
+                .begin::<Select>(
+                    SelectArgs {
+                        facts,
+                        from: WorldTile {
+                            x: 5,
+                            z: 5,
+                            level: 0,
+                        },
+                        preferences: BankPreferences {
+                            use_mage_bank: false,
+                            use_zanaris_bank: false,
+                        },
+                        options: WalkOptions::default(),
+                        explicit: None,
+                        allow_air_fallback,
+                    },
+                    &mut frame.cx,
+                )
+                .unwrap();
+            assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            handle
+        });
+        let pending = ledger.as_mut().unwrap();
+        assert_eq!(pending.outbox.len(), 1);
+        let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
+            panic!("Select must emit a real typed pick");
+        };
+        assert_eq!(
+            request.eligible.as_ref(),
+            if allow_air_fallback {
+                &[1, 2, 0]
+            } else {
+                &[0, 1, 2]
+            },
+            "only select-only requests capture a stable air-ranked eligible roster"
+        );
+        // Drop the real action without dispatch or receipt: the host never admits it.
+        pending.outbox.clear();
+        (snapshot, ledger, handle)
+    }
+
+    fn poll_select_waiter(
+        snapshot: &GameSnapshot,
+        ledger: &mut PickLedger,
+        handle: &PickHandle,
+        active: Duration,
+        wall: std::time::Instant,
+    ) -> Poll<Result<SelectedBank, ActionError>> {
+        with_tick(snapshot, ledger, 2, |frame| {
+            frame.cx.active_now = active;
+            frame.cx.wall_now = wall;
+            frame.actions.poll(handle, &mut frame.cx)
+        })
+    }
+
+    #[test]
+    fn select_only_dropped_request_settles_at_five_active_seconds_without_access() {
+        for allow_air_fallback in [false, true] {
+            let (mut snapshot, mut ledger, handle) = select_waiter(allow_air_fallback);
+            snapshot.seed_tile(WorldTile {
+                x: 10,
+                z: 5,
+                level: 0,
+            });
+            let wall = std::time::Instant::now();
+            assert!(poll_select_waiter(
+                &snapshot,
+                &mut ledger,
+                &handle,
+                Duration::from_millis(4_999),
+                wall,
+            )
+            .is_pending());
+            let result = poll_select_waiter(
+                &snapshot,
+                &mut ledger,
+                &handle,
+                Duration::from_secs(5),
+                wall,
+            );
+            if allow_air_fallback {
+                let Poll::Ready(Ok(selected)) = result else {
+                    panic!("a dropped select-only request must settle at its bound: {result:?}");
+                };
+                assert_eq!(selected.bank_index, 1);
+                assert_eq!(
+                    selected.access_tile,
+                    WorldTile {
+                        x: 6,
+                        z: 5,
+                        level: 3
+                    }
+                );
+                assert_eq!(selected.kind, PickKind::AirFallback);
+                assert!(selected.access.is_none());
+            } else {
+                assert!(
+                    result.is_pending(),
+                    "native Select keeps its existing host-owned result"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn select_only_waiter_clock_freezes_through_pause_and_hold() {
+        for boundary in ["pause", "hold"] {
+            let (snapshot, mut ledger, handle) = select_waiter(true);
+            let start = std::time::Instant::now();
+            let mut clock = api::identity::ActiveClock::new();
+            clock.observe(start, true);
+            clock.observe(start + Duration::from_secs(2), false);
+            let resume = start + Duration::from_secs(30);
+            assert!(
+                poll_select_waiter(
+                    &snapshot,
+                    &mut ledger,
+                    &handle,
+                    clock.now(resume).as_duration(),
+                    resume,
+                )
+                .is_pending(),
+                "{boundary} does not consume the remaining three active seconds"
+            );
+            clock.observe(resume, true);
+            let before = resume + Duration::from_millis(2_999);
+            assert!(poll_select_waiter(
+                &snapshot,
+                &mut ledger,
+                &handle,
+                clock.now(before).as_duration(),
+                before,
+            )
+            .is_pending());
+            let due = resume + Duration::from_secs(3);
+            let result = poll_select_waiter(
+                &snapshot,
+                &mut ledger,
+                &handle,
+                clock.now(due).as_duration(),
+                due,
+            );
+            assert!(
+                matches!(
+                    result,
+                    Poll::Ready(Ok(SelectedBank {
+                        kind: PickKind::AirFallback,
+                        access: None,
+                        ..
+                    }))
+                ),
+                "{boundary}: exactly five eligible seconds settle the captured fallback"
+            );
         }
     }
 

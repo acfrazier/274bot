@@ -999,8 +999,6 @@ impl GatherReconnectRig {
             false,
             0,
             false,
-            0,
-            false,
             None,
             PostedWalkOutcome::default(),
             PostedInspect::default(),

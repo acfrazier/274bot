@@ -32,7 +32,7 @@
     "selector": "purgePackAtBank",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script/src/shim/banking.js:160",
+    "runtime": "crates/script/src/shim/banking.js:141",
     "async": true
   },
   {
@@ -41,7 +41,7 @@
     "selector": "withdrawCoins",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script/src/shim/banking.js:164",
+    "runtime": "crates/script/src/shim/banking.js:145",
     "async": true
   },
   {
@@ -50,7 +50,7 @@
     "selector": "bankPace",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/banking.js:168",
+    "runtime": "crates/script/src/shim/banking.js:149",
     "async": true
   },
   {
@@ -59,7 +59,7 @@
     "selector": "bankPaceTicks",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/banking.js:172",
+    "runtime": "crates/script/src/shim/banking.js:153",
     "async": false
   },
   {
@@ -258,7 +258,7 @@
     "selector": "nearestWalkableBank",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:68",
+    "runtime": "crates/script/src/shim/bank_locations.js:61",
     "async": false
   },
   {
@@ -267,7 +267,7 @@
     "selector": "nearestWalkableBankAsync",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:72",
+    "runtime": "crates/script/src/shim/bank_locations.js:65",
     "async": true
   },
   {
@@ -276,7 +276,7 @@
     "selector": "bankCostForFinder",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:76",
+    "runtime": "crates/script/src/shim/bank_locations.js:69",
     "async": false
   },
   {
@@ -285,7 +285,7 @@
     "selector": "bankCostForNavigator",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:80",
+    "runtime": "crates/script/src/shim/bank_locations.js:73",
     "async": false
   },
   {
