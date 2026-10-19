@@ -22,8 +22,7 @@ export const COOK_LOCATIONS = globalThis.__rs2b0t_cook_locations().map((row) => 
 }));
 
 export function findCookLocation(locs, name) {
-    const want = String(name).trim().toLowerCase();
-    return (locs || []).find((l) => l && String(l.name).toLowerCase() === want) || null;
+    return globalThis.__rs2b0t_find_cook_location(locs, name);
 }
 
 export function buildCookLocations() {
