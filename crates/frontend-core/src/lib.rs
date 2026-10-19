@@ -33,6 +33,7 @@ pub mod log_file;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;
+pub mod models;
 pub mod nav_prefs;
 pub mod operations;
 pub mod prefs;
@@ -63,6 +64,7 @@ pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
 pub use fleet::{
+    FleetFilter,
     contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
     state_label, Fleet,
 };
@@ -101,11 +103,12 @@ pub use selection::{
     MarkedSelection, ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
 };
 pub use session::{
-    pick_focus, ArmMirror, GuardianEdit, MemoryNotice, OperatorSession, Removal, ScriptStart,
+    pick_focus, ArmMirror, DrawPolicy, MapDesk, GuardianEdit, MemoryNotice, OperatorSession, Removal, ScriptStart,
     Selection, SlotTransition, StartSettled, SubmitError, Submitted, Targets, Transition,
     SLOT_REMOVE_TIMEOUT,
 };
 pub use slot_view::{SlotView, StatusBuf};
+pub use models::Models;
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{

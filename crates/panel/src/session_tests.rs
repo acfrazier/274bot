@@ -8912,3 +8912,25 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
         ]
     );
 }
+
+#[test]
+fn panel_frame_hook_receives_client_through_slot_frame() {
+    let session = Session::new();
+    let hook = session.panel_frame_hook();
+    let mut client = paint_client();
+    client.ingame = true;
+    client.scene_state = 2;
+
+    frontend_core::frames::run_frame_for_test(
+        &mut client,
+        "alice",
+        hook,
+        host_play::SlotFrameInput::default(),
+        host_play::player_here_tile,
+        host_play::Host::publish_frontend_snapshot,
+        host_play::step_walk_arm_follow,
+        |client| client.gens.player,
+    );
+
+    assert!(session.mainland_sent.lock().unwrap().contains("alice"));
+}

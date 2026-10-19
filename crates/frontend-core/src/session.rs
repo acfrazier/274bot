@@ -23,7 +23,7 @@ use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
 
-use crate::capacity::{CapacityNotice, RenderPolicyLabel};
+use crate::capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
@@ -543,8 +543,16 @@ impl MemoryNotice {
 }
 
 mod commands;
-mod map;
+mod fleet;
+mod form;
+mod loadouts;
+pub(crate) mod map;
 mod native_settings;
+pub(crate) mod prefs;
+mod scripts;
+mod vault_rows;
+pub use map::MapDesk;
+pub use prefs::DrawPolicy;
 pub(crate) use commands::StagedProfileWrite;
 pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
 pub(crate) use native_settings::NativeCopyCancellation;
@@ -1074,8 +1082,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inject_capacity_warning(&mut self, warning: host::CapacityWarning) {
-        self.apply_capacity(CapacityEval::Warn(warning));
+    pub fn inject_capacity_warning(&mut self, warning: CapacityWarning) {
+        self.apply_capacity(CapacityEval::Warn(warning.to_host()));
     }
 
     /// Moves whenever a sample changed [`Self::resources`].
@@ -1978,7 +1986,7 @@ impl<Io> OperatorSession<Io> {
         }
         self.capacity_due = Some(now + CAPACITY_EVAL_EVERY);
         let eval = self.play.as_ref().map_or(CapacityEval::Clear, |play| {
-            play.capacity().evaluate(now, self.capacity_render)
+            play.capacity().evaluate(now, self.capacity_render.to_host())
         });
         self.apply_capacity(eval);
     }
@@ -1988,7 +1996,8 @@ impl<Io> OperatorSession<Io> {
     fn apply_capacity(&mut self, eval: CapacityEval) {
         let was_warning = self.capacity_kind == CapacityKind::Warn;
         let kind = match eval {
-            CapacityEval::Warn(warning) => {
+            CapacityEval::Warn(host_warning) => {
+                let warning = CapacityWarning::from_host(host_warning);
                 if self.capacity.as_ref().map(CapacityNotice::warning) != Some(warning) {
                     self.capacity = Some(CapacityNotice::from_warning(warning));
                     self.capacity_generation = self.capacity_generation.wrapping_add(1);

@@ -166,6 +166,17 @@ pub trait SlotSurface {
 
     /// `name` left the fleet: release per-slot devices (audio, capture).
     fn released(&mut self, name: &str);
+
+    /// The operator models this front end holds, lent to the command being
+    /// dispatched (see [`crate::models`]). The session changes them only
+    /// while it dispatches.
+    fn models(&mut self) -> crate::models::Models<'_>;
+
+    /// A draw-policy switch changed ([`crate::OperatorCommand::SetDraw`]):
+    /// apply it to the surface's own render and input devices (the panel's
+    /// render mirror and capture channel). The session already holds and
+    /// saved the new value.
+    fn draw_changed(&mut self, switch: crate::command::DrawSwitch, on: bool);
 }
 
 /// A surface with no per-slot devices: raster forced off, no frame mailbox,
@@ -211,6 +222,13 @@ impl<F: FnMut(&str)> SlotSurface for HeadlessSurface<F> {
     }
 
     fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> crate::models::Models<'_> {
+        crate::models::Models::none()
+    }
+
+    /// No renderer and no input devices: nothing to apply.
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
 }
 
 /// Map a point in a slot image of `image_w`×`image_h` to applet

@@ -221,3 +221,66 @@ impl<Io> OperatorSession<Io> {
         self.walk_slot_status(name).origin()
     }
 }
+
+/// One map, movement or game-input row of the command seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MapRow {
+    WalkTo,
+    GroupWalk,
+    Teleport,
+    DebugCommand,
+    GameInput,
+    OpenDemand,
+    ReleaseDemand,
+    BakeNow,
+    DeclineBake,
+}
+
+impl MapRow {
+    fn command(self) -> crate::command::OperatorCommand {
+        use crate::command::OperatorCommand as C;
+        match self {
+            Self::WalkTo => C::WalkTo,
+            Self::GroupWalk => C::GroupWalk,
+            Self::Teleport => C::Teleport,
+            Self::DebugCommand => C::DebugCommand,
+            Self::GameInput => C::GameInput,
+            Self::OpenDemand => C::OpenMapDemand,
+            Self::ReleaseDemand => C::ReleaseMapDemand,
+            Self::BakeNow => C::BakeMapNow,
+            Self::DeclineBake => C::DeclineMapBake,
+        }
+    }
+}
+
+/// The map desk a front end lends (placeholder until the map family lands).
+#[derive(Debug, Default)]
+pub struct MapDesk {}
+
+impl<Io> OperatorSession<Io> {
+    pub(super) fn map_row<S: crate::surface::SlotSurface<Io = Io>>(
+        &mut self,
+        row: MapRow,
+        request: api::identity::RequestId,
+        _surface: &mut S,
+        submitted: &mut super::commands::Submitted,
+    ) {
+        use super::commands::Applied;
+        let command = row.command();
+        let applied = || {
+            Applied::Rejected(
+                crate::command::Rejection::NoModel,
+                Some("map rows: in progress".into()),
+            )
+        };
+        if command.subject() == crate::command::SubjectKind::Application {
+            if self.app_admitted(request) {
+                self.settle_app(request, command, applied(), submitted);
+            }
+        } else {
+            for name in self.admitted_names(request) {
+                self.settle_member(request, command, &name, applied(), submitted);
+            }
+        }
+    }
+}

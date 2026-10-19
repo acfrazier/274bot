@@ -1146,6 +1146,19 @@ pub enum Rejection {
     /// The script start was refused (`script::StartLoadError`,
     /// `session.rs:1701-1705`).
     StartRefused,
+    /// The front end that issued the command does not hold the model the
+    /// row changes (for example the TUI and the panel's profile form):
+    /// nothing was changed.
+    NoModel,
+    /// The row commits a staged input and nothing was staged (no
+    /// passphrase, no destination, no selected card, no loadout draft).
+    NotStaged,
+    /// The vault could not be opened or created with the staged
+    /// passphrase, or the vault file could not be reset.
+    VaultRefused,
+    /// The row's target state already holds or does not apply to this
+    /// member (a mark on an unknown row, a walk with no map bound).
+    NotApplicable,
 }
 
 /// An owner-reported failure (today's `Outcome::Failed` strings produced

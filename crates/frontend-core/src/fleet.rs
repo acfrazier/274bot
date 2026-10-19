@@ -364,3 +364,62 @@ mod tests {
         assert_eq!(fleet.focus_neighbour("a", Some("b")), Some("b".into()));
     }
 }
+
+/// The fleet view's filter and row order, as the operator set them. The
+/// filter text is a staged input: a front end's text field edits
+/// [`Self::staged_mut`] and [`crate::OperatorCommand::SetFleetFilter`]
+/// commits it to the filter the rows are shown with ([`Self::text`]);
+/// [`crate::OperatorCommand::SetFleetSort`] sets the order. Both buffers
+/// keep their capacity, so a commit per keystroke allocates nothing once
+/// warm.
+#[derive(Debug)]
+pub struct FleetFilter {
+    staged: String,
+    applied: String,
+    order: FleetOrder,
+}
+
+impl FleetFilter {
+    /// An empty filter with `order`.
+    pub fn new(order: FleetOrder) -> Self {
+        Self {
+            staged: String::new(),
+            applied: String::new(),
+            order,
+        }
+    }
+
+    /// The staged filter text, for a text field to edit.
+    pub fn staged_mut(&mut self) -> &mut String {
+        &mut self.staged
+    }
+
+    /// The staged filter text.
+    pub fn staged(&self) -> &str {
+        &self.staged
+    }
+
+    /// The filter the rows are shown with.
+    pub fn text(&self) -> &str {
+        &self.applied
+    }
+
+    /// The row order.
+    pub fn order(&self) -> FleetOrder {
+        self.order
+    }
+
+    /// Commit the staged text: `false` when it was already the filter.
+    pub(crate) fn commit(&mut self) -> bool {
+        if self.applied == self.staged {
+            return false;
+        }
+        self.applied.clear();
+        self.applied.push_str(&self.staged);
+        true
+    }
+
+    pub(crate) fn set_order(&mut self, order: FleetOrder) -> bool {
+        std::mem::replace(&mut self.order, order) != order
+    }
+}

@@ -47,6 +47,12 @@ impl SlotSurface for Recorder {
     fn released(&mut self, name: &str) {
         self.released.push(name.to_string());
     }
+
+    fn models(&mut self) -> crate::Models<'_> {
+        crate::Models::none()
+    }
+
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
 }
 
 fn empty_play() -> Play {
@@ -2665,6 +2671,12 @@ impl SlotSurface for MemoryOverrideSurface {
     fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
 
     fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> crate::Models<'_> {
+        crate::Models::none()
+    }
+
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
 }
 
 #[test]
@@ -2707,7 +2719,7 @@ fn host_capacity_transitions_log_once_and_rebuild_the_line_only_on_change() {
             8,
             Some(Duration::from_millis(1730)),
             Some(Duration::from_millis(970)),
-            RenderPolicyLabel::Headless,
+            RenderPolicyLabel::Headless.to_host(),
         ))
     };
     let line = |late| {

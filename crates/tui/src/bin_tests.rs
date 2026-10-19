@@ -1795,6 +1795,7 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     {
         let mut surface = TuiSurface {
             walk_cleared: &mut walk_cleared,
+            models: frontend_core::Models::none(),
         };
         session.core.remove(slot, Instant::now(), &mut surface);
         session.core.remove(slot, Instant::now(), &mut surface);
