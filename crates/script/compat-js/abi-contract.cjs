@@ -5,6 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const BASE_PREDECESSORS = ['F0', 'T1.3', 'T2.1'];
+const ACTIVE_FAMILIES = ['bank', 'world-primitives'];
 // These nav values are expected assertions only; generated classifications
 // come from frozen import graphs and native backend source evidence.
 const SECTION_FAMILIES = new Map([
@@ -1254,9 +1255,9 @@ function buildArtifacts({
         return {
             family_id: row.family_id,
             nav_consuming: row.nav_consuming,
-            activation_unit: row.family_id === 'bank' ? 'I-family(bank)' : `I-family(${row.family_id})`,
+            activation_unit: `I-family(${row.family_id})`,
             activation_endpoint: row.family_id === 'bank' ? 'T2.3' : 'T2.rest',
-            activation_state: row.family_id === 'bank' ? 'activated' : 'not-activated',
+            activation_state: ACTIVE_FAMILIES.includes(row.family_id) ? 'activated' : 'not-activated',
             canonical_endpoint_predecessors: row.family_id === 'bank'
                 ? ['F0', 'T1.3', 'T2.2', 'T5.1']
                 : predecessors,
@@ -1288,7 +1289,7 @@ function buildArtifacts({
         overlays: classifiedOverlays,
         callbacks,
         not_impl_debt: debt,
-        active_families: ['bank'],
+        active_families: ACTIVE_FAMILIES,
         family_counts: familyCounts,
     };
     const predecessors = {
@@ -1307,8 +1308,8 @@ function buildArtifacts({
 
 function validateArtifacts(contract, predecessors, navFamilies = null) {
     if (contract.activation_state !== 'partially-activated' ||
-        JSON.stringify(contract.active_families) !== JSON.stringify(['bank'])) {
-        fail('T2.3 activates exactly the bank family');
+        JSON.stringify(contract.active_families) !== JSON.stringify(ACTIVE_FAMILIES)) {
+        fail('Activated families must match the complete family units');
     }
     const familyIds = new Set(predecessors.families.map(row => row.family_id));
     if (familyIds.size !== predecessors.families.length) fail('Duplicate family predecessor row');
@@ -1327,7 +1328,7 @@ function validateArtifacts(contract, predecessors, navFamilies = null) {
         for (const row of contract[collection]) checkFamily(row, row.selector || row.member || row.public_name || collection);
     }
     for (const family of predecessors.families) {
-        const expectedState = family.family_id === 'bank' ? 'activated' : 'not-activated';
+        const expectedState = ACTIVE_FAMILIES.includes(family.family_id) ? 'activated' : 'not-activated';
         if (family.activation_state !== expectedState) fail(`Unexpected activation state for family ${family.family_id}`);
         for (const required of BASE_PREDECESSORS) {
             if (!family.predecessors.includes(required)) fail(`Family ${family.family_id} is missing predecessor ${required}`);
