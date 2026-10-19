@@ -36,6 +36,8 @@ mod event_signal;
 #[cfg(feature = "load")]
 mod events;
 pub mod food_policy;
+/// Borrowed preset-location helpers for compiled and compatibility callers.
+pub mod gather_locations;
 /// Native gather-tool selection over the posted `api::gather_tools` rows.
 pub mod gather_tools;
 /// Native woodcutting and mining gatherer card.
@@ -139,19 +141,9 @@ mod attack_clock;
 #[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
-mod bank_access;
-#[cfg(feature = "load")]
-mod bank_deposit;
-#[cfg(feature = "load")]
-mod bank_op;
-#[cfg(feature = "load")]
-mod bank_open;
-#[cfg(feature = "load")]
 mod bank_select;
 #[cfg(feature = "load")]
 mod bank_withdraw;
-#[cfg(feature = "load")]
-mod banking_open;
 #[cfg(feature = "load")]
 mod boat_fare;
 pub mod cake_stall;

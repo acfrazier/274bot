@@ -1,19 +1,12 @@
 import Tile from '../../geometry/Tile.js';
 import { notImpl, runMachine } from '../../shim/_kernel.js';
 
-function tileBank(bank) {
-    return bank ? {
-        ...bank,
-        tile: Tile.from(bank.tile),
-        ...(bank.approach ? { approach: Tile.from(bank.approach) } : {}),
-    } : null;
-}
 
 export const USE_MAGE_BANK = 'useMageBank';
 export const USE_ZANARIS_BANK = 'useZanarisBank';
-export const BANK_LOCATIONS = globalThis.__rs2b0t_bank_locations().map(tileBank);
+export const BANK_LOCATIONS = globalThis.__rs2b0t_bank_locations(Tile);
 
-export function approachOf(bank) { return bank.approach ?? bank.tile; }
+export function approachOf(bank) { return globalThis.__rs2b0t_bank_approach(bank); }
 
 /** Eligibility is evaluated against the native observed account facts. */
 export function bankUnlocked(bank) {
@@ -43,25 +36,25 @@ export function bankUnlocked(bank) {
 }
 
 export function lockedBankAt(tile) {
-    return tileBank(globalThis.__rs2b0t_locked_bank_at(tile));
+    return globalThis.__rs2b0t_locked_bank_at(tile, Tile);
 }
 
 /** Air ranking is synchronous; only the reachable selector asks the worker. */
 export function nearestBank(here) {
-    return tileBank(globalThis.__rs2b0t_nearest_bank(here));
+    return globalThis.__rs2b0t_nearest_bank(here, Tile);
 }
 
 export function nearestBanks(here) {
-    return globalThis.__rs2b0t_nearest_banks(here).map(tileBank);
+    return globalThis.__rs2b0t_nearest_banks(here, Tile);
 }
 
 export function nearestUsableBank(here, usable) {
-    return tileBank(globalThis.__rs2b0t_nearest_usable_bank(here, bank => usable(tileBank(bank))));
+    return globalThis.__rs2b0t_nearest_usable_bank(here, usable, Tile);
 }
 
 export async function nearestBankReachable(here, _navigator) {
     const out = await runMachine('bank_select', { from: here, allow_wilderness: true });
-    return tileBank(out.kind === 'done' ? out.value : null);
+    return globalThis.__rs2b0t_bank_materialize(out.kind === 'done' ? out.value : null, Tile);
 }
 
 export function nearestWalkableBank() {

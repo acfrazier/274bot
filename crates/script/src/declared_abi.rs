@@ -460,12 +460,24 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
     },
     Reexport {
-        names: &["bankDistance"],
-        line: "export { bankDistance } from '../../api/bank/BankLocations.js';",
+        names: &["bankDistance", "nearestUsableBank"],
+        line: "export { bankDistance, nearestUsableBank } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
         names: &["reader"],
         line: "export { reader } from '../../adapter/ClientAdapter.js';",
+    },
+    Reexport {
+        names: &[
+            "DEFAULT_BOOTH_NAME",
+            "DEFAULT_BOOTH_OP",
+            "MAP_SQUARE",
+            "sameMapSquare",
+            "locationOptions",
+            "boothFields",
+            "resolveGatheringLocation",
+        ],
+        line: "export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';",
     },
     Reexport {
         names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool", "bestHeldToolNames", "surplusHeldToolNames"],

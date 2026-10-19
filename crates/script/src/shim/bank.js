@@ -1,9 +1,6 @@
-import { Execution } from '../execution/Execution.js';
 import { runMachine } from '../../shim/_kernel.js';
-const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
-const snap = () => host().snapshot || {};
 
 // One try: Rust walks, presses the booth it observed and waits for the
 // fresh item list, then the caller's await answers the frozen boolean.
@@ -39,34 +36,19 @@ export function withdrawOp(ops, which) {
 export const Bank = new Proxy(
     {
         isOpen() {
-            return snap().bank_open === true;
+            return globalThis.__rs2b0t_bank_snapshot('isOpen');
         },
         loaded() {
-            return (snap().bank || []).length > 0;
+            return globalThis.__rs2b0t_bank_snapshot('loaded');
         },
         ready() {
-            return Bank.isOpen() && (Bank.snapshotReady() || Bank.loaded());
+            return globalThis.__rs2b0t_bank_snapshot('ready');
         },
         items() {
-            return (snap().bank || []).map((row) => ({
-                name: row?.name ?? null,
-                count: row?.count ?? 0,
-                id: row?.id ?? 0,
-                slot: typeof row?.slot === 'number' ? row.slot : -1,
-                comId: typeof row?.component_id === 'number' ? row.component_id : -1,
-                ops: Array.isArray(row?.ops) ? row.ops.slice() : [],
-                noted: row?.noted === true,
-                cert: row?.cert ?? -1,
-            }));
+            return globalThis.__rs2b0t_bank_snapshot('items');
         },
         count(name) {
-            const wanted = String(name).toLowerCase();
-            return (snap().bank || [])
-                .filter(
-                    (row) =>
-                        row && typeof row.name === 'string' && row.name.toLowerCase() === wanted,
-                )
-                .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
+            return globalThis.__rs2b0t_bank_snapshot('count', String(name));
         },
         deposit(name, op = 'Deposit-1') {
             return bankOp({ kind: 'deposit', name: String(name), op: String(op) });
@@ -142,21 +124,18 @@ export const Bank = new Proxy(
         },
         async waitReady(timeoutMs, log) {
             const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
-            if (!Bank.isOpen() || Bank.ready()) {
-                return Bank.ready();
-            }
-            await Execution.delayUntil(() => !Bank.isOpen() || Bank.ready(), ms);
-            if (Bank.isOpen() && !Bank.ready() && typeof log === 'function') {
-                log('bank: opened but the item list never arrived');
-            }
-            return Bank.ready();
+            const out = await runMachine(
+                'bank_wait',
+                { kind: 'ready', timeout_ms: ms },
+                { log: typeof log === 'function' ? log : undefined },
+            );
+            return out.kind === 'done' && out.value === true;
         },
         snapshotReady() {
-            return snap().bank_loaded === true;
+            return globalThis.__rs2b0t_bank_snapshot('snapshotReady');
         },
         snapshotGeneration() {
-            const generation = snap().bank_snapshot_generation;
-            return Number.isFinite(generation) && generation >= 0 ? generation : -1;
+            return globalThis.__rs2b0t_bank_snapshot('snapshotGeneration');
         },
         async waitSnapshotAfter(generation, timeoutMs) {
             const baseline = Number(generation);
@@ -164,28 +143,19 @@ export const Bank = new Proxy(
                 return false;
             }
             const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
-            await Execution.delayUntil(
-                () => !Bank.isOpen() || Bank.snapshotGeneration() > baseline,
-                ms,
+            const out = await runMachine(
+                'bank_wait',
+                {
+                    kind: 'snapshot-after',
+                    timeout_ms: ms,
+                    baseline_generation: baseline,
+                },
+                {},
             );
-            return (
-                Bank.isOpen() &&
-                Bank.snapshotReady() &&
-                Bank.snapshotGeneration() > baseline
-            );
+            return out.kind === 'done' && out.value === true;
         },
         countById(id) {
-            const rs = snap().bank || [];
-            if (rs.length === 0) {
-                return 0;
-            }
-            if (!rs.some((r) => r && typeof r.id === 'number' && r.id !== 0)) {
-                throw notImpl('Bank.countById');
-            }
-            const want = Number(id);
-            return rs
-                .filter((r) => r && r.id === want)
-                .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
+            return globalThis.__rs2b0t_bank_snapshot('countById', Number(id));
         },
         // Rust picks the row's Withdraw-All or the fill ladder and settles
         // on the posted pack.

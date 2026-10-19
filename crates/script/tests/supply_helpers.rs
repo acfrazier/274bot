@@ -37,8 +37,6 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         hold: false,

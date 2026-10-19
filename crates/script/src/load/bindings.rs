@@ -735,6 +735,7 @@ pub(super) fn wire_runtime(
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::selected_facts_v8::install(runtime).map_err(|e| format!("selected facts v8: {e}"))?;
+    super::rune_routes_v8::install(runtime).map_err(|e| format!("rune routes v8: {e}"))?;
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
     super::progress_methods_v8::install(runtime)
         .map_err(|e| format!("progress methods v8: {e}"))?;
@@ -754,6 +755,11 @@ pub(super) fn wire_runtime(
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
+    super::entities_v8::install(runtime).map_err(|e| format!("entities v8: {e}"))?;
+    super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
+    super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
+    super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
+    super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
     super::shop_ops_v8::install(runtime).map_err(|e| format!("shop ops v8: {e}"))?;
     super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
     super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;
@@ -921,7 +927,7 @@ const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
   'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
   'puzzle_board','puzzle_board_generation',
-  'withdraw_x_result_seq','withdraw_x_result','withdraw_load_result_seq','withdraw_load_result',
+  'withdraw_x_result_seq','withdraw_x_result',
   'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
   'walk_outcome_failed','walk_outcome_x','walk_outcome_z','walk_outcome_level',
   'walk_outcome_radius','walk_outcome_allow_teleports','walk_outcome_request_id',
@@ -946,7 +952,6 @@ const V2_OPS = {
   'set-note-mode': ['on'],
   'deposit': ['name'],
   'withdraw': ['name','action'],
-  'withdraw-load': ['name','bank_generation'],
   'puzzle-move': ['id','slot','component','generation'],
   'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
   'walk': ['x','z','level'],

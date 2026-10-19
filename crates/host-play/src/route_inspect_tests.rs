@@ -2198,8 +2198,6 @@ fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
             count_dialog_open: false,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
-            withdraw_load_result_seq: 0,
-            withdraw_load_result: false,
             bank_op_result_seq: 0,
             bank_op_result: false,
             hold,
@@ -3263,16 +3261,70 @@ fn real_content_inspection_capture_bytes() {
         "old/new real-content snapshot bytes include the dynamic route and refusal"
     );
     let old_bytes = std::fs::read(OLD_CAPTURE).expect("immutable old inspection capture");
-    assert_eq!(
-        bytes, old_bytes,
-        "candidate must preserve captured inspection bytes"
-    );
-    assert_eq!(bytes.len(), 1_376);
-    let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+    assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
+    let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(
         nav::pack::sha256_hex(&digest),
         "886f2db744cd8f7f7b90004af412b6a24b0211b2fdd23a460ccc54eb531188ab",
-        "real-content inspection wire must match the old captured bytes"
+        "immutable real-content inspection capture authority"
+    );
+    let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
+    let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
+
+    assert_eq!(bytes.len(), 1_360, "new capture size");
+    let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
+    assert_eq!(
+        nav::pack::sha256_hex(&new_digest),
+        "342c6caaccae1009d420d0e32a632042a60dbe3d056f62b22aaee48764b7ea5d",
+        "new real-content inspection capture authority"
+    );
+
+    let old_vtable = old_snapshot._tab.vtable();
+    let new_vtable = snapshot._tab.vtable();
+    // The retired fields keep their original wire slots.
+    for retired_field in [126_u16, 128] {
+        assert_ne!(
+            old_vtable.get(retired_field),
+            0,
+            "old capture contains retired vtable offset {retired_field}"
+        );
+        assert_eq!(
+            new_vtable.get(retired_field),
+            0,
+            "new capture omits retired vtable offset {retired_field}"
+        );
+    }
+    let field_count = old_vtable.num_fields().max(new_vtable.num_fields());
+    for field_index in 0..field_count {
+        let field_offset =
+            4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
+        if field_offset == 126 || field_offset == 128 {
+            continue;
+        }
+        assert_eq!(
+            old_vtable.get(field_offset) != 0,
+            new_vtable.get(field_offset) != 0,
+            "snapshot field at vtable offset {field_offset} changed presence"
+        );
+    }
+
+    // flatc's generated Debug visits every active accessor recursively;
+    // FlatBuffers Vector Debug iterates every entry without truncation.
+    // Thus this compares every active nested field, not just route fields.
+    let active_fields = format!("{snapshot:?}");
+    assert_eq!(
+        active_fields,
+        format!("{old_snapshot:?}"),
+        "all active decoded snapshot fields preserve the immutable capture"
+    );
+    let changed = encode_inspect_bytes(&expected_snapshot, 289_002, false);
+    assert_ne!(
+        active_fields,
+        format!(
+            "{:?}",
+            script::isolate_fb::decode_snapshot(&changed).unwrap()
+        ),
+        "changing an active tick must fail the capture comparison"
     );
     if let Some(output) = output {
         std::fs::write(&output, &bytes).expect("write exact inspection snapshot bytes");

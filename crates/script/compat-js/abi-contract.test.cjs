@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const ts = require('typescript');
 const {
     callbackFamilyRows,
     classifyModule,
@@ -24,6 +25,7 @@ const contractText = fs.readFileSync(path.join(here, 'abi-contract.json'), 'utf8
 const predecessorText = fs.readFileSync(path.join(here, 'family-predecessors.json'), 'utf8');
 const contract = JSON.parse(contractText);
 const predecessors = JSON.parse(predecessorText);
+const currentIndex = fs.readFileSync(path.join(here, 'index.d.ts'), 'utf8');
 const registry = JSON.parse(fs.readFileSync(path.join(here, 'modules.json'), 'utf8'));
 const shimSources = Object.fromEntries(registry.map(entry => [
     entry.shim,
@@ -40,13 +42,325 @@ const navFamilies = frozenRoot ? deriveNavFamilies({
 }) : null;
 
 test('the generated ABI contract and family graph are complete', () => {
-    validateArtifacts(contract, predecessors, navFamilies);
+    validateArtifacts(contract, predecessors, navFamilies, currentIndex);
     const nav = new Set(predecessors.families.filter(row => row.nav_consuming).map(row => row.family_id));
     assert.deepEqual(
         [...nav].sort(),
         ['acquisition', 'bank', 'clues', 'duel', 'hunt', 'quests', 'runtime', 'shop', 'tasks', 'thieving', 'walking'],
         'nav families are exactly those reached from served or declared ABI sources and called native backends',
     );
+});
+
+test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
+    assert.equal(predecessors.families.length, 41);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 31);
+    for (const [familyId, modules] of [
+        ['magic', ['api/magic/Autocast.js']],
+        ['prayer', ['api/prayer/Prayer.js']],
+        ['catalog-data', ['data/dropdb.js', 'data/herbs.js', 'data/itemdb.js', 'data/shopdb.js', 'data/spelldb.js']],
+    ]) {
+        const family = predecessors.families.find(row => row.family_id === familyId);
+        assert.ok(family, familyId);
+        assert.equal(family.nav_consuming, false);
+        assert.equal(family.activation_state, 'not-activated');
+        assert.deepEqual(family.predecessors, ['F0', 'T1.3', 'T2.1']);
+        assert.deepEqual(
+            contract.typed_modules.filter(row => row.family_id === familyId).map(row => row.module),
+            modules,
+        );
+    }
+    assert.deepEqual(
+        contract.typed_modules.map(row => row.module).sort(),
+        ['@rs2b0t/api', ...registry.map(row => row.module)].sort(),
+    );
+});
+
+test('the internal gathering adapter has complete gathering family coverage', () => {
+    assert.deepEqual(
+        contract.typed_modules.find(row => row.module === 'shim/gathering_locations.js'),
+        { module: 'shim/gathering_locations.js', family_id: 'gathering', nav_consuming: false },
+    );
+    const helpers = new Set([
+        'DEFAULT_BOOTH_NAME', 'DEFAULT_BOOTH_OP', 'MAP_SQUARE', 'sameMapSquare',
+        'locationOptions', 'boothFields', 'resolveGatheringLocation',
+    ]);
+    assert.ok(!contract.not_impl_debt.some(row => helpers.has(row.selector)));
+});
+
+test('every typed module requires a family predecessor row', () => {
+    for (const module of contract.typed_modules) {
+        const drift = structuredClone(predecessors);
+        drift.families = drift.families.filter(row => row.family_id !== module.family_id);
+        assert.throws(
+            () => validateArtifacts(contract, drift, navFamilies, currentIndex),
+            /Missing family predecessor classification for typed module/,
+            module.module,
+        );
+    }
+});
+
+test('the typed declaration AST rejects omitted module family rows', () => {
+    for (const module of contract.typed_modules) {
+        const drift = structuredClone(contract);
+        drift.typed_modules = drift.typed_modules.filter(row => row.module !== module.module);
+        assert.throws(
+            () => validateArtifacts(drift, predecessors, navFamilies, currentIndex),
+            /Missing typed module family row/,
+            module.module,
+        );
+    }
+});
+
+test('typed module classification rejects duplicate and incorrect family rows', () => {
+    const duplicate = structuredClone(contract);
+    duplicate.typed_modules.push(duplicate.typed_modules[0]);
+    assert.throws(() => validateArtifacts(duplicate, predecessors, navFamilies), /Duplicate typed module family row/);
+    const incorrect = structuredClone(contract);
+    incorrect.typed_modules.find(row => row.module === 'api/magic/Autocast.js').family_id = 'combat';
+    assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
+});
+
+test('only complete bank, chatbox, cooking, cow, entities, gathering, inventory, runecrafting, skills and world-primitives families are activated', () => {
+    assert.equal(contract.activation_state, 'partially-activated');
+    assert.deepEqual(contract.active_families, ['bank', 'chatbox', 'cooking', 'cow', 'entities', 'gathering', 'inventory', 'runecrafting', 'skills', 'world-primitives']);
+    for (const family of predecessors.families) {
+        assert.equal(
+            family.activation_state,
+            contract.active_families.includes(family.family_id) ? 'activated' : 'not-activated',
+            family.family_id,
+        );
+    }
+    assert.ok(!contract.not_impl_debt.some(row => row.selector === 'nearestUsableBank'));
+    assert.ok(!contract.not_impl_debt.some(row => row.selector === 'backpackSnapshots'));
+    assert.ok(!contract.not_impl_debt.some(row => row.selector === 'backpackCapacity'));
+    assert.deepEqual(
+        contract.typed_modules.filter(row => row.family_id === 'inventory').map(row => row.module).sort(),
+        ['api/equipment/Equipment.js', 'api/inventory/Inventory.js', 'api/inventory/packRules.js'],
+    );
+    assert.equal(
+        predecessors.families.find(row => row.family_id === 'inventory').counts.not_impl_debt,
+        0,
+    );
+    assert.equal(nativeFamilyFamilies.get('bank_wait'), 'bank');
+});
+test('the entity family is completely activated with both query refusal debts removed', () => {
+    const family = predecessors.families.find(row => row.family_id === 'entities');
+    assert.ok(family);
+    assert.equal(family.activation_state, 'activated');
+    assert.deepEqual(family.counts, {
+        declarations: 11,
+        members: 58,
+        overloads: 0,
+        aliases: 1,
+        callbacks: 0,
+        type_aliases: 0,
+        name_aliases: 1,
+        not_impl_debt: 0,
+    });
+    assert.ok(!contract.not_impl_debt.some(row =>
+        row.selector === 'EntityQuery.inside' || row.selector === 'EntityQuery.nearestPreferLocal'));
+});
+
+test('inventory root and public module declarations expose exact consumer types', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-inventory-consumer-'));
+    try {
+        const consumer = path.join(scratch, 'consumer.ts');
+        fs.writeFileSync(consumer, `
+import {
+    Inventory as RootInventory,
+    InvItem as RootInvItem,
+    Equipment as RootEquipment,
+} from '@rs2b0t/api';
+import * as RootInventoryModule from '@rs2b0t/api';
+import {
+    Inventory as ModuleInventory,
+    InvItem as ModuleInvItem,
+    backpackSnapshots,
+    backpackCapacity,
+} from '#/bot/api/inventory/Inventory.js';
+import { Equipment as ModuleEquipment } from '#/bot/api/equipment/Equipment.js';
+import {
+    type PackItem,
+    matchesAny,
+    countMatching,
+    slotsMatching,
+    shouldBank,
+    shouldRestock,
+    shouldEat,
+    shouldPanic,
+} from '#/bot/api/inventory/packRules.js';
+import type { InvItemSnapshot } from '#/bot/adapter/ClientAdapter.js';
+import type { Loc } from '#/bot/api/model/Loc.js';
+import type { Npc } from '#/bot/api/model/Npc.js';
+import type { Player } from '#/bot/api/model/Player.js';
+import type { GroundItem } from '#/bot/api/grounditems/GroundItems.js';
+
+declare const row: InvItemSnapshot;
+declare const loc: Loc;
+declare const npc: Npc;
+declare const player: Player;
+declare const groundItem: GroundItem;
+
+const moduleRows: InvItemSnapshot[] = backpackSnapshots();
+const moduleCapacity: number = backpackCapacity();
+const moduleItems: ModuleInvItem[] = ModuleInventory.items();
+const rootItems: RootInvItem[] = RootInventory.items();
+const moduleFirst: ModuleInvItem | null = ModuleInventory.first('Shark');
+const rootFirst: RootInvItem | null = RootInventory.first('Shark');
+const moduleContains: boolean = ModuleInventory.contains('Shark');
+const rootContains: boolean = RootInventory.contains('Shark');
+const used: number = ModuleInventory.used();
+const count: number = ModuleInventory.count('Shark');
+const countById: number = ModuleInventory.countById(385);
+const full: boolean = ModuleInventory.isFull();
+const free: number = ModuleInventory.free();
+const rootUsed: number = RootInventory.used();
+const rootCount: number = RootInventory.count('Shark');
+const rootCountById: number = RootInventory.countById(385);
+const rootFull: boolean = RootInventory.isFull();
+const rootFree: number = RootInventory.free();
+const moduleEquipmentItems: ModuleInvItem[] = ModuleEquipment.items();
+const rootEquipmentItems: RootInvItem[] = RootEquipment.items();
+const equipmentContains: boolean = ModuleEquipment.contains('Shark');
+const rootEquipmentContains: boolean = RootEquipment.contains('Shark');
+const equip: Promise<boolean> = ModuleEquipment.equip('Shark');
+const unequip: Promise<boolean> = ModuleEquipment.unequip('Shark');
+const rootEquip: Promise<boolean> = RootEquipment.equip('Shark');
+const rootUnequip: Promise<boolean> = RootEquipment.unequip('Shark');
+
+const item = new ModuleInvItem(row);
+const rootItem: RootInvItem | null = moduleFirst;
+const name: string | null = item.name;
+const id: number = item.id;
+const slot: number = item.slot;
+const quantity: number = item.count;
+const noted: boolean = item.noted;
+const cert: number = item.cert;
+const actions: string[] = item.actions();
+const interacted: boolean = item.interact('Eat');
+const usedOnItem: boolean = item.useOn(item);
+const usedOnLoc: boolean = item.useOn(loc);
+const usedOnNpc: boolean = item.useOn(npc);
+const usedOnPlayer: boolean = item.useOn(player);
+const usedOnGroundItem: boolean = item.useOn(groundItem);
+const rootConstructedItem = new RootInvItem(row);
+const rootName: string | null = rootConstructedItem.name;
+const rootId: number = rootConstructedItem.id;
+const rootSlot: number = rootConstructedItem.slot;
+const rootQuantity: number = rootConstructedItem.count;
+const rootNoted: boolean = rootConstructedItem.noted;
+const rootCert: number = rootConstructedItem.cert;
+const rootActions: string[] = rootConstructedItem.actions();
+const rootInteracted: boolean = rootConstructedItem.interact('Eat');
+const rootUsedOnItem: boolean = rootConstructedItem.useOn(item);
+const rootUsedOnLoc: boolean = rootConstructedItem.useOn(loc);
+const rootUsedOnNpc: boolean = rootConstructedItem.useOn(npc);
+const rootUsedOnPlayer: boolean = rootConstructedItem.useOn(player);
+const rootUsedOnGroundItem: boolean = rootConstructedItem.useOn(groundItem);
+
+const pack: PackItem = { name: 'Shark', count: 2 };
+const packRows: readonly PackItem[] = [pack];
+const anyMatch: boolean = matchesAny(pack.name, ['shark']);
+const matchingCount: number = countMatching(packRows, ['shark']);
+const matchingSlots: number = slotsMatching(packRows, ['shark']);
+const bank: boolean = shouldBank(8, 8, false);
+const restock: boolean = shouldRestock(1, 2);
+const eat: boolean = shouldEat(10, 10, 5, 1);
+const panic: boolean = shouldPanic(0.2, 0.25, 0);
+
+// @ts-expect-error backpack snapshot helpers take no arguments
+backpackSnapshots(1);
+// @ts-expect-error backpackSnapshots is a public-module-only helper
+RootInventoryModule.backpackSnapshots();
+// @ts-expect-error backpackCapacity is a public-module-only helper
+RootInventoryModule.backpackCapacity();
+// @ts-expect-error module backpack capacity helper takes no arguments
+backpackCapacity(28);
+// @ts-expect-error count takes an item name, not an object id
+ModuleInventory.count(385);
+// @ts-expect-error root count takes an item name, not an object id
+RootInventory.count(385);
+// @ts-expect-error root countById requires a numeric id
+RootInventory.countById('385');
+// @ts-expect-error root contains takes an item name
+RootInventory.contains(385);
+// @ts-expect-error root equipment methods take an item name
+RootEquipment.equip(385);
+// @ts-expect-error the module InvItem constructor requires a posted row
+new ModuleInvItem();
+// @ts-expect-error the module InvItem constructor takes one posted row
+new ModuleInvItem(row, true);
+// @ts-expect-error InvItem does not expose its private source row
+item.snap;
+// @ts-expect-error InvItem fields are readonly
+item.name = 'mutated';
+// @ts-expect-error cert is numeric
+const wrongCert: string = item.cert;
+// @ts-expect-error useOn accepts only supported posted target classes
+item.useOn('Shark');
+// @ts-expect-error PackItem contains only name and count
+const extraPackField: PackItem = { name: 'Shark', count: 2, id: 385 };
+// @ts-expect-error root InvItem does not expose its private source row
+rootConstructedItem.snap;
+// @ts-expect-error root InvItem fields are readonly
+rootConstructedItem.name = 'mutated';
+// @ts-expect-error root useOn accepts only supported posted target classes
+rootConstructedItem.useOn('Shark');
+// @ts-expect-error PackItem is a type-only export
+void PackItem;
+// @ts-expect-error matchesAny requires a string array
+matchesAny('Shark', 'shark');
+// @ts-expect-error countMatching returns a number
+const wrongMatchingCount: string = countMatching(packRows, ['shark']);
+// @ts-expect-error shouldEat requires numeric HP and item counts
+shouldEat('10', 10, 5, 1);
+
+void [
+    moduleRows, moduleCapacity, moduleItems, rootItems,
+    moduleFirst, rootFirst, moduleContains, rootContains, used, count, countById,
+    full, free, moduleEquipmentItems, rootEquipmentItems, equipmentContains,
+    rootEquipmentContains, equip, unequip, rootEquip, rootUnequip, rootItem, name,
+    id, slot, quantity, noted, cert, actions, interacted, usedOnItem, usedOnLoc,
+    usedOnNpc, usedOnPlayer, usedOnGroundItem, anyMatch, matchingCount,
+    matchingSlots, bank, restock, eat, panic, wrongCert, extraPackField,
+    wrongMatchingCount,
+    rootUsed, rootCount, rootCountById, rootFull, rootFree, rootConstructedItem,
+    rootName, rootId, rootSlot, rootQuantity, rootNoted, rootCert, rootActions,
+    rootInteracted, rootUsedOnItem, rootUsedOnLoc, rootUsedOnNpc, rootUsedOnPlayer,
+    rootUsedOnGroundItem,
+];
+`);
+        const program = ts.createProgram(
+            [path.join(here, 'index.d.ts'), consumer],
+            {
+                target: ts.ScriptTarget.ESNext,
+                module: ts.ModuleKind.ESNext,
+                moduleResolution: ts.ModuleResolutionKind.Bundler,
+                strict: true,
+                skipLibCheck: false,
+                noEmit: true,
+            },
+        );
+        const diagnostics = ts.getPreEmitDiagnostics(program);
+        assert.deepEqual(
+            diagnostics.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+            [],
+            'inventory consumers must type-check against the generated exact declarations',
+        );
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+});
+
+test('an activated family cannot lose its complete-unit graph state', () => {
+    for (const familyId of contract.active_families) {
+        const drift = structuredClone(predecessors);
+        drift.families.find(row => row.family_id === familyId).activation_state = 'not-activated';
+        assert.throws(
+            () => validateArtifacts(contract, drift, navFamilies),
+            new RegExp(`Unexpected activation state for family ${familyId}`),
+        );
+    }
 });
 
 test('a declared-only runtime member roots its implementation for nav scanning', () => {
@@ -172,7 +486,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 212);
+    assert.equal(contract.not_impl_debt.length, 196);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [

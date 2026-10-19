@@ -930,16 +930,16 @@ impl ScenarioRunner {
             }
             if !self.engine_speed_sent {
                 if let Some(ms) = self.engine_speed_ms {
-                    match crate::quest_fast::send_tick_speed(client, &self.snapshot, ms) {
-                        Ok(baseline) => {
-                            self.speed_chat_baseline = Some(baseline);
-                            self.log_tick_speed_endpoint(ms);
-                        }
-                        Err(error) => {
-                            self.finish_fail(&error);
-                            return;
-                        }
+                    // Record the pre-send chat mark before the command: the
+                    // confirm step accepts only a confirmation newer than
+                    // it, so a matching line already in the ring is stale.
+                    self.speed_chat_baseline =
+                        Some(crate::quest_fast::chat_baseline(&self.snapshot));
+                    if let Err(error) = crate::quest_fast::send_tick_speed(client, ms) {
+                        self.finish_fail(&error);
+                        return;
                     }
+                    self.log_tick_speed_endpoint(ms);
                 }
                 self.engine_speed_sent = true;
             }
@@ -1236,12 +1236,11 @@ impl ScenarioRunner {
                 .protect_window
                 .as_ref()
                 .is_some_and(|window| window.ready(&self.snapshot, self.obj_names.as_deref())),
-            Proof::WorldSpeedChanged { ms } => match self.speed_chat_baseline {
-                Some(baseline) => {
-                    crate::quest_fast::tick_speed_confirmed(&self.snapshot, baseline, ms)
-                }
-                None => Proof::WorldSpeedChanged { ms }.check(&self.snapshot, None),
-            },
+            // Freshness needs the runner's pre-send baseline; a bare
+            // snapshot check would accept a stale matching line.
+            Proof::WorldSpeedChanged { ms } => self.speed_chat_baseline.is_some_and(|baseline| {
+                crate::quest_fast::tick_speed_confirmed(&self.snapshot, baseline, ms)
+            }),
             Proof::FreshTutorial => match self.fresh_chat_baseline {
                 Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
                 None => false,
@@ -1899,16 +1898,13 @@ impl ScenarioRunner {
             return;
         };
         if baseline.is_none() {
-            let baseline =
-                match crate::quest_fast::send_tick_speed(client, &self.snapshot, speed_ms) {
-                    Ok(baseline) => baseline,
-                    Err(error) => {
-                        self.fail_terminal_cleanup(&error);
-                        return;
-                    }
-                };
+            let mark = crate::quest_fast::chat_baseline(&self.snapshot);
             if let Some(cleanup) = self.terminal_cleanup.as_mut() {
-                cleanup.baseline = Some(baseline);
+                cleanup.baseline = Some(mark);
+            }
+            if let Err(error) = crate::quest_fast::send_tick_speed(client, speed_ms) {
+                self.fail_terminal_cleanup(&error);
+                return;
             }
             return;
         }

@@ -4,8 +4,8 @@
 //! generation (the old `game_draw_enters`/`title_screen_draw_enters`
 //! counters are gone from `SlotStatus`, M2). The mechanism:
 //! `raster_this_tick` gates on `client.draw`, so a draw-off slot never
-//! dispatches the renderer, never produces a `FrameOutput`, and never
-//! reaches `FrameBuf::store` — its generation stays 0. The draw-on slot
+//! attaches a render head, never produces a `FrameOutput`, and never
+//! reaches `FrameBuf::publish` — its generation stays 0. The draw-on slot
 //! rasters at the 1 fps watch cadence (no capture, no full-rate in this
 //! harness), so its generation grows. `per_frame` applies the focus
 //! `set_draw` switch exactly as the panel does; the per-frame hook

@@ -1583,6 +1583,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/t2_family_live.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/host-play/tests/toll_gate_live.rs",
       "owner": "T1"
     },
@@ -2983,6 +2987,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/bank/compat.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/bank/npc.rs",
       "owner": "T2"
     },
@@ -2995,11 +3003,19 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/bank_access.rs",
+      "path": "crates/script/src/bank/prompt_args_tests.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/bank_deposit.rs",
+      "path": "crates/script/src/bank/request.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/bank/seat_open.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/bank/seat_transfer.rs",
       "owner": "T2"
     },
     {
@@ -3007,23 +3023,11 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/bank_op.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/bank_open.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/src/bank_select.rs",
       "owner": "T2"
     },
     {
       "path": "crates/script/src/bank_withdraw.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/banking_open.rs",
       "owner": "T2"
     },
     {
@@ -3299,6 +3303,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/gather_locations.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/gather_tools.rs",
       "owner": "T2"
     },
@@ -3495,6 +3503,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/script/src/load/chatbox_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/clue_facts_v8.rs",
       "owner": "T2"
     },
@@ -3527,6 +3539,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/entities_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/entity_pages.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/fire_v8.rs",
       "owner": "T2"
     },
@@ -3535,7 +3555,15 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/gathering_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/hunt_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/inventory_v8.rs",
       "owner": "T2"
     },
     {
@@ -3635,6 +3663,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/rune_routes_v8.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/load/runtime_bridge.rs",
       "owner": "T1"
     },
@@ -3652,6 +3684,10 @@
     },
     {
       "path": "crates/script/src/load/shop_ops_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/skills_v8.rs",
       "owner": "T2"
     },
     {
@@ -4275,6 +4311,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/shim/gathering_locations.js",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/shim/grounditems.js",
       "owner": "T2"
     },
@@ -4551,6 +4591,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/slot/bank.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/slot/combat.rs",
       "owner": "T1"
     },
@@ -4760,6 +4804,10 @@
     },
     {
       "path": "crates/script/tests/combat_style_contract.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/common/bank_slot.rs",
       "owner": "T2"
     },
     {
@@ -5152,6 +5200,46 @@
     },
     {
       "path": "crates/script/tests/supply_helpers.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_chatbox_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_cooking_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_entities_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_entities_generation.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_gathering_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_inventory_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_runecrafting_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_skills_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_world_primitives.rs",
       "owner": "T2"
     },
     {
@@ -6697,6 +6785,10 @@
     {
       "path": "crates/host/src/render.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/host/src/render_head.rs",
+      "owner": "T4"
     },
     {
       "path": "crates/host-play/src/script_nav_facade_tests.rs",

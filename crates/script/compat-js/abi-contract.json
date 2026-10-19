@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "endpoint": "T2.1",
-  "activation_state": "not-activated",
+  "activation_state": "partially-activated",
   "frozen_source": {
     "repository": "https://github.com/rs2b2t/rs2b0t.git",
     "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
@@ -8191,7 +8191,7 @@
       "name": "GatheringLocation",
       "kind": "interface",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": false,
       "signatures": [],
       "members": [
@@ -8315,53 +8315,61 @@
       ],
       "bases": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "DEFAULT_BOOTH_NAME",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "string",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "DEFAULT_BOOTH_OP",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "string",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "MAP_SQUARE",
       "kind": "value",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [],
       "members": [],
       "family_id": "gathering",
       "declaration_type": "number",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "sameMapSquare",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8372,14 +8380,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "locationOptions",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8390,14 +8400,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "boothFields",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8408,14 +8420,16 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
       "name": "resolveGatheringLocation",
       "kind": "function",
       "section": "world catalogs (data tables and pure helpers)",
-      "source_module": null,
+      "source_module": "shim/gathering_locations.js",
       "runtime": true,
       "signatures": [
         {
@@ -8426,7 +8440,9 @@
       ],
       "members": [],
       "family_id": "gathering",
-      "source_modules": [],
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
       "nav_consuming": false
     },
     {
@@ -9832,6 +9848,19 @@
       "mapping_kind": "re-export"
     },
     {
+      "public_name": "nearestUsableBank",
+      "source_name": "nearestUsableBank",
+      "module": "api/bank/BankLocations.js",
+      "family_id": "bank",
+      "shim": "bank_locations.js",
+      "nav_consuming": true,
+      "source_modules": [
+        "api/bank/BankLocations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
       "public_name": "reader",
       "source_name": "reader",
       "module": "adapter/ClientAdapter.js",
@@ -9840,6 +9869,97 @@
       "nav_consuming": false,
       "source_modules": [
         "adapter/ClientAdapter.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "DEFAULT_BOOTH_NAME",
+      "source_name": "DEFAULT_BOOTH_NAME",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "DEFAULT_BOOTH_OP",
+      "source_name": "DEFAULT_BOOTH_OP",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "MAP_SQUARE",
+      "source_name": "MAP_SQUARE",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "sameMapSquare",
+      "source_name": "sameMapSquare",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "locationOptions",
+      "source_name": "locationOptions",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "boothFields",
+      "source_name": "boothFields",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
+      ],
+      "is_alias": false,
+      "mapping_kind": "re-export"
+    },
+    {
+      "public_name": "resolveGatheringLocation",
+      "source_name": "resolveGatheringLocation",
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "shim": "gathering_locations.js",
+      "nav_consuming": false,
+      "source_modules": [
+        "shim/gathering_locations.js"
       ],
       "is_alias": false,
       "mapping_kind": "re-export"
@@ -10988,28 +11108,6 @@
       "mapping_kind": "direct-value"
     },
     {
-      "public_name": "DEFAULT_BOOTH_NAME",
-      "source_name": "DEFAULT_BOOTH_NAME",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
-      "public_name": "DEFAULT_BOOTH_OP",
-      "source_name": "DEFAULT_BOOTH_OP",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
-    },
-    {
       "public_name": "FISHING_LOCATIONS",
       "source_name": "FISHING_LOCATIONS",
       "module": null,
@@ -11131,17 +11229,6 @@
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-class"
-    },
-    {
-      "public_name": "MAP_SQUARE",
-      "source_name": "MAP_SQUARE",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-value"
     },
     {
       "public_name": "MINING_LOCATIONS",
@@ -11368,17 +11455,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "boothFields",
-      "source_name": "boothFields",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "buyPlansCost",
       "source_name": "buyPlansCost",
       "module": null,
@@ -11533,17 +11609,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "locationOptions",
-      "source_name": "locationOptions",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "miningLocationLabel",
       "source_name": "miningLocationLabel",
       "module": null,
@@ -11562,19 +11627,6 @@
       "source_modules": [],
       "family_id": "fishing",
       "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "nearestUsableBank",
-      "source_name": "nearestUsableBank",
-      "module": null,
-      "shim": null,
-      "source_modules": [
-        "api/bank/BankLocations.js"
-      ],
-      "family_id": "bank",
-      "nav_consuming": true,
       "is_alias": false,
       "mapping_kind": "direct-function"
     },
@@ -11711,17 +11763,6 @@
       "mapping_kind": "direct-function"
     },
     {
-      "public_name": "resolveGatheringLocation",
-      "source_name": "resolveGatheringLocation",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
       "public_name": "resolveMiningLocation",
       "source_name": "resolveMiningLocation",
       "module": null,
@@ -11741,17 +11782,6 @@
         "data/woodcuttingLocations.js"
       ],
       "family_id": "woodcutting",
-      "nav_consuming": false,
-      "is_alias": false,
-      "mapping_kind": "direct-function"
-    },
-    {
-      "public_name": "sameMapSquare",
-      "source_name": "sameMapSquare",
-      "module": null,
-      "shim": null,
-      "source_modules": [],
-      "family_id": "gathering",
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
@@ -11788,6 +11818,593 @@
       "nav_consuming": false,
       "is_alias": false,
       "mapping_kind": "direct-function"
+    }
+  ],
+  "typed_modules": [
+    {
+      "module": "@rs2b0t/api",
+      "family_id": "compat-runtime",
+      "nav_consuming": false
+    },
+    {
+      "module": "adapter/ClientAdapter.js",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/acquisition/Tools.js",
+      "family_id": "acquisition",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/bankAccess.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/ClueExecutor.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/cluePaint.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/data/cluedb.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/data/toolAcquire.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/duelTravel.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/SolveClue.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/defs/murder/areas.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/engine/QuestEngine.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/exec/primitives.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/Bank.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/Banking.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/BankLocations.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankOps.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankQuestJunk.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankRules.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankSort.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankSortRules.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bot/Bot.js",
+      "family_id": "bot",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/chatbox/gameMessages.js",
+      "family_id": "chatbox",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/boostPotions.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/CombatStyle.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/CombatStyleLogic.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/eatTiming.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/equipment.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/fightUpkeep.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/food.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/hunting/combat.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/guarded.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/logic.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/sites.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/supply.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/keepList.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/meleeWeapons.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/ranged.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/rangedSettings.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/Special.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/cooking/CookLocations.js",
+      "family_id": "cooking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/duel/ClueDuel.js",
+      "family_id": "duel",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/duel/Duel.js",
+      "family_id": "duel",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/equipment/Equipment.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/execution/EventSignal.js",
+      "family_id": "execution",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/execution/Execution.js",
+      "family_id": "execution",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/firemaking/Firemaking.js",
+      "family_id": "firemaking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/firemaking/LightFire.js",
+      "family_id": "firemaking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/game/Game.js",
+      "family_id": "game-state",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/grounditems/GroundItems.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/inventory/Inventory.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/inventory/packRules.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/loadout/loadoutPlan.js",
+      "family_id": "loadouts",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/loadout/loadoutSetting.js",
+      "family_id": "loadouts",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/locs/Locs.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/magic/Autocast.js",
+      "family_id": "magic",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/market/catalog.js",
+      "family_id": "market",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/market/MarketMaker.js",
+      "family_id": "market",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Loc.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Npc.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Player.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/npcs/Npcs.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/players/Players.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/prayer/Prayer.js",
+      "family_id": "prayer",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/query/Query.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/shop/BuyoutLogic.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/shop/Shop.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/shop/types.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/skills/Skills.js",
+      "family_id": "skills",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/sustain/Sustain.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/tasks/Anchor.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/ContinueDialog.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/DeathRecovery.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/PeriodicBank.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/CakeStall.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/cakeStallData.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/stealRules.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/targets.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/trade/drivePartnerTrade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/trade/PartnerTrade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/trade/Trade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/dialogue/ChatDialog.js",
+      "family_id": "dialogue",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/questlog/Quests.js",
+      "family_id": "questlog",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/widgets/Modals.js",
+      "family_id": "dialogue",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/walking/DirectNavigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/walking/Reach.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/walking/Traversal.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "data/cookLocations.js",
+      "family_id": "cooking",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/cowKillerLocations.js",
+      "family_id": "cow",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/dropdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/herbs.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/itemdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/miningRocks.js",
+      "family_id": "mining",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/pickpocketTargets.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "data/runeCraftLocations.js",
+      "family_id": "runecrafting",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/shopdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/spelldb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/woodcuttingLocations.js",
+      "family_id": "woodcutting",
+      "nav_consuming": false
+    },
+    {
+      "module": "event/webwalk/DirectNavigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/geometry/Reachability.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/Navigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/walkOpening.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "geometry/Area.js",
+      "family_id": "world-primitives",
+      "nav_consuming": false
+    },
+    {
+      "module": "geometry/Tile.js",
+      "family_id": "world-primitives",
+      "nav_consuming": false
+    },
+    {
+      "module": "input/Input.js",
+      "family_id": "input",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/jive.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/levelProgress.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/Paint.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/paintLogic.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "runtime/BotHost.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/RecoveryHints.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/RunManager.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/ScriptRunner.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/Settings.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/Supervisor.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "shim/_kernel.js",
+      "family_id": "compat-runtime",
+      "nav_consuming": false
+    },
+    {
+      "module": "shim/gathering_locations.js",
+      "family_id": "gathering",
+      "nav_consuming": false
     }
   ],
   "overlays": [
@@ -12214,6 +12831,16 @@
       "nav_consuming": false
     },
     {
+      "id": "native-gathering-helper-types",
+      "module": "shim/gathering_locations.js",
+      "selector": "$module",
+      "reason": "The seven root gathering helpers use an internal native name-map adapter, not a new public data module. Preserve the pinned gatheringLocations.ts helper signatures and caller-row generic identity on that adapter.",
+      "runtime": "crates/script/src/shim/gathering_locations.js:1",
+      "declaration": "import type { WorldTile } from '../adapter/ClientAdapter.js'; import Tile from '../geometry/Tile.js'; export interface BaitVendor { readonly keeper: string; readonly stand: Tile; readonly price: number; readonly item: string; } export interface GatheringLocation { name: string; spot: Tile; bankStand: Tile; verified: boolean; boothName?: string; boothOp?: string; obstacles?: string[]; campRadius?: number; chaseRadius?: number; resources?: readonly string[]; readonly avoidSpots?: readonly Tile[]; readonly sweep?: readonly Tile[]; readonly baitVendor?: BaitVendor; notes?: string; } export const DEFAULT_BOOTH_NAME: 'Bank booth'; export const DEFAULT_BOOTH_OP: 'Use-quickly'; export const MAP_SQUARE: 64; export function sameMapSquare(a: WorldTile, b: WorldTile): boolean; export function locationOptions(table: readonly GatheringLocation[]): string[]; export function boothFields(loc: GatheringLocation | null | undefined): { boothName: string; boothOp: string; }; export function resolveGatheringLocation<T extends GatheringLocation>(setting: string, startTile: WorldTile, table: readonly T[]): T | null;",
+      "family_id": "gathering",
+      "nav_consuming": false
+    },
+    {
       "id": "barrel-runtime-values",
       "module": "@rs2b0t/api",
       "selector": "$barrel",
@@ -12280,7 +12907,7 @@
       "selector": "Bank.depositAllExcept",
       "add": true,
       "reason": "Native deposit machine accepts iterable or array-like keep names and resolves without a boolean result.",
-      "runtime": "crates/script/src/shim/bank.js:86",
+      "runtime": "crates/script/src/shim/bank.js:68",
       "declaration": "depositAllExcept(keep?: Iterable<string> | ArrayLike<string>): Promise<void>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12291,7 +12918,7 @@
       "selector": "Bank.openNearestWorld",
       "add": true,
       "reason": "Host exposes a zero-argument world-bank opener absent from the frozen Bank object.",
-      "runtime": "crates/script/src/shim/bank.js:135",
+      "runtime": "crates/script/src/shim/bank.js:117",
       "declaration": "openNearestWorld(): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12301,7 +12928,7 @@
       "module": "api/bank/Banking.js",
       "selector": "Banking.bankNearest",
       "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
-      "runtime": "crates/script/src/shim/banking.js:129",
+      "runtime": "crates/script/src/shim/banking.js:110",
       "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12512,7 +13139,7 @@
         "banks"
       ],
       "reason": "Host returns its prebuilt table and ignores the legacy banks argument.",
-      "runtime": "crates/script/src/shim/cook_locations_data.js:29",
+      "runtime": "crates/script/src/shim/cook_locations_data.js:28",
       "family_id": "cooking",
       "nav_consuming": false
     },
@@ -12767,7 +13394,7 @@
       "id": "scene-npc-wrapper",
       "module": "api/model/Npc.js",
       "selector": "Npc",
-      "reason": "Npc stores any supplied row without validation, reads flat row fields, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc is a runtime re-export of that class (crates/script/src/shim/npcs.js:5-8,26-28,42-50,77-105; crates/script/src/shim/model_npc.js:1).",
+      "reason": "Npc stores any supplied row without validation, reads flat row fields through native adapters, returns health unchanged, constructs Tile values, and synchronously queues interactions; model/Npc reexports that class (crates/script/src/shim/npcs.js:5-77; crates/script/src/shim/model_npc.js:1).",
       "runtime": "crates/script/src/shim/npcs.js:5",
       "declaration": "export declare class Npc<S extends Partial<NpcSnapshot> = NpcSnapshot> implements Interactable, Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): NpcRowField<S, 'id'>; get level(): number; get index(): NpcRowField<S, 'index'>; get size(): number; get inCombat(): boolean; get health(): NpcRowField<S, 'health'>; targetsAnotherPlayer(): boolean; targetsMe(): boolean; networkOrigin(): Tile; tile(): Tile; networkTile(): Tile; distance(): number; actions(): string[]; valid(): boolean; interact(action: string): boolean; }",
       "family_id": "entities",
@@ -12807,7 +13434,7 @@
       "id": "scene-player-wrapper",
       "module": "api/model/Player.js",
       "selector": "Player",
-      "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-8,38-58; crates/script/src/shim/model_player.js:1).",
+      "reason": "Player stores the posted flat row, returns Tile from its flat coordinates, and has a synchronous boolean interact method absent from the frozen model; model/Player reexports this class (crates/script/src/shim/players.js:5-49; crates/script/src/shim/model_player.js:1).",
       "runtime": "crates/script/src/shim/players.js:5",
       "declaration": "export declare class Player<S extends Partial<PlayerSnapshot> = PlayerSnapshot> implements Locatable { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get index(): PlayerRowField<S, 'index'>; get inCombat(): boolean; get combatLevel(): number; targetsMe(): boolean; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; }",
       "family_id": "entities",
@@ -12817,7 +13444,7 @@
       "id": "scene-grounditems-module",
       "module": "api/grounditems/GroundItems.js",
       "selector": "$module",
-      "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-55; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
+      "reason": "The shim directly exports both GroundItem and GroundItems, while the frozen module reexports GroundItem from an unsupported model module; replace this module to declare the real wrapper, posted row, defaulted count and synchronous boolean interaction together (crates/script/src/shim/grounditems.js:5-46; crates/host-play/src/script_snapshot.rs:696-719; crates/script/src/load/snapshot.rs:1424-1504).",
       "runtime": "crates/script/src/shim/grounditems.js:5",
       "declaration": "import type { GroundItemSnapshot } from '../../adapter/ClientAdapter.js'; import Tile from '../../geometry/Tile.js'; import EntityQuery from '../query/Query.js'; type GroundItemRowField<S extends object, K extends keyof GroundItemSnapshot> = K extends keyof S ? S[K] : GroundItemSnapshot[K] | undefined; export declare class GroundItem<S extends Partial<GroundItemSnapshot> & { count?: number } = GroundItemSnapshot> { readonly snap: S; constructor(/** @internal */ snap: S); get name(): string | null; get id(): GroundItemRowField<S, 'id'>; get count(): number; tile(): Tile; distance(): number; actions(): string[]; interact(action: string): boolean; } export declare const GroundItems: { query(): EntityQuery<GroundItem>; };",
       "family_id": "entities",
@@ -12827,8 +13454,9 @@
       "id": "scene-inventory-item-handle",
       "module": "api/inventory/Inventory.js",
       "selector": "InvItem",
-      "reason": "Inventory emits row-backed InvItem instances with noted, copied actions, synchronous interactions, and the host-supported useOn targets.",
-      "runtime": "crates/script/src/shim/inventory.js:40",
+      "reason": "The native initializer supplies all six InvItem fields. cert is an existing served-only extension, defaulting to -1, absent from the frozen Inventory.ts:25-42 members. Row-backed instances preserve noted, copied actions, synchronous interactions, and host-supported useOn targets.",
+      "runtime": "crates/script/src/shim/inventory.js:15",
+      "preserveMembers": true,
       "declaration": "export class InvItem { readonly name: string | null; readonly count: number; readonly id: number; readonly slot: number; readonly noted: boolean; readonly cert: number; constructor(snapshot: import('../../adapter/ClientAdapter.js').InvItemSnapshot); actions(): string[]; interact(action: string): boolean; useOn(target: InvItem | Loc | Npc | import('../grounditems/GroundItems.js').GroundItem | import('../model/Player.js').Player): boolean; }",
       "family_id": "inventory",
       "nav_consuming": false
@@ -12847,8 +13475,8 @@
       "id": "scene-query-class",
       "module": "api/query/Query.js",
       "selector": "EntityQuery",
-      "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script/src/shim/query.js:11-20,55-65).",
-      "runtime": "crates/script/src/shim/query.js:11",
+      "reason": "The runtime exposes a public supply/wrap constructor, stores the two inputs and filter arrays, and adds forEachMatch; fromSnapshots retains each supplied row S and wrapped entity E without broad-type erasure (crates/script/src/shim/query.js:7-17,39-41).",
+      "runtime": "crates/script/src/shim/query.js:7",
       "declaration": "export default class EntityQuery<E extends QueryableEntity> { supplySnaps: () => readonly EntitySnapView[]; wrap: (s: EntitySnapView) => E; snapFilters: ((s: EntitySnapView & { ops: readonly (string | null)[]; tile: WorldTile }) => boolean)[]; entityFilters: ((e: E) => boolean)[]; constructor(supplySnaps: () => readonly EntitySnapView[], wrap: (s: EntitySnapView) => E); /** @internal Snapshot-first query: common filters run before `wrap`. `S` exposes the raw posted name/actions/x/z/level/distance row. */ static fromSnapshots<S extends EntitySnapView, E extends QueryableEntity>(supply: () => readonly S[], wrap: (s: S) => E): EntityQuery<E>; name(...names: string[]): this; action(action: string): this; within(dist: number): this; /** Chebyshev disk around any tile; planar distance does not require an origin level. */ withinOf(origin: { x: number; z: number; level?: number }, dist: number): this; inside(area: { minX: number; maxX: number; minZ: number; maxZ: number }): this; /** Entity-level predicate (runs after wrap). */ where(pred: (e: E) => boolean): this; results(): E[]; nearest(): E | null; /** Nearest to the player among results. */ nearestPreferLocal(preferRadius: number): E | null; first(): E | null; exists(): boolean; count(): number; /** Every match in supply order; `seen` true stops the walk. */ forEachMatch(seen: (e: E) => boolean): void; }",
       "family_id": "entities",
       "nav_consuming": false
@@ -12858,8 +13486,8 @@
       "module": "api/players/Players.js",
       "selector": "Players.all",
       "add": true,
-      "reason": "Players.all maps each posted flat player row to the exported Player wrapper; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:68-70).",
-      "runtime": "crates/script/src/shim/players.js:68",
+      "reason": "Players.all wraps the original rows paired with the decoded native player page using the exported Player class; it is runtime-only in the frozen query facade (crates/script/src/shim/players.js:55-57).",
+      "runtime": "crates/script/src/shim/players.js:55",
       "declaration": "all(): Player[];",
       "family_id": "entities",
       "nav_consuming": false
@@ -12903,7 +13531,7 @@
       "selector": "purgePackAtBank",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script/src/shim/banking.js:160",
+      "runtime": "crates/script/src/shim/banking.js:141",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12914,7 +13542,7 @@
       "selector": "withdrawCoins",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-      "runtime": "crates/script/src/shim/banking.js:164",
+      "runtime": "crates/script/src/shim/banking.js:145",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12925,7 +13553,7 @@
       "selector": "bankPace",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script/src/shim/banking.js:168",
+      "runtime": "crates/script/src/shim/banking.js:149",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -12936,7 +13564,7 @@
       "selector": "bankPaceTicks",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-      "runtime": "crates/script/src/shim/banking.js:172",
+      "runtime": "crates/script/src/shim/banking.js:153",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13085,28 +13713,6 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl:query:inside",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.inside",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:108",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:query:nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "runtime": "crates/script/src/shim/query.js:112",
-      "async": false,
-      "family_id": "entities",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:api/combat/hunting/combat.js:Fight.hasChaseTarget",
       "module": "api/combat/hunting/combat.js",
       "selector": "Fight.hasChaseTarget",
@@ -13140,28 +13746,6 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackSnapshots",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:19",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "selector": "backpackCapacity",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "runtime": "crates/script/src/shim/inventory.js:23",
-      "async": false,
-      "family_id": "inventory",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
       "module": "api/trade/drivePartnerTrade.js",
       "selector": "stableClosedPoll",
@@ -13178,7 +13762,7 @@
       "selector": "nearestWalkableBank",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:68",
+      "runtime": "crates/script/src/shim/bank_locations.js:61",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13189,7 +13773,7 @@
       "selector": "nearestWalkableBankAsync",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:72",
+      "runtime": "crates/script/src/shim/bank_locations.js:65",
       "async": true,
       "family_id": "bank",
       "nav_consuming": true
@@ -13200,7 +13784,7 @@
       "selector": "bankCostForFinder",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:76",
+      "runtime": "crates/script/src/shim/bank_locations.js:69",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13211,7 +13795,7 @@
       "selector": "bankCostForNavigator",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-      "runtime": "crates/script/src/shim/bank_locations.js:80",
+      "runtime": "crates/script/src/shim/bank_locations.js:73",
       "async": false,
       "family_id": "bank",
       "nav_consuming": true
@@ -13720,54 +14304,6 @@
       "runtime": "crates/script/src/shim/paintLogic.js:84",
       "async": false,
       "family_id": "paint",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.record",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:17",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.firstSince",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:37",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.recent",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:41",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
-      "nav_consuming": false
-    },
-    {
-      "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "selector": "GameMessages.reset",
-      "operation": "not-impl",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "runtime": "crates/script/src/shim/game_messages.js:45",
-      "preserveParameters": true,
-      "async": false,
-      "family_id": "chatbox",
       "nav_consuming": false
     },
     {
@@ -14994,7 +15530,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15011,7 +15547,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15045,7 +15581,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+      "evidence": "$TS/api/bank/Bank.ts:322-334; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "bank",
@@ -15062,7 +15598,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "tasks",
@@ -15079,7 +15615,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "thieving",
@@ -15164,7 +15700,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524,529-536"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15181,7 +15717,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,525-532"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15198,7 +15734,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,533-537"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs"
     },
     {
       "family_id": "walking",
@@ -15402,7 +15938,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:474-493,512-517"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15419,7 +15955,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15436,7 +15972,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15453,7 +15989,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15470,7 +16006,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15487,7 +16023,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15504,7 +16040,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15521,7 +16057,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15538,7 +16074,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15555,7 +16091,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15572,7 +16108,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15589,7 +16125,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -15606,7 +16142,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "tasks",
@@ -15623,7 +16159,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -15640,7 +16176,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15657,7 +16193,24 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:380-410"
+      "evidence": "$TS/api/bank/Banking.ts:299-307; $S/slot/bank.rs; $S/bank/seat_open.rs"
+    },
+    {
+      "family_id": "bank",
+      "native_family": "bank_wait",
+      "member": "log",
+      "call_site": "Bank.waitReady synchronous item-snapshot notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "trade",
@@ -22869,7 +23422,7 @@
       "selector": "purgePackAtBank",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:160",
+      "source": "crates/script/src/shim/banking.js:141",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
       "overlay_id": "not-impl:api/bank/Banking.js:purgePackAtBank"
     },
@@ -22879,7 +23432,7 @@
       "selector": "withdrawCoins",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:164",
+      "source": "crates/script/src/shim/banking.js:145",
       "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
       "overlay_id": "not-impl:api/bank/Banking.js:withdrawCoins"
     },
@@ -22889,7 +23442,7 @@
       "selector": "bankPace",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:168",
+      "source": "crates/script/src/shim/banking.js:149",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
       "overlay_id": "not-impl:api/bank/Banking.js:bankPace"
     },
@@ -22899,7 +23452,7 @@
       "selector": "bankPaceTicks",
       "module": "api/bank/Banking.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/banking.js:172",
+      "source": "crates/script/src/shim/banking.js:153",
       "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
       "overlay_id": "not-impl:api/bank/Banking.js:bankPaceTicks"
     },
@@ -23034,26 +23587,6 @@
       "overlay_id": "not-impl:hunting:withdrawTo"
     },
     {
-      "family_id": "entities",
-      "member": "inside",
-      "selector": "EntityQuery.inside",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:108",
-      "reason": "Unconditional not-impl; the native query never inspects an area or produces a successful result.",
-      "overlay_id": "not-impl:query:inside"
-    },
-    {
-      "family_id": "entities",
-      "member": "nearestPreferLocal",
-      "selector": "EntityQuery.nearestPreferLocal",
-      "module": "api/query/Query.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/query.js:112",
-      "reason": "Unconditional not-impl; the native query never inspects a preference radius or produces a successful result.",
-      "overlay_id": "not-impl:query:nearestPreferLocal"
-    },
-    {
       "family_id": "hunt",
       "member": "hasChaseTarget",
       "selector": "Fight.hasChaseTarget",
@@ -23084,26 +23617,6 @@
       "overlay_id": "not-impl:api/ai/clues/duelTravel.js:resetClueDuelSearch"
     },
     {
-      "family_id": "inventory",
-      "member": "backpackSnapshots",
-      "selector": "backpackSnapshots",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:19",
-      "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackSnapshots"
-    },
-    {
-      "family_id": "inventory",
-      "member": "backpackCapacity",
-      "selector": "backpackCapacity",
-      "module": "api/inventory/Inventory.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/inventory.js:23",
-      "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-      "overlay_id": "not-impl:api/inventory/Inventory.js:backpackCapacity"
-    },
-    {
       "family_id": "trade",
       "member": "stableClosedPoll",
       "selector": "stableClosedPoll",
@@ -23119,7 +23632,7 @@
       "selector": "nearestWalkableBank",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:68",
+      "source": "crates/script/src/shim/bank_locations.js:61",
       "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBank"
     },
@@ -23129,7 +23642,7 @@
       "selector": "nearestWalkableBankAsync",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:72",
+      "source": "crates/script/src/shim/bank_locations.js:65",
       "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:nearestWalkableBankAsync"
     },
@@ -23139,7 +23652,7 @@
       "selector": "bankCostForFinder",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:76",
+      "source": "crates/script/src/shim/bank_locations.js:69",
       "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForFinder"
     },
@@ -23149,7 +23662,7 @@
       "selector": "bankCostForNavigator",
       "module": "api/bank/BankLocations.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/bank_locations.js:80",
+      "source": "crates/script/src/shim/bank_locations.js:73",
       "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
       "overlay_id": "not-impl:api/bank/BankLocations.js:bankCostForNavigator"
     },
@@ -23612,46 +24125,6 @@
       "source": "crates/script/src/shim/paintLogic.js:84",
       "reason": "Unconditional not-impl: paint statistic layout remains unavailable.",
       "overlay_id": "not-impl:paint/paintLogic.js:statColumns"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "record",
-      "selector": "GameMessages.record",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:17",
-      "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "firstSince",
-      "selector": "GameMessages.firstSince",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:37",
-      "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "recent",
-      "selector": "GameMessages.recent",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:41",
-      "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent"
-    },
-    {
-      "family_id": "chatbox",
-      "member": "reset",
-      "selector": "GameMessages.reset",
-      "module": "api/chatbox/gameMessages.js",
-      "state": "not-impl",
-      "source": "crates/script/src/shim/game_messages.js:45",
-      "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-      "overlay_id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset"
     },
     {
       "family_id": "paint",
@@ -24237,24 +24710,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "DEFAULT_BOOTH_NAME",
-      "selector": "DEFAULT_BOOTH_NAME",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "DEFAULT_BOOTH_OP",
-      "selector": "DEFAULT_BOOTH_OP",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "fishing",
       "member": "FISHING_LOCATIONS",
       "selector": "FISHING_LOCATIONS",
@@ -24339,15 +24794,6 @@
       "family_id": "acquisition",
       "member": "HARRY_VENDOR",
       "selector": "HARRY_VENDOR",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "MAP_SQUARE",
-      "selector": "MAP_SQUARE",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24507,15 +24953,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "boothFields",
-      "selector": "boothFields",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "fishing",
       "member": "buyPlansCost",
       "selector": "buyPlansCost",
@@ -24651,15 +25088,6 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "locationOptions",
-      "selector": "locationOptions",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "mining",
       "member": "miningLocationLabel",
       "selector": "miningLocationLabel",
@@ -24672,15 +25100,6 @@
       "family_id": "fishing",
       "member": "missingFishingGear",
       "selector": "missingFishingGear",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "bank",
-      "member": "nearestUsableBank",
-      "selector": "nearestUsableBank",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24795,27 +25214,9 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     },
     {
-      "family_id": "gathering",
-      "member": "resolveGatheringLocation",
-      "selector": "resolveGatheringLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
       "family_id": "mining",
       "member": "resolveMiningLocation",
       "selector": "resolveMiningLocation",
-      "module": null,
-      "state": "not-impl",
-      "source": "declared_surface.js",
-      "reason": "The current compatibility name map unconditionally refuses this declared member."
-    },
-    {
-      "family_id": "gathering",
-      "member": "sameMapSquare",
-      "selector": "sameMapSquare",
       "module": null,
       "state": "not-impl",
       "source": "declared_surface.js",
@@ -24849,7 +25250,18 @@
       "reason": "The current compatibility name map unconditionally refuses this declared member."
     }
   ],
-  "active_families": [],
+  "active_families": [
+    "bank",
+    "chatbox",
+    "cooking",
+    "cow",
+    "entities",
+    "gathering",
+    "inventory",
+    "runecrafting",
+    "skills",
+    "world-primitives"
+  ],
   "family_counts": [
     {
       "family_id": "acquisition",
@@ -24872,8 +25284,8 @@
       "aliases": 2,
       "type_aliases": 2,
       "name_aliases": 0,
-      "callbacks": 9,
-      "not_impl_debt": 11
+      "callbacks": 10,
+      "not_impl_debt": 10
     },
     {
       "family_id": "bot",
@@ -24888,6 +25300,18 @@
       "not_impl_debt": 6
     },
     {
+      "family_id": "catalog-data",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
+    },
+    {
       "family_id": "chatbox",
       "nav_consuming": false,
       "declarations": 0,
@@ -24897,7 +25321,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 4
+      "not_impl_debt": 0
     },
     {
       "family_id": "client-adapter",
@@ -25005,7 +25429,7 @@
       "type_aliases": 0,
       "name_aliases": 1,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "events",
@@ -25077,7 +25501,7 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 7
+      "not_impl_debt": 0
     },
     {
       "family_id": "hunt",
@@ -25113,10 +25537,22 @@
       "type_aliases": 0,
       "name_aliases": 0,
       "callbacks": 0,
-      "not_impl_debt": 2
+      "not_impl_debt": 0
     },
     {
       "family_id": "loadouts",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
+    },
+    {
+      "family_id": "magic",
       "nav_consuming": false,
       "declarations": 0,
       "members": 0,
@@ -25162,6 +25598,18 @@
       "name_aliases": 0,
       "callbacks": 0,
       "not_impl_debt": 33
+    },
+    {
+      "family_id": "prayer",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
     },
     {
       "family_id": "questlog",

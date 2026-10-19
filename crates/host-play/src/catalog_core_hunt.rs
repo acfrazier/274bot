@@ -687,9 +687,9 @@ impl HuntDeliveryCycle {
                     && self.proof_items > 0
                     && !JAIL_CELL.contains(here)
             }
-            // The approach walk-near the bank, then (bank_open.rs) at most the
-            // booth approach; the host saw the bank open and shut again;
-            // within the radius at the end.
+            // The root walk approaches the bank. Any script-act booth approach
+            // stays near it; native seat walks have their own HostEffect lane.
+            // The host must observe the bank open, then shut, within the radius.
             HuntCell::Bank => {
                 let Some(walk) = self.walked_near(BANK_V2_DEST, BANK_V2_RADIUS) else {
                     return false;
@@ -742,10 +742,9 @@ fn walk_near_closed(act: &ScriptAct, dest: LineOfSightTile, radius: i32) -> bool
     } if *d == dest && *r == radius && *request_id != 0)
 }
 
-/// The bank family's booth approach once it stands near the bank: the
-/// `bank-open` child's `walk-near` radius 0 to the booth's stand, which it
-/// emits itself with wilderness and bank fetch on and no walk-wait id
-/// (`bank_open.rs` `walk_near_req`).
+/// The script-act format for a booth approach: radius zero, wilderness and
+/// bank fetch enabled, and no legacy walk-wait id. Native bank-seat walks
+/// instead carry their authority in `HostEffect::Walk`.
 fn booth_approach(act: &ScriptAct) -> bool {
     matches!(act, ScriptAct::Walk {
         dest,

@@ -247,11 +247,11 @@ export default class T extends LoopingBot {
                 return String(e.message || e);
             }
         };
+        globalThis.__gatheringMapSquare = api.MAP_SQUARE;
         globalThis.__probe = await Promise.all([
             use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
             use(() => api.FISHING_LOCATIONS.length),
-            use(() => api.MAP_SQUARE + 1),
             use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
             use(() => bankPace()),
@@ -263,9 +263,17 @@ export default class T extends LoopingBot {
         .expect("declared stub probe must load");
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").expect("probe __probe");
+    let map_square = iso
+        .probe("__gatheringMapSquare")
+        .expect("completed Gathering constant");
     iso.join();
+    assert_eq!(map_square.as_i64(), Some(64));
     let rows = probe.as_array().cloned().unwrap_or_default();
-    assert_eq!(rows.len(), 7, "every stub use must be probed: {probe:?}");
+    assert_eq!(
+        rows.len(),
+        6,
+        "every remaining stub use must be probed: {probe:?}"
+    );
     for (i, row) in rows.iter().enumerate() {
         let text = row.as_str().unwrap_or("");
         assert!(
@@ -273,7 +281,7 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
-    let bank_pace = rows[6].as_str().unwrap_or("");
+    let bank_pace = rows[5].as_str().unwrap_or("");
     assert!(
         bank_pace.contains("not impl: bankPace"),
         "unimplemented call must name bankPace, got {bank_pace:?}"
@@ -626,10 +634,32 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
         serde_json::from_str(include_str!("../compat-js/family-predecessors.json"))
             .expect("generated family predecessors");
     assert_eq!(contract["endpoint"], "T2.1");
-    assert_eq!(contract["activation_state"], "not-activated");
-    assert_eq!(contract["active_families"], serde_json::json!([]));
+    assert_eq!(contract["activation_state"], "partially-activated");
+    assert_eq!(
+        contract["active_families"],
+        serde_json::json!([
+            "bank",
+            "chatbox",
+            "cooking",
+            "cow",
+            "entities",
+            "gathering",
+            "inventory",
+            "runecrafting",
+            "skills",
+            "world-primitives"
+        ])
+    );
 
     let family_rows = graph["families"].as_array().expect("family rows");
+    let entities = family_rows
+        .iter()
+        .find(|row| row["family_id"] == "entities")
+        .expect("entity family row");
+    assert_eq!(entities["activation_state"], "activated");
+    assert_eq!(entities["counts"]["declarations"], serde_json::json!(11));
+    assert_eq!(entities["counts"]["members"], serde_json::json!(58));
+    assert_eq!(entities["counts"]["not_impl_debt"], serde_json::json!(0));
     let family_ids: std::collections::HashSet<&str> = family_rows
         .iter()
         .map(|row| row["family_id"].as_str().expect("family id"))

@@ -210,6 +210,7 @@ impl BankRun {
                             preferences: api::named_banks::BankPreferences::default(),
                             options: WalkOptions::default(),
                             explicit: self.explicit.clone(),
+                            allow_air_fallback: false,
                         },
                         &mut cx.tick.cx,
                     ) {

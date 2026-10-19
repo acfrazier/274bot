@@ -1885,7 +1885,10 @@ fn script_trade_is_a_two_profile_fleet_with_a_rust_acceptor_companion() {
     assert_eq!(s.settings.inject_companion_as, Some("partner"));
     assert!(s.settings.full_rate);
     assert!(s.settings.require_mainland_base);
-    assert_eq!(s.settings.nav.engine_speed_ms, Some(600));
+    assert!(
+        s.settings.nav.engine_speed_ms.is_none(),
+        "the default live path sends no world-wide ::speed"
+    );
     assert!(names().contains(&"script_trade"));
 }
 
@@ -1964,6 +1967,15 @@ fn script_trade_companion_blocks_when_trade_open_without_accept_id() {
 }
 
 #[test]
+fn gold_script_nav_requests_no_world_speed() {
+    assert_eq!(gold_script_nav(), ScenarioNav::default());
+    assert!(
+        gold_script_nav().engine_speed_ms.is_none(),
+        "the gold preset must not send a world-wide ::speed by default"
+    );
+}
+
+#[test]
 fn gold_script_scenarios_register_start_script_names() {
     let cases = [
         ("bone_burier", "BoneBurier"),
@@ -1984,10 +1996,9 @@ fn gold_script_scenarios_register_start_script_names() {
             s.settings.require_mainland_base,
             "{name} waits for mainland scene 2"
         );
-        assert_eq!(
-            s.settings.nav.engine_speed_ms,
-            Some(600),
-            "{name} cheats speed 600 so a leftover nav speed 300 is not inherited"
+        assert!(
+            s.settings.nav.engine_speed_ms.is_none(),
+            "{name} runs on the engine's default tick and sends no world-wide ::speed"
         );
     }
     for name in ["thiever", "bank_fletcher"] {
@@ -12974,10 +12985,9 @@ fn jive_cells_are_registered_with_cards_and_loadouts() {
         let s = get(name).unwrap_or_else(|| panic!("{name} resolves"));
         assert_eq!(s.name, name);
         assert_eq!(s.settings.start_script, Some(card), "{name} card");
-        assert_eq!(
-            s.settings.nav.engine_speed_ms,
-            Some(600),
-            "{name} keeps Engine A at the default 600ms tick"
+        assert!(
+            s.settings.nav.engine_speed_ms.is_none(),
+            "{name} keeps Engine A at the default 600ms tick without sending ::speed"
         );
         let start = s
             .steps

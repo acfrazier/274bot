@@ -36,6 +36,58 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Compat v1 game-message recording and all readers now use one per-context
+  Rust history, bounded to 64 records. Only posted type 0 chat lines enter it.
+  `mark`, `since`, `sawSince` and `firstSince` read it. `since` returns original
+  message objects oldest first. Session resets clear history without replaying
+  omitted pages. Posted rows lack packet provenance, so local type 0 notices
+  remain indistinguishable from server game messages.
+  See [Game messages](docs/api/script.md#game-messages-compat-v1).
+- Gathering scripts can use the declared location options, booth defaults,
+  map-square checks and location resolver. A shared Rust preset core serves
+  compiled callers and compatibility adapters without a second resource catalog.
+- Cooking location options and name lookups now run in Rust over the existing
+  bank-bound catalog. Curated surfaces, unlock callbacks and returned object
+  identities keep their existing behavior.
+- The runecrafting compatibility catalog is materialized directly from the Rust
+  route roster. Its names, order, default rune and real Tile values are unchanged;
+  the unused posted content-page copy has been removed.
+- Cow location, toll, bootstrap and loot-leash helpers are admitted as a complete
+  Rust-backed compatibility family. Catalog order, selected-bank bindings,
+  object identities and existing behavior are unchanged.
+- Skills lookups and HP fraction calculations now run in Rust over the
+  already-posted stats rows. Compatibility names, row ordering, missing-skill
+  errors and boosted levels keep their existing behavior.
+- Inventory, Equipment and the seven pack-rule helpers now run through the
+  native inventory family. The backpack helpers select bank-side rows and
+  capacity 28 only while the bank is open. Otherwise, they use posted inventory
+  rows and capacity. Both helpers refuse an unposted bank-open page instead of
+  treating it as a closed pack. Known-empty views stay empty. Existing Inventory
+  and Equipment readers keep fresh posted rows, caller-visible getters and
+  item-handle identity. Both backpack helpers
+  remain on the public Inventory module only.
+- World Tile copying, translation, equality, text conversion and posted-coordinate
+  validation now run in Rust. Area sampling returns a real Tile in the same native
+  call. Existing geometry bounds, plane rules and caller-visible values stay the
+  same.
+- Bank opening, selection, deposits, withdrawals, note mode and close operations
+  now run in the native request seat. Compatibility callbacks keep their
+  existing call order, return handling and thrown values. Bank snapshot reads
+  and local bank calculations are owned by Rust.
+  Paused bank walks revalidate their saved destination on Resume without
+  repeating bank callbacks or extending the operation's active-time limit.
+  Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
+  byte limit, without changing the operation's result.
+- Breaking change: NativeApi v2 no longer accepts `withdraw-load` or exposes
+  `withdraw_load_result_seq` and `withdraw_load_result`. Use `withdraw-x` with
+  the number of free slots or compatibility `Bank.withdrawLoad(name)`. The
+  BoneBurier v2 example uses that method.
+- Entity wrappers and queries run on the native boundary, including area and
+  player-preferred nearest filters. Production collections select and rank from
+  the decoded Rust scene, paired with the original public row objects only after
+  successful snapshot publication. Wrapper getters still read their public
+  `snap`, while `fromSnapshots` keeps caller-supplied rows and callbacks.
+  Public classes, aliases, module helpers and interaction queues are unchanged.
 - Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
   `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
@@ -332,6 +384,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the first six bots it stops
   and the first six it starts, and counts the rest ("+N more") beside
   the total for each, instead of listing every name.
+- Render-all draws up to 128 clients at once. A client past that shows
+  "renderer refused: render head cap of 128 is full" in its own tile.
+- Clients without a drawn view retain less render scratch memory. Hiding a view
+  releases that scratch, and showing it again keeps the same game connection.
 
 ### TUI
 
@@ -374,6 +430,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Fixed during development
 
+#### Scripts
+
+- The compatibility family table now includes magic, prayer, and selected-content
+  data modules. Generation rejects a typed module without a family row.
+  This corrects coverage reporting and does not activate new behavior.
+
 #### Navigation
 
 - Planning a bank trip for route supplies is fast again from places such as
@@ -411,6 +473,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Route searches avoid repeated comparisons when they select the next tile.
   They skip finished reachability proofs and unnecessary zone-check futures.
   Routes, search budgets and cancellation checks stay unchanged.
+
+#### Live scenarios
+
+- Live script scenarios no longer send a world-wide `::speed 600` command by
+  default. A scenario sends `::speed` only when it explicitly asks for a
+  tick, such as `QUESTER_TICK_MS=300` on Engine Q. Every request is sent and
+  then confirmed by a system-chat line newer than that send; a matching
+  confirmation already in the ring neither suppresses nor satisfies it.
+  Scenario pass criteria are unchanged.
 
 #### Maps
 
@@ -488,6 +559,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   needs an operator commit in `274bot-arch` (`policy.toml` plus a
   regenerated `graph-provenance.json`, operator publishes first); propose
   it as a patch or branch bundle for the operator to push.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`),
+  pack purging at a bank (`purgePackAtBank`) and coin withdrawal
+  (`withdrawCoins`) are **Planned**, not included here. These calls still
+  report `not impl`; moving existing banking into the native seat does not
+  implement them.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

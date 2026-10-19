@@ -218,8 +218,6 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         count_dialog_open: scene.count_dialog_open,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         hold: scene.hold,

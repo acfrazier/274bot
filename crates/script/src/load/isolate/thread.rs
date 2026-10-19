@@ -534,7 +534,7 @@ fn encode_seat_batch(
         };
         let has_control_work = carry.has_work();
         let starts = carry.starts?;
-        let decisions: [crate::isolate_fb::SeatDecisionRef<'_>; 0] = [];
+        let decisions = &carry.decisions;
         let max_rows = crate::isolate_fb::MAX_SEAT_RESERVED_ROWS
             .saturating_add(crate::isolate_fb::MAX_SEAT_GAMEPLAY_ROWS);
         let mut requests = Vec::with_capacity(
@@ -626,7 +626,7 @@ fn encode_seat_batch(
         let input = crate::isolate_fb::SeatInteractBatchInput {
             consumed_terminal_seq: carry.consumed_terminal_seq,
             starts: &starts,
-            decisions: &decisions,
+            decisions,
             cancels: &carry.cancels,
             mirror_revokes: &carry.mirror_revokes,
             reqs: &requests,
@@ -1481,10 +1481,20 @@ fn tick_loop(
                         }
                         if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
-                        } else if events_consumed {
-                            let observed = event_producer.observe(&snap);
-                            if let Some(diag) = observed.diagnostic {
-                                let _ = out.send(ThreadMsg::Log(diag));
+                        } else {
+                            if snap.has_chat_lines() {
+                                if let Err(e) =
+                                    super::super::chatbox_v8::ingest_posted(&mut runtime)
+                                {
+                                    let _ =
+                                        out.send(ThreadMsg::Log(format!("chatbox snapshot: {e}")));
+                                }
+                            }
+                            if events_consumed {
+                                let observed = event_producer.observe(&snap);
+                                if let Some(diag) = observed.diagnostic {
+                                    let _ = out.send(ThreadMsg::Log(diag));
+                                }
                             }
                         }
                     }
@@ -2258,7 +2268,10 @@ fn tick_loop(
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
-                crate::bank_op::on_reset();
+                super::super::entity_pages::reset(&mut runtime);
+                if let Err(e) = super::super::chatbox_v8::reset_session(&mut runtime) {
+                    let _ = out.send(ThreadMsg::Log(format!("chatbox reset: {e}")));
+                }
                 super::reach_query::on_reset();
                 if !keep_work {
                     crate::cake_stall::on_reset();

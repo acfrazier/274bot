@@ -1,4 +1,4 @@
-// World tile primitive (Chebyshev distance). Thin shim over posted coords.
+// World tile representation. Geometry and posted validation run in Rust.
 export default class Tile {
     constructor(x, z, level = 0) {
         this.x = x;
@@ -7,7 +7,7 @@ export default class Tile {
     }
 
     static from(tile) {
-        return new Tile(tile.x, tile.z, tile.level ?? 0);
+        return globalThis.__rs2b0t_tile(0, Tile, tile);
     }
 
     distanceTo(other) {
@@ -15,31 +15,20 @@ export default class Tile {
     }
 
     translate(dx, dz) {
-        return new Tile(this.x + dx, this.z + dz, this.level);
+        return globalThis.__rs2b0t_tile(1, Tile, this, dx, dz);
     }
 
     equals(other) {
-        return this.x === other.x && this.z === other.z && this.level === other.level;
+        return globalThis.__rs2b0t_tile(2, this, other);
     }
 
     toString() {
-        return `(${this.x}, ${this.z}, ${this.level})`;
+        return globalThis.__rs2b0t_tile(3, this);
     }
 }
 
 export function tileFromPosted(value) {
-    if (
-        !value ||
-        typeof value !== 'object' ||
-        !Number.isSafeInteger(value.x) || value.x < 0 || value.x > 16_383 ||
-        !Number.isSafeInteger(value.z) || value.z < 0 || value.z > 16_383 ||
-        (value.level !== undefined && (
-            !Number.isSafeInteger(value.level) || value.level < 0 || value.level > 3
-        ))
-    ) {
-        return null;
-    }
-    return value instanceof Tile ? value : Tile.from(value);
+    return globalThis.__rs2b0t_tile(4, Tile, value);
 }
 
 globalThis.__rs2b0t_tileFromPosted = tileFromPosted;

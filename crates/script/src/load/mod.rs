@@ -30,6 +30,8 @@ mod cake_stall_v8;
 pub(crate) mod callback_v8;
 #[cfg(feature = "load")]
 mod canvas_tape;
+#[cfg(feature = "load")]
+mod chatbox_v8;
 mod clue_facts_v8;
 mod clue_logic_v8;
 mod clue_pack_v8;
@@ -42,10 +44,18 @@ mod dialog_v8;
 #[cfg(feature = "load")]
 mod distance;
 #[cfg(feature = "load")]
+mod entities_v8;
+#[cfg(feature = "load")]
+mod entity_pages;
+#[cfg(feature = "load")]
 mod fire_v8;
 mod gather_methods_v8;
 #[cfg(feature = "load")]
+mod gathering_v8;
+#[cfg(feature = "load")]
 mod hunt_v8;
+#[cfg(feature = "load")]
+mod inventory_v8;
 #[cfg(feature = "load")]
 mod isolate;
 mod library;
@@ -76,6 +86,8 @@ mod recovery_hints_v8;
 #[cfg(feature = "load")]
 mod run_policy_v8;
 #[cfg(feature = "load")]
+mod rune_routes_v8;
+#[cfg(feature = "load")]
 mod runtime_bridge;
 #[cfg(feature = "load")]
 mod scene_v8;
@@ -83,6 +95,8 @@ mod selected_facts_v8;
 mod shape;
 #[cfg(feature = "load")]
 mod shop_ops_v8;
+#[cfg(feature = "load")]
+mod skills_v8;
 #[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;
