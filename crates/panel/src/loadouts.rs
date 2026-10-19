@@ -1,25 +1,55 @@
 //! Native loadout editor: labeled equipment slots, supply quantities, and
 //! save/error feedback. Search uses generated wearpos facts; it does not
 //! clone the foreign panel.
+//!
+//! The window edits the core's loadout form ([`frontend_core::scripts::LoadoutForm`],
+//! lent to the command seam): a widget edits the staged draft in place and
+//! then submits `EditLoadoutDraft`, the buttons submit the loadout rows, and
+//! what a row says (`Saved.`, why a save failed) is the form's status. What
+//! stays here is presentation: the item search, its picker rows and the
+//! supply quantity text.
 
 use dear_imgui_rs::{Condition, StyleVar, Ui, WindowFlags};
 
 use crate::session::Session;
 use crate::theme::{scale_px, scale_size, ui_scale};
-use api::loadout::{CarryEntry, Loadout};
-use script::{
-    copy_equipment_preserving_supplies, unique_loadout_name, worn_slot_label, WORN_SLOT_LAYOUT,
-};
+use api::identity::Settlement;
+use api::loadout::CarryEntry;
+use frontend_core::command::{Completion, LoadoutField};
+use frontend_core::scripts::WornSlot;
+use frontend_core::{OperatorCommand, Targets};
 
 const SEARCH_LIMIT: usize = 40;
 const SEARCH_POPUP: &str = "##loadout-item-search";
 
-pub fn sync_draft(session: &mut Session) {
-    session.loadouts_draft = session
-        .loadouts
-        .loadouts()
-        .get(session.loadouts_sel)
-        .cloned();
+/// Submit `command` for the loadout form; whether it settled `Done`. A row
+/// that replaced the draft also rebuilds what the window derived from it
+/// (the item search, the supply quantity text).
+fn submit_row(session: &mut Session, command: OperatorCommand, targets: Targets<'_>) -> bool {
+    let generation = session.loadouts.generation();
+    let done = session.submit(command, targets).is_some_and(|submitted| {
+        session
+            .core
+            .commands()
+            .report(submitted.request())
+            .is_some_and(|report| {
+                report.members().iter().all(|member| {
+                    matches!(
+                        member.terminal(),
+                        Some(Settlement::Completed(Completion::Done))
+                    )
+                })
+            })
+    });
+    if session.loadouts.generation() != generation {
+        resync_presentation(session);
+    }
+    done
+}
+
+/// The window's own state that follows the draft: the item search closes and
+/// the quantity text is read from the supplies again.
+fn resync_presentation(session: &mut Session) {
     session.loadouts_search.clear();
     session.loadouts_search_slot = None;
     session.loadouts_search_supply = None;
@@ -28,166 +58,70 @@ pub fn sync_draft(session: &mut Session) {
 
 fn resync_qty_bufs(session: &mut Session) {
     session.loadouts_qty_bufs = session
-        .loadouts_draft
-        .as_ref()
+        .loadouts
+        .draft()
         .map(|draft| draft.carry.iter().map(|row| row.qty.to_string()).collect())
         .unwrap_or_default();
 }
 
-/// The selected row's name, taken before an edit so the row can be found
-/// again whatever the list becomes.
-fn selected_name(session: &Session) -> Option<String> {
-    session
-        .loadouts
-        .loadouts()
-        .get(session.loadouts_sel)
-        .map(|row| row.name.clone())
+/// Select row `index` and make it the editing draft.
+pub fn select(session: &mut Session, index: usize) {
+    session.loadouts.stage_selection(index);
+    submit_row(
+        session,
+        OperatorCommand::SelectLoadout,
+        Targets::Application,
+    );
 }
 
-/// Where the row called `name` sits in the form's list now.
-fn position_of(session: &Session, name: &str) -> Option<usize> {
-    session
-        .loadouts
-        .loadouts()
-        .iter()
-        .position(|row| row.name == name)
-}
-
-/// A save landed: the form now holds exactly the rows the store holds, so
-/// the saved row is selected by its name, not by the index it had (a new
-/// row is appended; a renamed one keeps its place).
-fn select_saved(session: &mut Session, name: &str) {
-    if let Some(index) = position_of(session, name) {
-        session.loadouts_sel = index;
-    }
-    sync_draft(session);
-}
-
-/// A save did not land: drop the edits the form made, keep the operator's
-/// draft, and keep the selection on the row it was on, found again by name
-/// (after a conflict the form's rows are the store's latest, in an order
-/// that may differ).
-fn discard_failed_save(session: &mut Session, selected: Option<String>) {
-    session.loadouts.discard();
-    if let Some(index) = selected.and_then(|name| position_of(session, &name)) {
-        session.loadouts_sel = index;
-    }
-}
-
+/// Save the draft over the selected row.
 pub fn save_draft(session: &mut Session) -> bool {
-    let Some(draft) = session.loadouts_draft.clone() else {
-        session.loadouts_status = "No loadout selected.".into();
-        return false;
-    };
-    if draft.name.trim().is_empty() {
-        session.loadouts_status = "Name is required.".into();
-        return false;
-    }
-    let selected = selected_name(session);
-    let saved = draft.name.clone();
-    if session.loadouts_sel < session.loadouts.loadouts().len() {
-        // The name is the row's key in the store: a rename onto another
-        // row's name is refused rather than replacing that row.
-        if !session.loadouts.replace_at(session.loadouts_sel, draft) {
-            session.loadouts_status = format!("A loadout named \"{saved}\" already exists.");
-            return false;
-        }
-    } else {
-        session.loadouts.upsert(draft);
-    }
-    match session.loadouts.save() {
-        Ok(()) => {
-            select_saved(session, &saved);
-            session.loadouts_status = "Saved.".into();
-            true
-        }
-        Err(err) => {
-            discard_failed_save(session, selected);
-            session.loadouts_status = format!("Save failed: {err}");
-            false
-        }
-    }
+    submit_row(session, OperatorCommand::SaveLoadout, Targets::Application)
 }
 
 fn add_loadout(session: &mut Session) {
-    let name = unique_loadout_name(session.loadouts.loadouts(), "loadout");
-    let selected = selected_name(session);
-    session.loadouts.upsert(Loadout::new(name.clone()));
-    match session.loadouts.save() {
-        Ok(()) => {
-            select_saved(session, &name);
-            session.loadouts_status = "Saved.".into();
-        }
-        Err(err) => {
-            discard_failed_save(session, selected);
-            session.loadouts_status = format!("Save failed: {err}");
-        }
-    }
+    submit_row(
+        session,
+        OperatorCommand::CreateLoadout,
+        Targets::Application,
+    );
 }
 
 fn duplicate_loadout(session: &mut Session) {
-    let Some(src) = session
-        .loadouts
-        .loadouts()
-        .get(session.loadouts_sel)
-        .cloned()
-    else {
-        return;
-    };
-    let mut dup = src.clone();
-    dup.name = unique_loadout_name(session.loadouts.loadouts(), &format!("{} copy", src.name));
-    let name = dup.name.clone();
-    session.loadouts.upsert(dup);
-    match session.loadouts.save() {
-        Ok(()) => {
-            select_saved(session, &name);
-            session.loadouts_status = "Saved.".into();
-        }
-        Err(err) => {
-            discard_failed_save(session, Some(src.name));
-            session.loadouts_status = format!("Save failed: {err}");
-        }
-    }
+    submit_row(
+        session,
+        OperatorCommand::DuplicateLoadout,
+        Targets::Application,
+    );
 }
 
 fn delete_loadout(session: &mut Session) {
-    let Some(name) = selected_name(session) else {
-        return;
-    };
-    session.loadouts.remove(&name);
-    match session.loadouts.save() {
-        Ok(()) => {
-            if session.loadouts_sel >= session.loadouts.loadouts().len() {
-                session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
-            }
-            sync_draft(session);
-            session.loadouts_status = "Saved.".into();
-        }
-        Err(err) => {
-            discard_failed_save(session, Some(name));
-            session.loadouts_status = format!("Save failed: {err}");
-        }
-    }
+    submit_row(
+        session,
+        OperatorCommand::DeleteLoadout,
+        Targets::Application,
+    );
 }
 
+/// Copy the selected member's worn gear into the draft.
 fn copy_equipment(session: &mut Session) {
-    let Some(items) = session.focused_equipment_items() else {
-        session.loadouts_status = "Copy current equipment needs a focused ingame character.".into();
-        return;
-    };
-    if session.loadouts_draft.is_none() {
-        session.loadouts_status = "No loadout selected.".into();
-        return;
-    }
-    let data = session.selected_game_data();
-    if let Some(draft) = session.loadouts_draft.as_mut() {
-        copy_equipment_preserving_supplies(draft, &items, data.as_deref());
-    }
-    session.loadouts_status = "Copied current equipment into the draft. Save to keep it.".into();
+    submit_row(
+        session,
+        OperatorCommand::CopyEquipmentToLoadout,
+        Targets::Selected,
+    );
 }
 
-fn assign_slot(session: &mut Session, slot: &str, item: Option<String>) {
-    let two_handed = slot == "righthand"
+/// Whether the selected member has equipment to copy.
+fn can_copy_equipment(session: &Session) -> bool {
+    session
+        .core
+        .selected()
+        .is_some_and(|name| session.core.can_observe_equipment(name))
+}
+
+fn assign_slot(session: &mut Session, slot: WornSlot, item: Option<String>) {
+    let two_handed = slot == WornSlot::RightHand
         && item.as_deref().is_some_and(|name| {
             session.selected_game_data().is_some_and(|data| {
                 data.items().iter().any(|row| {
@@ -197,13 +131,36 @@ fn assign_slot(session: &mut Session, slot: &str, item: Option<String>) {
                 })
             })
         });
-    let Some(draft) = session.loadouts_draft.as_mut() else {
+    let Some(draft) = session.loadouts.draft_mut() else {
         return;
     };
     if two_handed {
-        draft.worn.remove("lefthand");
+        draft.worn.remove(WornSlot::LeftHand.id());
     }
-    draft.set_slot(slot, item);
+    draft.set_slot(slot.id(), item);
+    submit_row(
+        session,
+        OperatorCommand::EditLoadoutDraft(LoadoutField::Equipment),
+        Targets::Application,
+    );
+}
+
+/// Name the item of supply row `index`; `false` when there is no such row.
+fn set_supply_item(session: &mut Session, index: usize, item: String) -> bool {
+    let Some(entry) = session
+        .loadouts
+        .draft_mut()
+        .and_then(|draft| draft.carry.get_mut(index))
+    else {
+        return false;
+    };
+    entry.item = item;
+    submit_row(
+        session,
+        OperatorCommand::EditLoadoutDraft(LoadoutField::Supplies),
+        Targets::Application,
+    );
+    true
 }
 
 /// Stable ImGui id for a layout spacer cell (must be unique across the grid).
@@ -226,17 +183,11 @@ pub fn apply_manual_item_name(session: &mut Session, name: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    if let Some(slot) = session.loadouts_search_slot.clone() {
-        assign_slot(session, &slot, Some(trimmed.to_string()));
+    if let Some(slot) = session.loadouts_search_slot {
+        assign_slot(session, slot, Some(trimmed.to_string()));
         true
-    } else if let Some(i) = session.loadouts_search_supply {
-        if let Some(draft) = session.loadouts_draft.as_mut() {
-            if let Some(entry) = draft.carry.get_mut(i) {
-                entry.item = trimmed.to_string();
-                return true;
-            }
-        }
-        false
+    } else if let Some(index) = session.loadouts_search_supply {
+        set_supply_item(session, index, trimmed.to_string())
     } else {
         false
     }
@@ -268,24 +219,26 @@ pub fn window(ui: &Ui, session: &mut Session) {
         )
         .build(|| {
             ui.text("Presets");
-            let names: Vec<String> = session.loadouts.names();
-            if names.is_empty() {
+            if session.loadouts.loadouts().is_empty() {
                 ui.text_wrapped("No loadouts yet — add one below.");
             } else {
+                let mut clicked = None;
                 ui.child_window("##loadout-list")
                     .size([0.0, scale_px(ui, 88.0)])
                     .build(ui, || {
-                        for (i, name) in names.iter().enumerate() {
+                        for (i, row) in session.loadouts.loadouts().iter().enumerate() {
                             if ui
-                                .selectable_config(name)
-                                .selected(i == session.loadouts_sel)
+                                .selectable_config(&row.name)
+                                .selected(i == session.loadouts.selected())
                                 .build()
                             {
-                                session.loadouts_sel = i;
-                                sync_draft(session);
+                                clicked = Some(i);
                             }
                         }
                     });
+                if let Some(i) = clicked {
+                    select(session, i);
+                }
             }
             if ui.button("New") {
                 add_loadout(session);
@@ -299,32 +252,49 @@ pub fn window(ui: &Ui, session: &mut Session) {
                 delete_loadout(session);
             }
             ui.spacing();
-            if session.loadouts_draft.is_none() && !session.loadouts.loadouts().is_empty() {
-                sync_draft(session);
+            let rows = session.loadouts.loadouts().len();
+            if session.loadouts.draft().is_none() && rows > 0 {
+                let index = session.loadouts.selected().min(rows - 1);
+                select(session, index);
             }
-            if let Some(draft) = session.loadouts_draft.as_mut() {
-                ui.input_text("Name", &mut draft.name).build();
+            let name_edited = session
+                .loadouts
+                .draft_mut()
+                .is_some_and(|draft| ui.input_text("Name", &mut draft.name).build());
+            if name_edited {
+                submit_row(
+                    session,
+                    OperatorCommand::EditLoadoutDraft(LoadoutField::Name),
+                    Targets::Application,
+                );
             }
             ui.spacing();
             ui.text("Equipment");
             draw_equipment(ui, session);
-            if let Some(draft) = session.loadouts_draft.as_ref() {
+            let mut clear_unassigned = false;
+            if let Some(draft) = session.loadouts.draft() {
                 if !draft.unassigned.is_empty() {
                     ui.spacing();
                     ui.text("Unassigned legacy gear");
                     ui.text_wrapped(draft.unassigned.join(", "));
-                    if ui.button("Clear unassigned") {
-                        if let Some(draft) = session.loadouts_draft.as_mut() {
-                            draft.unassigned.clear();
-                        }
-                    }
+                    clear_unassigned = ui.button("Clear unassigned");
                 }
+            }
+            if clear_unassigned {
+                if let Some(draft) = session.loadouts.draft_mut() {
+                    draft.unassigned.clear();
+                }
+                submit_row(
+                    session,
+                    OperatorCommand::EditLoadoutDraft(LoadoutField::Unassigned),
+                    Targets::Application,
+                );
             }
             ui.spacing();
             ui.text("Supplies");
             draw_supplies(ui, session);
             ui.spacing();
-            let can_copy = session.focused_equipment_items().is_some();
+            let can_copy = can_copy_equipment(session);
             {
                 let _off = ui.begin_disabled_with_cond(!can_copy);
                 if ui.button("Copy current equipment") {
@@ -339,8 +309,8 @@ pub fn window(ui: &Ui, session: &mut Session) {
             if ui.button("Save") {
                 save_draft(session);
             }
-            if !session.loadouts_status.is_empty() {
-                ui.text_wrapped(&session.loadouts_status);
+            if !session.loadouts.status().is_empty() {
+                ui.text_wrapped(session.loadouts.status());
             }
             search_popup(ui, session);
         });
@@ -349,19 +319,20 @@ pub fn window(ui: &Ui, session: &mut Session) {
 
 fn draw_equipment(ui: &Ui, session: &mut Session) {
     let cell_w = scale_px(ui, 150.0);
-    let mut open_slot: Option<String> = None;
-    for (row_i, row) in WORN_SLOT_LAYOUT.iter().enumerate() {
-        for (col, slot) in row.iter().enumerate() {
+    let mut open_slot: Option<WornSlot> = None;
+    for (row_i, row) in WornSlot::layout().iter().enumerate() {
+        for (col, cell) in row.iter().enumerate() {
             if col > 0 {
                 ui.same_line();
             }
-            match slot {
+            match cell {
                 Some(slot) => {
-                    let label = worn_slot_label(slot);
+                    let label = slot.label();
                     let filled = session
-                        .loadouts_draft
-                        .as_ref()
-                        .and_then(|draft| draft.worn.get(*slot).cloned())
+                        .loadouts
+                        .draft()
+                        .and_then(|draft| draft.worn.get(slot.id()))
+                        .map(String::as_str)
                         .unwrap_or_default();
                     let caption = if filled.is_empty() {
                         format!("{label}\n—")
@@ -370,10 +341,10 @@ fn draw_equipment(ui: &Ui, session: &mut Session) {
                     };
                     let _pad = ui.push_style_var(StyleVar::ButtonTextAlign([0.5, 0.5]));
                     if ui.button_with_size(
-                        format!("{caption}##slot-{slot}"),
+                        format!("{caption}##slot-{}", slot.id()),
                         [cell_w, scale_px(ui, 42.0)],
                     ) {
-                        open_slot = Some((*slot).to_string());
+                        open_slot = Some(*slot);
                     }
                 }
                 None => {
@@ -397,18 +368,15 @@ fn draw_equipment(ui: &Ui, session: &mut Session) {
 fn draw_supplies(ui: &Ui, session: &mut Session) {
     let mut remove = None;
     let mut open_supply = None;
-    let count = session
-        .loadouts_draft
-        .as_ref()
-        .map(|d| d.carry.len())
-        .unwrap_or(0);
+    let mut edited = false;
+    let count = session.loadouts.draft().map_or(0, |d| d.carry.len());
     if session.loadouts_qty_bufs.len() != count {
         resync_qty_bufs(session);
     }
     for i in 0..count {
         let item = session
-            .loadouts_draft
-            .as_ref()
+            .loadouts
+            .draft()
             .map(|d| d.carry[i].item.clone())
             .unwrap_or_default();
         if ui.button_with_size(
@@ -427,19 +395,16 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
             .expect("qty bufs resynced");
         ui.set_next_item_width(scale_px(ui, 72.0));
         if ui.input_text(format!("##supply-qty-{i}"), qty_buf).build() {
-            let parsed = apply_qty_text(qty_buf, 1);
-            if let Some(draft) = session.loadouts_draft.as_mut() {
-                if let Some(entry) = draft.carry.get_mut(i) {
-                    // Keep the typed buffer; only commit positive parses.
-                    if qty_buf
-                        .trim()
-                        .parse::<u32>()
-                        .ok()
-                        .filter(|n| *n > 0)
-                        .is_some()
-                    {
-                        entry.qty = parsed;
-                    }
+            // Keep the typed buffer; only positive parses commit.
+            if let Some(entry) = session
+                .loadouts
+                .draft_mut()
+                .and_then(|draft| draft.carry.get_mut(i))
+            {
+                let typed = apply_qty_text(qty_buf, entry.qty);
+                if typed != entry.qty {
+                    entry.qty = typed;
+                    edited = true;
                 }
             }
         }
@@ -449,9 +414,10 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
         }
     }
     if let Some(i) = remove {
-        if let Some(draft) = session.loadouts_draft.as_mut() {
+        if let Some(draft) = session.loadouts.draft_mut() {
             if i < draft.carry.len() {
                 draft.carry.remove(i);
+                edited = true;
             }
         }
         if i < session.loadouts_qty_bufs.len() {
@@ -459,10 +425,18 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
         }
     }
     if ui.button("Add supply") {
-        if let Some(draft) = session.loadouts_draft.as_mut() {
+        if let Some(draft) = session.loadouts.draft_mut() {
             draft.carry.push(CarryEntry::new("Lobster", 1));
             session.loadouts_qty_bufs.push("1".into());
+            edited = true;
         }
+    }
+    if edited {
+        submit_row(
+            session,
+            OperatorCommand::EditLoadoutDraft(LoadoutField::Supplies),
+            Targets::Application,
+        );
     }
     if let Some(i) = open_supply {
         session.loadouts_search_supply = Some(i);
@@ -474,8 +448,8 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
 
 fn search_popup(ui: &Ui, session: &mut Session) {
     ui.popup(SEARCH_POPUP, || {
-        let heading = if let Some(slot) = session.loadouts_search_slot.as_deref() {
-            format!("Search {} items", worn_slot_label(slot))
+        let heading = if let Some(slot) = session.loadouts_search_slot {
+            format!("Search {} items", slot.label())
         } else {
             "Search items".into()
         };
@@ -496,14 +470,14 @@ fn search_popup(ui: &Ui, session: &mut Session) {
                 };
                 same_data
                     && cached_query == &session.loadouts_search
-                    && cached_slot.as_deref() == session.loadouts_search_slot.as_deref()
+                    && *cached_slot == session.loadouts_search_slot
             });
         if !cache_matches {
             let hits = data
                 .as_ref()
                 .map(|data| {
-                    if let Some(slot) = session.loadouts_search_slot.as_deref() {
-                        data.search_slot_items(slot, &session.loadouts_search, SEARCH_LIMIT)
+                    if let Some(slot) = session.loadouts_search_slot {
+                        data.search_slot_items(slot.id(), &session.loadouts_search, SEARCH_LIMIT)
                     } else {
                         data.search_named_items(&session.loadouts_search, SEARCH_LIMIT)
                     }
@@ -512,7 +486,7 @@ fn search_popup(ui: &Ui, session: &mut Session) {
             session.loadouts_search_cache_key = Some((
                 data_key,
                 session.loadouts_search.clone(),
-                session.loadouts_search_slot.clone(),
+                session.loadouts_search_slot,
             ));
             session.loadouts_search_hits = hits;
             session.loadouts_picker_rows.invalidate();
@@ -559,22 +533,18 @@ fn search_popup(ui: &Ui, session: &mut Session) {
             }
         }
         if let Some((name, _)) = picked {
-            if let Some(slot) = session.loadouts_search_slot.clone() {
-                assign_slot(session, &slot, Some(name));
-            } else if let Some(i) = session.loadouts_search_supply {
-                if let Some(draft) = session.loadouts_draft.as_mut() {
-                    if let Some(entry) = draft.carry.get_mut(i) {
-                        entry.item = name;
-                    }
-                }
+            if let Some(slot) = session.loadouts_search_slot {
+                assign_slot(session, slot, Some(name));
+            } else if let Some(index) = session.loadouts_search_supply {
+                set_supply_item(session, index, name);
             }
             ui.close_current_popup();
         }
-        if session.loadouts_search_slot.is_some() && ui.button("Clear slot") {
-            if let Some(slot) = session.loadouts_search_slot.clone() {
-                assign_slot(session, &slot, None);
+        if let Some(slot) = session.loadouts_search_slot {
+            if ui.button("Clear slot") {
+                assign_slot(session, slot, None);
+                ui.close_current_popup();
             }
-            ui.close_current_popup();
         }
         if ui.button("Close") {
             ui.close_current_popup();
@@ -587,18 +557,18 @@ mod tests {
     use super::*;
     use crate::session::Session;
     use crate::test_support::{
-        reload_store_until, save_draft_patiently, save_store_patiently, scratch_service,
+        reload_form_until, save_draft_patiently, save_store_patiently, scratch_service,
         thread_state_root, TestDir,
     };
-    use script::LoadoutsStore;
+    use api::loadout::Loadout;
+    use frontend_core::scripts::{LoadoutForm, Loadouts};
     use std::collections::HashSet;
     use std::path::Path;
-    use std::sync::Arc;
 
-    /// A form over the loadouts of a service opened on `dir`, a scratch
-    /// state root (another such form on the same `dir` is another writer).
-    fn store_in(dir: &Path) -> LoadoutsStore {
-        LoadoutsStore::over(Arc::new(scratch_service(dir).operator_loadouts()))
+    /// The rows of a service opened on `dir`, a scratch state root (another
+    /// such list on the same `dir` is another writer).
+    fn store_in(dir: &Path) -> Loadouts {
+        Loadouts::operator(&scratch_service(dir))
     }
 
     /// A session whose Loadouts form holds `rows`, saved in a scratch root,
@@ -607,13 +577,12 @@ mod tests {
         let dir = TestDir::new("loadouts");
         let mut store = store_in(&dir);
         for row in rows {
-            store.upsert(row);
+            store.upsert_for_test(row);
         }
         save_store_patiently(&mut store);
         let mut session = Session::new();
-        session.loadouts = store;
-        session.loadouts_sel = 0;
-        sync_draft(&mut session);
+        session.loadouts = LoadoutForm::over(store);
+        select(&mut session, 0);
         (session, dir)
     }
 
@@ -621,10 +590,39 @@ mod tests {
         session_with(vec![Loadout::new("melee").with_carry("Lobster", 8)])
     }
 
+    /// Select the row called `name`: what the saved row's selection did
+    /// before a load-slow write was waited out.
+    fn select_named(session: &mut Session, name: &str) {
+        let index = session
+            .loadouts
+            .names()
+            .iter()
+            .position(|row| row == name)
+            .unwrap();
+        select(session, index);
+    }
+
+    /// Whether `command` was submitted and settled `Done`.
+    fn settled_done(session: &Session, command: OperatorCommand) -> bool {
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == command)
+            .any(|report| {
+                report.members().iter().all(|member| {
+                    matches!(
+                        member.terminal(),
+                        Some(Settlement::Completed(Completion::Done))
+                    )
+                })
+            })
+    }
+
     #[test]
     fn save_renames_in_place_without_dropping_supplies() {
         let (mut session, _dir) = session_with_store();
-        session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
+        session.loadouts.draft_mut().unwrap().name = "melee2".into();
         assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.loadouts().len(), 1);
         assert_eq!(session.loadouts.loadouts()[0].name, "melee2");
@@ -632,16 +630,16 @@ mod tests {
             session.loadouts.loadouts()[0].carry[0],
             CarryEntry::new("Lobster", 8)
         );
-        assert_eq!(session.loadouts_status, "Saved.");
+        assert_eq!(session.loadouts.status(), "Saved.");
     }
 
     #[test]
     fn invalid_empty_name_preserves_store() {
         let (mut session, _dir) = session_with_store();
-        session.loadouts_draft.as_mut().unwrap().name = "  ".into();
+        session.loadouts.draft_mut().unwrap().name = "  ".into();
         assert!(!save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
-        assert_eq!(session.loadouts_status, "Name is required.");
+        assert_eq!(session.loadouts.status(), "Name is required.");
     }
 
     /// Rows are keyed by name in the store: renaming a draft onto another
@@ -652,12 +650,11 @@ mod tests {
             Loadout::new("melee").with_carry("Lobster", 8),
             Loadout::new("range").with_carry("Shark", 3),
         ]);
-        session.loadouts_sel = 1;
-        sync_draft(&mut session);
-        session.loadouts_draft.as_mut().unwrap().name = "melee".into();
+        select(&mut session, 1);
+        session.loadouts.draft_mut().unwrap().name = "melee".into();
         assert!(!save_draft(&mut session));
         assert_eq!(
-            session.loadouts_status,
+            session.loadouts.status(),
             "A loadout named \"melee\" already exists."
         );
         assert_eq!(session.loadouts.names(), ["melee", "range"]);
@@ -665,37 +662,40 @@ mod tests {
             session.loadouts.get("melee").unwrap().carry[0],
             CarryEntry::new("Lobster", 8)
         );
-        assert_eq!(session.loadouts_sel, 1);
+        assert_eq!(session.loadouts.selected(), 1);
         assert_eq!(store_in(&dir).names(), ["melee", "range"]);
     }
 
     #[test]
     fn failed_save_restores_store_and_does_not_report_saved() {
         let (mut session, _dir) = session_with_store();
-        session.loadouts_draft.as_mut().unwrap().name = "changed".into();
+        session.loadouts.draft_mut().unwrap().name = "changed".into();
         // Recreate the store path as a directory so the write fails.
         let fail_dir = TestDir::new("loadouts-fail");
         let service = scratch_service(&fail_dir);
         let file = service.root().loadouts_file();
-        let mut store = LoadoutsStore::over(Arc::new(service.operator_loadouts()));
-        store.upsert(Loadout::new("melee").with_carry("Lobster", 8));
+        let mut store = Loadouts::operator(&service);
+        store.upsert_for_test(Loadout::new("melee").with_carry("Lobster", 8));
         save_store_patiently(&mut store);
         std::fs::remove_file(&file).unwrap();
         std::fs::create_dir_all(&file).unwrap();
-        session.loadouts = store;
-        sync_draft(&mut session);
-        session.loadouts_draft.as_mut().unwrap().name = "changed".into();
+        session.loadouts = LoadoutForm::over(store);
+        select(&mut session, 0);
+        session.loadouts.draft_mut().unwrap().name = "changed".into();
         assert!(!save_draft(&mut session));
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
-        assert!(!session.loadouts.is_dirty(), "the failed edit is dropped");
-        assert_eq!(session.loadouts_sel, 0);
+        assert!(
+            !session.loadouts.store().is_dirty(),
+            "the failed edit is dropped"
+        );
+        assert_eq!(session.loadouts.selected(), 0);
         assert_eq!(
-            session.loadouts_draft.as_ref().unwrap().name,
+            session.loadouts.draft().unwrap().name,
             "changed",
             "the operator's draft stays for another try"
         );
-        assert!(session.loadouts_status.starts_with("Save failed:"));
-        assert!(!session.loadouts_status.contains("Saved."));
+        assert!(session.loadouts.status().starts_with("Save failed:"));
+        assert!(!session.loadouts.status().contains("Saved."));
         drop(fail_dir);
     }
 
@@ -709,17 +709,17 @@ mod tests {
             Loadout::new("range"),
             Loadout::new("tank"),
         ]);
-        session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
+        session.loadouts.draft_mut().unwrap().name = "melee2".into();
         assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
-        assert_eq!(session.loadouts_sel, 0);
-        let draft = session.loadouts_draft.as_ref().unwrap();
+        assert_eq!(session.loadouts.selected(), 0);
+        let draft = session.loadouts.draft().unwrap();
         assert_eq!(draft.name, "melee2");
         assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
         assert_eq!(store_in(&dir).names(), ["melee2", "range", "tank"]);
 
         // The next save writes the renamed row, not another one.
-        session.loadouts_draft.as_mut().unwrap().carry[0].qty = 9;
+        session.loadouts.draft_mut().unwrap().carry[0].qty = 9;
         assert!(save_draft_patiently(&mut session));
         assert_eq!(session.loadouts.names(), ["melee2", "range", "tank"]);
         assert_eq!(session.loadouts.get("melee2").unwrap().carry[0].qty, 9);
@@ -733,34 +733,33 @@ mod tests {
             Loadout::new("range"),
         ]);
         add_loadout(&mut session);
-        if session.loadouts_status.contains("not durable within") {
+        if session.loadouts.status().contains("not durable within") {
             // Load-slow durability: the queued add lands on its own, and a
             // retry could double-add, so wait for it and finish the
             // selection the success path does.
-            reload_store_until(&mut session.loadouts, "added loadout", |store| {
-                store.names().contains(&"loadout".to_string())
+            reload_form_until(&mut session.loadouts, "added loadout", |form| {
+                form.names().contains(&"loadout".to_string())
             });
-            select_saved(&mut session, "loadout");
+            select_named(&mut session, "loadout");
         } else {
-            assert_eq!(session.loadouts_status, "Saved.");
+            assert_eq!(session.loadouts.status(), "Saved.");
         }
 
-        session.loadouts_sel = 0;
-        sync_draft(&mut session);
+        select(&mut session, 0);
         duplicate_loadout(&mut session);
-        if session.loadouts_status.contains("not durable within") {
+        if session.loadouts.status().contains("not durable within") {
             // As above: wait out the queued duplicate instead of retrying.
-            reload_store_until(&mut session.loadouts, "duplicated loadout", |store| {
-                store.names().contains(&"melee copy".to_string())
+            reload_form_until(&mut session.loadouts, "duplicated loadout", |form| {
+                form.names().contains(&"melee copy".to_string())
             });
-            select_saved(&mut session, "melee copy");
+            select_named(&mut session, "melee copy");
         }
         assert_eq!(
             session.loadouts.names(),
             ["melee", "range", "loadout", "melee copy"]
         );
-        assert_eq!(session.loadouts_sel, 3);
-        let draft = session.loadouts_draft.as_ref().unwrap();
+        assert_eq!(session.loadouts.selected(), 3);
+        let draft = session.loadouts.draft().unwrap();
         assert_eq!(draft.name, "melee copy");
         assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
     }
@@ -775,35 +774,34 @@ mod tests {
             Loadout::new("first"),
             Loadout::new("melee").with_carry("Lobster", 8),
         ]);
-        session.loadouts_sel = 1;
-        sync_draft(&mut session);
+        select(&mut session, 1);
         let mut other = store_in(&dir);
-        other.remove("first");
-        other.upsert(Loadout::new("tank"));
+        other.remove_for_test("first");
+        other.upsert_for_test(Loadout::new("tank"));
         save_store_patiently(&mut other);
 
-        session.loadouts_draft.as_mut().unwrap().name = "melee2".into();
+        session.loadouts.draft_mut().unwrap().name = "melee2".into();
         // A load-slow worker answers with the bounded-wait timeout instead
         // of the conflict: retry those, keep the first decisive answer.
         let mut saved = save_draft(&mut session);
         let start = std::time::Instant::now();
         while !saved
-            && session.loadouts_status.contains("not durable within")
+            && session.loadouts.status().contains("not durable within")
             && start.elapsed() < std::time::Duration::from_secs(60)
         {
             saved = save_draft(&mut session);
         }
         assert!(!saved);
         assert!(
-            session.loadouts_status.starts_with("Save failed:"),
+            session.loadouts.status().starts_with("Save failed:"),
             "got {:?}",
-            session.loadouts_status
+            session.loadouts.status()
         );
         assert_eq!(session.loadouts.names(), ["melee", "tank"]);
-        assert!(!session.loadouts.is_dirty());
-        assert_eq!(session.loadouts_sel, 0, "melee is now the first row");
+        assert!(!session.loadouts.store().is_dirty());
+        assert_eq!(session.loadouts.selected(), 0, "melee is now the first row");
         assert_eq!(
-            session.loadouts_draft.as_ref().unwrap().name,
+            session.loadouts.draft().unwrap().name,
             "melee2",
             "the operator's draft stays for another try"
         );
@@ -814,7 +812,7 @@ mod tests {
     /// the status, and no save writes over it.
     #[test]
     fn unreadable_loadouts_file_is_named_in_the_status_and_never_written_over() {
-        let _iso = script::IsolatedEnv::enter("loadouts-refused");
+        let _iso = frontend_core::test_support::IsolatedStores::enter("loadouts-refused");
         let file = thread_state_root().loadouts_file();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         let corrupt = b"{ not valid json";
@@ -827,52 +825,35 @@ mod tests {
             .expect("the refused file is named")
             .to_string();
         assert!(
-            session.loadouts_status.contains(&error),
+            session.loadouts.status().contains(&error),
             "the status carries the reason: {:?}",
-            session.loadouts_status
+            session.loadouts.status()
         );
         assert!(session.loadouts.loadouts().is_empty());
 
         add_loadout(&mut session);
         assert!(
-            session.loadouts_status.starts_with("Save failed:"),
+            session.loadouts.status().starts_with("Save failed:"),
             "got {:?}",
-            session.loadouts_status
+            session.loadouts.status()
         );
         assert!(
-            session.loadouts_status.contains("did not load"),
+            session.loadouts.status().contains("did not load"),
             "the status names the failed load: {:?}",
-            session.loadouts_status
+            session.loadouts.status()
         );
         assert!(session.loadouts.loadouts().is_empty());
         assert!(
-            !session.loadouts.is_dirty(),
+            !session.loadouts.store().is_dirty(),
             "the failed form is discarded, as for other failed saves"
         );
         assert_eq!(std::fs::read(&file).unwrap(), corrupt);
     }
 
     #[test]
-    fn copy_equipment_helper_keeps_supplies() {
-        let (mut session, _dir) = session_with_store();
-        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-        copy_equipment_preserving_supplies(
-            session.loadouts_draft.as_mut().unwrap(),
-            &[("Rune scimitar".into(), 1333)],
-            Some(&data),
-        );
-        let draft = session.loadouts_draft.as_ref().unwrap();
-        assert_eq!(
-            draft.worn.get("righthand").map(String::as_str),
-            Some("Rune scimitar")
-        );
-        assert_eq!(draft.carry[0], CarryEntry::new("Lobster", 8));
-    }
-
-    #[test]
     fn equipment_spacer_ids_are_unique_across_layout() {
         let mut ids = HashSet::new();
-        for (row_i, row) in WORN_SLOT_LAYOUT.iter().enumerate() {
+        for (row_i, row) in WornSlot::layout().iter().enumerate() {
             for (col, slot) in row.iter().enumerate() {
                 if slot.is_none() {
                     assert!(ids.insert(equipment_spacer_id(row_i, col)));
@@ -895,26 +876,26 @@ mod tests {
         let (mut session, _dir) = session_with_store();
         assert_eq!(session.loadouts_qty_bufs, vec!["8".to_string()]);
         session.loadouts_qty_bufs[0] = String::new();
-        let current = session.loadouts_draft.as_ref().unwrap().carry[0].qty;
+        let current = session.loadouts.draft().unwrap().carry[0].qty;
         let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
         assert_eq!(next, 8);
         assert_eq!(session.loadouts_qty_bufs[0], "");
         session.loadouts_qty_bufs[0] = "12".into();
         let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
         assert_eq!(next, 12);
-        session.loadouts_draft.as_mut().unwrap().carry[0].qty = next;
-        assert_eq!(session.loadouts_draft.as_ref().unwrap().carry[0].qty, 12);
+        session.loadouts.draft_mut().unwrap().carry[0].qty = next;
+        assert_eq!(session.loadouts.draft().unwrap().carry[0].qty, 12);
     }
 
     #[test]
     fn manual_item_name_assigns_slot_and_supply_without_catalog() {
         let (mut session, _dir) = session_with_store();
-        session.loadouts_search_slot = Some("hat".into());
+        session.loadouts_search_slot = Some(WornSlot::Hat);
         assert!(apply_manual_item_name(&mut session, "Rune full helm"));
         assert_eq!(
             session
-                .loadouts_draft
-                .as_ref()
+                .loadouts
+                .draft()
                 .unwrap()
                 .worn
                 .get("hat")
@@ -924,10 +905,7 @@ mod tests {
         session.loadouts_search_slot = None;
         session.loadouts_search_supply = Some(0);
         assert!(apply_manual_item_name(&mut session, "Shark"));
-        assert_eq!(
-            session.loadouts_draft.as_ref().unwrap().carry[0].item,
-            "Shark"
-        );
+        assert_eq!(session.loadouts.draft().unwrap().carry[0].item, "Shark");
         assert!(!apply_manual_item_name(&mut session, "  "));
     }
 
@@ -935,20 +913,65 @@ mod tests {
     fn duplicate_preserves_source_and_selects_copy() {
         let (mut session, _dir) = session_with_store();
         duplicate_loadout(&mut session);
-        if session.loadouts_status.contains("not durable within") {
+        if session.loadouts.status().contains("not durable within") {
             // As above: wait out the queued duplicate instead of retrying.
-            reload_store_until(&mut session.loadouts, "duplicated loadout", |store| {
-                store.names().contains(&"melee copy".to_string())
+            reload_form_until(&mut session.loadouts, "duplicated loadout", |form| {
+                form.names().contains(&"melee copy".to_string())
             });
-            select_saved(&mut session, "melee copy");
+            select_named(&mut session, "melee copy");
         }
         assert_eq!(session.loadouts.loadouts().len(), 2);
         assert_eq!(session.loadouts.loadouts()[0].name, "melee");
         assert_eq!(session.loadouts.loadouts()[1].name, "melee copy");
-        assert_eq!(session.loadouts_sel, 1);
+        assert_eq!(session.loadouts.selected(), 1);
         assert_eq!(
-            session.loadouts_draft.as_ref().unwrap().carry[0],
+            session.loadouts.draft().unwrap().carry[0],
             CarryEntry::new("Lobster", 8)
         );
+    }
+
+    /// The window's actions are rows of the command seam: each leaves its
+    /// settled report in the core's book, and a widget edit commits through
+    /// its own row.
+    #[test]
+    fn the_window_actions_are_rows_of_the_command_seam() {
+        let (mut session, _dir) = session_with_store();
+        assert!(settled_done(&session, OperatorCommand::SelectLoadout));
+
+        session.loadouts.draft_mut().unwrap().name = "melee2".into();
+        assert!(submit_row(
+            &mut session,
+            OperatorCommand::EditLoadoutDraft(LoadoutField::Name),
+            Targets::Application,
+        ));
+        assert!(settled_done(
+            &session,
+            OperatorCommand::EditLoadoutDraft(LoadoutField::Name)
+        ));
+        assert!(save_draft_patiently(&mut session));
+        assert!(settled_done(&session, OperatorCommand::SaveLoadout));
+        assert_eq!(session.loadouts.status(), "Saved.");
+    }
+
+    /// A row that cannot act reports why instead of settling Done: nothing
+    /// is selected in a form with no rows, so Duplicate and Delete skip and
+    /// a save has no draft to commit.
+    #[test]
+    fn rows_with_nothing_to_act_on_do_not_settle_done() {
+        let (mut session, _dir) = session_with(Vec::new());
+        assert!(session.loadouts.draft().is_none());
+        assert!(!submit_row(
+            &mut session,
+            OperatorCommand::DuplicateLoadout,
+            Targets::Application,
+        ));
+        assert!(!submit_row(
+            &mut session,
+            OperatorCommand::DeleteLoadout,
+            Targets::Application,
+        ));
+        assert!(!save_draft(&mut session));
+        assert_eq!(session.loadouts.status(), "No loadout selected.");
+        assert!(session.loadouts.loadouts().is_empty());
     }
 }

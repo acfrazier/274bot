@@ -14,7 +14,7 @@ use dear_imgui_rs::{
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
     fill_visible_row_indices, marked_availability, marked_startable, FleetOrder, FleetRow,
-    MarkedAction, MarkedBlock, Scripts,
+    MarkedAction, MarkedBlock, OperatorCommand, Scripts, Targets,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
@@ -97,22 +97,21 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
 
 fn profile_rows(session: &Session) -> Vec<FleetRow> {
     let projected = session.core.fleet_view().rows();
+    if !session.core.vault_open() {
+        return projected.iter().map(FleetRow::snapshot).collect();
+    }
     session
         .core
-        .vault()
-        .map(|vault| {
-            vault
-                .profiles()
-                .map(|profile| {
-                    projected
-                        .iter()
-                        .find(|row| row.name() == profile.username)
-                        .map(FleetRow::snapshot)
-                        .unwrap_or_else(|| FleetRow::for_profile(&profile.username))
-                })
-                .collect()
+        .profiles()
+        .map(|profile| {
+            let name = profile.username();
+            projected
+                .iter()
+                .find(|row| row.name() == name)
+                .map(FleetRow::snapshot)
+                .unwrap_or_else(|| FleetRow::for_profile(name))
         })
-        .unwrap_or_else(|| projected.iter().map(FleetRow::snapshot).collect())
+        .collect()
 }
 
 const ASSIGN_LABEL: &str = "Assign selected card";
@@ -275,11 +274,20 @@ fn apply_settings_row(ui: &Ui, session: &mut Session, count: usize) {
     if let Some(scope) = session.scripts.prepared_settings_sync() {
         ui.text_wrapped(scope.prompt());
         if ui.button("Apply##fleet-apply") {
-            session.apply_settings_sync();
+            if let Some(kind) = session.scripts.stage_settings_sync_apply() {
+                session.submit_script_command(
+                    OperatorCommand::ApplySettingsToMarked(kind),
+                    Targets::Everyone,
+                );
+                session.apply_script_notice();
+            } else {
+                session.error = Some("Apply to all: no prepared copy".into());
+            }
         }
         ui.same_line();
         if ui.button("Cancel##fleet-apply") {
-            session.scripts.cancel_settings_sync();
+            session
+                .submit_script_command(OperatorCommand::CancelSettingsSync, Targets::Application);
         }
         return;
     }
@@ -362,12 +370,13 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
 fn sort_combo(ui: &Ui, session: &mut Session) {
     ui.text("Sort:");
     ui.set_next_item_width(-1.0);
-    let combo = ui.begin_combo("##fleet-sort", session.fleet_sort.label());
+    let order = session.fleet_filter.order();
+    let combo = ui.begin_combo("##fleet-sort", order.label());
     #[cfg(test)]
     record_sort_combo(ui);
     if let Some(_open) = combo {
         for sort in FleetOrder::PANEL_CHOICES {
-            let selected = sort == session.fleet_sort;
+            let selected = sort == order;
             let picked = ui
                 .selectable_config(sort.label())
                 .selected(selected)
@@ -375,7 +384,7 @@ fn sort_combo(ui: &Ui, session: &mut Session) {
             #[cfg(test)]
             record_sort_choice(ui);
             if picked {
-                session.fleet_sort = sort;
+                session.submit(OperatorCommand::SetFleetSort(sort), Targets::Application);
             }
             if selected {
                 ui.set_item_default_focus();
@@ -473,7 +482,10 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
             #[cfg(test)]
             record_cell(ui);
             if ui.checkbox(format!("##fleet-mark-{}", marked_id.raw()), &mut marked) {
-                session.fleet_selection.set(marked_id, marked);
+                session.submit(
+                    OperatorCommand::SetMark(marked),
+                    Targets::Profile(row.name()),
+                );
             }
             ui.table_next_column();
             #[cfg(test)]
@@ -485,10 +497,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
                 ui.set_item_tooltip("saved settings need a restart to apply");
             }
             let progress = if needs_progress {
-                session
-                    .core
-                    .play()
-                    .and_then(|play| play.script_progress(row.name()))
+                session.core.script_progress(row.name())
             } else {
                 None
             };
@@ -499,19 +508,15 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
                 match column {
                     FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
                     FleetColumn::Card => cell(ui, |out| {
-                        match Scripts::assignment(&session.core, row.name()) {
-                            Some(assignment) => out.push_str(&assignment.display_name),
+                        match Scripts::assignment_name(&session.core, row.name()) {
+                            Some(name) => out.push_str(name),
                             None => out.push_str(NONE),
                         };
                     }),
                     FleetColumn::Run => {
                         ui.text(frontend_core::views::run_state_label(row.script()));
                         if ui.is_item_hovered() {
-                            if let Some(error) = session
-                                .core
-                                .play()
-                                .and_then(|play| play.script_last_error(row.name()))
-                            {
+                            if let Some(error) = session.core.script_last_error(row.name()) {
                                 ui.set_item_tooltip(&error);
                             }
                         }
@@ -568,9 +573,13 @@ pub fn window(ui: &Ui, session: &mut Session) {
         .build(|| {
             #[cfg(test)]
             record_content_edges(ui);
-            ui.input_text("Filter", &mut session.fleet_filter)
+            if ui
+                .input_text("Filter", session.fleet_filter.staged_mut())
                 .hint("name or status")
-                .build();
+                .build()
+            {
+                session.submit(OperatorCommand::SetFleetFilter, Targets::Application);
+            }
             sort_combo(ui, session);
             // The surface's universe is every vault profile; marks are
             // pruned to it at the session sync (see
@@ -580,7 +589,12 @@ pub fn window(ui: &Ui, session: &mut Session) {
             let rows = profile_rows(session);
             session.prune_fleet_marks();
             let mut shown = std::mem::take(&mut session.fleet_shown);
-            fill_visible_row_indices(&rows, &session.fleet_filter, session.fleet_sort, &mut shown);
+            fill_visible_row_indices(
+                &rows,
+                session.fleet_filter.text(),
+                session.fleet_filter.order(),
+                &mut shown,
+            );
             ui.separator();
             action_bar(ui, session);
             column_toggles(ui, session);
@@ -596,6 +610,8 @@ pub fn window(ui: &Ui, session: &mut Session) {
 #[cfg(test)]
 mod tests {
     use super::ActionLabels;
+    use frontend_core::test_support::session::install_vault;
+    use frontend_core::test_support::{FixtureProfile, VaultFixture};
     use frontend_core::{fill_visible_row_indices, fleet_row_matches, FleetOrder, FleetRow, Phase};
 
     /// The open window survives frames while columns come and go (the table
@@ -606,21 +622,14 @@ mod tests {
         let _guard = crate::test_support::imgui_context_guard();
         let dir = crate::test_support::TestDir::new("fleet-window-columns");
         let mut session = crate::session::Session::new();
-        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
         for (i, name) in ["alice", "bob"].into_iter().enumerate() {
-            vault
-                .upsert(vault::Profile {
-                    username: name.into(),
-                    password: "pw".into(),
-                    uid: 1 + i as i32,
-                    settings: vault::ProfileSettings::default(),
-                })
-                .unwrap();
+            vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
         }
-        session.core.set_vault(Some(vault));
+        install_vault(&mut session.core, vault);
         session.fleet_open = true;
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
             ctx.prepare_frame(
@@ -659,18 +668,11 @@ mod tests {
         let _guard = crate::test_support::imgui_context_guard();
         let dir = crate::test_support::TestDir::new("fleet-window-session");
         let mut session = crate::session::Session::new();
-        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
         for (uid, name) in [(3, "carol"), (2, "bob"), (1, "alice")] {
-            vault
-                .upsert(vault::Profile {
-                    username: name.into(),
-                    password: "pw".into(),
-                    uid,
-                    settings: vault::ProfileSettings::default(),
-                })
-                .unwrap();
+            vault.put(FixtureProfile::new(name, "pw").uid(uid));
         }
-        session.core.set_vault(Some(vault));
+        install_vault(&mut session.core, vault);
         session.fleet_open = true;
         let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
@@ -697,15 +699,19 @@ mod tests {
         assert_eq!(shown_names(&session), ["alice", "bob", "carol"]);
         // Filter: only bob's name matches "bob" (a bare "o" would also
         // match the offline status of every row).
-        session.fleet_filter = "bob".into();
+        session.fleet_filter.staged_mut().push_str("bob");
+        session.submit(
+            frontend_core::OperatorCommand::SetFleetFilter,
+            frontend_core::Targets::Application,
+        );
         frame(&mut session);
         assert_eq!(shown_names(&session), ["bob"]);
         // Marks: bob's stays; a mark outside the universe is pruned.
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         session
             .fleet_selection
-            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
         frame(&mut session);
         assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
         assert!(session.fleet_selection.contains(bob));
@@ -716,8 +722,8 @@ mod tests {
             "export default class T extends LoopingBot { override loop() {} }\n",
         )
         .unwrap();
-        let card = session.scripts.js_mut().load(&path).unwrap();
-        session.script_sel = Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+        let card = session.scripts.load_card(&path).unwrap();
+        session.script_sel = Some(card.choice());
         session.fleet_assign_selected();
         session.core.flush_writes();
         assert!(session.profile_assignment("bob").is_some());
@@ -735,22 +741,15 @@ mod tests {
     fn marks_are_pruned_at_the_session_sync_with_the_fleet_window_closed() {
         let dir = crate::test_support::TestDir::new("fleet-prune-closed");
         let mut session = crate::session::Session::new();
-        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
-        vault
-            .upsert(vault::Profile {
-                username: "bob".into(),
-                password: "pw".into(),
-                uid: 2,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
-        session.core.set_vault(Some(vault));
+        let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+        vault.put(FixtureProfile::new("bob", "pw").uid(2));
+        install_vault(&mut session.core, vault);
         assert!(!session.fleet_open, "the Fleet window stays closed");
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set(bob, true);
+        session.fleet_selection.set_for_test(bob, true);
         session
             .fleet_selection
-            .set(frontend_core::ProfileIdentity::synthetic("gone"), true);
+            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
         session.pump_status();
         assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
         assert!(session.fleet_selection.contains(bob));
@@ -765,24 +764,15 @@ mod tests {
     fn prune_keeps_marks_when_vault_order_differs_from_uid_order() {
         let dir = crate::test_support::TestDir::new("fleet-prune-order");
         let mut session = crate::session::Session::new();
-        let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+        let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
         for (username, uid) in [("zed", 1), ("amy", 3), ("max", 2), ("bea", 5), ("kim", 4)] {
-            vault
-                .upsert(vault::Profile {
-                    username: username.into(),
-                    password: "pw".into(),
-                    uid,
-                    settings: vault::ProfileSettings::default(),
-                })
-                .unwrap();
+            vault.put(FixtureProfile::new(username, "pw").uid(uid));
         }
-        session.core.set_vault(Some(vault));
+        install_vault(&mut session.core, vault);
         let order: Vec<_> = session
             .core
-            .vault()
-            .unwrap()
             .profiles()
-            .map(|profile| profile.uid)
+            .map(|profile| profile.uid())
             .collect();
         let mut sorted = order.clone();
         sorted.sort_unstable();
@@ -792,23 +782,16 @@ mod tests {
         );
         for name in ["zed", "amy", "max", "bea", "kim"] {
             let id = session.core.profile_identity(name).unwrap();
-            session.fleet_selection.set(id, true);
+            session.fleet_selection.set_for_test(id, true);
         }
         session.pump_status();
         assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
         session.pump_status();
         assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
         // Universe change without a Fleet frame: a smaller vault replaces it.
-        let mut smaller = vault::Vault::create(&dir.join("vault2"), "test-passphrase-01").unwrap();
-        smaller
-            .upsert(vault::Profile {
-                username: "amy".into(),
-                password: "pw".into(),
-                uid: 3,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
-        session.core.set_vault(Some(smaller));
+        let mut smaller = VaultFixture::create(&dir.join("vault2"), "test-passphrase-01");
+        smaller.put(FixtureProfile::new("amy", "pw").uid(3));
+        install_vault(&mut session.core, smaller);
         session.pump_status();
         assert_eq!(
             session.fleet_selection.len(),

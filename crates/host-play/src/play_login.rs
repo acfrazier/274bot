@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
-use api::identity::{Deadline, Event, Scope, SessionKey, SlotKeyMinter};
+use api::identity::{Deadline, Event, Scope, SessionKey, SlotKey, SlotKeyMinter};
 use api::lifecycle::{
     AbortedAttempt, HandshakeKind, HoldReason, Intent, IntentCommand, IntentMailbox, LifecycleFact,
     LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker, SessionEndCause,
@@ -679,6 +679,12 @@ impl SlotArm {
     /// The owner-authorized session; absent once it ends.
     pub fn session_key(&self) -> Option<SessionKey> {
         self.lifecycle.lock().session.current()
+    }
+
+    /// The slot identity minted when this arm was created; every lifecycle
+    /// event of this arm is scoped to it.
+    pub fn slot(&self) -> SlotKey {
+        self.lifecycle.lock().session.slot()
     }
 
     /// Borrow the actual session gate while its owner lock remains held.

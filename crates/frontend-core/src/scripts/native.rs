@@ -1,11 +1,11 @@
-//! Native schema, per-account settings, presentation and fenced controls.
+//! Native schema, per-account settings, and presentation.
+use super::CompiledCardId;
 use super::{LiveSettings, Scripts};
 use crate::operations::OperationId;
 use crate::session::{ArmMirror, OperatorSession};
-use api::selected::RunKey;
 use script::native::ScriptStatus;
 use script::shim::ScriptPaint;
-use script::{RunState, ScriptLifecycleReceipt, SettingDef};
+use script::{RunState, ScriptLifecycleReceipt};
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
@@ -13,31 +13,8 @@ pub enum SchemaView<'a> {
     Unavailable(&'a str),
     Ready {
         version: u16,
-        fields: &'a [SettingDef],
+        fields: super::SchemaRef<'a>,
     },
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeCommand {
-    Pause,
-    Resume,
-    Stop,
-}
-#[derive(Debug)]
-pub struct NativeTarget {
-    pub(crate) profile: String,
-    pub(crate) run: RunKey,
-}
-
-impl NativeTarget {
-    /// Profile this native command targets.
-    pub fn profile(&self) -> &str {
-        &self.profile
-    }
-
-    /// Run key this native command targets.
-    pub fn run(&self) -> RunKey {
-        self.run
-    }
 }
 
 pub struct NativeDetail {
@@ -49,18 +26,18 @@ pub struct NativeDetail {
 
 impl NativeDetail {
     /// Script lifecycle on this slot.
-    pub fn lifecycle(&self) -> RunState {
-        self.lifecycle
+    pub fn lifecycle(&self) -> super::ScriptRunState {
+        super::ScriptRunState::from_script(self.lifecycle)
     }
 
     /// Native status, when present.
-    pub fn status(&self) -> Option<&ScriptStatus> {
-        self.status.as_deref()
+    pub fn status(&self) -> Option<super::StatusView<'_>> {
+        self.status.as_deref().map(super::StatusView::new)
     }
 
     /// Native paint, when present.
-    pub fn paint(&self) -> Option<&ScriptPaint> {
-        self.paint.as_deref()
+    pub fn paint(&self) -> Option<super::PaintView<'_>> {
+        self.paint.as_deref().map(super::PaintView::new)
     }
 
     /// Terminal receipt, when the run has ended.
@@ -76,8 +53,9 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         profile: Option<&str>,
-        id: script::CompiledId,
+        id: CompiledCardId,
     ) -> SchemaView<'static> {
+        let id = id.to_script();
         let Some(card) = script::compiled_card(id) else {
             return SchemaView::Unavailable("compiled card unavailable");
         };
@@ -114,7 +92,7 @@ impl Scripts {
         }
         SchemaView::Ready {
             version: card.schema_version,
-            fields: (card.schema)(),
+            fields: super::SchemaRef::new((card.schema)()),
         }
     }
 
@@ -122,8 +100,9 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         profile: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
     ) -> Result<Map<String, Value>, String> {
+        let id = id.to_script();
         let settings = core
             .settings_for_edit(profile)
             .ok_or_else(|| format!("no profile: {profile}"))?;
@@ -134,8 +113,9 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         profile: Option<&str>,
-        id: script::CompiledId,
+        id: CompiledCardId,
     ) -> Result<Map<String, Value>, String> {
+        let id = id.to_script();
         let card = script::compiled_card(id).ok_or("compiled card unavailable")?;
         let (overrides, partner) = match profile {
             Some(profile) => {
@@ -158,8 +138,9 @@ impl Scripts {
         &self,
         core: &OperatorSession<Io>,
         profile: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
     ) -> Result<Map<String, Value>, String> {
+        let id = id.to_script();
         let card = script::compiled_card(id)
             .ok_or_else(|| format!("compiled card unavailable: {}", id.0))?;
         let row = core
@@ -169,32 +150,34 @@ impl Scripts {
         Ok(self.run_bag_with((card.schema)(), &overrides, &row.settings.clue_duel_partner))
     }
 
-    pub fn set_compiled_setting<Io>(
+    pub(crate) fn set_compiled_setting<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
         field: &str,
         value: Value,
     ) -> Result<OperationId, String> {
+        let id = id.to_script();
         let card = script::compiled_card(id).ok_or("compiled card unavailable")?;
         if !(card.schema)().iter().any(|setting| setting.id == field) {
             return Err(format!("unknown compiled setting: {field}"));
         }
-        let mut values = self.compiled_overrides(core, profile, id)?;
+        let mut values = self.compiled_overrides(core, profile, CompiledCardId::from_script(id))?;
         values.insert(field.into(), value);
-        self.set_compiled_overrides(core, profile, id, values)
+        self.set_compiled_overrides(core, profile, CompiledCardId::from_script(id), values)
     }
 
     /// Bulk and single-account edits use the same prepare → durable → configure
     /// transaction; the session reports a SettingsWrite for every accepted edit.
-    pub fn set_compiled_overrides<Io>(
+    pub(crate) fn set_compiled_overrides<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        id: script::CompiledId,
+        id: CompiledCardId,
         values: Map<String, Value>,
     ) -> Result<OperationId, String> {
+        let id = id.to_script();
         self.set_compiled_overrides_assigning(core, profile, id, values, None)
     }
 
@@ -211,7 +194,7 @@ impl Scripts {
     ) -> Result<OperationId, String> {
         let card = script::compiled_card(id).ok_or("compiled card unavailable")?;
         // Do not overwrite an unknown saved schema with current defaults.
-        self.compiled_overrides(core, profile, id)?;
+        self.compiled_overrides(core, profile, CompiledCardId::from_script(id))?;
         let key = script::compiled_identity_key(id);
         let schema = (card.schema)();
         let mut values = values;
@@ -239,7 +222,12 @@ impl Scripts {
         let result = self.upsert_profile_settings(
             core,
             profile,
-            ArmMirror::native_settings(id, bag, live, assignment.is_some()),
+            ArmMirror::native_settings(
+                CompiledCardId::from_script(id),
+                bag,
+                live,
+                assignment.is_some(),
+            ),
             log_action,
             |settings| {
                 if let Some(assignment) = assignment {
@@ -261,17 +249,6 @@ impl Scripts {
             self.clear_notice();
         }
         result
-    }
-
-    pub fn native_target<Io>(
-        &self,
-        core: &OperatorSession<Io>,
-        profile: &str,
-    ) -> Option<NativeTarget> {
-        Some(NativeTarget {
-            profile: profile.into(),
-            run: core.play()?.script_native_run(profile)?,
-        })
     }
 
     pub fn native_detail<Io>(
@@ -298,25 +275,6 @@ impl Scripts {
             paint: play.script_paint(profile),
             terminal: play.script_lifecycle_receipt(profile),
         })
-    }
-
-    pub fn native_command<Io>(
-        &mut self,
-        core: &OperatorSession<Io>,
-        target: &NativeTarget,
-        command: NativeCommand,
-    ) -> Result<(), String> {
-        let play = core.play().ok_or("no play")?;
-        let accepted = match command {
-            NativeCommand::Pause => play.script_native_pause(&target.profile, target.run, true),
-            NativeCommand::Resume => play.script_native_pause(&target.profile, target.run, false),
-            NativeCommand::Stop => play.script_native_stop(&target.profile, target.run),
-        };
-        if accepted {
-            Ok(())
-        } else {
-            Err("stale native run".into())
-        }
     }
 }
 

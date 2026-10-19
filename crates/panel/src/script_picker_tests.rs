@@ -167,12 +167,12 @@ fn load_date_column_is_black_on_alt_row_not_when_selected() {
 
 #[test]
 fn kind_badge_is_js_for_catalog_cards() {
-    use script::{ScriptKind, ScriptSource};
-    assert_eq!(super::kind_badge(ScriptKind::Compat), "JS");
-    assert_eq!(super::kind_badge(ScriptKind::NativeTick), "JS");
-    assert_eq!(super::source_badge(ScriptSource::Catalog), "Catalog");
+    use frontend_core::scripts::{CardRuntime, CardSource};
+    assert_eq!(super::kind_badge(CardRuntime::Compat), "JS");
+    assert_eq!(super::kind_badge(CardRuntime::NativeTick), "JS");
+    assert_eq!(super::source_badge(CardSource::Catalog), "Catalog");
     assert_eq!(
-        super::card_kind_source(ScriptKind::Compat, ScriptSource::Catalog),
+        super::card_kind_source(CardRuntime::Compat, CardSource::Catalog),
         "[JS] [Catalog]"
     );
 }
@@ -224,15 +224,15 @@ fn unselected_description_clips_to_three_lines() {
 
 #[test]
 fn card_transpile_label_only_for_the_front_of_the_queue() {
-    use script::ScriptSource;
+    use frontend_core::scripts::CardSource;
     assert_eq!(
-        super::card_transpile_label(None, ScriptSource::Catalog, "BoneBurier", 0, 1),
+        super::card_transpile_label(None, CardSource::Catalog, "BoneBurier", 0, 1),
         None
     );
     assert_eq!(
         super::card_transpile_label(
-            Some((ScriptSource::Catalog, "BoneBurier")),
-            ScriptSource::Catalog,
+            Some((CardSource::Catalog, "BoneBurier")),
+            CardSource::Catalog,
             "BoneBurier",
             0,
             1
@@ -241,8 +241,8 @@ fn card_transpile_label_only_for_the_front_of_the_queue() {
     );
     assert_eq!(
         super::card_transpile_label(
-            Some((ScriptSource::Catalog, "BoneBurier")),
-            ScriptSource::Catalog,
+            Some((CardSource::Catalog, "BoneBurier")),
+            CardSource::Catalog,
             "BoneBurier",
             2,
             10
@@ -251,8 +251,8 @@ fn card_transpile_label_only_for_the_front_of_the_queue() {
     );
     assert_eq!(
         super::card_transpile_label(
-            Some((ScriptSource::Catalog, "BoneBurier")),
-            ScriptSource::Catalog,
+            Some((CardSource::Catalog, "BoneBurier")),
+            CardSource::Catalog,
             "ShopRunner",
             0,
             1

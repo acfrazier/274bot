@@ -9,8 +9,12 @@ use host_play::{InstancePermit, Play, PlayOptions, SlotArm, SlotStatus, StartupP
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
+use crate::command::OperatorCommand;
+use crate::scripts::LoadShape;
 use crate::surface::{SlotAttach, SlotSurface};
 use crate::ArmMirror;
+use crate::WalkGlobals;
+use api::lifecycle::MemoryMode;
 
 /// Records lifecycle callbacks; IO values count attaches so reuse is visible.
 #[derive(Default)]
@@ -18,7 +22,7 @@ struct Recorder {
     attached: u32,
     resets: Vec<String>,
     released: Vec<String>,
-    rasters: Vec<vault::RasterMode>,
+    rasters: Vec<crate::command::RasterMode>,
 }
 
 impl SlotSurface for Recorder {
@@ -27,10 +31,10 @@ impl SlotSurface for Recorder {
     fn attach(
         &mut self,
         _name: &str,
-        profile: &mut Profile,
+        profile: &mut crate::SpawnProfile<'_>,
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
-        self.rasters.push(profile.settings.raster);
+        self.rasters.push(profile.raster());
         let io = retained.unwrap_or_else(|| {
             self.attached += 1;
             self.attached
@@ -38,13 +42,48 @@ impl SlotSurface for Recorder {
         SlotAttach::new(io, None, None)
     }
 
-    fn lifetime_reset(&mut self, name: &str) {
+    fn lifetime_reset(&mut self, name: &str, _walk_was_armed: bool) {
         self.resets.push(name.to_string());
     }
 
     fn released(&mut self, name: &str) {
         self.released.push(name.to_string());
     }
+
+    fn models(&mut self) -> crate::Models<'_> {
+        crate::Models::none()
+    }
+
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+}
+
+/// The auto-login row for `name` through the command seam; its operation.
+fn submit_auto_login<Io>(s: &mut OperatorSession<Io>, name: &str, on: bool) -> OperationId {
+    s.submit_detached(OperatorCommand::SetAutoLogin(on), Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation")
+}
+
+/// The memory-mode row for `name` through the command seam; its operation.
+fn submit_memory_mode<Io>(s: &mut OperatorSession<Io>, name: &str, lowmem: bool) -> OperationId {
+    let mode = if lowmem {
+        MemoryMode::Low
+    } else {
+        MemoryMode::High
+    };
+    s.submit_detached(OperatorCommand::SetMemoryMode(mode), Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation")
+}
+
+/// The profile-delete row for `name` through the command seam; its operation.
+fn submit_vault_remove<Io>(s: &mut OperatorSession<Io>, name: &str) -> OperationId {
+    s.submit_detached(OperatorCommand::DeleteProfile, Targets::Profile(name))
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation")
 }
 
 fn empty_play() -> Play {
@@ -66,18 +105,15 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = host_play::WalkGlobals {
-        allow_teleports: true,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        allow_danger_zones: true,
-        survivable_routing: false,
-    };
+    let granted = WalkGlobals::new(true, true, true, true, false);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
-    assert_eq!(session.play().unwrap().walk_globals(), granted);
-    session.set_walk_globals(host_play::WalkGlobals::default());
-    assert_eq!(session.play().unwrap().walk_globals(), Default::default());
+    assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());
+    session.set_walk_globals(WalkGlobals::default());
+    assert_eq!(
+        session.play().unwrap().walk_globals(),
+        WalkGlobals::default().to_host()
+    );
 }
 
 fn vault_path(test: &str) -> std::path::PathBuf {
@@ -451,11 +487,47 @@ fn member_still_stopping(
     (s, surface, release, remove)
 }
 
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal (a
+/// settled Start, a settled operation, a worker that has exited, a published
+/// line), and every accepted job and every stopping worker reaches one. Start
+/// preparation shares one process-wide background worker with every other test
+/// in this binary, so a wait on a loaded host queues behind all of them. The
+/// guard only stops a deadlocked test and is minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
+
+/// Poll the session, as a front end does once per frame, until `done` holds.
+/// `done` runs before the first poll and after every poll.
+fn pump_until<Io>(
+    s: &mut OperatorSession<Io>,
+    what: &str,
+    mut done: impl FnMut(&mut OperatorSession<Io>) -> bool,
+) {
+    let guard = Instant::now() + HANG_GUARD;
+    while !done(s) {
+        assert!(Instant::now() < guard, "{what}: hang guard expired");
+        s.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Poll until `op`'s outcome for alice is no longer Pending; the caller
+/// asserts which terminal it reached.
+fn wait_operation_settled<Io>(s: &mut OperatorSession<Io>, op: OperationId) {
+    pump_until(s, "operation did not settle", |s| {
+        s.operation(op).unwrap().outcome("alice") != Some(&Outcome::Pending)
+    });
+}
+
 /// Let `b`'s old worker exit, then poll once.
 fn finish_stopping(s: &mut OperatorSession<u32>, release: std::sync::mpsc::Sender<()>) {
     drop(release);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while s.play().unwrap().slot_stopping("b") && Instant::now() < deadline {
+    let guard = Instant::now() + HANG_GUARD;
+    while s.play().unwrap().slot_stopping("b") {
+        assert!(
+            Instant::now() < guard,
+            "b's worker did not exit: hang guard expired"
+        );
         std::thread::yield_now();
     }
     s.poll();
@@ -523,7 +595,7 @@ fn memory_toggle_while_spawn_is_deferred_updates_its_profile_and_arm() {
     let (mut s, mut surface, release, _) = member_still_stopping("deferred-memory-toggle");
     s.load_all(&mut surface, None);
 
-    s.set_memory_mode("b", false).unwrap();
+    submit_memory_mode(&mut s, "b", false);
     let deferred = s.deferred.get("b").expect("replacement spawn is deferred");
     assert!(
         !deferred.profile.settings.lowmem,
@@ -554,7 +626,7 @@ fn failed_memory_toggle_resets_a_deferred_profile_and_arm() {
     s.load_all(&mut surface, None);
     let blocked = block_writes(&vault_path("deferred-memory-toggle-fail"));
 
-    s.set_memory_mode("b", false).unwrap();
+    submit_memory_mode(&mut s, "b", false);
     s.flush_writes();
     unblock_writes(blocked);
 
@@ -723,7 +795,7 @@ fn reloading_during_removal_cancels_it_and_keeps_the_same_lifetime() {
     assert!(!a.stop.load(Ordering::Relaxed));
 }
 
-fn looping_bot(dir: &std::path::Path) -> (String, script::LoadShape) {
+fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
     let path = dir.join("looping.ts");
     std::fs::write(
         &path,
@@ -732,19 +804,16 @@ fn looping_bot(dir: &std::path::Path) -> (String, script::LoadShape) {
     .unwrap();
     let mut library = script::JsLibrary::new(dir.join("js-scripts.json"));
     let card = library.load(&path).unwrap();
-    (card.js, card.shape)
+    (card.js, LoadShape::from_script(card.shape))
 }
 
 fn settle_start(s: &mut OperatorSession<u32>) -> Vec<StartSettled> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        s.poll();
-        let settled = s.take_settled_starts();
-        if !settled.is_empty() || Instant::now() > deadline {
-            return settled;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let mut settled = Vec::new();
+    pump_until(s, "script Start did not settle", |s| {
+        settled = s.take_settled_starts();
+        !settled.is_empty()
+    });
+    settled
 }
 
 #[test]
@@ -798,13 +867,7 @@ fn offline_start_and_stop_settle_through_poll() {
     );
 
     let stop = s.stop_script("alice");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, stop);
     assert_eq!(
         s.operation(stop).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
@@ -820,7 +883,7 @@ fn a_start_refused_by_the_host_is_an_error_not_an_operation() {
     let mut s = session("start-refused", &[]);
     let refused = s.start_script(
         "ghost",
-        ScriptStart::load(String::new(), script::LoadShape::Reject, None, Vec::new()),
+        ScriptStart::load(String::new(), LoadShape::Reject, None, Vec::new()),
         None,
     );
     assert_eq!(
@@ -1182,17 +1245,20 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",
-        ScriptStart::load(card.js, card.shape, None, Vec::new()),
+        ScriptStart::load(
+            card.js,
+            LoadShape::from_script(card.shape),
+            None,
+            Vec::new(),
+        ),
         Some("file:broken".into()),
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
     let mut taken = Vec::new();
-    while Instant::now() < deadline && taken.is_empty() {
-        s.poll();
+    pump_until(&mut s, "the failing script's log lines", |s| {
         taken.extend(s.script_lines().iter().cloned());
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        !taken.is_empty()
+    });
     s.poll();
     assert!(s.script_lines().is_empty(), "lines are handed out once");
     assert!(
@@ -1248,7 +1314,7 @@ fn a_profile_write_is_queued_and_the_arm_follows_only_once_it_is_durable() {
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
 
-    let op = s.set_auto_login("alice", true).unwrap();
+    let op = submit_auto_login(&mut s, "alice", true);
 
     assert!(
         s.vault().unwrap().get("alice").unwrap().settings.auto_login,
@@ -1277,7 +1343,7 @@ fn consecutive_writes_land_in_order_with_the_last_one_on_disk() {
     let mut s = session("write-order", &[("alice", 1, false)]);
     s.set_random_settings("alice", false, "Magic", false)
         .unwrap();
-    s.set_auto_login("alice", true).unwrap();
+    submit_auto_login(&mut s, "alice", true);
     s.set_random_settings("alice", true, "Prayer", true)
         .unwrap();
     s.flush_writes();
@@ -1295,7 +1361,7 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
     s.load("alice", &mut surface);
     let alice = arm(&s, "alice");
     let op = s
-        .set_random_event_policy("alice", "River Troll", vault::RandomEventPolicy::Fight)
+        .set_random_event_policy("alice", "River Troll", crate::GuardianPolicy::Fight)
         .unwrap();
     assert!(
         alice.random_event_policies.lock().unwrap().is_empty(),
@@ -1390,13 +1456,7 @@ fn stop_scripts_drops_a_start_queued_behind_a_reap() {
     let (op, stopped) = s.stop_scripts(&["alice".to_string()]);
 
     assert_eq!(stopped, 1, "a Stopping slot with a queued Start is stopped");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(op).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, op);
     assert_eq!(
         s.operation(op).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
@@ -1424,8 +1484,8 @@ fn a_write_replaced_in_the_same_commit_is_cancelled_and_its_mirror_never_runs() 
     let alice = arm(&s, "alice");
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let on = s.set_auto_login("alice", true).unwrap();
-    let off = s.set_auto_login("alice", false).unwrap();
+    let on = submit_auto_login(&mut s, "alice", true);
+    let off = submit_auto_login(&mut s, "alice", false);
     drop(held);
     s.flush_writes();
 
@@ -1455,7 +1515,7 @@ fn coalesced_edits_of_different_settings_all_reach_the_running_slot() {
     assert!(alice.random_events.load(Ordering::Relaxed));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let auto = s.set_auto_login("alice", false).unwrap();
+    let auto = submit_auto_login(&mut s, "alice", false);
     let magic = s
         .set_random_settings("alice", false, "Magic", false)
         .unwrap();
@@ -1615,25 +1675,25 @@ fn profile_form_dirty_tracks_edits_against_the_vault_row() {
     );
 
     assert!(
-        !s.profile_form_dirty(Some("alice"), &user, &pass, &settings),
+        !dirty(&s, Some("alice"), &user, &pass, &settings),
         "an editor opened on the row is clean"
     );
     assert!(
-        s.profile_form_dirty(Some("alice"), &user, "typed-but-unsaved", &settings),
+        dirty(&s, Some("alice"), &user, "typed-but-unsaved", &settings),
         "an edited password is unsaved"
     );
     assert!(
-        s.profile_form_dirty(Some("alice"), "bob", &pass, &settings),
+        dirty(&s, Some("alice"), "bob", &pass, &settings),
         "a renamed username is unsaved"
     );
     let mut tweaked = settings.clone();
     tweaked.world = Some(2);
     assert!(
-        s.profile_form_dirty(Some("alice"), &user, &pass, &tweaked),
+        dirty(&s, Some("alice"), &user, &pass, &tweaked),
         "an edited setting is unsaved"
     );
     assert!(
-        s.profile_form_dirty(Some("ghost"), &user, &pass, &settings),
+        dirty(&s, Some("ghost"), &user, &pass, &settings),
         "a target with no row must ask before it is left"
     );
 }
@@ -1644,25 +1704,25 @@ fn profile_form_dirty_treats_a_blank_new_profile_as_clean() {
     let clean = ProfileSettings::default();
 
     assert!(
-        !s.profile_form_dirty(None, "", "", &clean),
+        !dirty(&s, None, "", "", &clean),
         "a blank new-profile form is clean"
     );
     assert!(
-        !s.profile_form_dirty(Some(""), "  ", "", &clean),
+        !dirty(&s, Some(""), "  ", "", &clean),
         "whitespace alone is not a name"
     );
     assert!(
-        s.profile_form_dirty(None, "bob", "", &clean),
+        dirty(&s, None, "bob", "", &clean),
         "a typed name is unsaved"
     );
     assert!(
-        s.profile_form_dirty(None, "", "pw", &clean),
+        dirty(&s, None, "", "pw", &clean),
         "a typed password is unsaved"
     );
     let mut tweaked = clean.clone();
     tweaked.lamp_auto = !clean.lamp_auto;
     assert!(
-        s.profile_form_dirty(None, "", "", &tweaked),
+        dirty(&s, None, "", "", &tweaked),
         "a non-default setting is unsaved"
     );
 }
@@ -1680,7 +1740,8 @@ fn profile_form_dirty_projects_only_what_save_writes() {
     // Whitespace around the username and the clue partner canonicalizes to
     // the stored row: Save would write the same values.
     assert!(
-        !s.profile_form_dirty(
+        !dirty(
+            &s,
             Some("alice"),
             "  alice  ",
             &row.password,
@@ -1715,25 +1776,31 @@ fn profile_form_dirty_projects_only_what_save_writes() {
         s.vault_mut().unwrap().upsert(updated).unwrap();
     }
     assert!(
-        !s.profile_form_dirty(Some("alice"), &row.username, &row.password, &row.settings),
+        !dirty(
+            &s,
+            Some("alice"),
+            &row.username,
+            &row.password,
+            &row.settings
+        ),
         "a concurrent change to a non-owned setting is not dirty"
     );
 
     // Real edits still count.
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, "changed", &row.settings),
+        dirty(&s, Some("alice"), &row.username, "changed", &row.settings),
         "a real password edit is dirty"
     );
     let mut world = row.settings.clone();
     world.world = Some(row.settings.world.unwrap_or(1).wrapping_add(1));
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &world),
+        dirty(&s, Some("alice"), &row.username, &row.password, &world),
         "a real world edit is dirty"
     );
     let mut clue = row.settings.clone();
     clue.clue_duel_partner = format!("{}!", row.settings.clue_duel_partner);
     assert!(
-        s.profile_form_dirty(Some("alice"), &row.username, &row.password, &clue),
+        dirty(&s, Some("alice"), &row.username, &row.password, &clue),
         "a real clue-partner edit is dirty"
     );
 }
@@ -1743,7 +1810,7 @@ fn on_a_failed_commit_a_superseded_write_is_cancelled_and_only_the_final_one_fai
     let blocked = block_writes(&vault_path("write-coalesce-fail"));
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let on = s.set_auto_login("alice", true).unwrap();
+    let on = submit_auto_login(&mut s, "alice", true);
     let off = s
         .set_random_settings("alice", false, "Magic", false)
         .unwrap();
@@ -2021,7 +2088,7 @@ fn a_failed_save_hands_back_the_draft_that_did_not_land() {
     let op = form_saves_alice(&mut s, &mut form, "typed");
     // An unrelated edit staged after the save changes the vault row, not
     // what the save carried.
-    s.set_auto_login("alice", true).unwrap();
+    submit_auto_login(&mut s, "alice", true);
     assert_eq!(
         s.saves_in_flight()
             .iter()
@@ -2101,7 +2168,7 @@ fn memory_toggle_stages_arms_and_settles() {
     publish_alice_login(&mut s, true);
     assert!(!s.memory_status("alice").unwrap().differs());
 
-    let op = s.set_memory_mode("alice", false).unwrap();
+    let op = submit_memory_mode(&mut s, "alice", false);
     assert_eq!(
         arm(&s, "alice").lowmem_handshake(),
         Some(false),
@@ -2137,7 +2204,7 @@ fn older_memory_save_cannot_rearm_a_cancelled_queue_across_commits() {
     s.load("alice", &mut surface);
     publish_alice_login(&mut s, true);
 
-    let first = s.set_memory_mode("alice", false).unwrap();
+    let first = submit_memory_mode(&mut s, "alice", false);
     // Seal and finish the first commit, but delay delivering its completion
     // until after the operator has cancelled that queued mode.
     let written = s.writer.as_mut().unwrap().wait_take().unwrap();
@@ -2146,7 +2213,7 @@ fn older_memory_save_cannot_rearm_a_cancelled_queue_across_commits() {
     assert!(written.result.is_ok());
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
-    let second = s.set_memory_mode("alice", true).unwrap();
+    let second = submit_memory_mode(&mut s, "alice", true);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(true));
     assert!(!s.memory_status("alice").unwrap().differs());
 
@@ -2231,7 +2298,7 @@ fn a_save_of_a_profile_deleted_before_it_was_written_leaves_nothing_to_show() {
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
     form_saves_alice(&mut s, &mut form, "typed");
-    s.vault_remove("alice").unwrap().unwrap();
+    submit_vault_remove(&mut s, "alice");
     drop(held);
     s.flush_writes();
 
@@ -2253,7 +2320,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
     let gate = s.write_gate();
     let held = gate.lock().unwrap();
     form_saves_alice(&mut s, &mut form, "typed");
-    let delete = s.vault_remove("alice").unwrap().unwrap();
+    let delete = submit_vault_remove(&mut s, "alice");
     let blocked = block_writes(&vault_path("form-delete-fails"));
     drop(held);
     s.flush_writes();
@@ -2279,7 +2346,7 @@ fn a_delete_that_fails_after_a_queued_save_reports_once_and_restores_the_profile
 fn memory_toggle_before_load_applies_at_spawn_without_notice() {
     let mut s = session("mem-early", &[("alice", 1, true)]);
     let mut surface = Recorder::default();
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     s.load("alice", &mut surface);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
@@ -2318,7 +2385,7 @@ fn memory_relog_posts_one_atomic_intent_and_waits_for_owner_session() {
     );
     s.poll();
 
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     let relog = s.request_memory_relog("alice", &mut surface);
     assert_eq!(
@@ -2435,7 +2502,7 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     publish_alice_login(&mut s, true);
     let blocked = block_writes(&vault_path("mem-write-fail"));
 
-    let op = s.set_memory_mode("alice", false).unwrap();
+    let op = submit_memory_mode(&mut s, "alice", false);
     assert_eq!(arm(&s, "alice").lowmem_handshake(), Some(false));
     s.flush_writes();
     unblock_writes(blocked);
@@ -2493,13 +2560,7 @@ fn memory_relog_warns_while_a_script_runs() {
     );
 
     let stop = s.stop_script("alice");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while s.operation(stop).unwrap().outcome("alice") == Some(&Outcome::Pending)
-        && Instant::now() < deadline
-    {
-        s.poll();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_operation_settled(&mut s, stop);
     assert!(
         !s.memory_relog_warning("alice"),
         "a stopped script needs no warning"
@@ -2523,7 +2584,7 @@ fn memory_ingame_toggled(test: &str) -> (OperatorSession<u32>, Recorder) {
         },
     );
     s.poll();
-    s.set_memory_mode("alice", false).unwrap();
+    submit_memory_mode(&mut s, "alice", false);
     s.flush_writes();
     assert!(s.memory_status("alice").unwrap().differs());
     (s, surface)
@@ -2644,16 +2705,22 @@ impl SlotSurface for MemoryOverrideSurface {
     fn attach(
         &mut self,
         _name: &str,
-        profile: &mut Profile,
+        profile: &mut crate::SpawnProfile<'_>,
         retained: Option<u32>,
     ) -> SlotAttach<u32> {
-        profile.settings.lowmem = false;
+        profile.set_lowmem(false);
         SlotAttach::new(retained.unwrap_or_default(), None, None)
     }
 
-    fn lifetime_reset(&mut self, _name: &str) {}
+    fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
 
     fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> crate::Models<'_> {
+        crate::Models::none()
+    }
+
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
 }
 
 #[test]
@@ -2696,7 +2763,7 @@ fn host_capacity_transitions_log_once_and_rebuild_the_line_only_on_change() {
             8,
             Some(Duration::from_millis(1730)),
             Some(Duration::from_millis(970)),
-            RenderPolicyLabel::Headless,
+            RenderPolicyLabel::Headless.to_host(),
         ))
     };
     let line = |late| {
@@ -2748,4 +2815,17 @@ fn host_capacity_transitions_log_once_and_rebuild_the_line_only_on_change() {
             (Level::Info, back.to_string()),
         ]
     );
+}
+
+fn dirty(
+    s: &OperatorSession<u32>,
+    target: Option<&str>,
+    username: &str,
+    password: &str,
+    settings: &ProfileSettings,
+) -> bool {
+    s.profile_form_dirty(
+        target,
+        &crate::ProfileDraft::from_parts(username, password, settings.clone()),
+    )
 }

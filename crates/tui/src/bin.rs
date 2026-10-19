@@ -2,17 +2,16 @@
 //! `host-play` / `panel-play` (`--vault`, `--vault-pass-stdin`,
 //! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).
 //!
-//! The operator lifecycle (vault, `host_play::Play`, fleet membership,
+//! The operator lifecycle (vault, the play session, fleet membership,
 //! selection, Load/Log in/Log out/Remove, script Start/Stop settlement and
 //! status polling) lives in the shared [`frontend_core::OperatorSession`];
-//! the binary adds a per-frame hook that publishes each slot's snapshot and
-//! steps the focused slot's walk arm, and the UI loop polls the core,
-//! refreshes [`TuiApp`], routes keys/clicks, and dispatches the returned
-//! [`AppAction`] —
-//! map Walk-confirm consumes a revision-bound `MapCommand` through
-//! `host_play::Play::map_walk`, chat Continue/Answer and WASD walks go
-//! through `host_play::WireCmd`, and the settings popup writes
-//! `ProfileSettings` on the focused profile.
+//! the core publishes each slot's snapshot and steps its walk arm, the
+//! binary's per-frame hook adds mainland seeding and the `--live` runner,
+//! and the UI loop polls the core, refreshes [`TuiApp`], routes
+//! keys/clicks, and dispatches the returned [`AppAction`] — map
+//! Walk-confirm consumes a revision-bound map command, chat
+//! Continue/Answer and WASD walks go through the core's slot accessors,
+//! and the settings popup writes `ProfileSettings` on the focused profile.
 //!
 //! **Raster Off:** every profile is spawned with `RasterMode::Off` and the
 //! TUI never attaches a `Renderer` (no `panel` / imgui / wgpu anywhere).
@@ -20,7 +19,7 @@
 //! (like the panel) and PASS/FAIL comes from the scenario runner, not a
 //! screenshot.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,39 +33,31 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-#[cfg(test)]
-use host_play::arm_walk_on;
-use host_play::catalog_core::CoreWatch;
-use host_play::live_gate::{self, CoreGate, LiveCore, LiveTiming, PassHold};
-use host_play::live_start::{self, PendingCatalogStart, StartArming};
-use host_play::paired_core::PairWatch;
-use host_play::walk_map::{
-    observed_services, ActionError, ActionKind, Catalogue, MapContext, WalkExclude, WalkSlotStatus,
-};
-use host_play::{
-    background_bots_ack_error, background_bots_acked, clear_background_bots_ack_error,
-    live_vault_passphrase, load_navpois, map_ready_catalogue, mint_live_entries, mint_live_names,
-    open_vault, parse_profile_args, peek_map_catalogue, persist_background_bots_ack,
-    player_here_tile, profile_password, run_with_io, run_with_template, MapDemandHandle,
-    MapJobStatus, MapStage, PlayOptions, ProfileOptions, ReadyCatalogue, ServerProfile,
-    SharedClientTemplate, SlotFrameInput, WalkArm, WireCmd,
-};
-use nav::map::identity::Digest;
 use nav::tile::Tile;
-use nav::WorldState;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use vault::{Profile, Vault};
 
 use frontend_core::resources::background_ack_text;
-use frontend_core::{
-    load_map_bake_choice, persist_map_bake_choice, HeadlessSurface, MapBakeGate, OperatorSession,
+use frontend_core::scripts::{
+    CardSource, CatalogActionKind, CompiledCardId, LoadoutForm, OwnedSchema, PaintFrame,
+    ScriptChoice,
 };
-use host_play::local_state::{LocalStateService, Preferences, StateRoot};
-use host_play::map_cache::MapDemand;
+#[cfg(test)]
+use frontend_core::test_support::VaultFixture;
+use frontend_core::walk_map::{
+    peek_walk_catalogue, WalkMapDemand, WalkMapJobState, WalkMapStage, WalkReadyCatalogue,
+};
+use frontend_core::UiPreferences;
+use frontend_core::{
+    load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, SubmitError,
+    Targets,
+};
+#[cfg(test)]
+use host_play::{PlayOptions, SharedClientTemplate};
 
 use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
+use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
 use crate::profile_import::ImportAction;
 use crate::script_shape::{
@@ -84,7 +75,7 @@ pub enum RunMode {
 }
 
 /// Parsed `tui-play` flags.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Args {
     /// `--vault-pass-stdin`: read the vault passphrase from a piped stdin. It
     /// is never an argument or an environment variable; on a terminal it is
@@ -93,7 +84,7 @@ pub struct Args {
     pub users: Vec<String>,
     pub live: Option<String>,
     pub world: Option<u16>,
-    pub profile: ProfileOptions,
+    pub profile: frontend_core::launch::ProfileArgs,
     /// `--catalog-core`: qualify the `--live` run under the shared catalog
     /// core witness (the panel `catalog_watch` mode).
     pub catalog_core: bool,
@@ -116,7 +107,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
 
 fn exit_after_work_shutdown(code: i32) -> ! {
-    let code = match script::work_admission::WorkService::shutdown_if_started() {
+    let code = match frontend_core::process::shutdown_background_work() {
         Ok(()) => code,
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
@@ -174,7 +165,8 @@ pub fn parse_args() -> Args {
 
 /// Testable CLI parse.
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
-    let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
+    let (profile, rest) =
+        frontend_core::launch::parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
     let mut parsed = Args {
         pass_stdin: false,
@@ -189,8 +181,10 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     let mut core_flags: Option<(bool, bool)> = None;
     let mut it = rest.into_iter();
     while let Some(arg) = it.next() {
-        if host_play::passphrase::is_removed_flag(arg.as_ref()) {
-            return Err(host_play::passphrase::removed_flag_error("tui-play"));
+        if frontend_core::launch::is_removed_passphrase_flag(arg.as_ref()) {
+            return Err(frontend_core::launch::removed_passphrase_flag_error(
+                "tui-play",
+            ));
         }
         match arg.as_ref() {
             "--vault-pass-stdin" => parsed.pass_stdin = true,
@@ -221,9 +215,9 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         );
     }
     if parsed.map_bundle.is_some()
-        && (parsed.profile.revision.is_none()
-            || parsed.profile.cache_dir.is_none()
-            || parsed.profile.unpack_dir.is_none()
+        && (!parsed.profile.has_revision()
+            || !parsed.profile.has_cache_dir()
+            || !parsed.profile.has_unpack_dir()
             || parsed.live.is_some())
     {
         return Err(
@@ -235,94 +229,12 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
 
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
 /// Unknown names fail the run (same usage contract as panel-play).
-pub fn live_scenario(name: &str) -> Result<scenario::Scenario, String> {
+pub fn live_scenario(name: &str) -> Result<frontend_core::live::Scenario, String> {
     let script = name
         .strip_prefix("script_")
         .ok_or_else(|| format!("tui-play: --live {name}: only script_<name> is supported"))?;
-    scenario::get(script).ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
-}
-
-/// Throwaway encrypted vault for `--live` (minted names, target-aware pass).
-fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
-    static SERIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!(
-        "274bot-tui-live-{}-{}-{serial}",
-        std::process::id(),
-        entries.len()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("vault");
-    if path.exists() {
-        std::fs::remove_file(&path).unwrap();
-    }
-    let mut vault = Vault::create(&path, vault_pass).unwrap();
-    for (i, (user, pass)) in entries.iter().enumerate() {
-        vault
-            .upsert(Profile {
-                username: user.clone(),
-                password: pass.clone().into(),
-                uid: 274_000_001 + i as i32,
-                settings: vault::ProfileSettings {
-                    auto_login: true,
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
-    }
-    path
-}
-
-/// The walk-arm step latch key: `(player gen, here)` per username, so a
-/// hop is sent once per server tick, not every 20 ms frame.
-type NavStepLatch = HashMap<String, (u64, (i32, i32, i32))>;
-
-type SlotTravellers = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
-
-fn reset_frontend_slot_session(
-    name: &str,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    tick_latch.lock().unwrap().remove(name);
-    let removed = travellers.lock().unwrap().remove(name);
-    let Some(arm) = removed else {
-        return false;
-    };
-    host_play::cancel_walk_arm(Some(name), &mut arm.lock().unwrap(), None, "SessionEnded");
-    true
-}
-
-fn reset_frontend_slot_lifetime(
-    name: &str,
-    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    gens.lock().unwrap().remove(name);
-    snapshots.lock().unwrap().remove(name);
-    reset_frontend_slot_session(name, travellers, tick_latch)
-}
-
-fn publish_frontend_slot(
-    name: &str,
-    client: &client::client::Client,
-    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &SlotTravellers,
-    tick_latch: &Arc<Mutex<NavStepLatch>>,
-) -> bool {
-    let mut gens_guard = gens.lock().unwrap();
-    let last = gens_guard.entry(name.to_string()).or_default();
-    let mut snapshot_guard = snapshots.lock().unwrap();
-    let snapshot = snapshot_guard.entry(name.to_string()).or_default();
-    let publication = host_play::Host::publish_frontend_snapshot(last, snapshot, client);
-    drop(snapshot_guard);
-    if publication.session_boundary {
-        reset_frontend_slot_session(name, travellers, tick_latch);
-    }
-    publication.session_boundary
+    frontend_core::live::Scenario::get(script)
+        .ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
 }
 
 /// Claim the one mainland seed for a slot's cold login. Reconnects retain
@@ -334,13 +246,6 @@ fn take_mainland_seed(
     last_login_reconnect: Option<bool>,
 ) -> bool {
     enabled && last_login_reconnect != Some(true) && sent.lock().unwrap().insert(name.to_string())
-}
-
-fn mainland_seed_options(options: &PlayOptions) -> (bool, PlayOptions) {
-    let enabled = options.mainland;
-    let mut host_options = options.clone();
-    host_options.mainland = false;
-    (enabled, host_options)
 }
 
 fn seed_mainland_on_ready<D: api::interact::Driver>(
@@ -359,65 +264,101 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
     }
 }
 
-fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
-    settings
-        .fixture_loadouts
-        .unwrap_or(&[])
-        .iter()
-        .map(|row| {
-            row.carry.iter().fold(
-                api::loadout::Loadout::new(row.name),
-                |loadout, &(item, qty)| loadout.with_carry(item, qty),
-            )
-        })
-        .collect()
+/// The TUI's per-frame client work on every slot. The core already
+/// publishes the frame and runs the shared live harness; this adds TUI-owned
+/// mainland seeding.
+struct TuiFrameHook {
+    /// Hop a fresh slot to the mainland once in a loaded scene.
+    mainland: bool,
+    mainland_sent: Mutex<HashSet<String>>,
 }
 
-/// The isolate Starts a live card stashes: both slots with their role bags
-/// under the pair gate, else the driven slot alone.
-fn live_card_starts(
-    live_core: LiveCore,
-    names: &[String],
-    card: &script::JsCard,
-    bag: Option<serde_json::Map<String, serde_json::Value>>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<api::loadout::Loadout>,
-    pair_watch: &PairWatch,
-) -> Result<Vec<PendingCatalogStart>, String> {
-    match live_core {
-        LiveCore::Pair(case) => live_start::pair_starts(
-            names,
-            case,
-            card.js.clone(),
-            card.shape,
-            &card.settings_schema,
-            siblings,
-            pair_watch,
-        ),
-        LiveCore::Off | LiveCore::Catalog(_) => Ok(vec![PendingCatalogStart::load(
-            names[0].clone(),
-            card.js.clone(),
-            card.shape,
-            bag,
-            siblings,
-            loadouts,
-        )]),
+impl frontend_core::frames::FrameHook for TuiFrameHook {
+    fn frame(
+        &self,
+        client: &mut dyn std::any::Any,
+        name: &str,
+        frame: &frontend_core::frames::FrameContext<'_>,
+    ) {
+        let c = client
+            .downcast_mut::<Client>()
+            .expect("tui slots run the client this TUI links");
+        let Self {
+            mainland,
+            mainland_sent,
+        } = self;
+        if frame.session_boundary() {
+            frame.mark_walk_clear();
+        }
+        if seed_mainland_on_ready(
+            c,
+            mainland_sent,
+            name,
+            *mainland,
+            c.ingame && c.scene_state == 2 && c.local_player.is_some(),
+            c.last_login_reconnect,
+        ) {
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Info,
+                slot = name,
+                "mainland hop queued"
+            );
+        }
     }
 }
 
-/// The Play-owned witness handles a core-gated `--live` run polls, taken
-/// once at prepare so each poll borrows them instead of cloning `Play`'s.
-struct LiveWitnesses {
-    catalog: CoreWatch,
-    pair: PairWatch,
+/// The headless slot surface: every spawn raster-off with no per-slot
+/// devices. A lifetime reset that ended an armed walk flags the picked walk
+/// destination for clearing.
+struct TuiSurface<'a> {
+    walk_cleared: &'a mut bool,
+    map_desk: &'a mut MapDesk,
+    models: frontend_core::Models<'a>,
+    /// The TUI's per-frame client work, lent only to the vault rows that
+    /// start the play.
+    frame_hook: Option<Arc<dyn frontend_core::frames::FrameHook>>,
 }
 
-/// The TUI session: the running play, the vault, the per-slot snapshot
-/// publication, and the per-username walk arms (the same `WalkArm` map
-/// `host_play::arm_walk_on` latches and the panel drives).
+impl frontend_core::SlotSurface for TuiSurface<'_> {
+    type Io = ();
+
+    fn attach(
+        &mut self,
+        _name: &str,
+        profile: &mut frontend_core::SpawnProfile<'_>,
+        _retained: Option<()>,
+    ) -> frontend_core::SlotAttach<()> {
+        profile.set_raster(frontend_core::command::RasterMode::Off);
+        frontend_core::SlotAttach::new((), None, None)
+    }
+
+    fn lifetime_reset(&mut self, _name: &str, walk_was_armed: bool) {
+        if walk_was_armed {
+            self.map_desk.clear_walk_dest();
+            *self.walk_cleared = true;
+        }
+    }
+
+    fn released(&mut self, _name: &str) {}
+
+    fn models(&mut self) -> frontend_core::Models<'_> {
+        self.models.reborrow().with_map(&mut *self.map_desk)
+    }
+
+    /// The TUI draws no game image and captures no game input.
+    fn draw_changed(&mut self, _switch: frontend_core::command::DrawSwitch, _on: bool) {}
+
+    fn frame_hook(&mut self) -> Option<Arc<dyn frontend_core::frames::FrameHook>> {
+        self.frame_hook.take()
+    }
+}
+
+/// The TUI session: the running play, the vault and the per-username walk
+/// arms (the core owns the per-slot snapshot publication).
 pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
-    memory: Option<host_play::memory::Run>,
+    memory: Option<frontend_core::bench::BenchRun>,
     /// Shared operator lifecycle (vault, play, fleet, selection, removals,
     /// status polling and operation results). Headless: no per-slot IO.
     core: OperatorSession<()>,
@@ -425,66 +366,36 @@ pub struct TuiSession {
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
-    /// Legacy-only endpoint bag retained for unit-test constructors.
-    options: PlayOptions,
-    /// Checked production assets and immutable server identity.
-    template: Option<Arc<SharedClientTemplate>>,
-    server_profile: Option<Arc<ServerProfile>>,
-    /// Catalogue-only demand lease. Dropped on MapClose; never requests PNGs.
-    map_demand: Option<MapDemandHandle>,
-    /// Map demand goes through the shared bake consent (catalogue-only here,
-    /// so it never asks); the remembered choice is edited in settings.
-    map_bake: MapBakeGate,
+    /// Hop a fresh slot to the mainland once in a loaded scene (the TUI's own
+    /// seed; the host never sees it).
+    mainland: bool,
+    /// The server-profile binding: its prepared template, connection
+    /// settings and the launch the next play session uses.
+    launcher: frontend_core::launch::ProfileLauncher,
+    /// Core-owned map demand, bake consent and accepted walk destination.
+    map_desk: MapDesk,
     map_catalogue_named: bool,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
-    /// Per-username snapshots, rebuilt by the per-frame hook.
-    snapshots: Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    /// Host publication cursor per slot. PLAYER_INFO's tick edge is tracked
-    /// separately from the snapshot's family generations.
-    frontend_gens: Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
-    /// Per-username walk arms; the focused arm's route paints the map and
-    /// the per-frame hook steps it via `Traveller::follow`.
-    travellers: SlotTravellers,
-    /// Last `(player gen, here)` ticked per username, so a walk hop is
-    /// sent once per server tick, not every 20 ms frame.
-    tick_latch: Arc<Mutex<NavStepLatch>>,
-    /// Slot threads set this when a traveller returns Arrived/Budget so
-    /// the UI can clear the picked walk dest.
-    walk_clear: Arc<AtomicBool>,
-    /// The shared nav world (`Play::world`), read by the per-frame walk
-    /// step and the app thread's route arms.
-    nav_world: Arc<Mutex<Option<Arc<nav::world::NavWorld>>>>,
-    /// The shared `--live script_*` runner (slot threads tick it from the
-    /// per-frame hook; the UI loop reads its status/evidence).
-    scenario: Arc<Mutex<Option<scenario::ScenarioRunner>>>,
-    /// Catalog card `live_prepare_script` stashes; the live pump Starts
-    /// them once on [`scenario::StepKind::StartScript`].
-    pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
-    /// Isolate-start handle and core watches the per-frame hook arms Start
-    /// with (filled after Play).
-    start_arming: Arc<Mutex<StartArming>>,
+    /// A slot lifetime reset ended an armed walk: the picked walk
+    /// destination clears on the next pump.
+    walk_reset: bool,
+
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
     /// `--catalog-core` / `--pair-core`: the shared witness the next
     /// `--live` prepare arms.
     live_catalog_core: bool,
     live_pair_core: bool,
-    /// The witnesses a `--catalog-core` / `--pair-core` run armed. `None`
-    /// for interactive use and plain `--live` runs, which poll no gate.
-    live_witnesses: Option<LiveWitnesses>,
     /// The armed witness's own ceiling (`None` without a core gate).
     live_core_deadline: Option<Instant>,
-    /// Pair fixture elapsed time, latched through the first shared Start.
-    live_timing: Arc<Mutex<Option<LiveTiming>>>,
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
-    live_wait_script_stop: Option<&'static str>,
     live_stop_wait_started: Option<Instant>,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
-    script_sel: Option<script::ScriptSel>,
+    script_sel: Option<ScriptChoice>,
     /// Shared script coordination (card library and catalog, assignment,
     /// per-profile parameters, Start/Stop all, reload, Apply to all): the
     /// same owner the panel uses.
@@ -501,10 +412,10 @@ pub struct TuiSession {
     /// The process local-state service's shared operator preferences
     /// (`panel-ui.json` through the service): every preference read and
     /// write in this process goes through this clone.
-    preferences: Preferences,
+    preferences: UiPreferences,
     /// Process-wide loadout presets: the form's editor over the process
     /// local-state service (slots read the same file through it).
-    loadouts: script::LoadoutsStore,
+    loadouts: LoadoutForm,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
     /// Core projection generations the app last copied (fleet rows, the
@@ -533,42 +444,190 @@ impl TuiSession {
     }
 }
 
-impl TuiSession {
-    /// Empty session over the default engine options.
-    #[cfg(test)]
-    fn new(options: PlayOptions) -> Self {
-        Self::with_instance(options, host_play::InstancePermit::SkipLock)
+/// A real command seam for app-level tests: the actions a key returns are
+/// applied through the dispatcher, over a session on isolated stores and
+/// the models the app lends, as the event loop does.
+#[cfg(test)]
+pub(crate) mod seam {
+    use super::*;
+    use crate::fleet::FleetState;
+    use crossterm::event::KeyEvent;
+
+    static QUESTER_PATHS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize tests that use the process-global Quester folder registry.
+    pub(crate) fn lock_quester_paths_test_state() -> std::sync::MutexGuard<'static, ()> {
+        QUESTER_PATHS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
-    fn with_instance(options: PlayOptions, _instance: host_play::InstancePermit) -> Self {
+    pub(crate) struct Seam {
+        session: TuiSession,
+    }
+
+    impl Seam {
+        /// A session on isolated stores: no play and no vault.
+        pub(crate) fn new() -> Self {
+            let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+            launcher.set_play_host("127.0.0.1");
+            let session =
+                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
+            Self { session }
+        }
+
+        /// Restore preferences while serializing access to the process-wide
+        /// Quester source registry shared by tests.
+        pub(crate) fn restore_preferences(
+            app: &mut TuiApp,
+            preferences: frontend_core::UiPreferences,
+        ) {
+            let _guard = lock_quester_paths_test_state();
+            app.restore_preferences(preferences);
+        }
+
+        /// A session over a vault holding `profiles` (name, uid) and an
+        /// empty play: a command that names a profile resolves it to its
+        /// vault identity.
+        pub(crate) fn with_profiles(profiles: &[(&str, i32)]) -> Self {
+            let mut seam = Self::new();
+            seam.session.core.set_spawn_workers(false);
+            let path = frontend_core::scripts::paths::bot_home().join("seam-vault");
+            let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+            for (name, uid) in profiles {
+                vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(*uid));
+            }
+            let play = frontend_core::test_support::empty_play(&PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            });
+            vault.start_session(&mut seam.session.core, play);
+            seam
+        }
+
+        /// Apply `action` as the event loop does.
+        pub(crate) fn apply(&mut self, app: &mut TuiApp, action: AppAction) {
+            dispatch(&mut self.session, app, action);
+        }
+
+        /// Poll the session as the event loop does.
+        pub(crate) fn pump(&mut self, app: &mut TuiApp) {
+            self.session.pump(app);
+        }
+
+        /// Send `key` to `app`, check that it returns `expected`, then
+        /// apply that action.
+        pub(crate) fn press(&mut self, app: &mut TuiApp, key: KeyEvent, expected: AppAction) {
+            let action = app.on_key(key);
+            assert_eq!(action, expected);
+            self.apply(app, action);
+        }
+
+        /// Send `key` to `app` and apply whatever action it returns.
+        pub(crate) fn send(&mut self, app: &mut TuiApp, key: KeyEvent) {
+            let action = app.on_key(key);
+            self.apply(app, action);
+        }
+
+        /// Commit `text` as the fleet filter of a bare fleet table
+        /// (`SetFleetFilter`).
+        pub(crate) fn filter(&mut self, state: &mut FleetState, text: &str) {
+            let staged = state.filter.staged_mut();
+            staged.clear();
+            staged.push_str(text);
+            let mut walk_cleared = false;
+            let mut desk = MapDesk::default();
+            let mut surface = TuiSurface {
+                walk_cleared: &mut walk_cleared,
+                map_desk: &mut desk,
+                models: frontend_core::Models::none().with_fleet_filter(&mut state.filter),
+                frame_hook: None,
+            };
+            self.session
+                .core
+                .submit(
+                    OperatorCommand::SetFleetFilter,
+                    Targets::Application,
+                    &mut surface,
+                )
+                .expect("SetFleetFilter opens");
+        }
+
+        /// Make the session's preferences refuse writes (a file past the
+        /// size bound), as a damaged store does.
+        pub(crate) fn refuse_preference_writes(&mut self) {
+            let path = self.session.preferences.path().to_path_buf();
+            std::fs::create_dir_all(path.parent().expect("a preferences directory"))
+                .expect("create the preferences directory");
+            std::fs::write(
+                &path,
+                vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+            )
+            .expect("write the oversized preferences file");
+            assert!(self.session.preferences.reload().is_err());
+        }
+
+        /// Undo [`Self::refuse_preference_writes`]: a valid empty document.
+        pub(crate) fn allow_preference_writes(&mut self) {
+            let path = self.session.preferences.path().to_path_buf();
+            std::fs::write(&path, b"{}").expect("write an empty preferences document");
+            self.session
+                .preferences
+                .reload()
+                .expect("the empty document loads");
+        }
+    }
+}
+
+impl TuiSession {
+    /// Empty session over the legacy local connection (`options.host`).
+    #[cfg(test)]
+    fn new(options: PlayOptions) -> Self {
+        let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+        launcher.set_play_host(&options.host);
+        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+    }
+
+    /// A session bound to the prepared host `template`.
+    #[cfg(test)]
+    fn new_bound(template: Arc<host_play::SharedClientTemplate>) -> Self {
+        let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+        launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(template));
+        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+    }
+
+    fn with_launcher(
+        launcher: frontend_core::launch::ProfileLauncher,
+        permit: frontend_core::launch::InstancePermit,
+    ) -> Self {
         #[cfg(test)]
-        script::IsolatedEnv::ensure_thread();
-        let mut js = script::JsLibrary::new(script::default_js_store());
+        frontend_core::test_support::IsolatedStores::ensure_thread();
         // A missing store is a first run; a refused or corrupt one is said out
         // loud (and nothing is saved over a refused one).
-        if let Err(error) = js.restore() {
+        let (scripts, restore_error) = frontend_core::Scripts::open_default();
+        if let Some(error) = restore_error {
             eprintln!("tui-play: {error}");
         }
-        let travellers: SlotTravellers = Arc::new(Mutex::new(HashMap::new()));
         // The composition root opens the process local-state service once;
         // every consumer clones these preferences and the loadouts form
         // writes through the same service.
-        let service =
-            LocalStateService::open_process(StateRoot::new(script::bot_home().join(".274bot")));
-        let mut core = OperatorSession::new(_instance);
-        core.bind_local_state(Arc::clone(&service));
-        let preferences = service.preferences();
-        let pause_manual_walk = frontend_core::nav_preference(
-            &preferences,
-            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            None,
-        )
-        .unwrap_or(true);
-        core.set_pause_script_on_manual_walk_abort(pause_manual_walk);
-        core.set_walk_globals_store(preferences.clone());
-        // The fleet rows show the map walks this TUI arms.
-        core.set_walk_arms(Arc::clone(&travellers));
-        let background_ack = background_bots_acked(&preferences);
+        let mut core = OperatorSession::open(permit);
+        core.open_process_state();
+        let loadouts = LoadoutForm::operator_of(&core);
+        let preferences = core
+            .preferences()
+            .expect("the session's local state was bound just now");
+        // The bound operator preferences (the durable walk globals and
+        // their store, the manual-movement pause) become the session's;
+        // the app reads its walk-permission view itself when it binds them.
+        core.adopt_operator_preferences();
+        // This front end draws no game image: the capacity warning says so.
+        core.declare_headless_render();
+        let background_ack = frontend_core::resources::background_bots_acked(&preferences);
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
@@ -576,44 +635,28 @@ impl TuiSession {
             auto_world: None,
             error: None,
             names: Vec::new(),
-            options,
-            template: None,
-            server_profile: None,
-            map_demand: None,
-            map_bake: MapBakeGate::new(load_map_bake_choice(&preferences)),
+            mainland: false,
+            launcher,
+            map_desk: MapDesk::new(load_map_bake_choice(&preferences)),
             map_catalogue_named: false,
             last_focused: None,
-            snapshots: Arc::new(Mutex::new(HashMap::new())),
-            frontend_gens: Arc::new(Mutex::new(HashMap::new())),
-            travellers,
-            tick_latch: Arc::new(Mutex::new(HashMap::new())),
-            walk_clear: Arc::new(AtomicBool::new(false)),
-            nav_world: Arc::new(Mutex::new(None)),
-            scenario: Arc::new(Mutex::new(None)),
-            pending_script: Arc::new(Mutex::new(Vec::new())),
-            start_arming: Arc::new(Mutex::new(StartArming::default())),
+            walk_reset: false,
             live_name: None,
             live_catalog_core: false,
             live_pair_core: false,
-            live_witnesses: None,
             live_core_deadline: None,
-            live_timing: Arc::new(Mutex::new(None)),
             live_soak_until: None,
             live_announced_pass: false,
-            live_wait_script_stop: None,
             live_stop_wait_started: None,
             script_sel: None,
-            scripts: frontend_core::Scripts::new(
-                js,
-                script::ScriptSettingsStore::with_default_path(),
-            ),
+            scripts,
             rs2b0t_catalog_open: false,
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             profile_import_preview_pending: false,
             script_category_order: Vec::new(),
-            preferences: preferences.clone(),
-            loadouts: script::LoadoutsStore::over(Arc::new(service.operator_loadouts())),
+            preferences: preferences.share(),
+            loadouts,
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,
@@ -626,52 +669,35 @@ impl TuiSession {
         }
     }
 
-    fn new_bound(template: Arc<SharedClientTemplate>, permit: host_play::InstancePermit) -> Self {
-        let profile = Arc::clone(template.profile());
-        let mut session = Self::with_instance(
-            PlayOptions {
-                host: profile.client().game_host().to_string(),
-                transport: profile.transport(),
-                port: profile.client().game_port(),
-                cache_dir: profile.client().cache_dir().display().to_string(),
-                lowmem: true,
-                mainland: false,
-            },
-            permit,
-        );
-        session.template = Some(template);
-        session.server_profile = Some(profile);
-        session
+    /// The server profile this session is bound to, once bound.
+    fn bound(&self) -> Option<&frontend_core::launch::BoundProfile> {
+        self.launcher.bound()
     }
 
     #[cfg(feature = "memory-profile")]
-    fn profile_class(&self) -> host_play::ProfileClass {
-        self.server_profile
-            .as_ref()
-            .map_or(host_play::ProfileClass::Remote, |profile| {
-                profile.profile_class()
+    fn profile_class(&self) -> frontend_core::launch::ProfileClass {
+        self.bound()
+            .map_or(frontend_core::launch::ProfileClass::Remote, |profile| {
+                profile.class()
             })
     }
 
     fn app_title(&self) -> String {
-        let revision = self
-            .server_profile
-            .as_ref()
-            .map_or(274, |profile| profile.revision().as_i32());
+        let revision = self.bound().map_or(274, |profile| profile.revision());
         format!("{revision}bot")
     }
 
     fn profile_label(&self) -> String {
-        self.server_profile.as_ref().map_or_else(
+        self.bound().map_or_else(
             || "legacy local-274 · revision 274".into(),
             |profile| profile.label(),
         )
     }
 
     fn catalog_root(&self) -> Option<PathBuf> {
-        match self.server_profile.as_ref() {
+        match self.bound() {
             Some(profile) => profile.catalog_root().map(Path::to_path_buf),
-            None => script::rs2b0t_root(),
+            None => frontend_core::scripts::paths::rs2b0t_root(),
         }
     }
 
@@ -680,16 +706,20 @@ impl TuiSession {
     /// `None` only when the merged bag is empty.
     fn pending_settings_bag(
         &self,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
-        schema: &[script::SettingDef],
     ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let none = OwnedSchema::default();
+        let schema = self
+            .scripts
+            .card(source, name)
+            .map_or_else(|| none.as_ref(), |card| card.schema());
         let merged = self.scripts.legacy_bag(source, name, schema);
         (!merged.is_empty()).then_some(merged)
     }
 
     fn default_catalog_browse_dir() -> PathBuf {
-        let home = script::bot_home();
+        let home = frontend_core::scripts::paths::bot_home();
         if home.as_os_str() == "." {
             PathBuf::from("/")
         } else {
@@ -697,280 +727,69 @@ impl TuiSession {
         }
     }
 
-    /// Unlock (or first-run create) the vault at `path` and start the play.
+    /// Unlock the vault at `path` (`UnlockVault`), or create it on a first
+    /// run, when there is no vault file yet (`CreateVault`), and start the
+    /// play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
-        let vault = open_vault(path, pass).map_err(|e| e.to_string())?;
-        self.start_play(vault)
+        let (launch, hook) = self.play_launch();
+        let command = if path.is_file() {
+            self.core
+                .stage_vault_unlock(path.to_path_buf(), pass, launch);
+            OperatorCommand::UnlockVault
+        } else {
+            self.core
+                .stage_vault_create(path.to_path_buf(), pass, launch);
+            OperatorCommand::CreateVault
+        };
+        let (core, mut surface) = self.core_and_surface();
+        surface.frame_hook = Some(hook);
+        let submitted = core
+            .submit(command, Targets::Application, &mut surface)
+            .map_err(|error| error.to_string())?;
+        if let Some(reason) = self.core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
+        self.play_started();
+        Ok(())
     }
 
-    /// Empty `Play` (shared cache + FIFO + per-frame hook) handed to the
-    /// core; the boot then loads and logs in the focused profile only and
-    /// `m` loads and logs in the rest.
-    fn start_play(&mut self, vault: Vault) -> Result<(), String> {
-        let snapshots = Arc::clone(&self.snapshots);
-        let frontend_gens = Arc::clone(&self.frontend_gens);
-        let travellers = Arc::clone(&self.travellers);
-        let tick_latch = Arc::clone(&self.tick_latch);
-        let walk_clear = Arc::clone(&self.walk_clear);
-        let nav_world = Arc::clone(&self.nav_world);
-        let scenario = Arc::clone(&self.scenario);
-        let pending_script = Arc::clone(&self.pending_script);
-        let start_arming = Arc::clone(&self.start_arming);
-        let live_timing = Arc::clone(&self.live_timing);
-        let options = self.options.clone();
-        let (mainland, host_options) = mainland_seed_options(&options);
-        let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
-        let map_members = self
-            .template
-            .as_ref()
-            .map(|t| t.profile().map_members())
-            .unwrap_or(false);
-        let per_frame = move |c: &mut Client, name: &str, frame: SlotFrameInput| {
-            let hold = frame.hold;
-            if host_play::cancel_walk_arm_on_manual_input(
-                name,
-                &travellers,
-                host_play::player_here_tile(c).map(|(x, z, level)| api::snapshot::WorldTile {
-                    x,
-                    z,
-                    level,
-                }),
-                frame,
-            ) {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
-            // Clear facts and externally armed work at the actual session
-            // boundary before scenario/local-player/Guardian early returns.
-            if publish_frontend_slot(
-                name,
-                c,
-                &frontend_gens,
-                &snapshots,
-                &travellers,
-                &tick_latch,
-            ) {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
+    /// Start the play over an already-written fixture `vault` (tests).
+    #[cfg(test)]
+    fn start_play(&mut self, vault: VaultFixture) -> Result<(), String> {
+        let (launch, hook) = self.play_launch();
+        frontend_core::test_support::tui::start_play_with_vault(
+            &mut self.core,
+            vault,
+            launch,
+            hook,
+        )?;
+        self.play_started();
+        Ok(())
+    }
 
-            // TUI owns mainland seeding so host-play cannot re-arm it when
-            // an intentional scenario logout starts a new run_client stretch.
-            if seed_mainland_on_ready(
-                c,
-                &mainland_sent,
-                name,
-                mainland,
-                c.ingame && c.scene_state == 2 && c.local_player.is_some(),
-                c.last_login_reconnect,
-            ) {
-                api::host_log!(
-                    api::hostlog::Category::Lifecycle,
-                    api::hostlog::Level::Info,
-                    slot = name,
-                    "mainland hop queued"
-                );
-            }
-
-            // The shared `--live script_*` runner: tick the driven
-            // slot and its companions before the local-player gate
-            // (seeding must observe frames with no player decode).
-            // Hold freezes scenario follow like `step_nav_bot`.
-            if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                if runner.drives(name) {
-                    if runner.wants_script_paint() {
-                        let paint = start_arming
-                            .lock()
-                            .unwrap()
-                            .handle
-                            .as_ref()
-                            .and_then(|handle| handle.paint(name));
-                        if let Some(paint) = paint {
-                            runner.observe_script_paint(paint.lines.iter().map(String::as_str));
-                        }
-                    }
-                    let on_start_script = runner.on_start_script();
-                    let pump = {
-                        let mut pending = pending_script.lock().unwrap();
-                        let mut timing = live_timing.lock().unwrap();
-                        if timing.as_ref().is_some_and(|timing| {
-                            timing.setup_expired(
-                                live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
-                                Instant::now(),
-                            )
-                        }) {
-                            runner.fail_start("paired fixture setup deadline expired before Start");
-                            live_start::StartScriptPump::Hold
-                        } else {
-                            let pump = live_start::fire_pending_catalog_start(
-                                &mut pending,
-                                on_start_script,
-                                runner.on_stop_script(),
-                                || start_arming.lock().unwrap().clone(),
-                            );
-                            mark_live_script_start(
-                                &mut timing,
-                                &pending,
-                                on_start_script,
-                                &pump,
-                                Instant::now(),
-                            );
-                            pump
-                        }
-                    };
-                    match pump {
-                        live_start::StartScriptPump::Hold => {}
-                        live_start::StartScriptPump::CompiledFailed(error) => {
-                            runner.fail_start(&error);
-                        }
-                        live_start::StartScriptPump::Continue
-                        | live_start::StartScriptPump::CompiledRunning => {
-                            if pump == live_start::StartScriptPump::CompiledRunning {
-                                runner.observe_script_running();
-                            }
-                            if runner.on_stop_script() {
-                                runner.observe_script_idle(start_arming.lock().is_ok_and(
-                                    |arming| {
-                                        arming
-                                            .handle
-                                            .as_ref()
-                                            .is_some_and(|handle| handle.idle(name))
-                                    },
-                                ));
-                            }
-                            runner.tick_with_hold(c, hold);
-                            // A relog can enter Start on the final off-world frame.
-                            // Arm it now rather than after the reconnect posts colour.
-                            if runner.on_start_script() {
-                                if let Ok(mut pending) = pending_script.lock() {
-                                    let mut timing = live_timing.lock().unwrap();
-                                    let pump = if timing.as_ref().is_some_and(|timing| {
-                                        timing.setup_expired(
-                                            live_gate::PAIR_FIXTURE_SETUP_DEADLINE,
-                                            Instant::now(),
-                                        )
-                                    }) {
-                                        runner.fail_start(
-                                            "paired fixture setup deadline expired before Start",
-                                        );
-                                        live_start::StartScriptPump::Hold
-                                    } else {
-                                        let pump = live_start::fire_pending_catalog_start(
-                                            &mut pending,
-                                            true,
-                                            false,
-                                            || {
-                                                start_arming
-                                                    .lock()
-                                                    .map(|arming| arming.clone())
-                                                    .unwrap_or_default()
-                                            },
-                                        );
-                                        mark_live_script_start(
-                                            &mut timing,
-                                            &pending,
-                                            true,
-                                            &pump,
-                                            Instant::now(),
-                                        );
-                                        pump
-                                    };
-                                    match pump {
-                                        live_start::StartScriptPump::CompiledRunning => {
-                                            runner.observe_script_running();
-                                        }
-                                        live_start::StartScriptPump::CompiledFailed(error) => {
-                                            runner.fail_start(&error);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if let Some(index) = runner.companion_for(name) {
-                    runner.companion_tick(index, c);
-                }
-            }
-
-            let Some(here) = player_here_tile(c) else {
-                return;
-            };
-            // Step the armed walk route one leg per player-info tick
-            // (the panel's `tick_latch` pattern — a hop is sent once
-            // per server tick, not re-sent every 20 ms frame).
-            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
-                return;
-            };
-            let finished = {
-                let snapshots = snapshots.lock().unwrap();
-                let Some(snap) = snapshots.get(name) else {
-                    return;
-                };
-                let mut arm = arm.lock().unwrap();
-                let world = nav_world.lock().unwrap().clone();
-                let refused = world.as_deref().is_some_and(|world| {
-                    host_play::observe_walk_arm_admission(
-                        snap,
-                        &mut arm,
-                        world,
-                        map_members,
-                        Some(name),
-                    )
-                });
-                if refused
-                    || !frontend_core::walk_permissions::manual_walk_may_follow(
-                        hold,
-                        frame.host_move_owned,
-                    )
-                {
-                    if refused {
-                        walk_clear.store(true, Ordering::Relaxed);
-                    }
-                    return;
-                }
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
-                        return;
-                    }
-                    latch.insert(name.to_string(), (c.gens.player, here));
-                }
-                host_play::step_walk_arm_follow(
-                    c,
-                    snap,
-                    &mut arm,
-                    world.as_deref(),
-                    here,
-                    map_members,
-                    Some(name),
-                )
-            };
-            if finished {
-                walk_clear.store(true, Ordering::Relaxed);
-            }
-        };
-        let mut play = match self.template.clone() {
-            Some(template) => run_with_template(
-                template,
-                host_options.mainland,
-                Vec::new(),
-                |_| (None, None),
-                per_frame,
-            )?,
-            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
-        };
-        // `script_start_handle()` below captures the Play's state composition
-        // when called, before `core.start` adopts the bound service: adopt it
-        // here so the handle already writes through the process service
-        // (adopting the same service again in `start` is a no-op).
-        if let Some(service) = self.core.local_state().cloned() {
-            play.adopt_local_state(service);
-        }
+    /// What the next `Play` launches from, and the per-frame hook every
+    /// slot runs. The play is empty (shared cache + FIFO); the boot then
+    /// loads and logs in the focused profile only and `m` loads and logs in
+    /// the rest.
+    fn play_launch(&mut self) -> (frontend_core::launch::PlayLaunch, Arc<TuiFrameHook>) {
+        let hook = Arc::new(TuiFrameHook {
+            mainland: self.mainland,
+            mainland_sent: Mutex::new(HashSet::new()),
+        });
+        let mut launch = self.launcher.take_launch();
         if let Some(number) = self.auto_world {
-            play.set_auto_world(number)?;
+            launch = launch.with_auto_world(number);
         }
-        self.nav_world.lock().unwrap().clone_from(&play.world());
+        (launch, hook)
+    }
+
+    /// Log the started play's debug trace when requested.
+    fn play_started(&mut self) {
+        if !self.core.has_play() {
+            return;
+        }
         if std::env::var_os("BOT_DEBUG").is_some() {
-            let game_data = play.game_data();
+            let game_data = self.core.game_data();
             let lobster_heal = game_data
                 .as_deref()
                 .and_then(|data| data.fixed_food_heal("Lobster"));
@@ -984,13 +803,6 @@ impl TuiSession {
                 }
             );
         }
-        *self.start_arming.lock().unwrap() = StartArming {
-            handle: Some(play.script_start_handle()),
-            catalog: Some(play.catalog_core_watch()),
-            pair: Some(play.paired_core_watch()),
-        };
-        self.core.start(vault, play);
-        Ok(())
     }
 
     /// Load `name` into the fleet and log it in (the TUI boot and `--live`
@@ -998,12 +810,13 @@ impl TuiSession {
     /// attaches a `Renderer`); after a DC the slot re-handshakes only when
     /// the profile's `auto_login` is on.
     fn load_and_login(&mut self, name: &str) -> bool {
-        let failure = {
-            let (core, mut surface) = self.core_and_surface();
-            let (load, _) = core.load(name, &mut surface);
-            let login = core.login(name, &mut surface);
-            core.failure(load).or_else(|| core.failure(login))
-        };
+        let failure = self
+            .submit(OperatorCommand::Load, Targets::Profile(name))
+            .err()
+            .or_else(|| {
+                self.submit(OperatorCommand::Login, Targets::Profile(name))
+                    .err()
+            });
         match failure {
             Some(error) => {
                 self.error = Some(error);
@@ -1013,27 +826,115 @@ impl TuiSession {
         }
     }
 
-    /// Split borrow: the core plus the headless surface, whose lifetime
-    /// reset drops this slot's published snapshot and walk arm.
-    fn core_and_surface(
+    /// Issue one operator command through the core's command seam (the
+    /// entry point the panel and the headless driver use). `Err` carries a
+    /// refused command or the failure of the operation it opened.
+    fn submit(
         &mut self,
-    ) -> (
-        &mut OperatorSession<()>,
-        HeadlessSurface<impl FnMut(&str) + '_>,
-    ) {
-        let gens = &self.frontend_gens;
-        let snapshots = &self.snapshots;
-        let travellers = &self.travellers;
-        let tick_latch = &self.tick_latch;
-        let walk_clear = &self.walk_clear;
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let submitted = self
+            .submit_raw(command, targets)
+            .map_err(|error| error.to_string())?;
+        match submitted.operation().and_then(|op| self.core.failure(op)) {
+            Some(failure) => Err(failure),
+            None => Ok(submitted),
+        }
+    }
+
+    /// [`Self::submit`] without reading the operation's failure.
+    fn submit_raw(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, SubmitError> {
+        let (core, mut surface) = self.core_and_surface();
+        core.submit(command, targets, &mut surface)
+    }
+
+    /// Split borrow: the core plus the headless surface, whose lifetime
+    /// reset flags the picked walk destination when it ended an armed walk.
+    fn core_and_surface(&mut self) -> (&mut OperatorSession<()>, TuiSurface<'_>) {
         (
             &mut self.core,
-            HeadlessSurface::with_reset(move |name: &str| {
-                if reset_frontend_slot_lifetime(name, gens, snapshots, travellers, tick_latch) {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
-            }),
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts),
+                frame_hook: None,
+            },
         )
+    }
+
+    /// [`Self::core_and_surface`] that also lends the models the app owns:
+    /// the fleet's marks and filter, the Quester Paths controller, the
+    /// walk-permission view and the settings form-save model. Handlers that
+    /// submit rows over them build their surface here.
+    fn core_and_surface_with<'a>(
+        &'a mut self,
+        app: &'a mut TuiApp,
+    ) -> (&'a mut OperatorSession<()>, TuiSurface<'a>) {
+        (
+            &mut self.core,
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts)
+                    .with_marks(&mut app.table.selection)
+                    .with_fleet_filter(&mut app.table.filter)
+                    .with_quester(&mut app.quester_paths_controller)
+                    .with_walk_globals(&mut app.walk_permissions)
+                    .with_form_save(&mut app.settings_save),
+                frame_hook: None,
+            },
+        )
+    }
+
+    /// Submit `command` for `targets` over the app's lent models. `Err` is
+    /// a refused command, the owner's refusal or failure text of the first
+    /// failed member, or the failure of the operation it opened.
+    fn submit_with(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let (core, mut surface) = self.core_and_surface_with(app);
+        let submitted =
+            core.submit(command, targets, &mut surface)
+                .map_err(|error| match error {
+                    frontend_core::SubmitError::NoTarget(OperatorCommand::GroupWalk) => {
+                        "no bots selected".to_string()
+                    }
+                    error => error.to_string(),
+                })?;
+
+        if let Some(reason) = core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
+        match submitted.operation().and_then(|op| core.failure(op)) {
+            Some(failure) => Err(failure),
+            None => Ok(submitted),
+        }
+    }
+    /// Submit with app-owned models without collapsing a bulk report into
+    /// its first failed member.
+    fn submit_raw_with(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let (core, mut surface) = self.core_and_surface_with(app);
+        core.submit(command, targets, &mut surface)
+            .map_err(|error| error.to_string())
     }
 
     /// Log in the focused member (explicit handshake; recreates a terminal
@@ -1042,24 +943,33 @@ impl TuiSession {
         let Some(name) = app.focused_name() else {
             return;
         };
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.login(&name, &mut surface);
-        app.error = core.failure(op);
+        app.error = self
+            .submit(OperatorCommand::Login, Targets::Profile(&name))
+            .err();
     }
 
     /// Log out the focused member; the slot stays loaded and latched.
     fn logout(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.scripts.cancel_queued_as(&name, "logged out");
-            self.scripts.publish_start_places(&mut self.core);
+            self.scripts.stage_cancel_queued("logged out");
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CancelQueuedStart,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
+            }
             self.apply_script_notice(app);
-            self.core.logout(&name);
+            if let Err(error) = self.submit(OperatorCommand::Logout, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
     /// Log out every member and every other running slot.
     fn logout_all(&mut self) {
-        self.core.logout_all();
+        // Nobody to log out is not an error.
+        let _ = self.submit(OperatorCommand::Logout, Targets::Everyone);
     }
 
     /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
@@ -1077,26 +987,45 @@ impl TuiSession {
 
     /// Relog through the login FIFO to apply the entire queued memory mode.
     fn memory_relog_now(&mut self, app: &mut TuiApp, name: &str) {
-        self.scripts.cancel_queued_as(name, "logged out");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("logged out");
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(name),
+        ) {
+            app.error = Some(error);
+        }
         self.apply_script_notice(app);
-        let (core, mut surface) = self.core_and_surface();
-        let op = core.request_memory_relog(name, &mut surface);
-        app.error = core.failure(op);
+        app.error = self
+            .submit(OperatorCommand::RelogNow, Targets::Profile(name))
+            .err();
     }
 
     /// Remove `name` (frozen when the operator confirmed): clean logout,
     /// then its worker stops. The neighbour becomes selected when it was.
     fn remove(&mut self, app: &mut TuiApp, name: &str) {
-        self.scripts.cancel_queued_as(name, "removed");
-        self.scripts.publish_start_places(&mut self.core);
+        self.scripts.stage_cancel_queued("removed");
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(name),
+        ) {
+            app.error = Some(error);
+        }
         self.apply_script_notice(app);
-        let (core, mut surface) = self.core_and_surface();
-        let removal = core.remove(name, Instant::now(), &mut surface);
-        if let Some(next) = removal.reselected() {
-            app.focused = app.names.iter().position(|n| n == next);
-        } else if removal.selection_cleared() {
-            app.focused = None;
+        let submitted = match self.submit(OperatorCommand::Remove, Targets::Profile(name)) {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                app.error = Some(error);
+                return;
+            }
+        };
+        if let Some(removal) = submitted.removal() {
+            if let Some(next) = removal.reselected() {
+                app.focused = app.names.iter().position(|n| n == next);
+            } else if removal.selection_cleared() {
+                app.focused = None;
+            }
         }
         // The fleet table drops the member on the next pump.
     }
@@ -1106,12 +1035,26 @@ impl TuiSession {
     /// recreated. Returns how many were newly loaded.
     fn load_and_login_all(&mut self) -> usize {
         let last = self.last_focused.clone();
-        let (added, failure) = {
-            let (core, mut surface) = self.core_and_surface();
-            let (load, added) = core.load_all(&mut surface, last.as_deref());
-            let login = core.login_all(&mut surface);
-            (added, core.failure(load).or_else(|| core.failure(login)))
+        self.core.set_focus_hint(last.as_deref());
+        // An empty "all" (nothing left to load, nobody to log in) is not an
+        // error, as before.
+        let mut added = 0;
+        let failure = match self.submit_raw(OperatorCommand::Load, Targets::Everyone) {
+            Ok(load) => {
+                added = load.added();
+                load.operation().and_then(|op| self.core.failure(op))
+            }
+            Err(SubmitError::NoTarget(_)) => None,
+            Err(error) => Some(error.to_string()),
         };
+        let failure =
+            failure.or_else(
+                || match self.submit_raw(OperatorCommand::Login, Targets::Everyone) {
+                    Ok(login) => login.operation().and_then(|op| self.core.failure(op)),
+                    Err(SubmitError::NoTarget(_)) => None,
+                    Err(error) => Some(error.to_string()),
+                },
+            );
         if failure.is_some() {
             self.error = failure;
         }
@@ -1120,245 +1063,150 @@ impl TuiSession {
 
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
-        self.core.select(name);
+        if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
+            self.error = Some(error);
+        }
     }
 
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner. With
     /// `--catalog-core` / `--pair-core` the Play-owned witness is armed
     /// before either slot publishes, exactly like the panel watches.
-    fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+    fn live_prepare_script(
+        &mut self,
+        scenario: frontend_core::live::Scenario,
+    ) -> Result<(), String> {
         self.persist_ui = false;
-        *self.live_timing.lock().unwrap() = None;
-        let live_core = LiveCore::resolve(
-            scenario.name,
-            scenario.seed.profiles.len(),
+        let view = scenario.view();
+        let name = view.name().to_owned();
+        let profile_count = view.profile_count();
+        let scenario_deadline = view.deadline();
+        let start_script = view.start_script().map(str::to_owned);
+        let start_file = view.start_file().map(str::to_owned);
+        let fleet_start = view.fleet_start();
+        let inject_companion_as = view.inject_companion_as().map(str::to_owned);
+        let settings_inject = scenario.settings_inject();
+        let fixture_loadouts = scenario.fixture_loadouts();
+        self.core.resolve_live_core(
+            &name,
+            profile_count,
             self.live_catalog_core,
             self.live_pair_core,
         )?;
-        let name = scenario.name.to_string();
-        let start_script = scenario.settings.start_script;
-        let fleet_start = scenario.settings.fleet_start;
-        let start_file = scenario.settings.start_file;
-        let wait_script_stop = scenario.settings.wait_script_stop;
-        let settings_inject = scenario.settings.script_settings_inject;
-        let scenario_deadline = scenario.settings.deadline;
-        let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
-        let names = mint_live_names(scenario.seed.profiles.len());
-        let entries = mint_live_entries(&names);
-        let pass = live_vault_passphrase();
-        let path = temp_live_vault(&entries, &pass);
-        self.unlock_at(&path, &pass)?;
-        let play = self
-            .core
-            .play()
-            .ok_or_else(|| "live prepare needs the unlocked play".to_string())?;
-        live_core.configure(play, &names)?;
-        let pair_watch = play.paired_core_watch();
-        self.live_witnesses = (live_core != LiveCore::Off).then(|| LiveWitnesses {
-            catalog: play.catalog_core_watch(),
-            pair: pair_watch.clone(),
-        });
+        let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
+        let names = profiles.names();
+        let fleet_cards = scenario.fleet_cards(names)?;
+        let path = profiles.tui_vault();
+        self.unlock_at(&path, profiles.passphrase())?;
+        self.core.configure_live_core(names)?;
         self.live_name = Some(name);
-        self.live_wait_script_stop = wait_script_stop;
         self.live_stop_wait_started = None;
-        let world = play.world();
-        let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
-        runner.set_tick_speed_endpoint(&self.options.host, self.options.port);
-        runner.set_map_members(play.map_members());
-        let budget = scenario::budget_s_from_env();
+        let play_config = self.launcher.play_config();
+        let budget = frontend_core::live::budget_s_from_env();
         if let Some(budget) = budget {
-            runner.set_deadline(budget);
             self.live_soak_until = Some(Instant::now() + budget);
             self.live_announced_pass = false;
         }
-        runner.set_live_names(&names);
-        runner.set_obj_names(play.obj_names());
-        *self.scenario.lock().unwrap() = Some(runner);
-        self.scripts
-            .set_inject(scenario::settings_inject_map(settings_inject));
-        self.names = names.clone();
-        for n in &names {
-            self.load_and_login(n);
+        let runner = self.core.live_scenario_runner(
+            scenario,
+            names,
+            play_config.host(),
+            play_config.port(),
+            budget,
+        );
+        self.core.live_runner().install(runner);
+        self.scripts.set_inject(settings_inject);
+        self.names = names.to_vec();
+        for name in names {
+            self.load_and_login(name);
         }
         self.focus(&names[0]);
-        // A scenario that names a script card selects the real `$RS2B0T`
-        // catalog script on the driven slot (same as the panel): fill the
-        // catalog from `$RS2B0T`, then Start on StartScript after seed.
-        // A fleet launch Starts the scenario's own card on each member slot.
         if let Some(fleet) = fleet_start {
             self.fill_rs2b0t_cards_for_live_start()?;
-            for member in fleet.members(&names)? {
+            for card in fleet_cards {
                 self.scripts
-                    .transpile_blocking(script::ScriptSource::Catalog, member.card)?;
+                    .transpile_blocking(CardSource::Catalog, card)
+                    .map_err(|error| error.to_string())?;
             }
-            let scripts = &mut self.scripts;
-            let (js, legacy, inject) = scripts.live_start_parts();
-            let starts = live_start::fleet_catalog_starts(
+            let plan = frontend_core::live::StartPlan::fleet_catalog(
+                &mut self.scripts,
                 fleet,
-                &names,
-                js,
-                legacy,
-                inject,
+                names,
                 &fixture_loadouts,
             )?;
-            *self.pending_script.lock().unwrap() = starts;
-        // Exact example files Load as File cards and select by identity_id.
+            self.core.live_runner().stage(plan);
         } else if let Some(file_name) = start_file {
-            let path = script::live_example_path(file_name)
-                .ok_or_else(|| format!("no in-tree example {file_name}"))?;
-            let loaded = self
+            let identity = self.scripts.load_live_example_identity(&file_name)?;
+            let choice = self
                 .scripts
-                .js_mut()
-                .load(&path)
-                .map_err(|e| format!("load {file_name}: {e}"))?;
-            let identity = loaded.identity_id();
-            let card = self
-                .scripts
-                .js()
-                .get(script::ScriptSource::File, &identity)
-                .cloned()
-                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
-            self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::File,
-                identity.clone(),
-            ));
-            let bag = self.pending_settings_bag(
-                script::ScriptSource::File,
-                &identity,
-                &card.settings_schema,
-            );
-            let siblings = self.sibling_modules_for_card(&card)?;
-            *self.pending_script.lock().unwrap() = live_card_starts(
-                live_core,
-                &names,
-                &card,
+                .card(CardSource::File, &identity)
+                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?
+                .choice();
+            self.script_sel = Some(choice);
+            let bag = self.pending_settings_bag(CardSource::File, &identity);
+            let selected = self
+                .script_sel
+                .as_ref()
+                .expect("live loaded-card selection is set");
+            self.core.live_runner().stage_loaded_card(
+                &mut self.scripts,
+                names,
+                selected,
                 bag,
-                siblings,
+                inject_companion_as.as_deref(),
                 fixture_loadouts,
-                &pair_watch,
             )?;
         } else if let Some(card_name) = start_script {
-            if let Some(id) = script::compiled_id(card_name) {
-                self.script_sel = Some(script::ScriptSel::Compiled(id));
+            if let Some(id) = CompiledCardId::lookup(&card_name) {
+                self.script_sel = Some(ScriptChoice::compiled(id));
                 let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
-                *self.pending_script.lock().unwrap() =
-                    vec![PendingCatalogStart::compiled(names[0].clone(), id, bag)];
+                self.core
+                    .live_runner()
+                    .stage(frontend_core::live::StartPlan::compiled(
+                        names[0].clone(),
+                        id,
+                        bag,
+                    ));
             } else {
                 self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
-                    .transpile_blocking(script::ScriptSource::Catalog, card_name)?;
-                let card = self
-                    .scripts
-                    .js()
-                    .get(script::ScriptSource::Catalog, card_name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                    })?;
-                self.script_sel = Some(script::ScriptSel::Loaded(
-                    script::ScriptSource::Catalog,
-                    card_name.to_string(),
-                ));
-                let bag = self.pending_settings_bag(
-                    script::ScriptSource::Catalog,
-                    card_name,
-                    &card.settings_schema,
-                );
-                let siblings = self.sibling_modules_for_card(&card)?;
-                *self.pending_script.lock().unwrap() = live_card_starts(
-                    live_core,
-                    &names,
-                    &card,
+                    .transpile_blocking(CardSource::Catalog, &card_name)
+                    .map_err(|error| error.to_string())?;
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, &card_name));
+                let bag = self.pending_settings_bag(CardSource::Catalog, &card_name);
+                let selected = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    selected,
                     bag,
-                    siblings,
+                    inject_companion_as.as_deref(),
                     fixture_loadouts,
-                    &pair_watch,
                 )?;
             }
         }
         let live_started = Instant::now();
-        self.live_core_deadline = self.live_witnesses.as_ref().and_then(|armed| {
-            live_gate::core_deadline(
-                Some(&armed.catalog),
-                Some(&armed.pair),
-                budget,
-                scenario_deadline,
-                live_started,
-            )
-        });
-        *self.live_timing.lock().unwrap() = self
-            .live_witnesses
-            .as_ref()
-            .filter(|armed| {
-                matches!(
-                    live_core,
-                    LiveCore::Pair(host_play::paired_core::PairCase::Flax)
-                ) && armed.pair.configured()
-            })
-            .map(|_| LiveTiming::new(live_started, self.live_core_deadline));
+        self.live_core_deadline =
+            self.core
+                .live_runner()
+                .core_deadline(budget, scenario_deadline, live_started);
+        self.core
+            .live_runner()
+            .configure_pair_setup_timing(live_started, self.live_core_deadline);
         Ok(())
     }
 
-    /// The sibling modules a card's isolate resolves at Start.
-    fn sibling_modules_for_card(
-        &self,
-        card: &script::JsCard,
-    ) -> Result<Vec<(String, String)>, String> {
-        live_start::card_siblings(self.scripts.js(), card)
-    }
-
-    fn map_members(&self) -> bool {
-        self.core
-            .play()
-            .map(|p| p.map_members())
-            .or_else(|| self.template.as_ref().map(|t| t.profile().map_members()))
-            .unwrap_or(false)
-    }
-
-    /// The focused slot's last published [`WorldState`] (inv/equipment/
-    /// stats/varps/quests), or the fail-closed empty state when the slot
-    /// has not published yet.
-    fn focused_walk_state(&self, name: &Option<String>) -> WorldState {
-        name.as_deref()
-            .and_then(|n| {
-                self.snapshots
-                    .lock()
-                    .unwrap()
-                    .get(n)
-                    .map(|s| WorldState::from_snapshot(s).with_map_members(self.map_members()))
-            })
-            .unwrap_or_else(|| WorldState::empty().with_map_members(self.map_members()))
-    }
-
-    fn walk_risk_input(&self, name: Option<&str>) -> host_play::admission::RiskInput {
-        name.and_then(|name| {
-            self.snapshots.lock().unwrap().get(name).map(|snapshot| {
-                host_play::admission::capture(
-                    snapshot,
-                    self.map_members(),
-                    Default::default(),
-                    false,
-                )
-            })
-        })
-        .unwrap_or_else(|| host_play::admission::unavailable(self.map_members()))
-    }
-
-    fn map_context(&self, app: &TuiApp) -> Result<MapContext, ActionError> {
-        let name = app.focused_name().ok_or(ActionError::NoFocus)?;
-        let focus = self.core.play().and_then(|play| play.map_focus(&name));
-        let nav = self
-            .server_profile
-            .as_ref()
-            .and_then(|profile| profile.nav_identity())
-            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
-            .ok_or(ActionError::NoNavigation)?;
-        Ok(MapContext {
-            focus,
+    fn map_context(&self, app: &TuiApp) -> Option<frontend_core::walk_map::WalkMapContext> {
+        let name = app.focused_name()?;
+        let nav = self.bound()?.nav_identity()?;
+        Some(self.core.walk_map_context(
+            Some(&name),
             nav,
-            overlay: app.map_host_catalogue.as_ref().map(|c| c.key()),
-            generation: 1,
-        })
+            app.map_catalogue.as_ref().map(|catalogue| catalogue.key()),
+            1,
+        ))
     }
 
     fn bind_map_context(&self, app: &mut TuiApp) {
@@ -1366,33 +1214,26 @@ impl TuiSession {
             app.map_model.close();
             return;
         }
-        match self.map_context(app) {
-            Ok(context) => {
-                app.map_model.bind(context);
-            }
-            Err(error) => {
-                app.map_model.close();
-                app.error = Some(format!("map: {error}"));
-            }
+        if let Some(context) = self.map_context(app) {
+            app.map_model.bind(context);
+        } else {
+            app.map_model.close();
+            app.error = Some("map: focused slot or navigation identity unavailable".into());
         }
     }
 
     fn open_map_catalogue(&mut self, app: &mut TuiApp) {
-        let Some(profile) = self.server_profile.clone() else {
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        if self.map_demand.is_none() {
-            match self
-                .map_bake
-                .open_profile(profile.as_ref(), MapDemand::CatalogueOnly)
-            {
-                Ok(handle) => self.map_demand = Some(handle),
-                Err(error) => {
-                    app.set_map_unavailable(format!(
-                        "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
-                    ));
-                    return;
-                }
+        if self.map_desk.map_demand().is_none() {
+            self.map_desk
+                .stage_open_demand(profile, WalkMapDemand::CatalogueOnly);
+            if let Err(error) = self.submit(OperatorCommand::OpenMapDemand, Targets::Application) {
+                app.set_map_unavailable(format!(
+                    "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
+                ));
+                return;
             }
         }
         if app.map_catalogue_status == MapCatalogueStatus::Unavailable
@@ -1408,56 +1249,62 @@ impl TuiSession {
         if !app.map_active {
             return;
         }
-        let Some(profile) = self.server_profile.clone() else {
+        self.core.poll_map_demand(&mut self.map_desk);
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        let status = match &self.map_demand {
-            Some(handle) => handle.status(),
-            None => return,
+        let Some(status) = self.map_desk.map_demand().map(|handle| handle.status()) else {
+            return;
         };
-        match status {
-            MapJobStatus::Ready => {
-                let ready = self
-                    .map_demand
-                    .as_ref()
-                    .and_then(|handle| map_ready_catalogue(handle).ok());
-                if let Some(ready) = ready {
+        match status.state() {
+            WalkMapJobState::Ready => {
+                if let Some(ready) = self
+                    .map_desk
+                    .map_demand()
+                    .and_then(|handle| handle.ready_catalogue().ok())
+                {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Queued => {
+            WalkMapJobState::Queued => {
                 app.map_catalogue_status = MapCatalogueStatus::ReadingCache;
                 app.map_coverage = "coverage: queued".into();
-                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                if let Some(ready) = peek_walk_catalogue(&profile) {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Running(progress) => {
-                app.map_catalogue_status = match progress.stage {
-                    MapStage::ReadingCache => MapCatalogueStatus::ReadingCache,
+            WalkMapJobState::Running => {
+                let Some(progress) = status.progress() else {
+                    return;
+                };
+                app.map_catalogue_status = match progress.stage() {
+                    WalkMapStage::ReadingCache => MapCatalogueStatus::ReadingCache,
                     _ => MapCatalogueStatus::DerivingPois,
                 };
-                let stage = match progress.stage {
-                    MapStage::ReadingCache => "reading cache",
-                    MapStage::DerivingPois => "deriving POIs",
-                    MapStage::BakingPlane => "baking plane",
-                    MapStage::BuildingZoomLevels => "building zoom levels",
-                    MapStage::Publishing => "publishing",
+                let stage = match progress.stage() {
+                    WalkMapStage::ReadingCache => "reading cache",
+                    WalkMapStage::DerivingPois => "deriving POIs",
+                    WalkMapStage::BakingPlane => "baking plane",
+                    WalkMapStage::BuildingZoomLevels => "building zoom levels",
+                    WalkMapStage::Publishing => "publishing",
                 };
                 app.map_coverage = format!(
                     "coverage: {stage} ({}/{}) {}",
-                    progress.completed, progress.total, progress.message
+                    progress.completed(),
+                    progress.total(),
+                    progress.message()
                 );
-                if let Some(ready) = peek_map_catalogue(profile.as_ref()) {
+                if let Some(ready) = peek_walk_catalogue(&profile) {
                     self.bind_ready_catalogue(app, ready);
                 }
             }
-            MapJobStatus::Failed(error) => {
+            WalkMapJobState::Failed => {
+                let error = status.failure().unwrap_or("unknown map cache error");
                 app.set_map_unavailable(format!(
                     "coverage: catalogue unavailable: {error}; terrain imagery unavailable"
                 ));
             }
-            MapJobStatus::Paused | MapJobStatus::Cancelled => {
+            WalkMapJobState::Paused | WalkMapJobState::Cancelled => {
                 app.set_map_unavailable(
                     "coverage: catalogue unavailable: demand paused; terrain imagery unavailable",
                 );
@@ -1465,303 +1312,255 @@ impl TuiSession {
         }
     }
 
-    fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<ReadyCatalogue>) {
-        let Some(world) = app.world.clone().or_else(|| {
-            self.core
-                .play()
-                .and_then(|play| play.world())
-                .or_else(|| self.nav_world.lock().unwrap().clone())
-        }) else {
+    fn bind_ready_catalogue(&mut self, app: &mut TuiApp, ready: Arc<WalkReadyCatalogue>) {
+        let Some(world) = app.world.clone().or_else(|| self.core.nav_world()) else {
             return;
         };
-        let identity = ready.manifest().identity;
-        let Some(profile) = self.server_profile.as_ref() else {
+        let Some(profile) = self.bound().map(|profile| profile.share()) else {
             return;
         };
-        let Some(nav) = profile
-            .nav_identity()
-            .and_then(|manifest| Digest::from_hex(&manifest.nav_sha256).ok())
-        else {
+        let identity = ready.identity();
+        let Some(nav) = profile.nav_identity() else {
             return;
         };
-        let data = profile
-            .game_data()
-            .or_else(|| self.core.play().and_then(|play| play.game_data()));
-        let same = app.map_host_catalogue.as_ref().is_some_and(|catalogue| {
+        let data = profile.game_data().or_else(|| self.core.game_data());
+        let same = app.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity && catalogue.nav_identity() == nav
         });
         if same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let services = load_navpois(profile, identity.content, nav);
-        let Ok(catalogue) = Catalogue::from_ready(world, identity, nav, Some(ready), services)
+        let Ok((mut catalogue, named)) =
+            self.core.walk_catalogue_from_ready(&profile, world, ready)
         else {
             return;
         };
-        self.map_catalogue_named = false;
-        let catalogue = match data {
-            Some(data) => match catalogue.with_game_data(data) {
-                Ok(named) => {
-                    self.map_catalogue_named = true;
-                    named
+        self.map_catalogue_named = named;
+        if !named {
+            if let Some(data) = data {
+                match catalogue.with_game_data(data) {
+                    Ok(named_catalogue) => {
+                        self.map_catalogue_named = true;
+                        catalogue = named_catalogue;
+                    }
+                    Err(_) => return,
                 }
-                Err(_) => return,
-            },
-            None => catalogue,
-        };
-        app.bind_host_catalogue(Arc::new(catalogue));
+            }
+        }
+        app.bind_walk_catalogue(Arc::new(catalogue));
     }
 
     fn release_map_catalogue(&mut self) {
-        self.map_demand = None;
+        if self.map_desk.needs_release() {
+            if let Err(error) = self.submit(OperatorCommand::ReleaseMapDemand, Targets::Application)
+            {
+                self.error = Some(error);
+            }
+        }
         self.map_catalogue_named = false;
     }
 
-    /// Map Walk-confirm consumes the shared, revision-bound command before
-    /// handing it to `Play`; the panel and TUI therefore share stale-focus,
-    /// origin and routing-option checks.
-    fn arm_walk_on(&mut self, app: &mut TuiApp, dest: Tile) {
-        self.walk_clear.store(false, Ordering::Relaxed);
-        #[cfg(test)]
-        if self.core.play().is_none() && self.server_profile.is_none() {
-            // Headless arm tests have no Play/profile identity to capture.
-            self.arm_walk_without_host(app, dest);
-            return;
-        }
+    /// Confirm the pending map Walk through the shared operator session.
+    fn arm_walk_on(&mut self, app: &mut TuiApp, _dest: Tile) {
         let name = app.focused_name();
-        let origin = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
-        let options = app.map_find_options();
-        let profile = self.server_profile.clone();
-        let state = self.focused_walk_state(&name);
-        let request = host_play::walk_map::WalkRequest {
-            slot: name.as_deref(),
-            origin,
-            destination: app
-                .map_model
-                .pending()
-                .map(|s| s.target.unwrap_or(s.requested))
-                .or(Some(dest)),
-            options,
-            map_members: state.map_members,
-            members: profile
-                .as_ref()
-                .map_or(&host_play::WorldMembersFact::Unknown, |p| p.world_members()),
-        };
-        let result = request.run(|| {
-            let context = self.map_context(app)?;
-            let from = origin.ok_or(ActionError::NoOrigin)?;
-            let command = app
-                .map_model
-                .confirm(ActionKind::Walk, &context, Some(from), options);
-            app.clear_consumed_map_selection();
-            let command = command?;
-            let play = self.core.play().ok_or(ActionError::NoFocus)?;
-            let bank = name
-                .as_deref()
-                .map(|n| play.bank_rows(n))
-                .unwrap_or_default();
-            let destination = command.destination();
-            let input = self.walk_risk_input(name.as_deref());
-            let route = play.map_walk(command, &context, &state, &bank, input, &self.travellers)?;
-            app.walk_dest = Some(destination);
-            Ok(route)
-        });
+        if let (Some(name), Some(context)) = (name.as_deref(), self.map_context(app)) {
+            let origin = self.core.walk_slot_status(name).origin();
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_walk_to(&mut app.map_model, context, origin, options);
+        }
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let result = self.submit(OperatorCommand::WalkTo, targets);
+        app.clear_consumed_map_selection();
         match result {
-            Ok(_) => app.error = None,
-            Err(error) => app.error = Some(format!("map: {error}")),
-        }
-    }
+            Ok(submitted) => {
+                let failure = self.core.command_failure(submitted.request());
+                let report = self.core.commands().report(submitted.request());
+                let applied = report.is_some_and(|report| {
+                    report.members().iter().any(|member| {
+                        matches!(
+                            member.terminal(),
+                            Some(api::identity::Settlement::Completed(
+                                frontend_core::command::Completion::Done
+                            ))
+                        )
+                    })
+                });
+                let not_logged_in = report.is_some_and(|report| {
+                    report.members().iter().any(|member| {
+                        matches!(
+                            member.terminal(),
+                            Some(api::identity::Settlement::Completed(
+                                frontend_core::command::Completion::Skipped(
+                                    frontend_core::command::SkipReason::NotLoggedIn
+                                )
+                            ))
+                        )
+                    })
+                });
 
-    #[cfg(test)]
-    fn arm_walk_without_host(&mut self, app: &mut TuiApp, dest: Tile) {
-        let name = app.focused_name();
-        let from = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
-        let world = self.nav_world.lock().unwrap().clone();
-        let (Some(world), Some(from)) = (world, from) else {
-            app.error = Some(ActionError::NoOrigin.to_string());
-            return;
-        };
-        let state = self.focused_walk_state(&name);
-        // No host owns a bank memory here: the test's memory is what the
-        // slot's observer would leave from its last published snapshot (the
-        // loaded open bank, else an unobserved `Unknown` bank).
-        let bank = name
-            .as_deref()
-            .and_then(|n| {
-                self.snapshots.lock().unwrap().get(n).map(|snap| {
-                    let mut memory = api::bank_memory::BankMemory::default();
-                    memory.track(snap, 0);
-                    nav::bank_fetch::BankRows::of(&memory)
-                })
-            })
-            .unwrap_or_default();
-        let routed = arm_walk_on(
-            &world,
-            from,
-            dest,
-            app.map_find_options(),
-            &state,
-            &bank,
-            host_play::admission::Admission::manual(
-                app.map_find_options(),
-                self.walk_risk_input(name.as_deref()),
-                0,
-                app.walk_permissions.globals,
-            ),
-            &self.travellers,
-            name.as_deref(),
-        );
-        match routed {
-            Ok(_) => {
-                app.walk_dest = Some(dest);
-                app.error = None;
+                if let Some(error) = failure {
+                    app.error = Some(error.to_string());
+                } else if applied {
+                    app.walk_dest = self.map_desk.walk_dest();
+                    app.error = None;
+                } else if not_logged_in {
+                    app.error = Some("map: no observed player".into());
+                } else {
+                    app.error = Some("map: WalkTo was not applied".into());
+                }
             }
-            Err(_) => {
-                app.error = Some(format!("no path to {} {} {}", dest.x, dest.z, dest.level));
-            }
+            Err(error) => app.error = Some(error),
         }
     }
 
     fn map_teleport(&mut self, app: &mut TuiApp, _dest: Tile) {
-        let Some(context) = self.map_context(app).ok() else {
-            app.error = Some("map: teleport unavailable: stale host context".into());
-            return;
-        };
-        let from = app.here.map(|h| Tile {
-            x: h.x,
-            z: h.z,
-            level: h.level,
-        });
-        let options = app.map_find_options();
-        let command = match app
-            .map_model
-            .confirm(ActionKind::Teleport, &context, from, options)
-        {
-            Ok(command) => command,
-            Err(error) => {
-                app.clear_consumed_map_selection();
-                app.error = Some(format!("map: {error}"));
-                return;
-            }
-        };
+        let name = app.focused_name();
+        if let (Some(name), Some(context)) = (name.as_deref(), self.map_context(app)) {
+            let origin = self.core.walk_slot_status(name).origin();
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_teleport(&mut app.map_model, context, origin, options);
+        }
+        let targets = name.as_deref().map_or(Targets::Selected, Targets::Profile);
+        let result = self.submit(OperatorCommand::Teleport, targets);
         app.clear_consumed_map_selection();
-        let Some(play) = self.core.play() else {
-            app.error = Some(ActionError::NoFocus.to_string());
-            return;
+        app.error = match result {
+            Err(error) => Some(error),
+            Ok(submitted) => self
+                .core
+                .command_failure(submitted.request())
+                .map(|error| error.to_string()),
         };
-        app.error = play
-            .map_teleport(command, &context)
-            .err()
-            .map(|error| format!("map: {error}"));
     }
 
-    /// Walk every marked bot to the pending destination through the shared
-    /// [`frontend_core::walk_marked`], the same command the panel's picker
-    /// runs. Nothing marked keeps the map selection.
+    /// Walk every marked bot through the shared operator-session operation.
     fn map_walk_group(&mut self, app: &mut TuiApp) {
-        if frontend_core::marked_availability(
-            frontend_core::MarkedAction::Walk,
-            app.table.selection.len(),
-            app.script_sel.is_some(),
-            app.focused_name().is_some(),
-        ) == Err(frontend_core::MarkedBlock::NothingMarked)
-        {
-            app.error = Some("no bots selected".into());
-            return;
+        if let Some(context) = self.map_context(app) {
+            let options = app.map_find_options();
+            self.map_desk
+                .stage_group_walk(&mut app.map_model, context, options);
         }
-        let options = app.map_find_options();
-        let destination = app
-            .map_model
-            .pending()
-            .map(|s| s.target.unwrap_or(s.requested));
-        let prepared = self.map_context(app).and_then(|context| {
-            let plan = app.map_model.confirm_walk_plan(&context, options);
-            app.clear_consumed_map_selection();
-            plan.map(|plan| (context, plan))
-        });
-        let planned = prepared.as_ref().ok().map(|(_, plan)| plan.destination());
-        let report = frontend_core::walk_marked(
-            &app.table.selection,
-            &self.core,
-            frontend_core::MarkedWalk::new(prepared, destination, options, &self.travellers),
-            |name| {
-                frontend_core::WalkInputs::new(
-                    self.focused_walk_state(&Some(name.to_string())),
-                    self.core
-                        .play()
-                        .map(|play| play.bank_rows(name))
-                        .unwrap_or_default(),
-                    self.walk_risk_input(Some(name)),
-                )
+        app.clear_consumed_map_selection();
+        let result = self.submit_with(app, OperatorCommand::GroupWalk, Targets::Marked);
+        match result {
+            Err(error) => app.error = Some(error),
+            Ok(mut submitted) => match submitted.take_bulk() {
+                Some(report) => {
+                    if report.done_count() > 0 {
+                        app.walk_dest = self.map_desk.walk_dest();
+                    }
+                    app.error = Some(report.summary());
+                }
+                None => app.error = Some("map: GroupWalk produced no result".into()),
             },
-        );
-        if report.done_count() > 0 {
-            let mut latch = self.tick_latch.lock().unwrap();
-            for name in report.done() {
-                latch.remove(name);
-            }
-            drop(latch);
-            self.walk_clear.store(false, Ordering::Relaxed);
-            app.walk_dest = planned;
         }
-        app.error = Some(report.summary());
     }
 
-    /// WASD one-tile walk: a direct `try_move` through the slot's wire
-    /// queue (adjacent world tile; the client pathfinds the step).
-    fn wasd_walk(&self, app: &TuiApp, dest: Tile) {
+    /// WASD one-tile walk: the client pathfinds this adjacent step.
+    fn wasd_walk(&mut self, app: &mut TuiApp, dest: Tile) {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = self.core.play() {
-            play.queue_wire(
-                &name,
-                WireCmd::Walk {
-                    x: dest.x,
-                    z: dest.z,
-                    level: dest.level,
-                },
-            );
+        self.submit_wire(
+            app,
+            &name,
+            frontend_core::GameInputEvent::walk(dest.x, dest.z, dest.level),
+        );
+    }
+
+    fn submit_wire(&mut self, app: &mut TuiApp, name: &str, event: frontend_core::GameInputEvent) {
+        self.map_desk.begin_game_input_frame();
+        if !self.map_desk.stage_game_input(event) {
+            app.error = Some("game input frame is full".into());
+            return;
         }
+        app.error = match self.submit(OperatorCommand::GameInput, Targets::Profile(name)) {
+            Err(error) => Some(error),
+            Ok(submitted) => self
+                .core
+                .command_failure(submitted.request())
+                .map(|error| error.to_string()),
+        };
     }
 
     /// Chat modal advance: queue `continue_dialog` / `answer_choice` on
     /// the focused slot (the guardian's hold still lets chat through).
-    fn chat_send(&self, app: &TuiApp, action: ChatAction) {
+    fn chat_send(&mut self, app: &mut TuiApp, action: ChatAction) {
         let Some(name) = app.focused_name() else {
             return;
         };
-        if let Some(play) = self.core.play() {
-            match action {
-                ChatAction::Continue => play.queue_wire(&name, WireCmd::Continue),
-                ChatAction::Answer(option) => {
-                    play.queue_wire(&name, WireCmd::Answer(option as i32))
-                }
-                ChatAction::PaintButton(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
-                        if let Some(id) = paint.buttons.get(index).map(|b| b.id.clone()) {
-                            play.script_paint_click(&name, &id, paint.generation);
-                        }
-                    }
-                }
-                ChatAction::PaintChrome(index) => {
-                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
-                        let rows = super::chat::paint_chrome_rows(paint);
-                        if let Some((key, select_name, _)) = rows.get(index) {
-                            play.script_paint_select(&name, key, select_name, paint.generation);
-                        }
-                    }
-                }
-                ChatAction::None => {}
+        match action {
+            ChatAction::Continue => {
+                self.submit_wire(
+                    app,
+                    &name,
+                    frontend_core::GameInputEvent::continue_dialogue(),
+                );
             }
+            ChatAction::Answer(option) => {
+                self.submit_wire(
+                    app,
+                    &name,
+                    frontend_core::GameInputEvent::answer(option as i32),
+                );
+            }
+            ChatAction::PaintButton(index) => {
+                let click = app
+                    .chat_data
+                    .script_paint
+                    .as_ref()
+                    .map(PaintFrame::view)
+                    .and_then(|paint| {
+                        paint
+                            .buttons()
+                            .nth(index)
+                            .map(|button| (button.id().to_owned(), paint.generation()))
+                    });
+                if let Some((id, generation)) = click {
+                    self.scripts
+                        .stage_paint_input(frontend_core::scripts::PaintInput::click(
+                            id, generation,
+                        ));
+                    app.error = self
+                        .submit_with(
+                            app,
+                            OperatorCommand::ScriptPaintInput,
+                            Targets::Profile(&name),
+                        )
+                        .err();
+                }
+            }
+            ChatAction::PaintChrome(index) => {
+                let selection = app
+                    .chat_data
+                    .script_paint
+                    .as_ref()
+                    .map(PaintFrame::view)
+                    .and_then(|paint| {
+                        super::chat::paint_chrome_rows(paint).get(index).map(
+                            |(key, select_name, _)| {
+                                (key.to_owned(), select_name.to_owned(), paint.generation())
+                            },
+                        )
+                    });
+                if let Some((key, select_name, generation)) = selection {
+                    self.scripts
+                        .stage_paint_input(frontend_core::scripts::PaintInput::select(
+                            key,
+                            select_name,
+                            generation,
+                        ));
+                    app.error = self
+                        .submit_with(
+                            app,
+                            OperatorCommand::ScriptPaintInput,
+                            Targets::Profile(&name),
+                        )
+                        .err();
+                }
+            }
+            ChatAction::None => {}
         }
     }
 
@@ -1770,27 +1569,40 @@ impl TuiSession {
             return Ok(());
         }
         let Some(root) = self.catalog_root() else {
-            self.scripts.mark_catalog_filled();
+            self.scripts.stage_catalog_action(
+                CatalogActionKind::Fill,
+                None,
+                frontend_core::scripts::paths::rs2b0t_path_file(),
+            );
+            let submitted = self
+                .submit_raw(OperatorCommand::ImportCatalog, Targets::Application)
+                .map_err(|error| error.to_string())?;
+            if let Some(error) = self.core.command_failure(submitted.request()) {
+                return Err(error.to_string());
+            }
             return Ok(());
         };
         self.scripts
-            .fill_catalog_blocking(&root, &script::default_rs2b0t_path_file())
+            .fill_catalog_blocking(&root, &frontend_core::scripts::paths::rs2b0t_path_file())
             .map_err(|error| error.to_string())
     }
 
-    /// Fill the JS library's cards from the `$RS2B0T` registry once when
-    /// the env/persisted root is already known (live boot). Errors are
-    /// debug-only.
-    fn fill_rs2b0t_cards_once(&mut self) {
+    /// Fill the JS library's cards from the known catalog root once.
+    fn fill_rs2b0t_cards_once(&mut self, app: &mut TuiApp) {
         if self.scripts.catalog_filled() {
             return;
         }
-        let root = self.catalog_root();
-        if let Some(root) = root.as_deref() {
-            self.scripts.fill_catalog_once(Some(root));
-        } else {
-            self.scripts.mark_catalog_filled();
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Fill,
+            self.catalog_root(),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+        {
+            app.error = Some(error);
         }
+        self.apply_script_notice(app);
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
@@ -1799,12 +1611,25 @@ impl TuiSession {
         if self.scripts.catalog_filled() {
             return;
         }
-        if let Some(root) = self.catalog_root() {
-            self.scripts.fill_catalog_once(Some(&root));
+        let root = self.catalog_root();
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Fill,
+            root.clone(),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+        {
+            app.error = Some(error);
             return;
         }
-        self.scripts.mark_catalog_filled();
-        if script::rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file()) {
+        self.apply_script_notice(app);
+        if root.is_some() {
+            return;
+        }
+        if frontend_core::scripts::paths::rs2b0t_import_deferred_at(
+            &frontend_core::scripts::paths::rs2b0t_import_file(),
+        ) {
             return;
         }
         self.rs2b0t_catalog_open = true;
@@ -1815,7 +1640,15 @@ impl TuiSession {
     }
 
     fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
-        let _ = script::set_rs2b0t_import_deferred_at(&script::default_rs2b0t_import_file());
+        self.scripts
+            .stage_defer_catalog(frontend_core::scripts::paths::rs2b0t_import_file());
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::DeferCatalogImport,
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
         self.rs2b0t_catalog_open = false;
         app.rs2b0t_catalog_open = false;
     }
@@ -1826,11 +1659,29 @@ impl TuiSession {
         // Script names map through the catalog. If its first scan is still
         // running, hold this preview until the worker publishes the catalog.
         if let ImportAction::Preview(path) = &action {
+            *self.profile_import.path_mut() = path.clone();
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::EditProfileImportPath,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+                self.show_profile_import(app);
+                return;
+            }
             if !self.scripts.catalog_filled() {
                 if let Some(root) = self.catalog_root() {
-                    self.scripts.fill_catalog_once(Some(&root));
+                    self.scripts.stage_catalog_action(
+                        frontend_core::scripts::CatalogActionKind::Fill,
+                        Some(root),
+                        frontend_core::scripts::paths::rs2b0t_path_file(),
+                    );
+                    if let Err(error) =
+                        self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
+                    {
+                        app.error = Some(error);
+                    }
                     if self.scripts.catalog_work_pending() {
-                        *self.profile_import.path_mut() = path.clone();
                         self.profile_import_preview_pending = true;
                         self.show_profile_import(app);
                         return;
@@ -1843,24 +1694,127 @@ impl TuiSession {
             self.show_profile_import(app);
             return;
         }
-        let flow = &mut self.profile_import;
         match action {
-            ImportAction::Preview(path) => {
-                *flow.path_mut() = path;
-                flow.preview(&self.core, &self.scripts);
+            ImportAction::Preview(_) => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::PreviewProfileImport,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
-            ImportAction::Policy(policy) => flow.set_policy(&self.core, &self.scripts, policy),
+            ImportAction::Policy(policy) => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportPolicy(policy),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
             ImportAction::IncludeUnusable(include) => {
-                flow.set_include_unusable(&self.core, &self.scripts, include)
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportIncludeUnusable(include),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
-            ImportAction::Confirm => flow.confirm(&mut self.core, &self.scripts),
-            ImportAction::Back => flow.back(),
-            ImportAction::AskDelete => flow.ask_delete(),
-            ImportAction::CancelDelete => flow.cancel_delete(),
-            ImportAction::ConfirmDelete => flow.confirm_delete(&self.core),
+            ImportAction::Confirm => {
+                match self
+                    .profile_import
+                    .prepare_confirmation(&self.core, &self.scripts)
+                {
+                    Ok(()) => {
+                        let planned = self
+                            .profile_import
+                            .planned_writes()
+                            .map(|(index, name, command)| (index, name.to_owned(), command))
+                            .collect::<Vec<_>>();
+                        for (index, name, planned_command) in planned {
+                            match planned_command {
+                                OperatorCommand::CreateProfile => {
+                                    if let Err(error) =
+                                        self.profile_import.stage_create_account(index)
+                                    {
+                                        app.error = Some(format!("profile import: {error}"));
+                                        break;
+                                    }
+                                    if let Err(error) = self.submit(
+                                        OperatorCommand::CreateProfile,
+                                        Targets::Application,
+                                    ) {
+                                        app.error = Some(format!("profile import: {error}"));
+                                    }
+                                }
+                                OperatorCommand::SaveProfile => {
+                                    if let Err(error) =
+                                        self.profile_import.stage_save_account(index)
+                                    {
+                                        app.error = Some(format!("profile import: {error}"));
+                                        break;
+                                    }
+                                    if let Err(error) = self.submit(
+                                        OperatorCommand::SaveProfile,
+                                        Targets::Profile(&name),
+                                    ) {
+                                        app.error = Some(format!("profile import: {error}"));
+                                    }
+                                }
+                                _ => {
+                                    app.error = Some(format!(
+                                        "profile import account {name} has an unsupported writer"
+                                    ));
+                                    break;
+                                }
+                            }
+                            self.profile_import.cancel_staged_account(index);
+                        }
+                    }
+                    Err(error) => app.error = Some(format!("profile import: {error}")),
+                }
+            }
+            ImportAction::Back => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::ReturnToProfileImportPath,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::AskDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportDeletePrompt(true),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::CancelDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SetProfileImportDeletePrompt(false),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            ImportAction::ConfirmDelete => {
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::DeleteProfileImportExport,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
             ImportAction::Close => {
                 self.profile_import_preview_pending = false;
-                *flow = frontend_core::rs2b0t_import::ProfileImport::new();
+                self.profile_import = frontend_core::rs2b0t_import::ProfileImport::new();
                 return;
             }
         }
@@ -1911,16 +1865,21 @@ impl TuiSession {
         view.delete_asked = flow.delete_asked();
     }
 
-    fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
+    fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
-                script::registry_index_path(root).display()
+                frontend_core::scripts::paths::registry_index_path(root).display()
             ));
         }
-        self.scripts
-            .request_catalog_import(root, &script::default_rs2b0t_path_file())
-            .map_err(|error| error.to_string())
+        self.scripts.stage_catalog_action(
+            CatalogActionKind::Import,
+            Some(root.to_path_buf()),
+            frontend_core::scripts::paths::rs2b0t_path_file(),
+        );
+        self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)?;
+        self.apply_script_notice(app);
+        Ok(())
     }
 
     /// Show the script coordinator's latest notice on the strip.
@@ -1939,27 +1898,39 @@ impl TuiSession {
         }
     }
 
-    /// Operator Start on the focused profile: `sel` becomes its pending
-    /// selection and Starts with its own parameters; the assignment is
-    /// saved once the Start is Ready (the same core path as the panel).
-    fn script_start(&mut self, app: &mut TuiApp, sel: &script::ScriptSel) {
+    /// Operator Start on the focused profile: stage its selected card, then
+    /// submit selection and Start as separate command rows.
+    fn script_start(&mut self, app: &mut TuiApp, sel: &ScriptChoice) {
         let Some(name) = app.focused_name() else {
             app.error = Some("script: no focused profile".into());
             return;
         };
-        self.scripts.set_pending_browse(&name, sel.clone());
-        let root = self.start_catalog_root();
-        let result = self
-            .scripts
-            .start_selected(&mut self.core, &name, Some(sel), root.as_deref());
-        match result {
-            Ok(()) => self.scripts.show_load_failures(),
-            Err(e) => {
-                self.apply_script_notice(app);
-                app.error = Some(format!("script: {e}"));
-                return;
-            }
+        self.scripts.stage_browse_pick(sel.duplicate());
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
         }
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::SelectScriptCard,
+            Targets::Profile(&name),
+        ) {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::StartScript, Targets::Profile(&name))
+        {
+            app.error = Some(format!("script: {error}"));
+            self.apply_script_notice(app);
+            return;
+        }
+        self.scripts.show_load_failures();
+
         self.apply_script_notice(app);
     }
 
@@ -1968,20 +1939,30 @@ impl TuiSession {
     /// pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
         self.scripts.poll(&mut self.core);
-        if let Some((_, result)) = self.scripts.take_catalog_import_result() {
+        if let Some((root, result)) = self.scripts.take_catalog_import_update() {
             match result {
                 Ok(_) => {
-                    let _ = script::clear_rs2b0t_import_at(&script::default_rs2b0t_import_file());
+                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                        &frontend_core::scripts::paths::rs2b0t_import_file(),
+                    );
+                    self.rs2b0t_catalog_dir = root.clone();
+                    app.rs2b0t_catalog_dir = root;
                     self.rs2b0t_catalog_open = false;
                     app.rs2b0t_catalog_open = false;
                     app.error = None;
                 }
-                Err(error) => app.error = Some(error.to_string()),
+                Err(error) => app.error = Some(error),
             }
         }
         if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {
             self.profile_import_preview_pending = false;
-            self.profile_import.preview(&self.core, &self.scripts);
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::PreviewProfileImport,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
             self.show_profile_import(app);
         }
         self.scripts.take_start_failures();
@@ -2041,17 +2022,33 @@ impl TuiSession {
         let root = self.start_catalog_root();
         match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
-                frontend_core::start_marked(
-                    &app.table.selection,
-                    &mut self.core,
-                    &mut self.scripts,
-                    app.script_sel.as_ref(),
-                    root.as_deref(),
-                );
+                if let Some(selection) = app.script_sel.as_ref().map(ScriptChoice::duplicate) {
+                    self.scripts.stage_browse_pick(selection);
+                } else {
+                    self.scripts.stage_browse_pick_clear();
+                }
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+                {
+                    app.error = Some(error);
+                    return;
+                }
+                self.scripts.stage_start_catalog_root(root);
+                match self.submit_raw_with(app, OperatorCommand::StartScript, Targets::Marked) {
+                    Ok(mut submitted) => {
+                        app.error = submitted.take_bulk().map(|report| report.summary());
+                    }
+                    Err(error) => app.error = Some(error),
+                }
                 self.apply_script_notice(app);
             }
             frontend_core::BulkScope::All => {
-                self.scripts.start_all(&mut self.core, root.as_deref());
+                self.scripts.stage_start_catalog_root(root);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::StartScript, Targets::Everyone)
+                {
+                    app.error = Some(error);
+                }
                 self.apply_script_notice(app);
             }
         }
@@ -2060,37 +2057,50 @@ impl TuiSession {
     /// Save the selected script as the assignment of every marked bot; the
     /// one bulk report names each bot that could not take it.
     fn script_assign_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.clone() else {
+        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
             app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
             return;
         };
-        let root = self.start_catalog_root();
-        let report = frontend_core::assign_marked(
-            &app.table.selection,
-            &mut self.core,
-            &mut self.scripts,
-            &card,
-            root.as_deref(),
-        );
+        self.scripts.stage_browse_pick(card);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        match self.submit_raw_with(app, OperatorCommand::AssignScript, Targets::Marked) {
+            Ok(mut submitted) => {
+                app.error = submitted.take_bulk().map(|report| report.summary());
+            }
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
-        app.error = Some(report.summary());
     }
 
     /// Assign the selected script to every marked bot and start it there
     /// through the paced Start permit; the running Start report follows.
     fn script_restart_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.clone() else {
+        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
             app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
             return;
         };
-        let root = self.start_catalog_root();
-        frontend_core::assign_and_restart_marked(
-            &app.table.selection,
-            &mut self.core,
-            &mut self.scripts,
-            &card,
-            root.as_deref(),
-        );
+        self.scripts.stage_browse_pick(card);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+        {
+            app.error = Some(error);
+            return;
+        }
+        self.scripts
+            .stage_start_catalog_root(self.start_catalog_root());
+        match self.submit_raw_with(app, OperatorCommand::AssignAndRestart, Targets::Marked) {
+            Ok(mut submitted) => {
+                app.error = submitted.take_bulk().map(|report| report.summary());
+            }
+            Err(error) => app.error = Some(error),
+        }
         self.apply_script_notice(app);
     }
 
@@ -2098,52 +2108,77 @@ impl TuiSession {
     /// the marked bots (the same core command as the panel's Fleet window)
     /// and ask to confirm the frozen scope; nothing is written before that.
     fn prepare_apply_settings_marked(&mut self, app: &mut TuiApp) {
-        let (Some(source), Some(card)) = (app.focused_name(), app.script_sel.clone()) else {
+        let (Some(source), Some(card)) = (
+            app.focused_name(),
+            app.script_sel.as_ref().map(ScriptChoice::duplicate),
+        ) else {
             app.error = Some("Apply to marked: focus a bot and select a script".into());
             return;
         };
-        match frontend_core::prepare_apply_settings_marked(
-            &app.table.selection,
-            &self.core,
-            &mut self.scripts,
-            &source,
-            &card,
+        let kind = if card.compiled_id().is_some() {
+            frontend_core::command::CardKind::Native
+        } else {
+            frontend_core::command::CardKind::Script
+        };
+        self.scripts.stage_settings_sync_prepare(&source, &card);
+        match self.submit_with(
+            app,
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Marked,
         ) {
-            Ok(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
+            Ok(_) => match self.scripts.prepared_settings_sync() {
+                Some(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
+                None => app.error = Some("Apply to marked: no prepared settings".into()),
+            },
             Err(error) => app.error = Some(error),
         }
         self.apply_script_notice(app);
     }
 
-    /// Log in every marked bot, loading the ones not loaded yet.
+    /// Log in every marked bot, loading the ones not loaded yet (`Login`
+    /// over the marks).
     fn login_marked(&mut self, app: &mut TuiApp) {
-        let (core, mut surface) = self.core_and_surface();
-        let report = frontend_core::login_marked(&app.table.selection, core, &mut surface);
-        app.error = Some(report.summary());
+        self.submit_marked(app, OperatorCommand::Login);
     }
 
-    /// Log out every marked bot that is logged in or logging in.
+    /// Log out every marked bot that is logged in or logging in (`Logout`
+    /// over the marks).
     fn logout_marked(&mut self, app: &mut TuiApp) {
-        let report =
-            frontend_core::logout_marked(&app.table.selection, &mut self.core, &mut self.scripts);
+        self.submit_marked(app, OperatorCommand::Logout);
+    }
+
+    /// Submit `command` over the marked rows and show the per-row report's
+    /// summary; a refused command or a failed member shows its reason.
+    fn submit_marked(&mut self, app: &mut TuiApp, command: OperatorCommand) {
+        let outcome = self.submit_with(app, command, Targets::Marked);
         self.apply_script_notice(app);
-        app.error = Some(report.summary());
+        app.error = Some(match outcome {
+            Err(error) => error,
+            Ok(mut submitted) => submitted.take_bulk().map_or_else(
+                || format!("{command:?}: produced no result"),
+                |report| report.summary(),
+            ),
+        });
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
         match frontend_core::combined_bulk_scope(&app.table.selection) {
             frontend_core::BulkScope::Marked => {
-                let report = frontend_core::stop_marked(
-                    &app.table.selection,
-                    &mut self.core,
-                    &mut self.scripts,
-                );
+                match self.submit_raw_with(app, OperatorCommand::StopScript, Targets::Marked) {
+                    Ok(mut submitted) => {
+                        app.error = submitted.take_bulk().map(|report| report.summary());
+                    }
+                    Err(error) => app.error = Some(error),
+                }
                 app.reload_confirm = self.scripts.reload_awaiting_confirm();
                 self.apply_script_notice(app);
-                app.error = Some(report.summary());
             }
             frontend_core::BulkScope::All => {
-                self.scripts.stop_all(&mut self.core);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::StopScript, Targets::Everyone)
+                {
+                    app.error = Some(error);
+                }
                 app.reload_confirm = self.scripts.reload_awaiting_confirm();
                 self.apply_script_notice(app);
             }
@@ -2156,23 +2191,34 @@ impl TuiSession {
         let target =
             self.scripts
                 .reload_target(&self.core, focused.as_deref(), app.script_sel.as_ref());
-        self.scripts.begin_reload(&mut self.core, target);
+        let command = if self.scripts.reload_confirmation_pending(target.as_ref()) {
+            OperatorCommand::ConfirmReload
+        } else {
+            OperatorCommand::ReloadScripts
+        };
+        self.scripts.stage_reload_target(target);
+        if let Err(error) = self.submit_with(app, command, Targets::Application) {
+            app.error = Some(error);
+        }
         app.reload_confirm = self.scripts.reload_awaiting_confirm();
         self.apply_script_notice(app);
     }
 
     fn script_reload_cancel(&mut self, app: &mut TuiApp) {
-        self.scripts.cancel_reload();
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::CancelReload, Targets::Application)
+        {
+            app.error = Some(error);
+        }
         app.reload_confirm = false;
         self.apply_script_notice(app);
     }
 
-    fn loaded_params_card(&self, app: &TuiApp) -> Option<(script::ScriptSource, String, PathBuf)> {
-        let script::ScriptSel::Loaded(source, lookup) = app.params_card()? else {
-            return None;
-        };
-        let card = self.scripts.js().get(source, &lookup)?;
-        Some((source, card.name.clone(), card.path.clone()))
+    fn loaded_params_card(&self, app: &TuiApp) -> Option<(CardSource, String, PathBuf)> {
+        let choice = app.params_card()?;
+        let (source, lookup) = choice.loaded_card()?;
+        let card = self.scripts.card(source, lookup)?;
+        Some((source, card.name().to_owned(), card.path().to_path_buf()))
     }
 
     fn params_bag(
@@ -2180,7 +2226,7 @@ impl TuiSession {
         app: &TuiApp,
         profile: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-        if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
+        if let Some(id) = app.params_card().and_then(|choice| choice.compiled_id()) {
             return self
                 .scripts
                 .compiled_edit_bag(&self.core, Some(profile), id);
@@ -2194,7 +2240,7 @@ impl TuiSession {
             source,
             &name,
             &path,
-            &app.params_schema,
+            app.params_schema.as_ref(),
         ))
     }
 
@@ -2211,52 +2257,136 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    /// One key into the open params popup: each edit is a typed parameter
-    /// write on the focused profile through the coordinator.
+    /// One key into the params popup: edits become typed settings rows on
+    /// the focused profile.
     fn params_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> AppAction {
         let (Some(profile), Some(selection)) = (app.focused_name(), app.params_card()) else {
             app.params_state.open = false;
             return AppAction::None;
         };
-        let data = self.template.as_ref().and_then(|t| t.game_data());
         let was_open = app.params_state.open;
         let was_editing = app.params_state.editing;
+        let old_params_state = app.params_state.clone();
+        let mut pending_setting = None;
         let action = {
-            let scripts = &mut self.scripts;
-            let core = &mut self.core;
+            let data = self.bound().and_then(|profile| profile.game_data());
             let mut commit =
                 |field: &str, value: serde_json::Value, current: Option<serde_json::Value>| {
-                    let edit_key = frontend_core::scripts::ParameterEditKey::new(
-                        Some(&profile),
-                        &selection,
-                        field,
-                    );
-                    scripts
-                        .commit_parameter_value(core, &edit_key, &selection, field, value, current)
-                        .map(|_| ())
+                    pending_setting = Some((field.to_owned(), value, current));
+                    Ok(())
                 };
-            app.params_on_key(&mut commit, &self.loadouts, data.as_deref(), key)
+            app.params_on_key(&mut commit, self.loadouts.store(), data.as_deref(), key)
         };
+        if let Some((field, value, current)) = pending_setting {
+            let kind = if selection.compiled_id().is_some() {
+                frontend_core::command::CardKind::Native
+            } else {
+                frontend_core::command::CardKind::Script
+            };
+            self.scripts
+                .stage_setting(Some(&profile), &selection, &field, value);
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::SaveScriptSettings(kind),
+                Targets::Profile(&profile),
+            ) {
+                app.params_state = old_params_state;
+                match current {
+                    Some(value) => {
+                        app.params_bag.insert(field, value);
+                    }
+                    None => {
+                        app.params_bag.remove(&field);
+                    }
+                }
+                app.params_state.error = Some(format!("Save failed: {error}"));
+            }
+        }
         if key.code == crossterm::event::KeyCode::Esc
             && was_open
             && (!app.params_state.open || (was_editing && !app.params_state.editing))
         {
-            if let Some(field) = app
+            let edit_key = app
                 .params_schema
+                .as_ref()
                 .iter()
-                .filter(|def| script::setting_visible(def.show_if.as_deref(), &app.params_bag))
+                .filter(|def| def.visible(&app.params_bag))
                 .nth(app.params_state.cursor)
-            {
-                let edit_key = frontend_core::scripts::ParameterEditKey::new(
-                    Some(&profile),
-                    &selection,
-                    &field.id,
-                );
-                self.scripts.discard_parameter_text(&edit_key);
+                .map(|field| {
+                    frontend_core::scripts::ParameterEditKey::new(
+                        Some(&profile),
+                        &selection,
+                        field.id(),
+                    )
+                });
+            if let Some(edit_key) = edit_key {
+                self.scripts.stage_parameter_discard(edit_key);
+                if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::DiscardParameterText,
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
             }
         }
         self.apply_script_notice(app);
         action
+    }
+
+    /// A key for the loadouts popup, when it is open: the popup's cursor and
+    /// text rows take the key, and what it asks of the loadout form is
+    /// staged and submitted as that row. `false` when the popup is closed.
+    fn loadouts_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> bool {
+        if !app.loadouts_state.open {
+            return false;
+        }
+        self.loadouts_opened(app);
+        if app.loadouts_state.name_scratch.is_empty() && !self.loadouts.loadouts().is_empty() {
+            app.loadouts_state.fill(&self.loadouts);
+        }
+        let generation = self.loadouts.generation();
+        let count = self.loadouts.loadouts().len();
+        match app.loadouts_state.on_key(key, count) {
+            LoadoutsIntent::None => {}
+            LoadoutsIntent::SelectNext => {
+                self.loadouts
+                    .stage_selection((self.loadouts.selected() + 1) % count);
+                self.submit_loadout(app, OperatorCommand::SelectLoadout);
+            }
+            LoadoutsIntent::Save => {
+                self.loadouts.stage_draft(app.loadouts_state.text_loadout());
+                self.submit_loadout(app, OperatorCommand::SaveLoadout);
+            }
+            LoadoutsIntent::Create => self.submit_loadout(app, OperatorCommand::CreateLoadout),
+            LoadoutsIntent::Duplicate => {
+                self.submit_loadout(app, OperatorCommand::DuplicateLoadout);
+            }
+            LoadoutsIntent::Delete => self.submit_loadout(app, OperatorCommand::DeleteLoadout),
+        }
+        if self.loadouts.generation() != generation {
+            app.loadouts_state.fill(&self.loadouts);
+        }
+        true
+    }
+
+    /// The loadouts popup was opened since the last look: select its first
+    /// loadout and fill the text rows from it.
+    fn loadouts_opened(&mut self, app: &mut TuiApp) {
+        if !std::mem::take(&mut app.loadouts_state.reopened) {
+            return;
+        }
+        self.loadouts.stage_selection(0);
+        self.submit_loadout(app, OperatorCommand::SelectLoadout);
+        app.loadouts_state.fill(&self.loadouts);
+    }
+
+    /// Submit `command` for the loadout form. What the row did is the
+    /// form's status line; a refused command shows on the message line.
+    fn submit_loadout(&mut self, app: &mut TuiApp, command: OperatorCommand) {
+        if let Err(error) = self.submit_raw(command, Targets::Application) {
+            app.error = Some(error.to_string());
+        }
     }
 
     /// Re-read the params popup's bag from the focused profile.
@@ -2275,21 +2405,29 @@ impl TuiSession {
         let Some(profile) = app.focused_name() else {
             return;
         };
-        let result = if let Some(script::ScriptSel::Compiled(id)) = app.params_card() {
-            self.scripts
-                .prepare_compiled_settings_sync(&self.core, &profile, id, None)
-        } else if let Some((source, name, path)) = self.loaded_params_card(app) {
-            Ok(self
-                .scripts
-                .prepare_settings_sync(&self.core, &profile, source, &name, &path))
-        } else {
-            Err("parameters unavailable".into())
+        let Some(selection) = app.params_card() else {
+            app.error = Some("parameters unavailable".into());
+            return;
         };
-        match result {
-            Ok(scope) => {
-                app.params_state.sync_prompt =
-                    Some(format!("{} y apply · n cancel", scope.prompt()))
-            }
+        let kind = if selection.compiled_id().is_some() {
+            frontend_core::command::CardKind::Native
+        } else {
+            frontend_core::command::CardKind::Script
+        };
+        self.scripts
+            .stage_settings_sync_prepare(&profile, &selection);
+        match self.submit_with(
+            app,
+            OperatorCommand::ApplySettingsToMarked(kind),
+            Targets::Profile(&profile),
+        ) {
+            Ok(_) => match self.scripts.prepared_settings_sync() {
+                Some(scope) => {
+                    app.params_state.sync_prompt =
+                        Some(format!("{} y apply · n cancel", scope.prompt()));
+                }
+                None => app.error = Some("Apply to all: nothing prepared".into()),
+            },
             Err(error) => app.error = Some(error),
         }
         self.apply_script_notice(app);
@@ -2297,8 +2435,16 @@ impl TuiSession {
 
     fn apply_settings_sync(&mut self, app: &mut TuiApp) {
         app.params_state.sync_prompt = None;
-        if let Err(error) = self.scripts.apply_settings_sync(&mut self.core) {
-            app.error = Some(error);
+        if let Some(kind) = self.scripts.stage_settings_sync_apply() {
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::ApplySettingsToMarked(kind),
+                Targets::Everyone,
+            ) {
+                app.error = Some(error);
+            }
+        } else {
+            app.error = Some("Apply to all: nothing prepared".into());
         }
         // The popup repeats the report: the strip may be too narrow for it.
         app.params_state.report = self
@@ -2311,44 +2457,62 @@ impl TuiSession {
     /// Pause or resume the focused slot's script (toggle like the panel).
     fn script_toggle_pause(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.core.toggle_pause(&name);
+            let row = if self.core.script_paused(&name) {
+                OperatorCommand::ResumeScript
+            } else {
+                OperatorCommand::PauseScript
+            };
+            if let Err(error) = self.submit(row, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
     /// Stop the focused slot's script.
     fn script_stop(&mut self, app: &mut TuiApp) {
         if let Some(name) = app.focused_name() {
-            self.scripts.cancel_queued(&name);
-            self.scripts.publish_start_places(&mut self.core);
-            self.core.stop_script(&name);
+            self.scripts.stage_cancel_queued("cancelled");
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CancelQueuedStart,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
+            }
+            self.apply_script_notice(app);
+            if let Err(error) = self.submit(OperatorCommand::StopScript, Targets::Profile(&name)) {
+                app.error = Some(error);
+            }
         }
     }
 
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
-        match self.scripts.js_mut().load(path) {
-            Ok(card) => {
-                app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
+        self.scripts.stage_load_file(path.to_path_buf());
+        match self.submit_with(app, OperatorCommand::LoadScriptFile, Targets::Application) {
+            Ok(_) => {
+                app.script_sel = self.scripts.browse_selection().map(ScriptChoice::duplicate);
                 app.browse_changed = true;
-                app.error = if self.scripts.js().load_failures().is_empty() {
+                app.error = if self.scripts.load_failure_count() == 0 {
                     None
                 } else {
-                    Some(self.scripts.js().named_failure_output())
+                    Some(self.scripts.named_failure_output())
                 };
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
                     app.script_load_last_dir = self.script_load_last_dir.clone();
                 }
             }
-            Err(e) => {
-                app.error = if self.scripts.js().load_failures().len() > 1 {
-                    Some(self.scripts.js().named_failure_output())
+            Err(error) => {
+                app.error = if self.scripts.load_failure_count() > 1 {
+                    Some(self.scripts.named_failure_output())
                 } else {
-                    Some(format!("script: {e}"))
+                    Some(format!("script: {error}"))
                 };
             }
         }
+        self.apply_script_notice(app);
     }
 
     /// Persist the settings popup's changes onto the profile it was opened
@@ -2364,115 +2528,151 @@ impl TuiSession {
         };
         let changed_policies = self
             .core
-            .vault()
-            .and_then(|vault| vault.get(&name))
+            .profile(&name)
             .map(|profile| {
-                vault::RANDOM_EVENT_POLICY_EVENTS
+                frontend_core::GUARDIAN_EVENTS
                     .iter()
                     .filter_map(|(event, _)| {
                         let policy = app.settings.random_event_policy(event);
-                        (profile.settings.random_event_policy(event) != policy)
-                            .then_some((*event, policy))
+                        (profile.random_event_policy(event) != policy).then_some((*event, policy))
                     })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
         // Field edit, not a whole-settings replacement: the popup owns the
-        // guardian fields and the memory row, and each arm change lands
-        // through its own write (the form tracks the latest).
-        let settings = &app.settings;
+        // guardian fields and the memory row, and each row lands through its
+        // own write (the form tracks the latest).
+        let lowmem = app.settings.lowmem();
+        let random_events = app.settings.random_events();
+        let lamp_skill = app.settings.lamp_skill().to_string();
+        let lamp_auto = app.settings.lamp_auto();
         let lowmem_changed = self
             .core
-            .vault()
-            .and_then(|v| v.get(&name))
-            .is_some_and(|p| p.settings.lowmem != settings.lowmem);
+            .profile(&name)
+            .is_some_and(|p| p.lowmem() != lowmem);
         if lowmem_changed {
-            match self.core.set_memory_mode(&name, settings.lowmem) {
-                Ok(op) => app
-                    .settings_save
-                    .submitted(&mut self.core, op, Some(&name), &name),
-                Err(e) => {
-                    let reason = format!("settings: {e}");
-                    app.settings_save.refused(reason.clone());
-                    app.error = Some(reason);
-                }
+            let mode = if lowmem {
+                api::lifecycle::MemoryMode::Low
+            } else {
+                api::lifecycle::MemoryMode::High
+            };
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::SetMemoryMode(mode),
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(format!("settings: {error}"));
             }
         }
-        match self.core.set_random_settings(
-            &name,
-            settings.random_events,
-            &settings.lamp_skill,
-            settings.lamp_auto,
-        ) {
-            Ok(op) => app
-                .settings_save
-                .submitted(&mut self.core, op, Some(&name), &name),
-            Err(e) => {
-                let reason = format!("settings: {e}");
-                app.settings_save.refused(reason.clone());
-                app.error = Some(reason);
-            }
+        self.core
+            .stage_guardian(GuardianEdit::fields(random_events, &lamp_skill, lamp_auto));
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetGuardian, Targets::Profile(&name))
+        {
+            app.error = Some(format!("settings: {error}"));
         }
         for (event, policy) in changed_policies {
-            match self.core.set_random_event_policy(&name, event, policy) {
-                Ok(op) => app
-                    .settings_save
-                    .submitted(&mut self.core, op, Some(&name), &name),
-                Err(e) => {
-                    let reason = format!("settings: {e}");
-                    app.settings_save.refused(reason.clone());
-                    app.error = Some(reason);
-                }
-            }
-        }
-    }
-    /// Persist only user-changed globals and publish the latest durable
-    /// projection to the session on every pump.
-    fn project_walk_globals(&mut self, app: &mut TuiApp) {
-        let before = app.walk_permissions;
-        let after = frontend_core::WalkGlobalsView {
-            globals: app.nav,
-            script_scope_notice_ack: app.script_scope_notice_ack,
-            survivable_routing_notice_ack: app.survivable_routing_notice_ack,
-        };
-        let dirty = std::mem::take(&mut app.nav_preferences_dirty);
-        self.core.set_walk_globals_store(self.preferences.clone());
-
-        if !dirty.is_empty() && self.persist_ui {
-            match frontend_core::WalkGlobalsView::persist_changed(&self.preferences, before, after)
+            self.core
+                .stage_guardian(GuardianEdit::policy(event, policy));
+            if let Err(error) =
+                self.submit_with(app, OperatorCommand::SetGuardian, Targets::Profile(&name))
             {
-                Ok(()) => {
-                    if app
-                        .error
-                        .as_deref()
-                        .is_some_and(|error| error.starts_with("settings: walk permissions:"))
-                    {
-                        app.error = None;
-                    }
-                }
-                Err(error) => {
-                    app.error = Some(format!("settings: walk permissions: {error}"));
-                }
+                app.error = Some(format!("settings: {error}"));
             }
         }
-
-        app.refresh_walk_permissions();
-        self.core.set_walk_globals(app.walk_permissions.globals);
     }
 
-    /// Persist the shared manual-walk pause preference and apply it to the
-    /// current and future slots.
+    /// Submit what the settings popup changed in the walk permissions
+    /// (`SetNavPreference`, `SetDangerLevel`), then adopt the durable
+    /// projection (the core hands it to the play session too) on every pump.
+    fn project_walk_globals(&mut self, app: &mut TuiApp) {
+        let dirty = std::mem::take(&mut app.nav_preferences_dirty);
+        if !dirty.is_empty() && self.persist_ui {
+            self.persist_walk_globals(app);
+        }
+        app.refresh_walk_permissions();
+        self.core.refresh_walk_globals();
+    }
+
+    /// One row per walk permission the operator changed since the last
+    /// durable read: the buffer (`app.nav`, the acknowledgements) against
+    /// the projection (`app.walk_permissions`).
+    fn persist_walk_globals(&mut self, app: &mut TuiApp) {
+        use frontend_core::NavPreference;
+        let before = app.walk_permissions;
+        let after = frontend_core::WalkGlobalsView::new(
+            app.nav,
+            app.script_scope_notice_ack,
+            app.survivable_routing_notice_ack,
+        );
+        let (was, now) = (before.globals(), after.globals());
+        let changes = [
+            (was.allow_teleports() != now.allow_teleports()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowTeleports,
+                    now.allow_teleports(),
+                ),
+            ),
+            (was.allow_wilderness() != now.allow_wilderness()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowWilderness,
+                    now.allow_wilderness(),
+                ),
+            ),
+            (was.allow_bank_fetch() != now.allow_bank_fetch()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::AllowBankFetch,
+                    now.allow_bank_fetch(),
+                ),
+            ),
+            (was.danger_level() != now.danger_level())
+                .then_some(OperatorCommand::SetDangerLevel(now.danger_level())),
+            (before.script_scope_notice_ack() != after.script_scope_notice_ack()).then_some(
+                OperatorCommand::SetNavPreference(
+                    NavPreference::ScriptScopeNoticeAck,
+                    after.script_scope_notice_ack(),
+                ),
+            ),
+            (before.survivable_routing_notice_ack() != after.survivable_routing_notice_ack())
+                .then_some(OperatorCommand::SetNavPreference(
+                    NavPreference::SurvivableRoutingNoticeAck,
+                    after.survivable_routing_notice_ack(),
+                )),
+        ];
+        let mut failure = None;
+        for command in changes.into_iter().flatten() {
+            if let Err(error) = self.submit_with(app, command, Targets::Application) {
+                failure = Some(error);
+            }
+        }
+        match failure {
+            None => {
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("settings: walk permissions:"))
+                {
+                    app.error = None;
+                }
+            }
+            Some(error) => app.error = Some(format!("settings: walk permissions: {error}")),
+        }
+    }
+
+    /// Submit the shared manual-walk pause preference
+    /// (`SetNavPreference`): the core applies it to the current and future
+    /// slots once it is saved. A refused save shows its reason and the
+    /// popup shows the stored value again.
     fn project_manual_walk_pause(&mut self, app: &mut TuiApp) {
-        self.core
-            .set_pause_script_on_manual_walk_abort(app.pause_script_on_manual_walk_abort);
         if !std::mem::take(&mut app.pause_script_on_manual_walk_abort_dirty) || !self.persist_ui {
             return;
         }
-        match frontend_core::nav_preference(
-            &self.preferences,
+        let pause = app.pause_script_on_manual_walk_abort;
+        let command = OperatorCommand::SetNavPreference(
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            Some(app.pause_script_on_manual_walk_abort),
-        ) {
+            pause,
+        );
+        match self.submit_with(app, command, Targets::Application) {
             Ok(_) => {
                 if app.error.as_deref().is_some_and(|error| {
                     error.starts_with("settings: pause script on manual movement:")
@@ -2484,31 +2684,44 @@ impl TuiSession {
                 app.error = Some(format!(
                     "settings: pause script on manual movement: {error}"
                 ));
+                app.pause_script_on_manual_walk_abort = self
+                    .core
+                    .nav_preference(frontend_core::NavPreference::PauseScriptOnManualWalkAbort)
+                    .unwrap_or(true);
             }
         }
     }
-    /// Set the global pause policy before binding or arming a TUI live run.
-    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
-        self.core.set_pause_script_on_manual_walk_abort(enabled);
+
+    /// Set the global pause policy before binding or arming a TUI live run
+    /// (`SetNavPreference`).
+    #[cfg(test)]
+    fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) -> Result<(), String> {
+        let command = OperatorCommand::SetNavPreference(
+            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            enabled,
+        );
+        self.submit(command, Targets::Application).map(|_| ())
     }
 
     /// The remembered terrain-bake choice, shared with the panel through
-    /// the process service's preferences.
+    /// the process service's preferences (`SetMapBakeChoice`).
     fn persist_map_bake(&mut self, app: &mut TuiApp) {
-        self.map_bake.set_choice(app.map_bake);
         if !self.persist_ui {
             return;
         }
-        if let Err(e) = persist_map_bake_choice(&self.preferences, app.map_bake) {
-            app.error = Some(format!("settings: map bake: {e}"));
+        let choice = app.map_bake;
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::SetMapBakeChoice(choice),
+            Targets::Application,
+        ) {
+            app.error = Some(format!("settings: {error}"));
         }
     }
+
     /// Persist changed source settings and service the shared Path controller.
     fn project_quester_paths(&mut self, app: &mut TuiApp) {
-        let selected = self
-            .template
-            .as_ref()
-            .and_then(|template| template.game_data());
+        let selected = self.bound().and_then(|profile| profile.game_data());
         self.project_quester_paths_with_game_data(app, selected);
     }
 
@@ -2518,14 +2731,16 @@ impl TuiSession {
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) {
         if std::mem::take(&mut app.quester_paths_dirty) {
-            let failed = app
-                .quester_paths_controller
-                .apply_changed(
-                    &self.preferences,
-                    &app.quester_paths,
-                    selected.clone(),
-                    self.persist_ui,
-                )
+            self.core.stage_quester_paths(
+                frontend_core::quester_paths::QuesterPathsView::new(
+                    app.quester_paths.enabled(),
+                    app.quester_paths.folder().to_path_buf(),
+                ),
+                self.persist_ui,
+                selected.clone(),
+            );
+            let failed = self
+                .submit_with(app, OperatorCommand::SetQuesterPaths, Targets::Application)
                 .is_err();
             if failed {
                 let enabled = app.quester_paths_controller.settings().enabled();
@@ -2538,41 +2753,60 @@ impl TuiSession {
                 app.quester_paths.set_folder(folder);
             }
         }
-        app.quester_paths_controller.advance(selected);
+        self.core
+            .advance_quester_paths(&mut app.quester_paths_controller, selected);
     }
 
+    /// Reload the Quester Paths (`ReloadQuesterPaths`): the controller's
+    /// notice, shown in the settings popup, says why a reload did not
+    /// start.
     fn start_quester_paths_reload(&mut self, app: &mut TuiApp) {
-        let selected = self
-            .template
-            .as_ref()
-            .and_then(|template| template.game_data());
-        app.quester_paths_controller.request_reload(selected);
+        let selected = self.bound().and_then(|profile| profile.game_data());
+        self.core.stage_quester_reload(selected);
+        match self.submit_with(
+            app,
+            OperatorCommand::ReloadQuesterPaths,
+            Targets::Application,
+        ) {
+            Ok(_) => {}
+            Err(_) if app.quester_paths_controller.notice_is_error() => {}
+            Err(error) => app.error = Some(error),
+        }
     }
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
-        self.core
-            .set_capacity_render(frontend_core::RenderPolicyLabel::Headless);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
+        // The benchmark's focus follows its run: select the member it
+        // moved to.
+        #[cfg(feature = "memory-profile")]
+        if let Some(index) = self.memory.as_ref().map(|run| run.focus_index()) {
+            app.focused = Some(index);
+            let moved = self
+                .memory
+                .as_ref()
+                .map(|run| run.names()[index].as_str())
+                .filter(|name| self.core.selected() != Some(*name))
+                .map(str::to_owned);
+            if let Some(name) = moved {
+                self.focus(&name);
+            }
+        }
         #[cfg(feature = "memory-profile")]
         if let Some(run) = self.memory.as_mut() {
-            app.focused = Some(run.focus_index());
-            self.core.select(&run.names[run.focus_index()]);
-            if let Some(play) = self.core.play_mut() {
-                match run.poll(play) {
-                    Ok(true) => {
-                        restore_terminal();
-                        eprintln!("PASS: memory tui observation complete");
-                        exit_after_work_shutdown(0);
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        restore_terminal();
-                        eprintln!("FAIL: memory tui: {error}");
-                        exit_after_work_shutdown(1);
-                    }
+            match run.poll(&self.core) {
+                Ok(true) => {
+                    restore_terminal();
+                    eprintln!("PASS: memory tui observation complete");
+                    exit_after_work_shutdown(0);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    restore_terminal();
+                    eprintln!("FAIL: memory tui: {error}");
+                    exit_after_work_shutdown(1);
                 }
             }
         }
@@ -2633,9 +2867,21 @@ impl TuiSession {
         // A Browse pick is the pending selection of the profile whose
         // heading it replaced.
         if std::mem::take(&mut app.browse_changed) {
-            if let (Some(name), Some(sel)) = (self.last_focused.as_deref(), app.script_sel.as_ref())
-            {
-                self.scripts.set_pending_browse(name, sel.clone());
+            let focused = self.last_focused.clone();
+            let selection = app.script_sel.as_ref().map(ScriptChoice::duplicate);
+            if let (Some(name), Some(selection)) = (focused, selection) {
+                self.scripts.stage_browse_pick(selection);
+                if let Err(error) =
+                    self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
+                {
+                    app.error = Some(error);
+                } else if let Err(error) = self.submit_with(
+                    app,
+                    OperatorCommand::SelectScriptCard,
+                    Targets::Profile(&name),
+                ) {
+                    app.error = Some(error);
+                }
             }
         }
         // The script heading follows the focused profile: reload when the
@@ -2649,35 +2895,42 @@ impl TuiSession {
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));
             if heading.as_ref().is_some_and(|sel| {
-                matches!(
-                    sel,
-                    script::ScriptSel::Loaded(script::ScriptSource::Catalog, _)
-                )
+                sel.loaded_card()
+                    .is_some_and(|(source, _)| source == CardSource::Catalog)
             }) {
-                self.fill_rs2b0t_cards_once();
+                self.fill_rs2b0t_cards_once(app);
             }
             app.script_sel = heading;
             if !app.settings_state.open {
                 app.settings = focused
                     .as_deref()
-                    .and_then(|n| self.core.vault().and_then(|v| v.get(n)))
-                    .map(|p| p.settings.clone())
+                    .and_then(|n| self.core.profile(n))
+                    .map(|p| p.settings_draft())
                     .unwrap_or_default();
             }
         }
-        if app.settings_state.open {
-            if let (None, Some(name)) = (app.settings_profile.as_ref(), focused.as_deref()) {
-                // Freshly opened: bind the focused profile and load its row;
-                // later focus changes keep this binding and its buffers.
-                app.settings = self
-                    .core
-                    .vault()
-                    .and_then(|v| v.get(name))
-                    .map(|p| p.settings.clone())
-                    .unwrap_or_default();
-                app.settings_title = format!("{} — {name}", crate::settings::TITLE);
-                app.settings_profile = Some(name.to_string());
-                app.settings_dirty = false;
+        let profile_to_bind = if app.settings_state.open && app.settings_profile.is_none() {
+            focused.as_deref().map(str::to_owned)
+        } else {
+            None
+        };
+        if let Some(name) = profile_to_bind {
+            // Freshly opened: bind the focused profile and load its row;
+            // later focus changes keep this binding and its buffers.
+            app.settings = self
+                .core
+                .profile(&name)
+                .map(|p| p.settings_draft())
+                .unwrap_or_default();
+            app.settings_title = format!("{} — {name}", crate::settings::TITLE);
+            app.settings_profile = Some(name.clone());
+            app.settings_dirty = false;
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::OpenProfileForm,
+                Targets::Profile(&name),
+            ) {
+                app.error = Some(error);
             }
         }
         app.settings_memory = app
@@ -2704,35 +2957,34 @@ impl TuiSession {
         }
         app.script_category_order = self.script_category_order.clone();
         app.params_unavailable = None;
-        match &app.script_sel {
-            Some(script::ScriptSel::Loaded(source, name)) => {
-                if let Some(card) = self.scripts.js().get(*source, name) {
-                    app.params_schema.clone_from(&card.settings_schema);
-                } else {
-                    app.params_schema.clear();
-                    app.params_unavailable = Some("script parameters unavailable");
-                }
-            }
-            Some(script::ScriptSel::Compiled(id)) => {
-                match self
-                    .scripts
-                    .compiled_schema(&self.core, app.focused_name().as_deref(), *id)
-                {
-                    frontend_core::scripts::SchemaView::Ready { fields, .. } => {
-                        if app.params_schema.as_slice() != fields {
-                            app.params_schema.clear();
-                            app.params_schema.extend_from_slice(fields);
-                        }
-                    }
-                    frontend_core::scripts::SchemaView::Unavailable(reason) => {
+        match app.script_sel.as_ref() {
+            Some(sel) => {
+                if let Some((source, name)) = sel.loaded_card() {
+                    if let Some(card) = self.scripts.card(source, name) {
+                        app.params_schema.copy_from(card.schema());
+                    } else {
                         app.params_schema.clear();
-                        app.params_unavailable = Some(reason);
+                        app.params_unavailable = Some("script parameters unavailable");
+                    }
+                } else if let Some(id) = sel.compiled_id() {
+                    match self.scripts.compiled_schema(
+                        &self.core,
+                        app.focused_name().as_deref(),
+                        id,
+                    ) {
+                        frontend_core::scripts::SchemaView::Ready { fields, .. } => {
+                            app.params_schema.copy_from(fields);
+                        }
+                        frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                            app.params_schema.clear();
+                            app.params_unavailable = Some(reason);
+                        }
                     }
                 }
             }
             None => app.params_schema.clear(),
         }
-        if app.params_state.open && app.params_schema.is_empty() {
+        if app.params_state.open && app.params_schema.as_ref().is_empty() {
             app.params_state.open = false;
         }
         app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
@@ -2745,16 +2997,17 @@ impl TuiSession {
         // The map paints `Play`'s packed collision, not the live loc
         // snapshot. Copy the session world each pump (an `Arc` clone)
         // so a loaded pack is not stuck behind the empty-state title.
-        app.world = self.nav_world.lock().unwrap().clone();
+        app.world = self.core.nav_world();
         // This is the UI loop, not a client's snapshot/tick thread. The first
         // explicit reach-layer request decodes the already verified sidecar.
         app.map_reach = if app.map_active && app.map.layers.reach {
-            self.server_profile.as_ref().and_then(|profile| {
+            self.bound().and_then(|profile| {
                 let world = app.world.as_ref()?;
                 let bound = profile.world()?;
-                Arc::ptr_eq(world, &bound)
-                    .then(|| profile.reach())
-                    .flatten()
+                if !Arc::ptr_eq(world, &bound) {
+                    return None;
+                }
+                profile.walk_reach_source()?.get()
             })
         } else {
             None
@@ -2763,12 +3016,7 @@ impl TuiSession {
         self.bind_map_context(app);
         if app.map_active {
             self.poll_map_demand(app);
-            app.refresh_walk_send(|name| {
-                self.core
-                    .play()
-                    .map(|p| p.walk_eligibility(name))
-                    .unwrap_or(WalkSlotStatus::Excluded(WalkExclude::NotLoggedIn))
-            });
+            app.refresh_walk_send(|name| self.core.walk_slot_status(name));
         }
 
         if let Some(name) = &focused {
@@ -2777,66 +3025,59 @@ impl TuiSession {
             let show_game_chat = app.chat_data.show_game_chat;
             // Borrow the focused slot's snapshot under the lock and copy
             // the small views the panes need (GameSnapshot is not Clone).
-            let snap = self.snapshots.lock().unwrap();
-            match snap.get(name) {
-                Some(s) => {
-                    app.chat_data = chat_data_from(s);
-                    app.chat_data.show_game_chat = show_game_chat;
-                    app.inv_items = s
-                        .inventory()
-                        .iter()
-                        .map(|i| (i.def.name.clone().unwrap_or_else(|| "?".into()), i.count))
-                        .collect();
-                    app.stats_rows = s
-                        .stats()
-                        .iter()
-                        .filter(|st| st.used)
-                        .map(|st| (st.name.clone(), st.effective))
-                        .collect();
-                    let here = app.here;
-                    app.locs_near = s
-                        .locs()
-                        .iter()
-                        .filter_map(|l| {
-                            let name = l.name.as_deref()?.to_string();
-                            let d = here
-                                .map(|h| (l.tile.x - h.x).abs().max((l.tile.z - h.z).abs()))
-                                .unwrap_or(l.distance);
-                            Some((d, name))
-                        })
-                        .collect();
-                    app.locs_near.sort_by_key(|(d, _)| *d);
-                    app.locs_near.truncate(3);
-                    if app.map_active {
-                        if let Ok(ctx) = self.map_context(app) {
-                            match observed_services(s, ctx, ctx) {
-                                Ok(records) => app.map_observed = records,
-                                Err(_) => app.map_observed.clear(),
-                            }
-                        } else {
-                            app.map_observed.clear();
+            let read = self.core.with_slot_snapshot(name, |s| {
+                app.chat_data = chat_data_from(s);
+                app.chat_data.show_game_chat = show_game_chat;
+                app.inv_items = s
+                    .inventory()
+                    .iter()
+                    .map(|i| (i.def.name.clone().unwrap_or_else(|| "?".into()), i.count))
+                    .collect();
+                app.stats_rows = s
+                    .stats()
+                    .iter()
+                    .filter(|st| st.used)
+                    .map(|st| (st.name.clone(), st.effective))
+                    .collect();
+                let here = app.here;
+                app.locs_near = s
+                    .locs()
+                    .iter()
+                    .filter_map(|l| {
+                        let name = l.name.as_deref()?.to_string();
+                        let d = here
+                            .map(|h| (l.tile.x - h.x).abs().max((l.tile.z - h.z).abs()))
+                            .unwrap_or(l.distance);
+                        Some((d, name))
+                    })
+                    .collect();
+                app.locs_near.sort_by_key(|(d, _)| *d);
+                app.locs_near.truncate(3);
+                if app.map_active {
+                    if let Some(context) = self.map_context(app) {
+                        match frontend_core::walk_map::observed_walk_services(s, context) {
+                            Ok(records) => app.map_observed = records,
+                            Err(_) => app.map_observed.clear(),
                         }
+                    } else {
+                        app.map_observed.clear();
                     }
                 }
-                None => {
-                    // A slot with no published snapshot must not show the
-                    // previous focused slot's chat / inventory.
-                    app.chat_data = ChatData::default();
-                    app.chat_data.show_game_chat = show_game_chat;
-                    app.inv_items.clear();
-                    app.stats_rows.clear();
-                    app.locs_near.clear();
-                    app.map_observed.clear();
-                }
+            });
+            if read.is_none() {
+                // A slot with no published snapshot must not show the
+                // previous focused slot's chat / inventory.
+                app.chat_data = ChatData::default();
+                app.chat_data.show_game_chat = show_game_chat;
+                app.inv_items.clear();
+                app.stats_rows.clear();
+                app.locs_near.clear();
+                app.map_observed.clear();
             }
-            drop(snap);
             // The script's paint frame rides the status row (copied from
             // the isolate each observe); the chat pane shows it in place
             // of the game chat while it is non-empty.
-            app.chat_data.script_paint = self
-                .core
-                .status(name)
-                .and_then(|st| st.script_paint.clone());
+            app.chat_data.script_paint = self.core.script_paint(name);
             // Stop drops the isolate (and its paint with it); reset the
             // operator's game-chat toggle when no paint is showing so a
             // fresh Start shows the new paint by default instead of
@@ -2844,17 +3085,13 @@ impl TuiSession {
             if app.chat_data.script_paint.is_none() {
                 app.chat_data.show_game_chat = false;
             }
-            app.route = self
-                .travellers
-                .lock()
-                .unwrap()
-                .get(name)
-                .and_then(|a| a.lock().unwrap().route.clone());
-            if self.walk_clear.swap(false, Ordering::Relaxed) {
+            app.route = self.core.manual_walk_route(name);
+            let walk_cleared = self.core.take_walk_clear();
+            if std::mem::take(&mut self.walk_reset) || walk_cleared {
                 app.walk_dest = None;
             }
-            if let Some(play) = self.core.play() {
-                app.script_state = play.script_state(name);
+            if self.core.has_play() {
+                app.script_state = self.core.script_state(name);
             }
             app.script_queued = self.scripts.start_queue_place(name).is_some();
         } else {
@@ -2872,7 +3109,13 @@ impl TuiSession {
         // later popup.
         if !app.settings_state.open && app.settings_profile.take().is_some() {
             app.settings_memory = None;
-            app.settings_save.form_changed();
+            if let Err(error) = self.submit_with(
+                app,
+                OperatorCommand::CloseProfileForm(frontend_core::command::FormClose::Form),
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
         }
         // `Saved <name>.` or the failure shows only on the popup the persist
         // came from. A failed write put the profile back, so that popup
@@ -2887,9 +3130,9 @@ impl TuiSession {
             if let Some(saved) = app
                 .settings_profile
                 .as_deref()
-                .and_then(|name| self.core.vault().and_then(|v| v.get(name)))
+                .and_then(|name| self.core.profile(name))
             {
-                app.settings = saved.settings.clone();
+                app.settings = saved.settings_draft();
             }
         }
         if app.map_bake_dirty {
@@ -2899,17 +3142,9 @@ impl TuiSession {
     }
 
     fn script_self_stop_observed(&self, needle: &str) -> bool {
-        let Some(name) = self.names.first() else {
-            return false;
-        };
-        let Some(play) = self.core.play() else {
-            return false;
-        };
-        live_gate::script_self_stop_observed(
-            play.script_state(name),
-            play.script_lifecycle_receipt(name).as_ref(),
-            needle,
-        )
+        self.names
+            .first()
+            .is_some_and(|name| self.core.live_script_self_stop_observed(name, needle))
     }
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
@@ -2919,68 +3154,39 @@ impl TuiSession {
     /// panel watches do: the witness this run armed fails the run when it
     /// fails, and holds the PASS while Pending, before the clean-stop grace.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
-        // The UI loop polls this every frame, interactive use included:
-        // without a `--live` run there is nothing to decide, so read no
-        // clock, take no lock and touch no witness.
         let Some(name) = self.live_name.as_deref() else {
             return (None, Vec::new());
         };
         let now = Instant::now();
-        let timing = self.live_timing.lock().unwrap().as_ref().copied();
-        if let Some(timing) = timing
-            .filter(|timing| timing.setup_expired(live_gate::PAIR_FIXTURE_SETUP_DEADLINE, now))
-        {
-            return (
-                Some(1),
-                vec![
-                    ProofLine::Stderr(live_timing_record(name, timing, now)),
-                    ProofLine::Stderr(format!(
-                        "FAIL: live {name} setup: paired fixture did not reach successful relog and scene readiness before its bounded pre-Start deadline"
-                    )),
-                ],
-            );
+        let runner = self.core.live_runner();
+        let timing = runner.timing_view(now);
+        if runner.pair_setup_expired(now) {
+            let mut lines = Vec::new();
+            if let Some(timing) = timing {
+                lines.push(ProofLine::Stderr(live_timing_record(name, timing)));
+            }
+            lines.push(ProofLine::Stderr(format!(
+                "FAIL: live {name} setup: paired fixture did not reach successful relog and scene readiness before its bounded pre-Start deadline"
+            )));
+            return (Some(1), lines);
         }
-        // Build the JSON receipt only on a terminal or first-PASS poll.
-        // Only the witness this run armed can decide it, borrowed from the
-        // run; a plain `--live` run has none and evaluates no gate.
-        let (core_gate, pair_gate) = match &self.live_witnesses {
-            None => (CoreGate::Disabled, CoreGate::Disabled),
-            Some(armed) => (
-                live_gate::catalog_core_gate(Some(&armed.catalog), self.live_core_deadline, now),
-                live_gate::pair_core_gate(Some(&armed.pair), self.live_core_deadline, now),
-            ),
-        };
-        let catalog = self.live_witnesses.as_ref().map(|armed| &armed.catalog);
-        let pair = self.live_witnesses.as_ref().map(|armed| &armed.pair);
-        // The witness receipts ride with the terminal line: stdout before a
-        // PASS, stderr before a FAIL, labelled with the `--live` token.
+        let decision = runner.watch_decision(self.live_core_deadline, now);
         let witnesses = |ok: bool| {
-            let label = format!("script_{name}");
-            [
-                (
-                    live_gate::CATALOG_CORE_TAG,
-                    live_gate::catalog_core_record(catalog, &core_gate),
-                ),
-                (
-                    live_gate::PAIRED_CORE_TAG,
-                    live_gate::pair_core_record(pair, &pair_gate),
-                ),
-            ]
-            .into_iter()
-            .filter_map(|(tag, witness)| witness.map(|witness| format!("{tag}: {label} {witness}")))
-            .map(|line| {
-                if ok {
+            let mut lines = Vec::new();
+            decision.for_each_record(|tag, witness| {
+                let line = format!("{tag}: script_{name} {witness}");
+                lines.push(if ok {
                     ProofLine::Stdout(line)
                 } else {
                     ProofLine::Stderr(line)
-                }
-            })
-            .collect::<Vec<_>>()
+                });
+            });
+            lines
         };
         let fail = |receipt: String, message: &str| {
             let mut lines = witnesses(false);
             if let Some(timing) = timing {
-                lines.push(ProofLine::Stderr(live_timing_record(name, timing, now)));
+                lines.push(ProofLine::Stderr(live_timing_record(name, timing)));
             }
             lines.push(ProofLine::Stderr(receipt));
             lines.push(ProofLine::Stderr(format!("FAIL: {message}")));
@@ -2989,42 +3195,45 @@ impl TuiSession {
         if let Some(message) = self.terminal_startup_failure() {
             return fail(format!("FAIL: live {name} startup: {message}"), &message);
         }
-        for gate in [&core_gate, &pair_gate] {
-            if let CoreGate::Failed(message) = gate {
+        for gate in [decision.catalog(), decision.pair()] {
+            if let Some(message) = gate.failure_message() {
                 return fail(format!("FAIL: live {name} {message}"), message);
             }
         }
-        let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
-        if let Some(scenario::RunnerStatus::Passed) = &status {
+        let status = runner.status();
+        if status == Some(frontend_core::live::RunnerStatus::Passed) {
             let mut grace = self.live_stop_wait_started;
-            let hold = live_gate::pass_hold(
-                &[&core_gate, &pair_gate],
-                self.live_wait_script_stop,
+            let hold = decision.pass_hold(
+                runner.wait_script_stop(),
                 |needle| self.script_self_stop_observed(needle),
                 &mut grace,
                 now,
             );
             self.live_stop_wait_started = grace;
-            match hold {
-                PassHold::Core | PassHold::CleanStop => return (None, Vec::new()),
-                PassHold::TimedOut(message) => {
-                    return fail(format!("FAIL: live {name} {message}"), &message);
+            match hold.kind() {
+                frontend_core::live::PassHoldKind::Core
+                | frontend_core::live::PassHoldKind::CleanStop => return (None, Vec::new()),
+                frontend_core::live::PassHoldKind::TimedOut => {
+                    let message = hold
+                        .failure_message()
+                        .expect("timed-out clean-stop holds carry their failure reason");
+                    return fail(format!("FAIL: live {name} {message}"), message);
                 }
-                PassHold::Release { .. } => {}
+                frontend_core::live::PassHoldKind::Release => {}
             }
         }
-        let evidence = self
-            .scenario
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|r| r.evidence().cloned())
-            .map(|ev| ev.to_json())
-            .unwrap_or_default();
+        let evidence = runner.evidence_json().unwrap_or_default();
+        let failure = runner.failure_message();
         let soaking = self.live_soak_until.is_some_and(|t| now < t);
         let was_announced = self.live_announced_pass;
-        let (code, proof, announced) =
-            live_proof(name, status, &evidence, soaking, self.live_announced_pass);
+        let (code, proof, announced) = live_proof(
+            name,
+            status,
+            &evidence,
+            failure.as_deref(),
+            soaking,
+            self.live_announced_pass,
+        );
         let timing_due = code.is_some() || (announced && !was_announced);
         let mut lines = match code {
             Some(1) => witnesses(false),
@@ -3033,7 +3242,7 @@ impl TuiSession {
         };
         if timing_due {
             if let Some(timing) = timing {
-                let receipt = live_timing_record(name, timing, now);
+                let receipt = live_timing_record(name, timing);
                 lines.push(if code == Some(1) {
                     ProofLine::Stderr(receipt)
                 } else {
@@ -3044,11 +3253,10 @@ impl TuiSession {
         lines.extend(proof);
         self.live_announced_pass = announced;
         if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
-            if let (Some(slot), Some(play)) = (self.names.first(), self.core.play()) {
-                if let Some(receipt) = play.script_lifecycle_receipt(slot) {
+            if let Some(slot) = self.names.first() {
+                if let Some(details) = self.core.live_script_lifecycle_debug(slot) {
                     lines.push(ProofLine::Stderr(format!(
-                        "[tui-play] script lifecycle slot={slot:?} generation={} state={:?} tick={} reason={:?}",
-                        receipt.runtime_generation, receipt.state, receipt.tick, receipt.reason
+                        "[tui-play] script lifecycle slot={slot:?} {details}"
                     )));
                 }
             }
@@ -3059,23 +3267,29 @@ impl TuiSession {
     /// Return a producer-marked terminal asset-init failure for a slot owned
     /// by this scenario. Retryable login errors intentionally remain pending.
     fn terminal_startup_failure(&self) -> Option<String> {
-        let runner = self.scenario.lock().unwrap();
-        let runner = runner.as_ref()?;
-        let owned = runner.owned_profile_names();
-        let statuses = self.core.play()?.statuses();
-        host_play::owned_terminal_startup_error(&statuses, &owned)
+        self.core.live_terminal_startup_failure()
     }
 
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
         if self.persist_ui {
-            match persist_background_bots_ack(&self.preferences) {
-                Ok(()) => {
+            self.core
+                .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
+            let failure = self
+                .submit_raw(OperatorCommand::AcknowledgeNotice, Targets::Application)
+                .map(|submitted| {
+                    self.core
+                        .command_failure(submitted.request())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|error| Some(error.to_string()));
+            match failure {
+                None => {
                     self.background_bots_acked = true;
                     self.notice_sig = None;
                     app.background_notice = None;
-                    clear_background_bots_ack_error(&mut app.error);
+                    frontend_core::resources::clear_background_bots_ack_error(&mut app.error);
                 }
-                Err(e) => app.error = Some(background_bots_ack_error(&e)),
+                Some(error) => app.error = Some(error),
             }
         } else {
             self.notice_sig = None;
@@ -3088,7 +3302,8 @@ impl TuiSession {
             .ack_checked_at
             .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1))
         {
-            self.background_bots_acked = background_bots_acked(&self.preferences);
+            self.background_bots_acked =
+                frontend_core::resources::background_bots_acked(&self.preferences);
             self.ack_checked_at = Some(now);
         }
     }
@@ -3100,12 +3315,7 @@ impl TuiSession {
             return;
         }
         self.refresh_ack_cache(now);
-        let focused = app.focused_name();
-        let background = self
-            .core
-            .play()
-            .map(|play| play.background_bot_count(focused.as_deref()))
-            .unwrap_or(0);
+        let background = self.core.background_bot_count();
         if self.background_bots_acked || background == 0 {
             self.notice_sig = None;
             app.background_notice = None;
@@ -3149,6 +3359,130 @@ impl TuiSession {
     }
 }
 
+/// The handlers of the fleet marks and filter, the log, the map overlay
+/// preference, the Quester Paths notice and Quit: each is a plain submit
+/// over the models the app lends.
+impl TuiSession {
+    /// Mark or unmark `name`'s fleet row (`SetMark`).
+    fn set_mark(&mut self, app: &mut TuiApp, name: &str, on: bool) {
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetMark(on), Targets::Profile(name))
+        {
+            app.error = Some(error);
+        }
+    }
+
+    /// Mark these members' fleet rows (`MarkAll`).
+    fn mark_all(&mut self, app: &mut TuiApp, identities: Vec<frontend_core::ProfileIdentity>) {
+        self.core.stage_mark_all(identities);
+        if let Err(error) = self.submit_with(app, OperatorCommand::MarkAll, Targets::Application) {
+            app.error = Some(error);
+        }
+    }
+
+    /// Clear every row mark (`ClearMarks`).
+    fn clear_marks(&mut self, app: &mut TuiApp) {
+        if let Err(error) = self.submit_with(app, OperatorCommand::ClearMarks, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+    }
+
+    /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
+    /// shown rows follow the text.
+    fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
+        let staged = app.table.filter.staged_mut();
+        match edit {
+            crate::fleet::FilterEdit::Push(c) => staged.push(c),
+            crate::fleet::FilterEdit::Pop => {
+                staged.pop();
+            }
+            crate::fleet::FilterEdit::Clear => staged.clear(),
+        }
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetFleetFilter, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+        app.table
+            .sync_with_ids(&app.names, &app.profile_ids, &app.fleet);
+    }
+
+    /// Save the rows the log view shows (`SaveLog`). The write runs off the
+    /// UI thread; the log pane's status line follows it.
+    fn save_log(&mut self, app: &mut TuiApp) {
+        let focused = app.focused_name();
+        let (path, text) = app.log.save_request(focused.as_deref());
+        self.core.stage_log_save(path, text);
+        match self.submit_with(app, OperatorCommand::SaveLog, Targets::Application) {
+            Ok(submitted) => match self.core.log_save(submitted.request()) {
+                Some(ticket) => app.log.saving(ticket),
+                None => app.log.status = Some("save log: the write did not start".into()),
+            },
+            Err(error) => app.log.status = Some(error),
+        }
+    }
+
+    /// Turn the session log file on or off (`SetSessionLog`); the log
+    /// pane's status line names the file the process holds open now.
+    fn set_session_log(&mut self, app: &mut TuiApp, on: bool) {
+        let outcome = self.submit_with(
+            app,
+            OperatorCommand::SetSessionLog(on),
+            Targets::Application,
+        );
+        app.log.status = Some(match outcome {
+            Ok(_) => match frontend_core::log_file::session_log_path() {
+                Some(path) => format!("session file {}", path.display()),
+                None => "session file off".into(),
+            },
+            Err(error) => error,
+        });
+    }
+
+    /// Save the map's special-areas overlay choice (`SetNavPreference`),
+    /// which the panel shares; a refused save shows its reason.
+    fn set_special_areas(&mut self, app: &mut TuiApp, on: bool) {
+        let command =
+            OperatorCommand::SetNavPreference(frontend_core::NavPreference::ShowSpecialAreas, on);
+        match self.submit_with(app, command, Targets::Application) {
+            Ok(_) => {
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("map wilderness:"))
+                {
+                    app.error = None;
+                }
+            }
+            Err(error) => app.error = Some(format!("map wilderness: {error}")),
+        }
+    }
+
+    /// Dismiss the Quester Paths status line (`AcknowledgeNotice`).
+    fn dismiss_paths_notice(&mut self, app: &mut TuiApp) {
+        self.core
+            .stage_notice(frontend_core::OperatorNotice::QuesterPaths);
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::AcknowledgeNotice,
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
+    }
+
+    /// Quit (`Quit`): every member's slot shuts down and the play closes
+    /// before the terminal is torn down. Nothing loaded is not an error.
+    fn quit(&mut self, app: &mut TuiApp) {
+        match self.submit_raw(OperatorCommand::Quit, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => app.error = Some(error.to_string()),
+        }
+        app.quit = true;
+    }
+}
+
 /// One machine-readable `--live` proof line. PASS stays on stdout for
 /// harness scrapers; FAIL stays on stderr and still exits 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3166,33 +3500,11 @@ impl ProofLine {
     }
 }
 
-fn mark_live_script_start(
-    timing: &mut Option<LiveTiming>,
-    pending: &[PendingCatalogStart],
-    on_start_script: bool,
-    pump: &live_start::StartScriptPump,
-    now: Instant,
-) {
-    if !on_start_script
-        || !matches!(
-            pump,
-            live_start::StartScriptPump::Continue | live_start::StartScriptPump::CompiledRunning
-        )
-        || pending.is_empty()
-        || pending.iter().any(|card| !card.started)
-    {
-        return;
-    }
-    if let Some(timing) = timing {
-        timing.mark_script_started(now);
-    }
-}
-
-fn live_timing_record(name: &str, timing: LiveTiming, now: Instant) -> String {
+fn live_timing_record(name: &str, timing: frontend_core::live::LiveTimingView) -> String {
     let millis = |duration: Duration| duration.as_millis().min(u128::from(u64::MAX)) as u64;
     let receipt = serde_json::json!({
-        "setup_elapsed_ms": millis(timing.setup_elapsed(now)),
-        "script_elapsed_ms": timing.script_elapsed(now).map(millis),
+        "setup_elapsed_ms": millis(timing.setup_elapsed()),
+        "script_elapsed_ms": timing.script_elapsed().map(millis),
     });
     format!("LIVE_TIMING: script_{name} {receipt}")
 }
@@ -3207,13 +3519,14 @@ fn write_proof_lines(lines: &[ProofLine]) {
 /// caller's latch so a `BUDGET_S` soak does not reprint PASS.
 fn live_proof(
     name: &str,
-    status: Option<scenario::RunnerStatus>,
+    status: Option<frontend_core::live::RunnerStatus>,
     evidence: &str,
+    failure: Option<&str>,
     soaking: bool,
     announced_pass: bool,
 ) -> (Option<i32>, Vec<ProofLine>, bool) {
     match status {
-        Some(scenario::RunnerStatus::Passed) => {
+        Some(frontend_core::live::RunnerStatus::Passed) => {
             let mut lines = Vec::new();
             let announced = if announced_pass {
                 true
@@ -3227,14 +3540,17 @@ fn live_proof(
                 (Some(0), lines, announced)
             }
         }
-        Some(scenario::RunnerStatus::Failed(msg)) => (
-            Some(1),
-            vec![
-                ProofLine::Stderr(format!("FAIL: live {name} {evidence}")),
-                ProofLine::Stderr(format!("FAIL: {msg}")),
-            ],
-            announced_pass,
-        ),
+        Some(frontend_core::live::RunnerStatus::Failed) => {
+            let message = failure.expect("failed runner exposes its failure reason");
+            (
+                Some(1),
+                vec![
+                    ProofLine::Stderr(format!("FAIL: live {name} {evidence}")),
+                    ProofLine::Stderr(format!("FAIL: {message}")),
+                ],
+                announced_pass,
+            )
+        }
         _ => (None, Vec::new(), announced_pass),
     }
 }
@@ -3253,8 +3569,8 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
     }
 }
 
-fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
-    eprintln!("{}", host_play::instance_conflict_message(holder));
+fn prompt_instance_conflict(conflict: &frontend_core::launch::InstanceConflict) -> bool {
+    eprintln!("{}", conflict.message());
     eprint!("Exit (default) or Continue anyway [E/c]: ");
     let _ = std::io::Write::flush(&mut std::io::stderr());
     let mut line = String::new();
@@ -3266,9 +3582,9 @@ fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
 }
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
-fn new_app(title: impl Into<String>, preferences: &Preferences) -> TuiApp {
+fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
     let mut app = TuiApp::new(title);
-    app.restore_preferences(preferences.clone());
+    app.restore_preferences(preferences.share());
     app
 }
 
@@ -3276,7 +3592,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
         {
-            host_play::memory::Config::from_env()
+            frontend_core::bench::BenchConfig::from_env()
                 .ok()
                 .flatten()
                 .is_some()
@@ -3287,55 +3603,67 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     };
     let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
-    let permit = match host_play::resolve_instance_permit(host_play::InstanceKind::Tui, skip_lock) {
-        Ok(host_play::InstancePermitOutcome::Ready(permit)) => permit,
-        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
-            if !prompt_instance_conflict(&holder) {
+    let permit = match frontend_core::launch::acquire_instance(
+        frontend_core::launch::InstanceKind::Tui,
+        skip_lock,
+    ) {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(conflict)) => {
+            if !prompt_instance_conflict(&conflict) {
                 return Ok(0);
             }
-            host_play::InstancePermit::skip()
+            frontend_core::launch::InstancePermit::skip()
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
-    let selection = args.profile.resolve(None)?;
+    let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
+    launcher
+        .configure(
+            args.profile.duplicate(),
+            frontend_core::launch::ProfileEnv::capture(),
+        )
+        .map_err(|error| error.to_string())?;
+    launcher
+        .bind_with(None)
+        .map_err(|error| error.to_string())?;
     if let Some(number) = args.world {
-        let worlds = selection
-            .public_worlds()
+        let mut worlds = launcher
+            .bound()
+            .and_then(|profile| profile.public_world_numbers())
             .ok_or("--world requires the rs2b2t profile")?;
-        if worlds.by_number(number).is_none() {
+        if !worlds.any(|world| world == number) {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
             ));
         }
     }
-    let template = selection.prepare_template()?;
-    let mut session = TuiSession::new_bound(template, permit);
-    if frontend_core::log_file::session_log_setting(&session.preferences) {
-        frontend_core::log_file::apply_session_log(true);
-    }
+    let mut session = TuiSession::with_launcher(launcher, permit);
+    // The saved session-file preference: open this process's file at start.
+    frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;
     session
-        .server_profile
-        .as_ref()
+        .bound()
         .expect("bound session")
-        .require_bot_operation()?;
+        .require_bot_operation()
+        .map_err(|error| error.to_string())?;
 
     #[cfg(feature = "memory-profile")]
-    if let Some(config) = host_play::memory::Config::from_env()? {
-        host_play::memory::require_live_benchmark(session.profile_class())?;
+    if let Some(config) =
+        frontend_core::bench::BenchConfig::from_env().map_err(|error| error.to_string())?
+    {
+        frontend_core::bench::require_live_benchmark(session.profile_class())
+            .map_err(|error| error.to_string())?;
         session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
-        let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
-        session.options.mainland = true;
-        session.unlock_at(&run.vault, &run.pass)?;
-        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay {
-            world: session.core.play().and_then(|p| p.world()),
-            obj_names: session.core.play().map(|p| p.obj_names()),
-            map_members: session.core.play().is_some_and(|p| p.map_members()),
-        })?;
-        session.names = run.names.clone();
+        let run = frontend_core::bench::BenchRun::prepare(config, "tui")
+            .map_err(|error| error.to_string())?;
+        session.mainland = true;
+        session.unlock_at(run.vault(), run.passphrase())?;
+        run.bind_seed_nav(&session.core)
+            .map_err(|error| error.to_string())?;
+        session.names = run.names().to_vec();
         session.load_and_login_all();
-        session.focus(&run.names[0]);
+        session.focus(&run.names()[0]);
         let mut app = new_app(
             format!(
                 "{} memory benchmark · {}",
@@ -3344,7 +3672,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ),
             &session.preferences,
         );
-        app.names = run.names.clone();
+        app.names = run.names().to_vec();
         app.focused = Some(0);
         session.memory = Some(run);
         return run_loop(session, app);
@@ -3353,7 +3681,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     match mode {
         RunMode::Live(name) => {
             let scenario = live_scenario(&name)?;
-            session.options.mainland = scenario.seed.mainland;
+            session.mainland = scenario.view().mainland();
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
             session.live_prepare_script(scenario)?;
@@ -3367,17 +3695,14 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         RunMode::Interactive => {
             let vault_path = session
-                .server_profile
-                .as_ref()
+                .bound()
                 .expect("bound session")
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
-            let pass = host_play::passphrase::obtain(
-                "tui-play",
-                args.pass_stdin,
-                host_play::passphrase::Purpose::for_vault(vault_exists),
-            )?;
+            let pass =
+                frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
+                    .map_err(|error| error.to_string())?;
             if let Err(e) = session.unlock_at(&vault_path, &pass) {
                 return Err(format!("vault {}: {e}", vault_path.display()));
             }
@@ -3411,15 +3736,15 @@ impl TuiSession {
     fn bootstrap_interactive_profiles(&mut self, users: &[String]) -> Result<String, String> {
         // `--user` names may not exist: create them like host-play does.
         for u in users {
-            if self.core.vault().is_none_or(|v| v.get(u).is_none()) {
+            if self.core.profile(u).is_none() {
                 self.create_profile(u)?;
             }
         }
         self.names = self
             .core
-            .vault()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
+            .profiles()
+            .map(|p| p.username().to_string())
+            .collect();
         users
             .first()
             .cloned()
@@ -3432,23 +3757,16 @@ impl TuiSession {
     /// Create a missing profile (fresh game secret, uid one past the
     /// vault's max, from the 274M base).
     fn create_profile(&mut self, username: &str) -> Result<(), String> {
-        let uid = self
-            .core
-            .vault()
-            .map_or(274_000_001, frontend_core::fresh_uid);
-        let profile = Profile {
-            username: username.into(),
-            password: profile_password(username).into(),
-            uid,
-            settings: vault::ProfileSettings::default(),
-        };
-        // Startup only (before the terminal loop): waiting on the write
-        // here keeps a failed first-run profile a startup error.
-        let op = self
-            .core
-            .create_profile(profile, frontend_core::ArmMirror::none(), "profile")?;
+        self.core
+            .stage_new_profile(username, &frontend_core::live::profile_password(username));
+        let submitted = self
+            .submit_raw(OperatorCommand::CreateProfile, Targets::Application)
+            .map_err(|error| format!("profile: {error}"))?;
+        if let Some(reason) = self.core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
+        }
         self.core.flush_writes();
-        match self.core.failure(op) {
+        match submitted.operation().and_then(|op| self.core.failure(op)) {
             Some(error) => Err(format!("profile: {error}")),
             None => Ok(()),
         }
@@ -3501,20 +3819,55 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// One pass of the headless loop: pump the session, print the proof lines,
+/// and return the live run's exit code once it decided.
+fn headless_step(session: &mut TuiSession, app: &mut TuiApp) -> Option<i32> {
+    session.pump(app);
+    let (code, lines) = session.live_status();
+    write_proof_lines(&lines);
+    code
+}
+
+/// One pass of the headed loop before it waits for input: pump the session,
+/// hold the proof lines until the terminal is restored, and draw. Returns
+/// the live run's exit code, without drawing, once it decided.
+fn headed_frame<B: ratatui::backend::Backend>(
+    session: &mut TuiSession,
+    app: &mut TuiApp,
+    terminal: &mut Terminal<B>,
+    deferred: &mut Vec<ProofLine>,
+) -> Result<Option<i32>, String> {
+    session.pump(app);
+    let (code, lines) = session.live_status();
+    deferred.extend(lines);
+    if code.is_some() {
+        return Ok(code);
+    }
+    let _profile_frame = client::profiling::UI_FRAME.start();
+    let params_data = session.bound().and_then(|profile| profile.game_data());
+    session.loadouts_opened(app);
+    terminal
+        .draw(|frame| {
+            let _profile_draw = client::profiling::UI_DRAW.start();
+            app.draw(frame);
+            app.draw_loadouts_overlay(frame, &session.loadouts);
+            app.draw_params_overlay(frame, session.loadouts.store(), params_data.as_deref());
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(None)
+}
+
 /// The crossterm event loop. `--live` runs headed when a controlling
 /// terminal is available (the operator watches the panes) and degrades to
 /// a headless pump loop otherwise, so the PASS/FAIL still lands in CI.
 /// Headless prints proof immediately. Headed holds it until after restore
 /// so the PASS JSON line cannot paint into Ratatui rows.
 fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
-    app.map_bake = session.map_bake.choice();
+    app.map_bake = session.map_desk.bake_gate().choice();
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
         loop {
-            session.pump(&mut app);
-            let (code, lines) = session.live_status();
-            write_proof_lines(&lines);
-            if let Some(code) = code {
+            if let Some(code) = headless_step(&mut session, &mut app) {
                 return Ok(code);
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -3537,23 +3890,8 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 
     let mut deferred = Vec::new();
     let result = (|| loop {
-        session.pump(&mut app);
-        let (code, lines) = session.live_status();
-        deferred.extend(lines);
-        if let Some(code) = code {
+        if let Some(code) = headed_frame(&mut session, &mut app, &mut terminal, &mut deferred)? {
             return Ok(code);
-        }
-        {
-            let _profile_frame = client::profiling::UI_FRAME.start();
-            let params_data = session.template.as_ref().and_then(|t| t.game_data());
-            terminal
-                .draw(|frame| {
-                    let _profile_draw = client::profiling::UI_DRAW.start();
-                    app.draw(frame);
-                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                    app.draw_params_overlay(frame, &session.loadouts, params_data.as_deref());
-                })
-                .map_err(|e| e.to_string())?;
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             // One routing model: the app decides which pane, popup or
@@ -3579,13 +3917,14 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     result
 }
 
-/// Route one [`AppAction`] onto the session: map walks arm through
-/// `host_play::arm_walk_on`, chat and manual walks go through [`WireCmd`],
-/// the script actions dispatch `Play::script_start_load` / pause / stop /
-/// the JS library, and the settings popup persists on the next pump.
+/// Route one [`AppAction`] onto the session: map walks arm through the
+/// core's walk arms, chat and manual walks go through the core's slot
+/// accessors, the script actions dispatch the shared script coordinator
+/// (Start / pause / stop / the JS library), and the settings popup persists
+/// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
-        AppAction::Quit => app.quit = true,
+        AppAction::Quit => session.quit(app),
         AppAction::Focus(name) => session.focus(&name),
         AppAction::MapOpen => {
             session.bind_map_context(app);
@@ -3601,6 +3940,14 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::WalkTile(tile) => session.wasd_walk(app, tile),
         AppAction::MapTeleport(tile) => session.map_teleport(app, tile),
         AppAction::ReloadPaths => session.start_quester_paths_reload(app),
+        AppAction::DismissPathsNotice => session.dismiss_paths_notice(app),
+        AppAction::SetMark(name, on) => session.set_mark(app, &name, on),
+        AppAction::MarkAll(identities) => session.mark_all(app, identities),
+        AppAction::ClearMarks => session.clear_marks(app),
+        AppAction::FleetFilter(edit) => session.set_fleet_filter(app, edit),
+        AppAction::SaveLog => session.save_log(app),
+        AppAction::SetSessionLog(on) => session.set_session_log(app, on),
+        AppAction::MapWilderness(on) => session.set_special_areas(app, on),
         AppAction::Chat(action) => session.chat_send(app, action),
         AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),
@@ -3627,15 +3974,15 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = match session.import_rs2b0t_catalog(&root) {
+            app.error = match session.import_rs2b0t_catalog(app, &root) {
                 Ok(_) => {
-                    if session.scripts.js().load_failures().is_empty() {
+                    if session.scripts.load_failure_count() == 0 {
                         None
                     } else {
-                        Some(session.scripts.js().named_failure_output())
+                        Some(session.scripts.named_failure_output())
                     }
                 }
-                Err(e) => Some(e),
+                Err(error) => Some(error),
             };
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
@@ -3651,26 +3998,72 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),
         AppAction::ScriptSyncApply => session.apply_settings_sync(app),
-        AppAction::ScriptSyncCancel => session.scripts.cancel_settings_sync(),
+        AppAction::ScriptSyncCancel => {
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::CancelSettingsSync,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::ScriptRestartSettings => {
             let root = session.start_catalog_root();
-            if let Err(error) = session
-                .scripts
-                .restart_pending_settings(&mut session.core, root.as_deref())
-            {
+            session.scripts.stage_start_catalog_root(root);
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::RestartForSettings,
+                Targets::Application,
+            ) {
                 app.error = Some(error);
             }
             session.apply_script_notice(app);
         }
-        AppAction::ScriptRestartLater => session.scripts.dismiss_restart_prompt(),
+        AppAction::ScriptRestartLater => {
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::DeferSettingsRestart,
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::AckBackground => session.ack_background_bots(app),
+        AppAction::SettingsDraftEdited(edit) => {
+            match edit {
+                crate::settings::SettingsEdit::RandomEvents(value) => {
+                    *app.settings.random_events_mut() = value;
+                }
+                crate::settings::SettingsEdit::LampSkill(skill) => {
+                    *app.settings.lamp_skill_mut() = skill.into();
+                }
+                crate::settings::SettingsEdit::LampAuto(value) => {
+                    *app.settings.lamp_auto_mut() = value;
+                }
+                crate::settings::SettingsEdit::RandomEventPolicy { event, policy } => {
+                    app.settings.set_random_event_policy(event, policy);
+                }
+                crate::settings::SettingsEdit::Lowmem(value) => {
+                    *app.settings.lowmem_mut() = value;
+                }
+            }
+            if let Err(error) = session.submit_with(
+                app,
+                OperatorCommand::EditProfileDraft(
+                    frontend_core::command::ProfileDraftField::Settings,
+                ),
+                Targets::Application,
+            ) {
+                app.error = Some(error);
+            }
+        }
         AppAction::ProfileImport(action) => session.profile_import(app, action),
         AppAction::ParamsKey(key) => {
             let action = session.params_key(app, key);
             dispatch(session, app, action);
         }
         AppAction::LoadoutsKey(key) => {
-            app.loadouts_on_key(&mut session.loadouts, key);
+            session.loadouts_key(app, key);
         }
         AppAction::MouseCapture(on) => set_mouse_capture(on),
         AppAction::Batch(actions) => {
@@ -3707,7 +4100,7 @@ fn set_mouse_capture(on: bool) {
 
 pub fn main() -> ExitCode {
     let args = parse_args();
-    host_play::passphrase::warn_legacy_env("tui-play");
+    frontend_core::launch::warn_legacy_passphrase_env("tui-play");
     if let Some(out) = &args.map_bundle {
         return map_bundle(&args.profile, out);
     }
@@ -3730,37 +4123,34 @@ pub fn main() -> ExitCode {
 /// client cache into `OUT/map/<revision>/` and print its descriptions
 /// (JSON) on stdout.
 /// Progress goes to stderr at most once a second.
-fn map_bundle(profile: &ProfileOptions, out: &Path) -> ExitCode {
-    let (Some(revision), Some(cache), Some(unpack)) = (
-        profile.revision.as_deref(),
-        profile.cache_dir.as_deref(),
-        profile.unpack_dir.as_deref(),
-    ) else {
-        usage();
-    };
-    let revision = match host_play::parse_revision(revision) {
-        Ok(revision) => revision.as_i32() as u16,
+fn map_bundle(profile: &frontend_core::launch::ProfileArgs, out: &Path) -> ExitCode {
+    let revision = match profile.revision_number() {
+        Ok(Some(revision)) => revision,
+        Ok(None) => usage(),
         Err(error) => {
             eprintln!("tui-play: {error}");
             return ExitCode::from(2);
         }
     };
-    let mut reported: Option<(Instant, MapStage)> = None;
-    let result = host_play::bake_shipped_map_bundle(revision, cache, unpack, out, |status| {
-        let MapJobStatus::Running(progress) = status else {
-            return;
-        };
-        if reported.is_none_or(|(at, stage)| {
-            stage != progress.stage || at.elapsed() >= Duration::from_secs(1)
-        }) {
-            eprintln!("tui-play: map bundle: {}", progress.message);
-            reported = Some((Instant::now(), progress.stage));
-        }
-    });
-    match result
-        .map_err(|error| error.to_string())
-        .and_then(|shipped| serde_json::to_string(&shipped).map_err(|error| error.to_string()))
-    {
+    let (Some(cache), Some(unpack)) = (profile.cache_dir(), profile.unpack_dir()) else {
+        usage();
+    };
+    let mut reported: Option<(Instant, WalkMapStage)> = None;
+    let result = frontend_core::map_bake::bake_shipped_map_bundle(
+        revision,
+        cache,
+        unpack,
+        out,
+        |stage, message| {
+            if reported.is_none_or(|(at, previous)| {
+                previous != stage || at.elapsed() >= Duration::from_secs(1)
+            }) {
+                eprintln!("tui-play: map bundle: {message}");
+                reported = Some((Instant::now(), stage));
+            }
+        },
+    );
+    match result {
         Ok(json) => {
             println!("{json}");
             ExitCode::SUCCESS
@@ -3779,3 +4169,7 @@ mod tests;
 #[cfg(test)]
 #[path = "manual_click_live_tests.rs"]
 mod manual_click_live_tests;
+
+#[cfg(test)]
+#[path = "bin_loop_tests.rs"]
+mod loop_tests;

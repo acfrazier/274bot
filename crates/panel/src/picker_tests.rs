@@ -25,8 +25,8 @@ use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::{overlay_colors, WalkMapRenderer};
 use dear_imgui_rs::WindowFlags;
-use host_play::walk_map::{MapModel, RouteSource};
-use script::IsolatedEnv;
+use frontend_core::test_support::IsolatedStores;
+use frontend_core::walk_map::{WalkMap, WalkRouteSource};
 
 // REACH/FLOOD/FLAGS/PACK/ROUTE_TILES share FLAGS_TEST_LOCK — one process-global
 // lock for every test that mutates picker statics (incl. Session drop →
@@ -83,31 +83,30 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let _nav = super::lock_nav_statics();
     let mut session = Session::new();
     session.set_focus_for_test("alice");
-    session.core.set_play(Some(host_play::run_with_io(
-        &host_play::PlayOptions {
-            host: "127.0.0.1".into(),
-            transport: client::Transport::Tcp,
-            port: 43594,
-            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
-            lowmem: true,
-            mainland: false,
-        },
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    )));
+    let arms = host_play::WalkArms::default();
     let arm = Arc::new(std::sync::Mutex::new(host_play::WalkArm {
         route: Some(Arc::new(test_route())),
         route_generation: 42,
         ..Default::default()
     }));
-    session
-        .travellers
-        .lock()
+    arms.lock()
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));
-    let paint = session.core.play().unwrap().script_nav_paint();
-    let scenario = Arc::clone(&session.scenario);
+    session.core.set_walk_arms(arms);
+    session
+        .core
+        .set_play(Some(frontend_core::test_support::empty_play(
+            &host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            },
+        )));
+    let paint = session.core.play_for_test().unwrap().script_nav_paint();
+    let runner = session.core.live_runner().share();
     let barrier = Arc::new(std::sync::Barrier::new(2));
     MAP_ROUTE_BARRIER.with(|hook| *hook.borrow_mut() = Some(Arc::clone(&barrier)));
     let (ready, navs_locked) = std::sync::mpsc::channel();
@@ -118,8 +117,8 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
             ready.send(()).unwrap();
             barrier.wait();
             let _manual = arm.lock().unwrap();
-            // The frame must also release scenario before waiting on navs.
-            let _scenario = scenario.lock().unwrap();
+            // The frame must also release the runner before waiting on navs.
+            let _runner_lock = runner.lock_for_test();
         });
     });
     navs_locked
@@ -427,7 +426,7 @@ fn walkto_footer_adds_teleport_on_local_engine() {
 #[test]
 fn walkto_actions_enable_teleport_without_a_walk_target() {
     let world = open_world(3, 3);
-    let mut model = MapModel::default();
+    let mut model = WalkMap::new();
     let miss = Tile {
         x: 1000,
         z: 1001,
@@ -535,17 +534,14 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
 /// A peer frontend sets the durable global danger-zone grant, through a
 /// second service on the session's files; the session sees it once its own
 /// preferences re-read.
-fn peer_sets_danger_zones(
-    peer: &host_play::local_state::Preferences,
-    session: &Session,
-    enabled: bool,
-) {
+fn peer_sets_danger_zones(peer: &frontend_core::UiPreferences, session: &Session, enabled: bool) {
     crate::test_support::patiently(|| {
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             peer,
             frontend_core::NavPreference::AllowDangerZones,
-            Some(enabled),
+            enabled,
         )
+        .map(|()| enabled)
         .map(|_| ())
         .map_err(|error| error.to_string())
     })
@@ -560,7 +556,7 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
         super::GLOBAL_DANGER_WARNING,
         "Global danger-zone override is enabled."
     );
-    let _isolated = IsolatedEnv::enter("picker-durable-danger");
+    let _isolated = IsolatedStores::enter("picker-durable-danger");
     let mut ctx = crate::test_support::imgui_context();
     let world = open_world(3, 3);
 
@@ -654,7 +650,7 @@ fn picker_click_selects_a_walkable_tile() {
     s.walkto_open = true;
     // FirstUseEver WalkTo is 720×560 at the default imgui origin; the
     // canvas sits under the toolbar. A click in the window interior
-    // must select through MapModel — not pan, not miss the hit target.
+    // must select through the frontend map model — not pan or miss the hit target.
     assert!(
         click_to_tile(&world, (3220, 3220), 2.0, [100.0, 100.0], [200.0, 200.0], 0).is_some(),
         "lumbridge-centred 3x3 must be snappable"
@@ -671,7 +667,7 @@ fn picker_click_selects_a_walkable_tile() {
     let pending = s
         .map_model
         .pending()
-        .and_then(|sel| sel.target)
+        .and_then(|sel| sel.walk_target())
         .expect("click on the WalkTo canvas must snap a tile");
     assert_eq!(pending.level, 0);
     assert!(
@@ -1320,7 +1316,7 @@ fn compact_route_view_uses_the_same_clipped_leg_cache() {
     let route = test_route();
     let world = open_world_at((0, 0), 6, 1);
     let view = nav::producer::route_view(&world, &route).expect("route view");
-    let tiles = cached_remaining_path_view(view, RouteSource::Script, 2, Some(wt(2, 0)));
+    let tiles = cached_remaining_path_view(view, WalkRouteSource::Script, 2, Some(wt(2, 0)));
     assert_eq!(
         tiles.iter().map(|(tile, _)| *tile).collect::<Vec<_>>(),
         vec![wt(3, 0), wt(4, 0), wt(5, 0)],
@@ -1335,17 +1331,17 @@ fn route_cache_skips_completed_legs_and_stays_allocation_free_on_hit() {
     let _guard = super::lock_nav_statics();
     reset_route_cache();
     let route = test_route();
-    let tiles = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    let tiles = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(2, 0)));
     assert_eq!(
         tiles.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
         vec![wt(3, 0), wt(4, 0), wt(5, 0)],
         "here at a completed walk end must skip that leg"
     );
     assert_eq!(route_flatten_count(), 1);
-    let again = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(2, 0)));
+    let again = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(2, 0)));
     assert_eq!(again, tiles);
     assert_eq!(route_flatten_count(), 1, "cache hit must not flatten again");
-    let off_route = cached_remaining_path(&route, RouteSource::Manual, 1, Some(wt(80, 80)));
+    let off_route = cached_remaining_path(&route, WalkRouteSource::Manual, 1, Some(wt(80, 80)));
     assert_eq!(
         off_route, tiles,
         "off-route here must not re-show walked legs"
@@ -1396,7 +1392,7 @@ fn pending_selection_draws_no_dest_marker_until_a_walk_is_armed() {
         !picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
         "a pending selection must not draw the armed dest marker"
     );
-    s.walk_dest = Some(hit);
+    s.map_desk.set_walk_dest_for_test(Some(hit));
     assert!(
         picker_frame_colours(&mut ctx, &mut s, &world).contains(&dest_colour),
         "the armed walk destination draws its marker"

@@ -8,11 +8,12 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
+use crate::command::OperatorCommand;
+use crate::scripts::{CompiledCardId, ScriptChoice};
 use crate::scripts::{Scripts, SyncScope};
 use crate::selection::{profile_rows, BulkSkip, MarkedSelection, ProfileIdentity};
-use crate::session::OperatorSession;
-use crate::surface::SlotSurface;
-use crate::views::{FleetRow, Phase};
+use crate::session::{OperatorSession, Targets};
+use crate::views::FleetRow;
 
 const UNAVAILABLE: &str = "profile unavailable";
 
@@ -252,9 +253,10 @@ pub fn assign_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
     catalog_root: Option<&Path>,
 ) -> BulkReport {
+    let card = card.as_script();
     const LABEL: &str = "Assign";
     const DONE: &str = "assigned";
     let Resolved { names, gone } = resolve(selection, core);
@@ -276,7 +278,8 @@ pub fn assign_marked<Io>(
                     }));
                     BulkReport::new(LABEL, DONE, rows, None)
                 }
-                Err(reason) => {
+                Err(error) => {
+                    let reason = error.to_string();
                     rows.extend(
                         names
                             .iter()
@@ -380,7 +383,7 @@ impl RestartScope {
             let state = rows
                 .iter()
                 .find(|row| row.name() == name)
-                .map_or(script::RunState::Idle, |row| row.script());
+                .map_or(script::RunState::Idle, |row| row.script().to_script());
             if active(state) {
                 scope.interrupted.push(name.to_string());
             } else {
@@ -450,9 +453,10 @@ pub fn assign_and_restart_marked<Io>(
     selection: &MarkedSelection,
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
     catalog_root: Option<&Path>,
 ) {
+    let card = card.as_script();
     let Resolved { names, gone } = resolve(selection, core);
     assign_and_restart_names(&names, &gone, core, scripts, card, catalog_root);
 }
@@ -481,7 +485,8 @@ fn assign_and_restart_names<Io>(
                 root: catalog_root.map(Path::to_path_buf),
                 restart: true,
             };
-            if let Err(reason) = scripts.defer_pending_catalog_assignment(action) {
+            if let Err(error) = scripts.defer_pending_catalog_assignment(action) {
+                let reason = error.to_string();
                 for name in names {
                     scripts.tally_fail(name, &reason);
                 }
@@ -537,7 +542,7 @@ fn enqueue_assigned_restarts<Io>(
         }
     }
     if !stopping.is_empty() {
-        core.stop_scripts(&stopping);
+        let _ = core.submit_detached(OperatorCommand::StopScript, Targets::Profiles(&stopping));
     }
     scripts.admit_starts(core, catalog_root);
     scripts.publish_bulk();
@@ -633,92 +638,6 @@ fn fail_pending_catalog_assignment<Io>(
     let _ = core;
 }
 
-/// Log in every marked profile, loading the ones not loaded yet. A bot that
-/// is already logging in or logged in is skipped.
-pub fn login_marked<Io, S: SlotSurface<Io = Io>>(
-    selection: &MarkedSelection,
-    core: &mut OperatorSession<Io>,
-    surface: &mut S,
-) -> BulkReport {
-    const LABEL: &str = "Log in marked";
-    const DONE: &str = "logging in";
-    let Resolved { names, gone } = resolve(selection, core);
-    let mut rows = unavailable_rows(gone);
-    let mut eligible = Vec::new();
-    for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase());
-        let member = core.members().contains(&name);
-        match phase.filter(|_| member) {
-            Some(Phase::Ready) => rows.push(BulkRow::new(
-                name,
-                BulkOutcome::skipped("already logged in"),
-            )),
-            Some(
-                Phase::Preparing
-                | Phase::Waiting
-                | Phase::Queued
-                | Phase::Connecting
-                | Phase::Loading,
-            ) => rows.push(BulkRow::new(
-                name,
-                BulkOutcome::skipped("already logging in"),
-            )),
-            _ => {
-                if !member {
-                    core.load(&name, surface);
-                }
-                eligible.push(name);
-            }
-        }
-    }
-    if !eligible.is_empty() {
-        core.login_members(&eligible, surface);
-        rows.extend(
-            eligible
-                .into_iter()
-                .map(|name| BulkRow::new(name, BulkOutcome::Done)),
-        );
-    }
-    BulkReport::new(LABEL, DONE, rows, None)
-}
-
-/// Log out every marked profile that is logged in or logging in. A bot still
-/// waiting for its Start is cancelled with the logout.
-pub fn logout_marked<Io>(
-    selection: &MarkedSelection,
-    core: &mut OperatorSession<Io>,
-    scripts: &mut Scripts,
-) -> BulkReport {
-    const LABEL: &str = "Log out marked";
-    const DONE: &str = "logging out";
-    let Resolved { names, gone } = resolve(selection, core);
-    let mut rows = unavailable_rows(gone);
-    let mut eligible = Vec::new();
-    for name in names {
-        let phase = core.fleet_view().row(&name).map(|row| row.phase());
-        let member = core.members().contains(&name);
-        match phase.filter(|_| member) {
-            None | Some(Phase::Offline | Phase::LoggedOut | Phase::Failed) => {
-                rows.push(BulkRow::new(name, BulkOutcome::skipped("not logged in")))
-            }
-            Some(_) => eligible.push(name),
-        }
-    }
-    if !eligible.is_empty() {
-        for name in &eligible {
-            scripts.cancel_queued_as(name, "logged out");
-        }
-        scripts.publish_start_places(core);
-        core.logout_members(&eligible);
-        rows.extend(
-            eligible
-                .into_iter()
-                .map(|name| BulkRow::new(name, BulkOutcome::Done)),
-        );
-    }
-    BulkReport::new(LABEL, DONE, rows, None)
-}
-
 /// Freeze *Apply focused bot's settings to marked* for `card`: the parameters
 /// `source` (the focused bot) holds for the card, and the marked bots that
 /// would take them (already on the card, or unassigned — Apply assigns the
@@ -732,8 +651,9 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     core: &OperatorSession<Io>,
     scripts: &'a mut Scripts,
     source: &str,
-    card: &script::ScriptSel,
+    card: &ScriptChoice,
 ) -> Result<&'a SyncScope, String> {
+    let card = card.as_script();
     const LABEL: &str = "Apply to marked";
     scripts.clear_prepared_settings_sync();
     if selection.is_empty() {
@@ -741,15 +661,26 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     }
     match card {
         script::ScriptSel::Compiled(id) => {
-            scripts.prepare_compiled_settings_sync(core, source, *id, None)?;
+            scripts.prepare_compiled_settings_sync(
+                core,
+                source,
+                CompiledCardId::from_script(*id),
+                None,
+            )?;
         }
         script::ScriptSel::Loaded(card_source, lookup) => {
             let (name, path) = scripts
-                .js()
+                .library()
                 .get(*card_source, lookup)
                 .map(|card| (card.name.clone(), card.path.clone()))
                 .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;
-            scripts.prepare_settings_sync(core, source, *card_source, &name, &path);
+            scripts.prepare_settings_sync(
+                core,
+                source,
+                crate::scripts::CardSource::from_script(*card_source),
+                &name,
+                &path,
+            );
         }
     }
     let Resolved { names, gone } = resolve(selection, core);

@@ -672,6 +672,16 @@ pub fn format_background(n: usize) -> String {
     }
 }
 
+/// Whether the operator dismissed the background-bots notice for good.
+pub fn background_bots_acked(preferences: &crate::prefs::UiPreferences) -> bool {
+    host_play::background_bots_acked(preferences.inner())
+}
+
+/// Clear a banner line a failed background-bots acknowledgement left.
+pub fn clear_background_bots_ack_error(error: &mut Option<String>) {
+    host_play::clear_background_bots_ack_error(error);
+}
+
 /// The background-bots notice body: other profiles keep running, with the
 /// live meter.
 pub fn background_ack_text(others: usize, view: &ResourceView) -> String {

@@ -403,7 +403,9 @@ pub fn quest_colour(
     quests: &QuestCatalog,
     snapshot: SnapshotView<'_>,
 ) -> Option<QuestListStatus> {
-    quest_list_status(quests, &path.id, snapshot).map(|status| status.value)
+    // A draft Path can retain the selected quest's binding under its own ID.
+    let quest = path.progress.binding.0.strip_prefix("journal:")?;
+    quest_list_status(quests, quest, snapshot).map(|status| status.value)
 }
 
 pub fn resolve_colour(

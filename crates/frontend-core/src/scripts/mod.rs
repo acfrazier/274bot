@@ -11,8 +11,23 @@
 //! Operator-facing text is published as one [`Notice`] the front end shows
 //! on its message line, in call order (the last one wins).
 
+mod loadouts;
 mod native;
-pub use native::{NativeCommand, NativeDetail, NativeTarget, SchemaView};
+mod paint;
+pub mod paths;
+mod vocab;
+pub(crate) use loadouts::Refused;
+pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
+pub use native::{NativeDetail, SchemaView};
+pub use paint::{
+    map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
+    PaintFrame, PaintView,
+};
+pub use vocab::{
+    format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,
+    LoadStage, LoadedCard, OwnedSchema, SchemaRef, ScriptChoice, ScriptRunState, SettingView,
+    StatusView,
+};
 
 mod marked;
 mod parameter_edit;
@@ -27,10 +42,11 @@ pub use parameter_edit::{
 
 mod sync;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use api::identity::Settlement;
 pub use start_admit::START_ADMIT_PER_FRAME;
 use start_admit::{QueuedStart, StartAdmit, StartPermit};
 use start_tally::{Outcome, StartTally};
@@ -39,11 +55,16 @@ use api::hostlog::{Level, Source};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
+use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
-use crate::session::{ArmMirror, OperatorSession, ScriptStart, StartSettled};
-use crate::views::QueuePlace;
+use crate::session::{
+    ArmMirror, OperatorSession, ScriptAssignmentWrite, ScriptStart, StartSettled,
+};
+use crate::QueuePlace;
 
-pub use reload::{CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning};
+pub use reload::{
+    CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
+};
 pub use sync::{RestartPrompt, SyncReport, SyncScope};
 
 /// A card's parameters bound to the run they were edited for.
@@ -97,6 +118,7 @@ impl LiveSettings {
     }
 
     /// Present only after the native preparer has validated the complete bag.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn prepared(&self) -> Option<&script::native::PreparedConfig> {
         self.prepared.as_deref()
     }
@@ -352,6 +374,54 @@ pub(crate) enum StartKind {
     RestartSettings,
 }
 
+/// A Start rejected before or while admitting its script: the kind and the
+/// sentence the front end shows.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct ScriptStartError {
+    kind: ScriptStartErrorKind,
+    message: String,
+}
+
+/// The kind of a [`ScriptStartError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptStartErrorKind {
+    /// The Start was refused (no assignment, already active, missing card).
+    Refused,
+    /// The Start waits on another decision (uncommitted settings, a
+    /// blocked sync).
+    Waiting,
+    /// The script runtime could not load the card.
+    RuntimeLoad,
+}
+
+impl ScriptStartError {
+    fn refused(message: impl Into<String>) -> Self {
+        Self {
+            kind: ScriptStartErrorKind::Refused,
+            message: message.into(),
+        }
+    }
+
+    /// The kind of rejection.
+    pub fn kind(&self) -> ScriptStartErrorKind {
+        self.kind
+    }
+}
+
+impl From<script::StartLoadError> for ScriptStartError {
+    fn from(error: script::StartLoadError) -> Self {
+        let (kind, message) = match error {
+            script::StartLoadError::Refused(reason) => (ScriptStartErrorKind::Refused, reason),
+            script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
+            script::StartLoadError::RuntimeLoad(reason) => {
+                (ScriptStartErrorKind::RuntimeLoad, reason)
+            }
+        };
+        Self { kind, message }
+    }
+}
+
 /// A Start whose worker has not settled. Assignment changes only on Ready.
 #[derive(Debug, Clone)]
 enum PendingCard {
@@ -389,77 +459,274 @@ enum LogTo {
 /// Loaded cards remain borrowed from the library, so a Browse render does not
 /// clone source bytes or the whole card.
 #[derive(Debug, Clone, Copy)]
-pub enum BrowseCard<'a> {
+pub struct BrowseCard<'a>(BrowseCardKind<'a>);
+
+#[derive(Debug, Clone, Copy)]
+enum BrowseCardKind<'a> {
     Compiled(&'static script::native::CompiledCard),
     Loaded(&'a script::JsCard),
 }
 
 impl<'a> BrowseCard<'a> {
     pub fn name(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.name,
-            Self::Loaded(card) => card.name.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.name,
+            BrowseCardKind::Loaded(card) => card.name.as_str(),
         }
     }
 
     pub fn description(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.description,
-            Self::Loaded(card) => card.description.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.description,
+            BrowseCardKind::Loaded(card) => card.description.as_str(),
         }
     }
 
     pub fn category(self) -> &'a str {
-        match self {
-            Self::Compiled(card) => card.category,
-            Self::Loaded(card) => card.category.as_str(),
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.category,
+            BrowseCardKind::Loaded(card) => card.category.as_str(),
         }
     }
 
     pub fn tags(self) -> Option<&'a [String]> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => Some(&card.tags),
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => Some(&card.tags),
         }
     }
 
-    pub fn kind(self) -> script::ScriptKind {
-        match self {
-            Self::Compiled(_) => script::ScriptKind::Compiled,
-            Self::Loaded(card) => card.kind,
+    /// How the card runs.
+    pub fn kind(self) -> CardRuntime {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => CardRuntime::Compiled,
+            BrowseCardKind::Loaded(card) => CardRuntime::from_script(card.kind),
         }
     }
 
-    pub fn source(self) -> script::ScriptSource {
-        match self {
-            Self::Compiled(_) => script::ScriptSource::Builtin,
-            Self::Loaded(card) => card.source,
+    /// Where the card came from.
+    pub fn source(self) -> CardSource {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => CardSource::Builtin,
+            BrowseCardKind::Loaded(card) => CardSource::from_script(card.source),
         }
     }
 
     pub fn unloadable(self) -> Option<&'a str> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => card.unloadable.as_deref(),
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => card.unloadable.as_deref(),
         }
     }
 
-    pub fn loaded(self) -> Option<&'a script::JsCard> {
-        match self {
-            Self::Compiled(_) => None,
-            Self::Loaded(card) => Some(card),
+    /// The loaded JS card, if this is one.
+    pub fn loaded(self) -> Option<LoadedCard<'a>> {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            BrowseCardKind::Loaded(card) => Some(LoadedCard::new(card)),
         }
     }
 
-    pub fn selection(self) -> script::ScriptSel {
-        match self {
-            Self::Compiled(card) => script::ScriptSel::Compiled(card.id),
-            Self::Loaded(card) => script::ScriptSel::Loaded(card.source, card.identity_id()),
+    /// The compiled card's id, if this is one.
+    pub fn compiled_id(self) -> Option<CompiledCardId> {
+        match self.0 {
+            BrowseCardKind::Compiled(card) => Some(CompiledCardId::from_script(card.id)),
+            BrowseCardKind::Loaded(_) => None,
         }
+    }
+
+    /// The card as a picker choice.
+    pub fn selection(self) -> ScriptChoice {
+        ScriptChoice::from_script(match self.0 {
+            BrowseCardKind::Compiled(card) => script::ScriptSel::Compiled(card.id),
+            BrowseCardKind::Loaded(card) => {
+                script::ScriptSel::Loaded(card.source, card.identity_id())
+            }
+        })
     }
 }
 
+/// A click on a script's paint: a button, or a choice in one of its
+/// select rows, for the paint `generation` it was drawn from. A front end
+/// stages it for `ScriptPaintInput`.
+#[derive(Debug)]
+pub struct PaintInput(pub(crate) PaintAction);
+
+#[derive(Debug)]
+pub(crate) enum PaintAction {
+    Click {
+        id: String,
+        generation: u64,
+    },
+    Select {
+        key: String,
+        name: String,
+        generation: u64,
+    },
+}
+
+impl PaintInput {
+    /// A click on the paint button `id`.
+    pub fn click(id: String, generation: u64) -> Self {
+        Self(PaintAction::Click { id, generation })
+    }
+
+    /// The choice `name` in the paint select row `key`.
+    pub fn select(key: String, name: String, generation: u64) -> Self {
+        Self(PaintAction::Select {
+            key,
+            name,
+            generation,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedSetting {
+    pub(crate) profile: Option<String>,
+    pub(crate) selection: ScriptChoice,
+    pub(crate) field: String,
+    pub(crate) value: Value,
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedParameterValidation {
+    pub(crate) key: ParameterEditKey,
+    pub(crate) selection: ScriptChoice,
+    pub(crate) field: String,
+    pub(crate) baseline_text: String,
+    pub(crate) baseline_value: Option<Value>,
+    pub(crate) definition: script::SettingDef,
+    pub(crate) options: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogActionKind {
+    Fill,
+    Import,
+    Refresh,
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedCatalogAction {
+    pub(crate) kind: CatalogActionKind,
+    pub(crate) root: Option<PathBuf>,
+    pub(crate) path_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncCommandInput {
+    Prepare,
+    Apply,
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedSyncCommand {
+    pub(crate) command: SyncCommandInput,
+    pub(crate) source: String,
+    pub(crate) selection: ScriptChoice,
+}
+
+#[derive(Debug)]
+struct StagedReloadTarget {
+    source: CardSource,
+    lookup: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedParameterDiscard {
+    pub(crate) key: ParameterEditKey,
+}
+
+#[derive(Debug)]
+struct PendingStartCommand {
+    request: api::identity::RequestId,
+    subject: Subject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingApplicationWait {
+    CatalogFill,
+    CatalogImport,
+    Reload,
+    RestartSettings,
+}
+
+#[derive(Debug)]
+struct PendingApplicationCommand {
+    request: api::identity::RequestId,
+    wait: PendingApplicationWait,
+}
+
+#[derive(Debug)]
+struct PendingCatalogAssignmentCommand {
+    request: api::identity::RequestId,
+    subject: Subject,
+    profile: String,
+    selection: ScriptChoice,
+    catalog_root: Option<PathBuf>,
+    restart: bool,
+}
+
+/// One Assign or Assign & restart member: the row's request and subject,
+/// the bot, its card and the catalogue root the card resolves against.
+#[derive(Debug)]
+pub(crate) struct PendingAssignmentWrite {
+    pub(crate) request: api::identity::RequestId,
+    pub(crate) subject: Subject,
+    pub(crate) profile: String,
+    pub(crate) selection: ScriptChoice,
+    pub(crate) catalog_root: Option<PathBuf>,
+    pub(crate) restart: bool,
+}
+
+#[derive(Debug)]
+pub(crate) enum AssignmentCommandResult {
+    Done,
+    Operation(OperationId),
+    Later,
+    Skipped(crate::command::SkipReason),
+    Rejected(String),
+}
+
+#[derive(Debug)]
+struct TranspileEntry {
+    source: CardSource,
+    lookup: String,
+    requests: Vec<api::identity::RequestId>,
+}
+
 pub struct Scripts {
+    /// The Browse card both surfaces display.
+    browse_selection: Option<ScriptChoice>,
+    staged_browse_pick: Option<Option<ScriptChoice>>,
+    staged_cancel_reason: Option<&'static str>,
+    staged_file_path: Option<PathBuf>,
+    staged_paint_input: Option<PaintInput>,
+    staged_setting: Option<StagedSetting>,
+    staged_parameter_validation: Option<StagedParameterValidation>,
+    staged_catalog_action: Option<StagedCatalogAction>,
+    staged_defer_catalog: Option<PathBuf>,
+    staged_sync: Option<StagedSyncCommand>,
+    staged_start_catalog_root: Option<PathBuf>,
+    staged_reload_target: Option<StagedReloadTarget>,
+    staged_transpile_target: Option<(CardSource, String)>,
+    pending_catalog_assignment_commands: Vec<PendingCatalogAssignmentCommand>,
+    pending_assignment_writes: HashMap<OperationId, Vec<PendingAssignmentWrite>>,
+    restart_settings_failure: Option<String>,
+    staged_parameter_discard: Option<StagedParameterDiscard>,
+    transpile_queue: VecDeque<TranspileEntry>,
+    transpile_armed: bool,
+    transpile_done: usize,
+    transpile_total: usize,
+    transpile_all_request: Option<api::identity::RequestId>,
+    transpile_all_failure: Option<String>,
+    pending_start_commands: HashMap<String, Vec<PendingStartCommand>>,
+    pending_application_commands: Vec<PendingApplicationCommand>,
+    catalog_fill_update: Option<Result<(), String>>,
+    catalog_import_update: Option<(PathBuf, Result<usize, String>)>,
+    catalog_import_command_result: Option<Result<usize, String>>,
+    start_command_failures: Vec<(String, String)>,
     /// The card library: catalog, loaded files, transpile cache.
     js: script::JsLibrary,
     /// Legacy global per-card overrides (`script-settings.json`), claimed
@@ -468,7 +735,7 @@ pub struct Scripts {
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
-    pending_browse: HashMap<String, script::ScriptSel>,
+    pending_browse: HashMap<String, ScriptChoice>,
     /// Reused editor keys for the currently displayed profile and card.
     parameter_key_cache: Vec<ParameterEditKey>,
     parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
@@ -504,6 +771,35 @@ pub struct Scripts {
 impl Scripts {
     pub fn new(js: script::JsLibrary, legacy: script::ScriptSettingsStore) -> Self {
         Self {
+            browse_selection: None,
+            staged_browse_pick: None,
+            staged_cancel_reason: None,
+            staged_file_path: None,
+            staged_paint_input: None,
+            staged_setting: None,
+            staged_parameter_validation: None,
+            staged_catalog_action: None,
+            staged_defer_catalog: None,
+            staged_sync: None,
+            staged_start_catalog_root: None,
+            staged_parameter_discard: None,
+            transpile_queue: VecDeque::new(),
+            staged_reload_target: None,
+            staged_transpile_target: None,
+            pending_catalog_assignment_commands: Vec::new(),
+            pending_assignment_writes: HashMap::new(),
+            restart_settings_failure: None,
+            transpile_armed: false,
+            transpile_done: 0,
+            transpile_total: 0,
+            transpile_all_request: None,
+            transpile_all_failure: None,
+            pending_start_commands: HashMap::new(),
+            pending_application_commands: Vec::new(),
+            catalog_import_update: None,
+            catalog_import_command_result: None,
+            catalog_fill_update: None,
+            start_command_failures: Vec::new(),
             js,
             legacy,
             inject: None,
@@ -530,28 +826,577 @@ impl Scripts {
         }
     }
 
+    /// The shared Browse selection.
+    pub fn browse_selection(&self) -> Option<&ScriptChoice> {
+        self.browse_selection.as_ref()
+    }
+
+    /// Stage the Start-cancellation tally reason for the next command row.
+    pub fn stage_cancel_queued(&mut self, reason: &'static str) {
+        self.staged_cancel_reason = Some(reason);
+    }
+
+    pub(crate) fn take_staged_cancel_reason(&mut self) -> Option<&'static str> {
+        self.staged_cancel_reason.take()
+    }
+
+    /// Stage a Browse card for the next `PickBrowseCard` command.
+    pub fn stage_browse_pick(&mut self, selection: ScriptChoice) {
+        self.staged_browse_pick = Some(Some(selection));
+    }
+
+    /// Stage clearing the shared Browse card for the next `PickBrowseCard` command.
+    pub fn stage_browse_pick_clear(&mut self) {
+        self.staged_browse_pick = Some(None);
+    }
+
+    pub(crate) fn take_staged_browse_pick(&mut self) -> Option<Option<ScriptChoice>> {
+        self.staged_browse_pick.take()
+    }
+
+    pub(crate) fn pick_browse_card(&mut self, selection: Option<ScriptChoice>) {
+        self.browse_selection = selection;
+    }
+
+    /// Stage a local script path for `LoadScriptFile`.
+    pub fn stage_load_file(&mut self, path: PathBuf) {
+        self.staged_file_path = Some(path);
+    }
+
+    pub(crate) fn take_staged_file_path(&mut self) -> Option<PathBuf> {
+        self.staged_file_path.take()
+    }
+
+    /// Stage one script paint answer.
+    pub fn stage_paint_input(&mut self, input: PaintInput) {
+        self.staged_paint_input = Some(input);
+    }
+
+    pub(crate) fn take_staged_paint_input(&mut self) -> Option<PaintInput> {
+        self.staged_paint_input.take()
+    }
+
+    /// Stage one typed parameter value for a profile or legacy settings save.
+    pub fn stage_setting(
+        &mut self,
+        profile: Option<&str>,
+        selection: &ScriptChoice,
+        field: &str,
+        value: Value,
+    ) {
+        self.staged_setting = Some(StagedSetting {
+            profile: profile.map(str::to_owned),
+            selection: selection.duplicate(),
+            field: field.to_owned(),
+            value,
+        });
+    }
+
+    pub(crate) fn take_staged_setting(&mut self) -> Option<StagedSetting> {
+        self.staged_setting.take()
+    }
+
+    /// Stage the schema needed to validate the parameter editor's current
+    /// text when `EditParameterText` is submitted.
+    pub fn stage_parameter_validation(
+        &mut self,
+        key: ParameterEditKey,
+        selection: &ScriptChoice,
+        baseline_text: &str,
+        baseline_value: Option<Value>,
+        definition: SettingView<'_>,
+        options: &[String],
+    ) {
+        self.staged_parameter_validation = Some(StagedParameterValidation {
+            key,
+            selection: selection.duplicate(),
+            field: definition.id().to_owned(),
+            baseline_text: baseline_text.to_owned(),
+            baseline_value,
+            definition: definition.def().clone(),
+            options: options.to_vec(),
+        });
+    }
+
+    pub(crate) fn take_staged_parameter_validation(&mut self) -> Option<StagedParameterValidation> {
+        self.staged_parameter_validation.take()
+    }
+
+    /// Stage catalogue work for `ImportCatalog`.
+    pub fn stage_catalog_action(
+        &mut self,
+        kind: CatalogActionKind,
+        root: Option<PathBuf>,
+        path_file: PathBuf,
+    ) {
+        self.staged_catalog_action = Some(StagedCatalogAction {
+            kind,
+            root,
+            path_file,
+        });
+    }
+
+    pub(crate) fn take_staged_catalog_action(&mut self) -> Option<StagedCatalogAction> {
+        self.staged_catalog_action.take()
+    }
+
+    /// Stage the durable Not now marker path.
+    pub fn stage_defer_catalog(&mut self, path: PathBuf) {
+        self.staged_defer_catalog = Some(path);
+    }
+
+    pub(crate) fn take_staged_defer_catalog(&mut self) -> Option<PathBuf> {
+        self.staged_defer_catalog.take()
+    }
+
+    pub(crate) fn stage_sync_command(
+        &mut self,
+        command: SyncCommandInput,
+        source: &str,
+        selection: &ScriptChoice,
+    ) {
+        self.staged_sync = Some(StagedSyncCommand {
+            command,
+            source: source.to_owned(),
+            selection: selection.duplicate(),
+        });
+    }
+
+    pub(crate) fn take_staged_sync_command(&mut self) -> Option<StagedSyncCommand> {
+        self.staged_sync.take()
+    }
+
+    /// Stage the catalog root used by the next Start.
+    pub fn stage_start_catalog_root(&mut self, root: Option<PathBuf>) {
+        self.staged_start_catalog_root = root;
+    }
+
+    pub(crate) fn take_staged_start_catalog_root(&mut self) -> Option<PathBuf> {
+        self.staged_start_catalog_root.take()
+    }
+
+    pub fn stage_reload_target(&mut self, target: Option<(CardSource, String)>) {
+        self.staged_reload_target =
+            target.map(|(source, lookup)| StagedReloadTarget { source, lookup });
+    }
+
+    pub(crate) fn take_staged_reload_target(&mut self) -> Option<(CardSource, String)> {
+        self.staged_reload_target
+            .take()
+            .map(|target| (target.source, target.lookup))
+    }
+
+    pub fn stage_transpile_target(&mut self, source: CardSource, lookup: &str) {
+        self.staged_transpile_target = Some((source, lookup.to_owned()));
+    }
+
+    pub(crate) fn take_staged_transpile_target(&mut self) -> Option<(CardSource, String)> {
+        self.staged_transpile_target.take()
+    }
+
+    pub(crate) fn register_start_command(
+        &mut self,
+        profile: String,
+        request: api::identity::RequestId,
+        subject: Subject,
+    ) {
+        self.pending_start_commands
+            .entry(profile)
+            .or_default()
+            .push(PendingStartCommand { request, subject });
+    }
+
+    /// Stage the focused parameter edit for `DiscardParameterText`.
+    pub fn stage_parameter_discard(&mut self, key: ParameterEditKey) {
+        self.staged_parameter_discard = Some(StagedParameterDiscard { key });
+    }
+
+    pub(crate) fn take_staged_parameter_discard(&mut self) -> Option<StagedParameterDiscard> {
+        self.staged_parameter_discard.take()
+    }
+
+    pub(crate) fn await_application_command(
+        &mut self,
+        request: api::identity::RequestId,
+        wait: PendingApplicationWait,
+    ) {
+        self.pending_application_commands
+            .push(PendingApplicationCommand { request, wait });
+    }
+
+    pub(crate) fn defer_assignment_command(
+        &mut self,
+        request: api::identity::RequestId,
+        subject: Subject,
+        profile: String,
+        selection: ScriptChoice,
+        catalog_root: Option<PathBuf>,
+        restart: bool,
+    ) {
+        self.pending_catalog_assignment_commands
+            .push(PendingCatalogAssignmentCommand {
+                request,
+                subject,
+                profile,
+                selection,
+                catalog_root,
+                restart,
+            });
+    }
+
+    pub(crate) fn dispatch_assignment_command<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        command: PendingAssignmentWrite,
+    ) -> AssignmentCommandResult {
+        let PendingAssignmentWrite {
+            request,
+            subject,
+            profile,
+            selection,
+            catalog_root,
+            restart,
+        } = command;
+        if restart {
+            self.open_tally("Assign & restart");
+            self.tally_record(&profile, Outcome::Queued, LogTo::None);
+            self.publish_bulk();
+        }
+        if !restart && script_active(core, &profile) {
+            return AssignmentCommandResult::Skipped(crate::command::SkipReason::ScriptActive);
+        }
+        let selected_script = selection.as_script().clone();
+        let assignment = match self.assignment_for(&selected_script, catalog_root.as_deref()) {
+            Ok(Some(assignment)) => assignment,
+            Ok(None) => {
+                self.defer_assignment_command(
+                    request,
+                    subject,
+                    profile,
+                    selection,
+                    catalog_root,
+                    restart,
+                );
+                return AssignmentCommandResult::Later;
+            }
+            Err(reason) => {
+                if restart {
+                    self.fail_assignment_restart(&profile, &reason);
+                }
+                return AssignmentCommandResult::Rejected(reason);
+            }
+        };
+        self.clear_pending_browse(&profile);
+        let log_action = if restart {
+            "Assign & restart"
+        } else {
+            "Assign"
+        };
+        let write = if restart {
+            self.queue_assignment_with_mirror(
+                core,
+                &profile,
+                assignment,
+                log_action,
+                ArmMirror::script_assignment(),
+            )
+        } else {
+            self.queue_assignment(core, &profile, assignment, log_action)
+        };
+        match write {
+            Ok(Some(op)) if restart => {
+                self.pending_assignment_writes.entry(op).or_default().push(
+                    PendingAssignmentWrite {
+                        request,
+                        subject,
+                        profile,
+                        selection,
+                        catalog_root,
+                        restart: true,
+                    },
+                );
+                AssignmentCommandResult::Later
+            }
+            Ok(Some(op)) => AssignmentCommandResult::Operation(op),
+            Ok(None) if restart => {
+                self.start_assigned_command(
+                    core,
+                    PendingAssignmentWrite {
+                        request,
+                        subject,
+                        profile,
+                        selection,
+                        catalog_root,
+                        restart: true,
+                    },
+                );
+                AssignmentCommandResult::Later
+            }
+            Ok(None) => AssignmentCommandResult::Done,
+            Err(reason) => {
+                if restart {
+                    self.fail_assignment_restart(&profile, &reason);
+                }
+                AssignmentCommandResult::Rejected(reason)
+            }
+        }
+    }
+
+    pub(crate) fn queue_transpile_command(
+        &mut self,
+        request: api::identity::RequestId,
+        source: CardSource,
+        lookup: &str,
+    ) -> Result<bool, String> {
+        if self.js.get(source.to_script(), lookup).is_none() {
+            return Err(format!("unavailable: {lookup}"));
+        }
+        if self.card_is_prepared(source, lookup) {
+            return Ok(false);
+        }
+        self.enqueue_transpile(source, lookup.to_owned(), true, Some(request));
+        Ok(true)
+    }
+
+    pub(crate) fn queue_transpile_all_command(
+        &mut self,
+        request: api::identity::RequestId,
+    ) -> Result<bool, String> {
+        if self.transpile_all_request.is_some() {
+            return Err("transpile all is already pending".into());
+        }
+        let need = self.cards_needing_transpile();
+        if need.is_empty() {
+            return Ok(false);
+        }
+        self.transpile_all_request = Some(request);
+        self.transpile_all_failure = None;
+        if self.transpile_queue.is_empty() {
+            self.transpile_done = 0;
+        }
+        for (source, name) in need {
+            self.enqueue_transpile(source, name, false, None);
+        }
+        self.transpile_total = self.transpile_queue.len();
+        self.transpile_armed = true;
+        Ok(true)
+    }
+
+    pub fn transpile_front(&self) -> Option<(CardSource, &str)> {
+        self.transpile_queue
+            .front()
+            .map(|entry| (entry.source, entry.lookup.as_str()))
+    }
+
+    pub fn transpile_progress(&self) -> (usize, usize) {
+        (self.transpile_done, self.transpile_total)
+    }
+
+    fn enqueue_transpile(
+        &mut self,
+        source: CardSource,
+        lookup: String,
+        to_front: bool,
+        request: Option<api::identity::RequestId>,
+    ) {
+        if self.transpile_queue.is_empty() {
+            self.transpile_done = 0;
+            self.transpile_total = 0;
+        }
+        if let Some(index) = self
+            .transpile_queue
+            .iter()
+            .position(|entry| entry.source == source && entry.lookup == lookup)
+        {
+            if let Some(request) = request {
+                self.transpile_queue[index].requests.push(request);
+            }
+            if to_front && index != 0 {
+                if let Some(entry) = self.transpile_queue.remove(index) {
+                    self.transpile_queue.push_front(entry);
+                }
+            }
+        } else {
+            let mut requests = Vec::new();
+            if let Some(request) = request {
+                requests.push(request);
+            }
+            let entry = TranspileEntry {
+                source,
+                lookup,
+                requests,
+            };
+            if to_front {
+                self.transpile_queue.push_front(entry);
+            } else {
+                self.transpile_queue.push_back(entry);
+            }
+        }
+        self.transpile_total = self.transpile_queue.len();
+        self.transpile_armed = true;
+    }
+
+    pub fn take_catalog_import_update(&mut self) -> Option<(PathBuf, Result<usize, String>)> {
+        self.catalog_import_update.take()
+    }
+
+    /// The operator's card library and legacy per-card store at their
+    /// default paths. A missing library store is a first run; a refused or
+    /// corrupt one is returned as text for the front end to say out loud
+    /// (nothing is saved over a refused store).
+    pub fn open_default() -> (Self, Option<String>) {
+        let mut js = script::JsLibrary::new(script::default_js_store());
+        let restore_error = js.restore().err();
+        (
+            Self::new(js, script::ScriptSettingsStore::with_default_path()),
+            restore_error,
+        )
+    }
+
+    /// The card library, inside this crate.
+    pub(crate) fn library(&self) -> &script::JsLibrary {
+        &self.js
+    }
+
     /// The card library.
-    pub fn js(&self) -> &script::JsLibrary {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn js(&self) -> &script::JsLibrary {
         &self.js
     }
 
     /// The card library, for load/transpile.
-    pub fn js_mut(&mut self) -> &mut script::JsLibrary {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn js_mut(&mut self) -> &mut script::JsLibrary {
         &mut self.js
     }
 
-    /// Replace the card library (tests and session setup).
+    /// Replace the card library (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_js(&mut self, js: script::JsLibrary) {
         self.js = js;
     }
 
+    /// Use a fresh card library stored at `store` with its transpile cache
+    /// under `cache_root` (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn use_library_at(&mut self, store: PathBuf, cache_root: PathBuf) {
+        self.js = script::JsLibrary::with_cache(store, cache_root);
+    }
+
     /// Replace the legacy global per-card store (tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_legacy(&mut self, legacy: script::ScriptSettingsStore) {
         self.legacy = legacy;
     }
 
+    /// The loaded card `name` (a File card's lookup is its path).
+    pub fn card(&self, source: CardSource, name: &str) -> Option<LoadedCard<'_>> {
+        self.js.get(source.to_script(), name).map(LoadedCard::new)
+    }
+
+    /// Every loaded card, in library order.
+    pub fn cards(&self) -> impl ExactSizeIterator<Item = LoadedCard<'_>> + '_ {
+        self.js.cards().iter().map(LoadedCard::new)
+    }
+
+    /// Whether the library holds any card from `source`.
+    pub fn has_cards_from(&self, source: CardSource) -> bool {
+        let source = source.to_script();
+        self.js.cards().iter().any(|card| card.source == source)
+    }
+
+    /// The recorded load failure for a card identity key.
+    pub fn load_failure(&self, identity_key: &str) -> Option<LoadFailureView<'_>> {
+        self.js.load_failure(identity_key).map(LoadFailureView::new)
+    }
+
+    /// Every recorded load failure.
+    pub fn load_failures(&self) -> impl Iterator<Item = LoadFailureView<'_>> + '_ {
+        self.js
+            .load_failures()
+            .into_iter()
+            .map(LoadFailureView::new)
+    }
+
+    /// How many load failures are recorded.
+    pub fn load_failure_count(&self) -> usize {
+        self.js.load_failures().len()
+    }
+
+    /// The recorded load failures as named, copyable lines.
+    pub fn named_failure_output(&self) -> String {
+        self.js.named_failure_output()
+    }
+
+    /// Loaded cards whose JavaScript is not yet prepared, by lookup.
+    pub fn cards_needing_transpile(&self) -> Vec<(CardSource, String)> {
+        self.js
+            .cards_needing_transpile()
+            .into_iter()
+            .map(|(source, name)| (CardSource::from_script(source), name))
+            .collect()
+    }
+
+    /// Whether a loaded card's JavaScript is prepared.
+    pub fn card_is_prepared(&self, source: CardSource, name: &str) -> bool {
+        self.js.js_is_ready(source.to_script(), name)
+    }
+
+    /// Load a local JS/TS file into the library (registering a picker card
+    /// and persisting the library store). Returns the loaded card.
+    pub(crate) fn load_file(&mut self, path: &Path) -> Result<LoadedCard<'_>, String> {
+        let card = self.js.load(path)?;
+        let lookup = card.identity_id();
+        self.js
+            .get(card.source, &lookup)
+            .map(LoadedCard::new)
+            .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
+    }
+
+    /// Load one exact in-tree example and return its canonical File-card identity.
+    pub fn load_live_example_identity(&mut self, file_name: &str) -> Result<String, String> {
+        let path = script::live_example_path(file_name)
+            .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+        let loaded = self
+            .js
+            .load(&path)
+            .map_err(|error| format!("load {file_name}: {error}"))?;
+        let identity = loaded.identity_id();
+        self.js
+            .get(script::ScriptSource::File, &identity)
+            .map(|_| identity.clone())
+            .ok_or_else(|| format!("file example {file_name} missing after identity load"))
+    }
+
+    /// Same-folder `./Foo.js` sibling modules a loaded card imports, read
+    /// for an isolate Start.
+    pub fn card_siblings(
+        &self,
+        source: CardSource,
+        lookup: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        let card = self
+            .js
+            .get(source.to_script(), lookup)
+            .ok_or_else(|| format!("unavailable: {lookup}"))?;
+        host_play::live_start::card_siblings(&self.js, card)
+    }
+
+    /// Write one legacy global per-card override and save the store.
+    pub(crate) fn set_legacy_value(
+        &mut self,
+        source: CardSource,
+        name: &str,
+        id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        self.legacy.set_value(source.to_script(), name, id, value);
+        self.legacy.save()
+    }
+
     /// Disjoint library, legacy store and inject bag for live Start.
-    pub fn live_start_parts(
+    #[cfg(feature = "live-harness")]
+    pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
         &mut script::JsLibrary,
@@ -563,12 +1408,13 @@ impl Scripts {
 
     /// Legacy global per-card overrides.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn legacy(&self) -> &script::ScriptSettingsStore {
+    pub(crate) fn legacy(&self) -> &script::ScriptSettingsStore {
         &self.legacy
     }
 
-    /// Legacy global per-card overrides, for writes.
-    pub fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
+    /// Legacy global per-card overrides, for writes (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
         &mut self.legacy
     }
 
@@ -602,11 +1448,12 @@ impl Scripts {
         self.sync.pending_restart_prompt()
     }
 
-    pub fn dismiss_restart_prompt(&mut self) {
+    pub(crate) fn dismiss_restart_prompt(&mut self) {
         self.sync.dismiss_restart_prompt();
     }
 
-    pub fn restart_required_for(&self, profile: &str, selection: &script::ScriptSel) -> bool {
+    pub fn restart_required_for(&self, profile: &str, selection: &ScriptChoice) -> bool {
+        let selection = selection.as_script();
         self.sync
             .restart_card(profile)
             .is_some_and(|required| required == selection)
@@ -620,7 +1467,7 @@ impl Scripts {
         self.sync.restart_generation()
     }
 
-    pub fn restart_pending_settings<Io>(
+    pub(crate) fn restart_pending_settings<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         catalog_root: Option<&Path>,
@@ -783,13 +1630,10 @@ impl Scripts {
         self.catalog_filled
     }
 
-    pub fn mark_catalog_filled(&mut self) {
-        self.catalog_filled = true;
-    }
-
+    #[cfg(test)]
     /// Queue the catalog's first source-only scan once per root. The shared
     /// WorkAdmission worker performs all registry and source-file reads.
-    pub fn fill_catalog_once(&mut self, root: Option<&Path>) {
+    pub(crate) fn fill_catalog_once(&mut self, root: Option<&Path>) {
         let Some(root) = root else {
             return;
         };
@@ -806,31 +1650,57 @@ impl Scripts {
     pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
         script::compiled_cards()
             .iter()
-            .map(BrowseCard::Compiled)
-            .chain(self.js.cards().iter().map(BrowseCard::Loaded))
+            .map(|card| BrowseCard(BrowseCardKind::Compiled(card)))
+            .chain(
+                self.js
+                    .cards()
+                    .iter()
+                    .map(|card| BrowseCard(BrowseCardKind::Loaded(card))),
+            )
     }
 
     // ---- assignment and Browse selection -------------------------------
 
     /// `profile`'s last successful assignment (as saved, staged edits
     /// included).
-    pub fn assignment<Io>(core: &OperatorSession<Io>, profile: &str) -> Option<ScriptAssignment> {
+    pub(crate) fn assignment<Io>(
+        core: &OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<ScriptAssignment> {
         core.vault()
             .and_then(|v| v.get(profile))
             .and_then(|p| p.settings.script_assignment.clone())
     }
 
-    /// The card a profile's script heading names: its pending Browse
-    /// selection, else its last successful assignment.
-    pub fn heading<Io>(
-        &self,
+    /// The display name of `profile`'s last successful assignment.
+    pub fn assignment_name<'a, Io>(
+        core: &'a OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<&'a str> {
+        core.vault()
+            .and_then(|v| v.get(profile))
+            .and_then(|p| p.settings.script_assignment.as_ref())
+            .map(|a| a.display_name.as_str())
+    }
+
+    /// `profile`'s last successful assignment (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn profile_assignment<Io>(
         core: &OperatorSession<Io>,
         profile: &str,
-    ) -> Option<script::ScriptSel> {
+    ) -> Option<ScriptAssignment> {
+        Self::assignment(core, profile)
+    }
+
+    /// The card a profile's script heading names: its pending Browse
+    /// selection, else its last successful assignment.
+    pub fn heading<Io>(&self, core: &OperatorSession<Io>, profile: &str) -> Option<ScriptChoice> {
         if let Some(sel) = self.pending_browse.get(profile) {
-            return Some(sel.clone());
+            return Some(sel.duplicate());
         }
-        Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a))
+        Self::assignment(core, profile)
+            .and_then(|a| sel_from_assignment(&a))
+            .map(ScriptChoice::from_script)
     }
 
     /// Whether `profile`'s Browse selection differs from its assignment.
@@ -840,15 +1710,15 @@ impl Scripts {
         };
         match Self::assignment(core, profile) {
             None => true,
-            Some(asg) => sel_from_assignment(&asg).as_ref() != Some(pending),
+            Some(asg) => sel_from_assignment(&asg).as_ref() != Some(pending.as_script()),
         }
     }
 
-    pub fn set_pending_browse(&mut self, profile: &str, sel: script::ScriptSel) {
+    pub(crate) fn set_pending_browse(&mut self, profile: &str, sel: ScriptChoice) {
         self.pending_browse.insert(profile.to_string(), sel);
     }
 
-    pub fn pending_browse(&self, profile: &str) -> Option<&script::ScriptSel> {
+    pub fn pending_browse(&self, profile: &str) -> Option<&ScriptChoice> {
         self.pending_browse.get(profile)
     }
 
@@ -884,13 +1754,41 @@ impl Scripts {
 
     /// Save `profile`'s last successful assignment. Re-starting the same
     /// card writes nothing.
-    pub fn persist_assignment<Io>(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn persist_assignment<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
         assignment: ScriptAssignment,
     ) -> bool {
         self.persist_assignment_with_action(core, profile, assignment, "assignment")
+    }
+
+    pub(crate) fn queue_assignment<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        assignment: ScriptAssignment,
+        log_action: &'static str,
+    ) -> Result<Option<OperationId>, String> {
+        self.queue_assignment_with_mirror(core, profile, assignment, log_action, ArmMirror::none())
+    }
+
+    fn queue_assignment_with_mirror<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        assignment: ScriptAssignment,
+        log_action: &'static str,
+        mirror: ArmMirror,
+    ) -> Result<Option<OperationId>, String> {
+        if Self::assignment(core, profile).as_ref() == Some(&assignment) {
+            return Ok(None);
+        }
+        self.upsert_profile_settings(core, profile, mirror, log_action, |settings| {
+            settings.script_assignment = Some(assignment);
+        })
+        .map(Some)
     }
 
     pub(crate) fn persist_assignment_with_action<Io>(
@@ -900,16 +1798,11 @@ impl Scripts {
         assignment: ScriptAssignment,
         log_action: &'static str,
     ) -> bool {
-        if Self::assignment(core, profile).as_ref() == Some(&assignment) {
-            return true;
-        }
-        self.upsert_profile_settings(core, profile, ArmMirror::none(), log_action, |settings| {
-            settings.script_assignment = Some(assignment);
-        })
-        .is_ok()
+        self.queue_assignment(core, profile, assignment, log_action)
+            .is_ok()
     }
 
-    pub fn mark_assignment_unavailable<Io>(
+    pub(crate) fn mark_assignment_unavailable<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
@@ -1012,11 +1905,13 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
+        let schema = schema.defs();
+        let source = source.to_script();
         let key = script::card_identity_key(source, path, name);
         let overrides = self.profile_overrides(core, profile, &key, name);
         self.run_bag(core, profile, schema, &overrides)
@@ -1114,10 +2009,12 @@ impl Scripts {
     /// The legacy global bag for a card (no profile focused).
     pub fn legacy_bag(
         &self,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
-        schema: &[script::SettingDef],
+        schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
+        let schema = schema.defs();
+        let source = source.to_script();
         self.legacy
             .merged_bag(source, name, schema, self.inject.as_ref())
     }
@@ -1128,16 +2025,17 @@ impl Scripts {
     /// the result arrives as a [`SettingsWrite`]. A prepared bulk sync from
     /// this profile is dropped: its snapshot no longer matches.
     #[allow(clippy::too_many_arguments)]
-    pub fn set_profile_setting<Io>(
+    pub(crate) fn set_profile_setting<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        source: script::ScriptSource,
+        source: CardSource,
         name: &str,
         path: &Path,
         id: &str,
         value: Value,
     ) -> Result<OperationId, String> {
+        let source = source.to_script();
         let key = script::card_identity_key(source, path, name);
         self.claim_legacy_for(core, profile, &key, name);
         let mut bag = core
@@ -1216,12 +2114,12 @@ impl Scripts {
 
     /// Drop a queued-but-not-yet-admitted Start. Returns whether a place
     /// was removed. Already-dispatched Starts are stopped through the host.
-    pub fn cancel_queued(&mut self, profile: &str) -> bool {
+    pub(crate) fn cancel_queued(&mut self, profile: &str) -> bool {
         self.cancel_queued_as(profile, "cancelled")
     }
 
     /// Drop a waiting Start and record `reason` in the running Start tally.
-    pub fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
+    pub(crate) fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
         let pending_marked = self
             .cancel_pending_catalog_assignment(Some(profile))
             .is_some();
@@ -1309,46 +2207,56 @@ impl Scripts {
         }
     }
 
+    #[cfg(test)]
     /// Start `profile` on its last successful assignment.
-    pub fn start_profile<Io>(
+    pub(crate) fn start_profile<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
         catalog_root: Option<&Path>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
         if script_active(core, profile) {
-            return Ok(());
+            return Ok(None);
         }
         let sel = Self::assignment(core, profile)
             .and_then(|a| sel_from_assignment(&a))
-            .ok_or_else(|| "no assignment".to_string())?;
+            .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(|error| error.to_string())
+            .map_err(ScriptStartError::from)
     }
 
-    /// Operator Start on `profile`: its pending Browse selection, else the
-    /// front end's `heading`, else its assignment. Another profile's draft
-    /// never reaches this Start. Refused while the profile's script is
-    /// active.
-    pub fn start_selected<Io>(
+    /// Operator Start on `profile`: its pending Browse selection, then the
+    /// shared Browse selection, then the front end's heading, then its
+    /// assignment. Another profile's draft never reaches this Start.
+    /// Refused while the profile's script is active.
+    pub(crate) fn start_selected<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        heading: Option<&script::ScriptSel>,
+        heading: Option<&ScriptChoice>,
         catalog_root: Option<&Path>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
+        let heading = heading.map(ScriptChoice::as_script);
         if script_active(core, profile) {
-            return Err("script already active: stop it first".into());
+            return Err(ScriptStartError::refused(
+                "script already active: stop it first",
+            ));
         }
         let sel = self
             .pending_browse
             .get(profile)
-            .cloned()
+            .map(|sel| sel.as_script().clone())
+            .or_else(|| {
+                self.browse_selection
+                    .as_ref()
+                    .map(ScriptChoice::as_script)
+                    .cloned()
+            })
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
-            .ok_or_else(|| "no assignment".to_string())?;
+            .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(|error| error.to_string())
+            .map_err(ScriptStartError::from)
     }
 
     /// The loaded card `(source, lookup)` names, if it can start. A file
@@ -1387,7 +2295,7 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<(), script::StartLoadError> {
+    ) -> Result<Option<OperationId>, script::StartLoadError> {
         if self.parameter_edit_blocks_start(profile) {
             return Err(script::StartLoadError::Waiting(
                 "settings edit is uncommitted or its save has not settled".into(),
@@ -1406,7 +2314,7 @@ impl Scripts {
         }
         let from_queue = self.admit.leave(profile).is_some();
         match &result {
-            Ok(()) => self.credit_queue_outcome(from_queue, profile, Ok(())),
+            Ok(_) => self.credit_queue_outcome(from_queue, profile, Ok(())),
             Err(error) => self.credit_queue_outcome(from_queue, profile, Err(&error.to_string())),
         }
         result
@@ -1420,13 +2328,17 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<(), script::StartLoadError> {
+    ) -> Result<Option<OperationId>, script::StartLoadError> {
         match sel {
             script::ScriptSel::Compiled(id) => {
                 let bag = self
-                    .compiled_bag(core, profile, *id)
+                    .compiled_bag(core, profile, CompiledCardId::from_script(*id))
                     .map_err(script::StartLoadError::Refused)?;
-                core.start_script(profile, ScriptStart::compiled(*id, bag), None)?;
+                let op = core.start_script(
+                    profile,
+                    ScriptStart::compiled(CompiledCardId::from_script(*id), bag),
+                    None,
+                )?;
                 self.starts.insert(
                     profile.to_string(),
                     PendingStart {
@@ -1435,7 +2347,7 @@ impl Scripts {
                         tallied,
                     },
                 );
-                Ok(())
+                Ok(Some(op))
             }
             script::ScriptSel::Loaded(..) => {
                 if !wall_member(core, profile) {
@@ -1452,6 +2364,7 @@ impl Scripts {
                     )));
                 }
                 self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
+                    .map(|()| None)
             }
         }
     }
@@ -1461,18 +2374,24 @@ impl Scripts {
     /// permit (at most [`START_ADMIT_PER_FRAME`] in this click). Active
     /// members are skipped. The running tally is shown; a member whose setup
     /// fails later moves from started to failed.
-    pub fn start_all<Io>(&mut self, core: &mut OperatorSession<Io>, catalog_root: Option<&Path>) {
+    pub(crate) fn start_all<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        catalog_root: Option<&Path>,
+    ) -> Vec<String> {
         let members = core.members().to_vec();
         if members.is_empty() {
             self.show("Start all: no wall members");
-            return;
+            return Vec::new();
         }
         if let Some(root) = catalog_root {
             self.admit_catalog = Some(root.to_path_buf());
         }
         self.open_tally("Start all");
+        let mut accepted = Vec::new();
         for name in members {
-            if self.admit.contains(&name) {
+            if self.admit.contains(&name) || self.has_start_preparation(&name) {
+                accepted.push(name);
                 continue;
             }
             if script_active(core, &name) {
@@ -1484,12 +2403,14 @@ impl Scripts {
                 self.tally_fail(&name, "no assignment");
                 continue;
             };
-            if let Err(error) = self.queue_start(core, &name, sel.clone(), Some(sel)) {
-                self.tally_fail(&name, &error);
+            match self.queue_start(core, &name, sel.clone(), Some(sel)) {
+                Ok(()) => accepted.push(name),
+                Err(error) => self.tally_fail(&name, &error),
             }
         }
         self.admit_starts(core, catalog_root);
         self.publish_bulk();
+        accepted
     }
 
     /// Enqueue `profile` for a paced Start in the running tally (opened by
@@ -1541,12 +2462,20 @@ impl Scripts {
         self.publish_start_places(core);
     }
 
+    #[cfg(test)]
     /// Stop every member's script (and any other running slot), including a
     /// slot still reaping a reload whose replacement Start is queued: that
     /// Start is dropped. Queued-but-not-yet-admitted Starts are cancelled.
     /// Any reload in preparation or awaiting confirmation is cancelled.
     /// Returns how many were stopped.
-    pub fn stop_all<Io>(&mut self, core: &mut OperatorSession<Io>) -> usize {
+    pub(crate) fn stop_all<Io>(&mut self, core: &mut OperatorSession<Io>) -> usize {
+        self.stop_all_with_receipt(core).0
+    }
+
+    pub(crate) fn stop_all_with_receipt<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+    ) -> (usize, Option<OperationId>) {
         let cancelled = self.admit.drain();
         for entry in &cancelled {
             self.tally_record(
@@ -1573,27 +2502,409 @@ impl Scripts {
             self.publish_bulk();
         }
         self.publish_start_places(core);
-        if core.play().is_none() {
-            return 0;
-        }
-        let names = slot_names(core);
-        let (_, stopped) = core.stop_scripts(&names);
+        let (stopped, operation) = if core.play().is_none() {
+            (0, None)
+        } else {
+            let names = slot_names(core);
+            let (operation, stopped) = core.stop_scripts(&names);
+            (stopped, Some(operation))
+        };
         self.reload.invalidate();
         let report = format!("Stop all: stopped {stopped}");
-        if self.last_bulk_report.as_deref() == Some(report.as_str()) {
-            return stopped;
+        if self.last_bulk_report.as_deref() != Some(report.as_str()) {
+            self.last_bulk_report = Some(report);
+            if stopped > 0 || cancelled_any {
+                self.clear_notice();
+            }
         }
-        self.last_bulk_report = Some(report);
-        if stopped > 0 || cancelled_any {
-            self.clear_notice();
-        }
-        stopped
+        (stopped, operation)
     }
 
     /// The running Start all / marked-Start report, or the last Stop all
     /// report when that came later.
     pub fn last_bulk_report(&self) -> Option<&str> {
         self.last_bulk_report.as_deref()
+    }
+
+    fn pump_transpile_queue<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        let settled = if let Some((source, lookup, result)) = self.take_transpile_result() {
+            let index = self
+                .transpile_queue
+                .iter()
+                .position(|entry| entry.source == source && entry.lookup == lookup);
+            if let Some(entry) = index.and_then(|index| self.transpile_queue.remove(index)) {
+                self.finish_transpile_entry(core, entry, result);
+            }
+            true
+        } else {
+            false
+        };
+        let armed = std::mem::replace(&mut self.transpile_armed, false);
+        if armed && !settled && !self.transpile_pending() {
+            if let Some(entry) = self.transpile_queue.pop_front() {
+                match self.request_transpile(entry.source, &entry.lookup) {
+                    Ok(()) => self.transpile_queue.push_front(entry),
+                    Err(reason) => self.finish_transpile_entry(core, entry, Err(reason)),
+                }
+            }
+        }
+        if self.transpile_queue.is_empty() {
+            if let Some(request) = self.transpile_all_request.take() {
+                let (terminal, detail) = match self.transpile_all_failure.take() {
+                    Some(detail) => (
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                        Some(detail),
+                    ),
+                    None => (Settlement::Completed(Completion::Done), None),
+                };
+                core.settle_later(request, Subject::Application, terminal, detail.as_deref());
+                self.transpile_done = 0;
+                self.transpile_total = 0;
+            }
+        } else {
+            self.transpile_armed = true;
+        }
+    }
+
+    fn finish_transpile_entry<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        entry: TranspileEntry,
+        result: Result<(), TranspileError>,
+    ) {
+        self.transpile_done = self.transpile_done.saturating_add(1);
+        let (terminal, detail) = match result {
+            Ok(()) => (Settlement::Completed(Completion::Done), None),
+            Err(error) => {
+                let reason = error.to_string();
+                self.show(format!("Transpile {}: {reason}", entry.lookup));
+                if self.transpile_all_request.is_some() && self.transpile_all_failure.is_none() {
+                    self.transpile_all_failure = Some(reason.clone());
+                }
+                (
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                    Some(reason),
+                )
+            }
+        };
+        for request in entry.requests {
+            core.settle_later(
+                request,
+                Subject::Application,
+                terminal.clone(),
+                detail.as_deref(),
+            );
+        }
+    }
+
+    fn retain_catalog_fill_result(&mut self) {
+        if self.catalog_fill_update.is_none() {
+            self.catalog_fill_update = self
+                .take_catalog_fill_result()
+                .map(|result| result.map_err(|error| error.to_string()));
+        }
+    }
+
+    fn settle_pending_catalog_assignment_commands<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        if self.pending_catalog_assignment_commands.is_empty() || self.catalog_work_pending() {
+            return;
+        }
+        self.retain_catalog_fill_result();
+        let pending = std::mem::take(&mut self.pending_catalog_assignment_commands);
+        for command in pending {
+            let catalog_failure = self
+                .catalog_fill_update
+                .as_ref()
+                .and_then(|result| result.as_ref().err())
+                .cloned();
+            if let Some(reason) = catalog_failure {
+                if command.restart {
+                    self.fail_assignment_restart(&command.profile, &reason);
+                }
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                    Some(&reason),
+                );
+                continue;
+            }
+            let root = command
+                .catalog_root
+                .clone()
+                .or_else(|| self.catalog_root.clone());
+            let selection = command.selection.as_script().clone();
+            let assignment = match self.assignment_for(&selection, root.as_deref()) {
+                Ok(Some(assignment)) => assignment,
+                Ok(None) => {
+                    self.pending_catalog_assignment_commands.push(command);
+                    continue;
+                }
+                Err(reason) => {
+                    if command.restart {
+                        self.fail_assignment_restart(&command.profile, &reason);
+                    }
+                    core.settle_later(
+                        command.request,
+                        command.subject,
+                        Settlement::Failed(CommandFailure::Rejected(
+                            crate::command::Rejection::StartRefused,
+                        )),
+                        Some(&reason),
+                    );
+                    continue;
+                }
+            };
+            self.clear_pending_browse(&command.profile);
+            let log_action = if command.restart {
+                "Assign & restart"
+            } else {
+                "Assign"
+            };
+            match self.queue_assignment_with_mirror(
+                core,
+                &command.profile,
+                assignment,
+                log_action,
+                ArmMirror::script_assignment(),
+            ) {
+                Ok(Some(op)) => self.pending_assignment_writes.entry(op).or_default().push(
+                    PendingAssignmentWrite {
+                        request: command.request,
+                        subject: command.subject,
+                        profile: command.profile,
+                        selection: command.selection,
+                        catalog_root: command.catalog_root,
+                        restart: command.restart,
+                    },
+                ),
+                Ok(None) if command.restart => self.start_assigned_command(
+                    core,
+                    PendingAssignmentWrite {
+                        request: command.request,
+                        subject: command.subject,
+                        profile: command.profile,
+                        selection: command.selection,
+                        catalog_root: command.catalog_root,
+                        restart: true,
+                    },
+                ),
+                Ok(None) => core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Completed(Completion::Done),
+                    None,
+                ),
+                Err(reason) => {
+                    if command.restart {
+                        self.fail_assignment_restart(&command.profile, &reason);
+                    }
+                    core.settle_later(
+                        command.request,
+                        command.subject,
+                        Settlement::Failed(CommandFailure::Rejected(
+                            crate::command::Rejection::VaultRefused,
+                        )),
+                        Some(&reason),
+                    );
+                }
+            }
+        }
+    }
+
+    fn settle_assignment_write<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        write: ScriptAssignmentWrite,
+    ) {
+        let Some(commands) = self.pending_assignment_writes.remove(&write.op()) else {
+            return;
+        };
+        let failure = if write.result().is_failed() {
+            Some(
+                write
+                    .result()
+                    .error()
+                    .unwrap_or("profile assignment write failed"),
+            )
+        } else if write.result().is_superseded() {
+            Some("profile assignment was superseded")
+        } else {
+            None
+        };
+        for command in commands {
+            if let Some(reason) = failure {
+                if command.restart {
+                    self.fail_assignment_restart(&command.profile, reason);
+                }
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                    Some(reason),
+                );
+            } else if command.restart {
+                self.start_assigned_command(core, command);
+            } else {
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Completed(Completion::Done),
+                    None,
+                );
+            }
+        }
+    }
+
+    fn fail_assignment_restart(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Failed(reason.to_owned()), LogTo::None);
+        self.publish_bulk();
+    }
+
+    fn start_assigned_command<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        command: PendingAssignmentWrite,
+    ) {
+        let state = core.play().map_or(script::RunState::Idle, |play| {
+            play.script_state(&command.profile)
+        });
+        let stopping = matches!(
+            state,
+            script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+        );
+        if stopping {
+            core.stop_script(&command.profile);
+        }
+        match self.queue_restart(
+            core,
+            &command.profile,
+            command.selection.as_script().clone(),
+            stopping || state == script::RunState::Stopping,
+        ) {
+            Ok(()) => {
+                self.register_start_command(command.profile, command.request, command.subject);
+                self.admit_starts(core, command.catalog_root.as_deref());
+            }
+            Err(reason) => {
+                self.fail_assignment_restart(&command.profile, &reason);
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                    Some(&reason),
+                );
+            }
+        }
+    }
+
+    fn settle_pending_application_commands<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        self.retain_catalog_fill_result();
+        // Only an ImportCatalog row collects the import receipt; a request
+        // made without one keeps it for its caller.
+        let import_pending = self
+            .pending_application_commands
+            .iter()
+            .any(|pending| pending.wait == PendingApplicationWait::CatalogImport);
+        if let Some((root, result)) = import_pending
+            .then(|| self.take_catalog_import_result())
+            .flatten()
+        {
+            let result = result.map_err(|error| error.to_string());
+            self.catalog_import_command_result = Some(result.clone());
+            self.catalog_import_update = Some((root, result));
+        }
+        let pending = std::mem::take(&mut self.pending_application_commands);
+        for command in pending {
+            let result = match command.wait {
+                PendingApplicationWait::CatalogFill => {
+                    self.catalog_fill_update
+                        .as_ref()
+                        .map(|result| match result {
+                            Ok(()) => (Settlement::Completed(Completion::Done), None),
+                            Err(reason) => (
+                                Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                                Some(reason.clone()),
+                            ),
+                        })
+                }
+                PendingApplicationWait::CatalogImport => self
+                    .catalog_import_command_result
+                    .as_ref()
+                    .map(|result| match result {
+                        Ok(_) => (Settlement::Completed(Completion::Done), None),
+                        Err(reason) => (
+                            Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                            Some(reason.clone()),
+                        ),
+                    }),
+                PendingApplicationWait::Reload => self.reload_outcome().map(|outcome| {
+                    outcome.failure().map_or_else(
+                        || (Settlement::Completed(Completion::Done), None),
+                        |reason| {
+                            (
+                                Settlement::Failed(CommandFailure::Failed(FailureKind::JobFailed)),
+                                Some(reason.to_owned()),
+                            )
+                        },
+                    )
+                }),
+                PendingApplicationWait::RestartSettings => {
+                    (!self.starts_pending()).then(|| match self.restart_settings_failure.take() {
+                        Some(reason) => (
+                            Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                            Some(reason),
+                        ),
+                        None => (Settlement::Completed(Completion::Done), None),
+                    })
+                }
+            };
+            if let Some((terminal, detail)) = result {
+                core.settle_later(
+                    command.request,
+                    Subject::Application,
+                    terminal,
+                    detail.as_deref(),
+                );
+            } else if command.wait == PendingApplicationWait::Reload
+                && !self.reload_validation_pending()
+            {
+                core.settle_later(
+                    command.request,
+                    Subject::Application,
+                    Settlement::Cancelled(api::identity::Cancellation::Operator),
+                    None,
+                );
+            } else if matches!(
+                command.wait,
+                PendingApplicationWait::CatalogFill | PendingApplicationWait::CatalogImport
+            ) && !self.catalog_work_pending()
+            {
+                core.settle_later(
+                    command.request,
+                    Subject::Application,
+                    Settlement::Completed(Completion::Done),
+                    None,
+                );
+            } else {
+                self.pending_application_commands.push(command);
+            }
+        }
+        if !self
+            .pending_application_commands
+            .iter()
+            .any(|pending| pending.wait == PendingApplicationWait::CatalogImport)
+        {
+            self.catalog_import_command_result = None;
+        }
+        if self.pending_catalog_assignment_commands.is_empty()
+            && !self
+                .pending_application_commands
+                .iter()
+                .any(|pending| pending.wait == PendingApplicationWait::CatalogFill)
+        {
+            self.catalog_fill_update = None;
+        }
     }
 
     // ---- per-frame settlement ------------------------------------------
@@ -1605,6 +2916,8 @@ impl Scripts {
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.settle_parameter_edits(core);
         self.poll_script_work(core);
+        self.pump_transpile_queue(core);
+        self.settle_pending_catalog_assignment_commands(core);
         self.poll_reload_preparation(core);
         self.poll_reload_validation(core);
         self.release_stopped_restarts(core);
@@ -1613,6 +2926,11 @@ impl Scripts {
         }
         self.publish_start_places(core);
         self.settle_starts(core);
+        self.settle_start_command_failures(core);
+        self.settle_pending_application_commands(core);
+        while let Some(write) = core.take_script_assignment_write() {
+            self.settle_assignment_write(core, write);
+        }
         for write in core.take_settings_writes() {
             let is_sync_write = self.sync.tracks_write(write.op);
             if write.result.delivery() == Some(&LiveDelivery::RestartRequired) {
@@ -1658,11 +2976,28 @@ impl Scripts {
             ..
         } in core.take_settled_starts()
         {
+            let command_outcome = outcome.clone();
             let Some(pending) = self.starts.remove(&name) else {
+                self.settle_start_commands(core, &name, command_outcome);
                 continue;
             };
             if matches!(&outcome, Some(script::StartOutcome::Ready)) {
                 self.sync.clear_restart_badge(&name);
+            }
+            if pending.kind == StartKind::RestartSettings {
+                match command_outcome.as_ref() {
+                    Some(script::StartOutcome::Failed(reason))
+                        if self.restart_settings_failure.is_none() =>
+                    {
+                        self.restart_settings_failure = Some(reason.clone());
+                    }
+                    Some(script::StartOutcome::Rejected(reason))
+                        if self.restart_settings_failure.is_none() =>
+                    {
+                        self.restart_settings_failure = Some(reason.to_string());
+                    }
+                    _ => {}
+                }
             }
             match outcome {
                 Some(script::StartOutcome::Ready) if pending.kind == StartKind::RestartSettings => {
@@ -1743,6 +3078,60 @@ impl Scripts {
                 }
                 Some(script::StartOutcome::Cancelled) | None => {}
             }
+            self.settle_start_commands(core, &name, command_outcome);
+        }
+    }
+
+    fn settle_start_commands<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        profile: &str,
+        outcome: Option<script::StartOutcome>,
+    ) {
+        let Some(commands) = self.pending_start_commands.remove(profile) else {
+            return;
+        };
+        for command in commands {
+            let (terminal, detail): (Settlement<Completion, CommandFailure>, Option<String>) =
+                match outcome.as_ref() {
+                    Some(script::StartOutcome::Ready) => {
+                        (Settlement::Completed(Completion::Done), None)
+                    }
+                    Some(script::StartOutcome::Failed(reason)) => (
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                        Some(reason.clone()),
+                    ),
+                    Some(script::StartOutcome::Rejected(reason)) => (
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                        Some(reason.to_string()),
+                    ),
+                    Some(script::StartOutcome::Cancelled) | None => (
+                        Settlement::Cancelled(api::identity::Cancellation::Superseded),
+                        None,
+                    ),
+                };
+            core.settle_later(
+                command.request,
+                command.subject,
+                terminal,
+                detail.as_deref(),
+            );
+        }
+    }
+
+    fn settle_start_command_failures<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        for (profile, reason) in std::mem::take(&mut self.start_command_failures) {
+            let Some(commands) = self.pending_start_commands.remove(&profile) else {
+                continue;
+            };
+            for command in commands {
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                    Some(&reason),
+                );
+            }
         }
     }
 
@@ -1766,11 +3155,13 @@ impl Scripts {
                 .as_ref()
                 .is_some_and(|t| t.outcome(name).is_some())
         {
-            self.tally_record(name, Outcome::Failed(diagnostic), LogTo::None);
+            self.tally_record(name, Outcome::Failed(diagnostic.clone()), LogTo::None);
             self.publish_bulk();
         } else {
             self.show(message.clone());
         }
+        self.start_command_failures
+            .push((name.to_string(), diagnostic));
         self.start_failures.push((name.to_string(), message));
     }
 
@@ -1826,8 +3217,8 @@ impl Scripts {
             entry.kind,
             tallied,
         ) {
-            Ok(()) if tallied => self.credit_started(&entry.profile),
-            Ok(()) => {}
+            Ok(_) if tallied => self.credit_started(&entry.profile),
+            Ok(_) => {}
             Err(script::StartLoadError::Waiting(reason)) => {
                 if tallied {
                     self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
@@ -1896,7 +3287,7 @@ impl Scripts {
         self.show(report);
     }
 
-    pub fn publish_start_places<Io>(&mut self, core: &mut OperatorSession<Io>) {
+    pub(crate) fn publish_start_places<Io>(&mut self, core: &mut OperatorSession<Io>) {
         if !self.admit.take_publish() {
             return;
         }
@@ -1948,7 +3339,7 @@ fn arm_flags<Io>(core: &OperatorSession<Io>, name: &str) -> (bool, bool) {
 }
 
 /// The Browse selection a saved assignment names.
-pub fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
+pub(crate) fn sel_from_assignment(asg: &ScriptAssignment) -> Option<script::ScriptSel> {
     if asg.source_kind == "compiled" {
         return script::compiled_id(&asg.identity).map(script::ScriptSel::Compiled);
     }
@@ -1964,6 +3355,14 @@ pub(crate) fn assignment_has_sel(asg: &ScriptAssignment) -> bool {
         return script::compiled_id(&asg.identity).is_some();
     }
     script::parse_source_kind(&asg.source_kind).is_some()
+}
+
+/// Make `dst` a copy of `src`, reusing `dst`'s buffer and elements.
+pub(crate) fn refill<T: Clone>(dst: &mut Vec<T>, src: &[T]) {
+    dst.truncate(src.len());
+    let kept = dst.len();
+    dst.clone_from_slice(&src[..kept]);
+    dst.extend_from_slice(&src[kept..]);
 }
 
 /// The library lookup for a card: a File card by path, others by name.

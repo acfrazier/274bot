@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::nav_settings::NavSettings;
 
 use frontend_core::log::{Level, Source};
-use host_play::local_state::Preferences;
+use frontend_core::UiPreferences as Preferences;
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -27,7 +27,7 @@ pub struct PanelUiState {
     pub rail_preview: HashMap<String, bool>,
     /// Global none/GPU/CPU for every slot (General config).
     #[serde(default)]
-    pub raster: vault::RasterMode,
+    pub raster: frontend_core::command::RasterMode,
     /// Global lowmem for every slot. Default true (headless default).
     #[serde(default = "default_true")]
     pub lowmem: bool,
@@ -140,7 +140,7 @@ impl Default for PanelUiState {
             collapsed: HashMap::new(),
             nav: NavSettings::default(),
             rail_preview: HashMap::new(),
-            raster: vault::RasterMode::Gpu,
+            raster: frontend_core::command::RasterMode::Gpu,
             lowmem: true,
             server_revision: default_server_revision(),
             section_order: Vec::new(),
@@ -170,16 +170,39 @@ pub fn default_section_closed(id: &str) -> bool {
 }
 
 /// The preferences the session reads. Under `cfg(test)` a per-thread
-/// stand-in, so parallel `select` calls do not race on a shared file or the
-/// operator's real prefs; [`load_from`] always reads the store.
+/// stand-in for the panel's own keys, so parallel `select` calls do not race
+/// on a shared file or the operator's real prefs. The keys only the core
+/// writes (`CORE_OWNED_KEYS`) still come from the store once their command
+/// has written them, as they do outside tests; [`load_from`] always reads
+/// the store.
 pub fn load(preferences: &Preferences) -> PanelUiState {
     #[cfg(test)]
     {
-        let _ = preferences;
-        TEST_STATE.with(|s| s.borrow().clone())
+        let stand_in = TEST_STATE.with(|s| s.borrow().clone());
+        with_core_owned_keys(stand_in, preferences)
     }
     #[cfg(not(test))]
     load_from(preferences)
+}
+
+/// `state` with the [`CORE_OWNED_KEYS`] the store holds: their command rows
+/// write the store, never the stand-in, so a key the store holds wins over
+/// the stand-in's (seeded) value, and a key it lacks keeps it.
+#[cfg(test)]
+fn with_core_owned_keys(state: PanelUiState, preferences: &Preferences) -> PanelUiState {
+    let Ok(document) = preferences.document() else {
+        return state;
+    };
+    let mut merged = serde_json::to_value(&state).expect("PanelUiState serializes");
+    let keys = merged
+        .as_object_mut()
+        .expect("serialized PanelUiState is an object");
+    for key in CORE_OWNED_KEYS {
+        if let Some(stored) = document.get(*key) {
+            keys.insert((*key).into(), stored.clone());
+        }
+    }
+    serde_json::from_value(merged).unwrap_or(state)
 }
 
 /// Save the session's preferences (the per-thread stand-in under
@@ -215,14 +238,33 @@ fn prefs_log(level: Level, message: String) {
     frontend_core::log::global().process_line(Source::Host, level, &message);
 }
 
-const MERGED_NAV_KEYS: &[&str] = &[
-    "allow_teleports",
-    "allow_wilderness",
-    "allow_bank_fetch",
-    "allow_danger_zones",
-    "survivable_routing",
-    "script_scope_notice_ack",
-    "survivable_routing_notice_ack",
+/// The `nav` keys the core writes (walk permissions, notices, the manual
+/// movement pause, the special-area paint): a panel save keeps the
+/// document's value, or the key's default when the document has none.
+const MERGED_NAV_KEYS: &[(&str, bool)] = &[
+    ("allow_teleports", false),
+    ("allow_wilderness", false),
+    ("allow_bank_fetch", false),
+    ("allow_danger_zones", false),
+    ("survivable_routing", true),
+    ("script_scope_notice_ack", false),
+    ("survivable_routing_notice_ack", false),
+    ("pause_script_on_manual_walk_abort", true),
+    ("show_special_areas", false),
+];
+
+/// Top-level operator preferences only the core writes, through their
+/// commands (`SetDraw`, `AcknowledgeNotice`, `SetMapBakeChoice`,
+/// `SetSessionLog`): a panel save never writes them; the document keeps
+/// what it holds.
+const CORE_OWNED_KEYS: &[&str] = &[
+    "capture",
+    "sidecar_50",
+    "focused_50",
+    "render_all_warning_ack",
+    "background_bots_ack",
+    "map_bake",
+    "session_log_file",
 ];
 
 /// Merge the panel's own keys (`replacement`, the serialized state) into the
@@ -256,16 +298,29 @@ fn merge_saved_panel_state(
             .expect("serialized PanelUiState always has a nav object")
             .clone(),
     );
-    for key in MERGED_NAV_KEYS {
-        let default = *key == "survivable_routing";
+    for (key, default) in MERGED_NAV_KEYS {
         let enabled = previous_nav
             .and_then(|nav| nav.get(*key))
             .and_then(Value::as_bool)
-            .unwrap_or(default);
+            .unwrap_or(*default);
         merged_nav.insert((*key).into(), Value::Bool(enabled));
     }
+    let kept: Vec<(&str, Option<Value>)> = CORE_OWNED_KEYS
+        .iter()
+        .map(|key| (*key, document.get(*key).cloned()))
+        .collect();
     document.extend(replacement.clone());
     document.insert("nav".into(), Value::Object(merged_nav));
+    for (key, value) in kept {
+        match value {
+            Some(value) => {
+                document.insert(key.into(), value);
+            }
+            None => {
+                document.remove(key);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -331,14 +386,14 @@ thread_local! {
 mod tests {
     use super::{load, load_from, save, save_to, save_to_checked, NavSettings, PanelUiState};
     use crate::test_support::{patiently, scratch_service, set_patiently, TestDir};
-    use host_play::local_state::Preferences;
+    use frontend_core::UiPreferences as Preferences;
     use std::collections::HashMap;
 
     /// A scratch state root and the preferences of a service opened on it:
     /// the service stops before the directory goes.
     fn scratch(label: &str) -> (TestDir, Preferences) {
         let dir = TestDir::new(label);
-        let preferences = scratch_service(&dir).preferences();
+        let preferences = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
         (dir, preferences)
     }
 
@@ -429,37 +484,56 @@ mod tests {
     #[test]
     fn panel_and_tui_nav_writes_round_trip_without_clobbering_each_other() {
         let (_dir, prefs) = scratch("ui-nav-cross-surface");
+        // "capture input" belongs to its SetDraw row and the manual-walk
+        // pause to its SetNavPreference row: the core writes both, and no
+        // panel save does. The panel's own state below still holds them on
+        // (the defaults), and the document keeps what the rows wrote.
+        set_patiently(&prefs, "capture", serde_json::json!(false));
+        patiently(|| {
+            frontend_core::nav_prefs::write_nav_preference_for_test(
+                &prefs,
+                frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+                false,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .unwrap();
         let state = PanelUiState {
             last_focus: Some("alice".into()),
-            capture: false,
             nav: NavSettings {
-                pause_script_on_manual_walk_abort: false,
+                show_nav_path: true,
                 ..NavSettings::default()
             },
             ..PanelUiState::default()
         };
         save_to(&prefs, &state);
 
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &prefs,
             frontend_core::NavPreference::ShowSpecialAreas,
-            Some(true),
+            true,
         )
+        .map(|()| true)
         .unwrap();
         let loaded = load_from(&prefs);
         assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
         assert!(!loaded.capture);
         assert!(
+            loaded.nav.show_nav_path,
+            "TUI's nested nav write preserves the panel's saved nav toggle"
+        );
+        assert!(
             !loaded.nav.pause_script_on_manual_walk_abort,
-            "TUI's nested nav write preserves the panel's saved pause toggle"
+            "TUI's nested nav write preserves the pause toggle its row saved"
         );
         assert!(loaded.nav.show_special_areas);
 
-        frontend_core::nav_preference(
+        frontend_core::nav_prefs::write_nav_preference_for_test(
             &prefs,
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-            Some(true),
+            true,
         )
+        .map(|()| true)
         .unwrap();
         let loaded = load_from(&prefs);
         assert!(loaded.nav.pause_script_on_manual_walk_abort);
@@ -474,7 +548,7 @@ mod tests {
         let (dir, prefs) = scratch("ui-nav-overlap");
         // The single-key writers are a second service on the same files: a
         // peer frontend's writes, as far as the panel's preferences can tell.
-        let peer = scratch_service(&dir).preferences();
+        let peer = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
         patiently(|| {
             save_to_checked(
                 &prefs,
@@ -486,6 +560,10 @@ mod tests {
             .map_err(|error| error.to_string())
         })
         .unwrap();
+        // "capture input" belongs to its SetDraw row: the core writes it and
+        // a panel save keeps what the document holds. The panel's snapshot
+        // below still holds it off, and must not win.
+        set_patiently(&prefs, "capture", serde_json::json!(true));
         set_patiently(&peer, "unrelated", serde_json::json!({"keep": 7}));
         set_patiently(
             &peer,
@@ -494,7 +572,7 @@ mod tests {
         );
         let panel_state = PanelUiState {
             last_focus: Some("panel-save".into()),
-            capture: true,
+            capture: false,
             nav: NavSettings {
                 show_nav_path: true,
                 ..NavSettings::default()
@@ -580,7 +658,7 @@ mod tests {
         assert!(!refreshed_nav.survivable_routing_notice_ack);
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let panel_prefs = prefs.clone();
+        let panel_prefs = prefs.share();
         let panel_barrier = std::sync::Arc::clone(&barrier);
         let panel = std::thread::spawn(move || {
             for _ in 0..32 {
@@ -763,7 +841,7 @@ mod tests {
         let p = session.preferences.path();
         assert!(p.ends_with(".274bot/panel-ui.json"), "got {}", p.display());
         assert!(
-            p.starts_with(script::bot_home()),
+            p.starts_with(frontend_core::scripts::paths::bot_home()),
             "the file sits under the thread's home, got {}",
             p.display()
         );
@@ -849,20 +927,19 @@ mod tests {
         assert!(old.focused_50);
     }
 
-    /// The acknowledgement and both 50 fps choices survive a save and a
-    /// reload through the preferences file, next to the keys other features
-    /// wrote.
+    /// The acknowledgement and both 50 fps choices survive a panel save and
+    /// a reload through the preferences file, next to the keys other
+    /// features wrote. Their command rows write them (`AcknowledgeNotice`,
+    /// `SetDraw`) with the same preference writer, and the panel's own save,
+    /// here of its default state, never does.
     #[test]
     fn render_ack_and_50_fps_choices_round_trip_through_the_file() {
         let (_dir, prefs) = scratch("ui-render-ack");
-        let state = PanelUiState {
-            render_all_warning_ack: true,
-            sidecar_50: true,
-            focused_50: false,
-            capture: false,
-            ..Default::default()
-        };
-        save_to(&prefs, &state);
+        set_patiently(&prefs, "render_all_warning_ack", serde_json::json!(true));
+        set_patiently(&prefs, "sidecar_50", serde_json::json!(true));
+        set_patiently(&prefs, "focused_50", serde_json::json!(false));
+        set_patiently(&prefs, "capture", serde_json::json!(false));
+        save_to(&prefs, &PanelUiState::default());
         let back = load_from(&prefs);
         assert!(back.render_all_warning_ack);
         assert!(back.sidecar_50);
@@ -892,14 +969,13 @@ mod tests {
         assert!(s.show_parameters_rail);
     }
 
+    /// "capture input" is written by its `SetDraw` row (one key through the
+    /// preference writer), kept by the panel's own save, and read back.
     #[test]
     fn capture_persist_roundtrip() {
         let (_dir, prefs) = scratch("ui-capture");
-        let state = PanelUiState {
-            capture: false,
-            ..Default::default()
-        };
-        save_to(&prefs, &state);
+        set_patiently(&prefs, "capture", serde_json::json!(false));
+        save_to(&prefs, &PanelUiState::default());
         assert!(!load_from(&prefs).capture);
     }
 
@@ -954,11 +1030,14 @@ mod tests {
         assert_eq!(odd.last_focus.as_deref(), Some("alice"));
         assert!(!odd.capture, "an unreadable choice does not reset the file");
         let (_dir, prefs) = scratch("ui-map-bake");
-        let state = PanelUiState {
-            map_bake: MapBakeChoice::Always,
-            ..Default::default()
-        };
-        save_to(&prefs, &state);
+        // `SetMapBakeChoice` writes the choice with this writer; the panel's
+        // own save, here of its default state, keeps it.
+        patiently(|| {
+            frontend_core::map_bake::persist_map_bake_choice_for_test(&prefs, MapBakeChoice::Always)
+                .map_err(|error| error.to_string())
+        })
+        .unwrap();
+        save_to(&prefs, &PanelUiState::default());
         assert_eq!(load_from(&prefs).map_bake, MapBakeChoice::Always);
     }
 }

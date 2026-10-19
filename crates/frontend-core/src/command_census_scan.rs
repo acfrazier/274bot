@@ -89,6 +89,10 @@ pub struct SurfaceFn {
     pub core_calls: Vec<CoreCall>,
     /// Effect probes hit: (probe text, line).
     pub probes: Vec<(String, u32)>,
+    /// Literal command rows named in the body (`OperatorCommand::Row`):
+    /// (row name, line). A surface call of the command seam
+    /// (`OperatorSession::submit`) issues the row it names.
+    pub row_calls: Vec<(String, u32)>,
 }
 
 /// Enumerate the operator-decision census for the workspace at
@@ -371,7 +375,8 @@ fn line_of(starts: &[usize], off: usize) -> u32 {
 // File inventory
 // ---------------------------------------------------------------------------
 
-/// Whether a file name is excluded as a test file.
+/// Whether a file name is excluded as a test file (a `test_support/`
+/// directory is skipped whole by [`collect_rs`]).
 fn is_test_name(name: &str) -> bool {
     name.ends_with("_tests.rs") || name == "tests.rs" || name == "test_support.rs"
 }
@@ -410,7 +415,11 @@ fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>, errors: &mut Vec<String>) {
             }
         };
         if kind.is_dir() {
-            collect_rs(&path, out, errors);
+            // A `test_support/` module tree is test fixtures, like a
+            // `test_support.rs` file.
+            if path.file_name().and_then(|n| n.to_str()) != Some("test_support") {
+                collect_rs(&path, out, errors);
+            }
         } else if kind.is_file() && matches!(path.extension().and_then(|e| e.to_str()), Some("rs"))
         {
             out.push(path);
@@ -1714,6 +1723,7 @@ fn scan_surface(
             let core_calls = calls.into_iter().map(|(_, c)| c).collect();
             let mut probes = probe_hits(&l.clean, bs, be, &l.starts);
             probes.dedup();
+            let row_calls = row_calls_in(&l.clean, bs, be, &l.starts);
             out.push(SurfaceFn {
                 crate_name: tag,
                 file: l.rel.clone(),
@@ -1722,6 +1732,7 @@ fn scan_surface(
                 name: f.name.clone(),
                 core_calls,
                 probes,
+                row_calls,
             });
         }
     }
@@ -1912,6 +1923,26 @@ fn next_word_in(b: &[u8], needle: &[u8], mut pos: usize, end: usize) -> Option<u
 }
 
 /// Effect-probe hits in a body: (probe text, line), occurrence order.
+/// `OperatorCommand::<Row>` names in `clean[bs..be]`, in body order.
+fn row_calls_in(clean: &str, bs: usize, be: usize, starts: &[usize]) -> Vec<(String, u32)> {
+    const PREFIX: &str = "OperatorCommand::";
+    let body = &clean[bs..be.min(clean.len())];
+    let mut rows = Vec::new();
+    let mut from = 0;
+    while let Some(k) = body[from..].find(PREFIX) {
+        let start = from + k + PREFIX.len();
+        let name: String = body[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if name.starts_with(|c: char| c.is_ascii_uppercase()) && name != "ALL" {
+            rows.push((name, line_of(starts, bs + from + k)));
+        }
+        from = start;
+    }
+    rows
+}
+
 fn probe_hits(clean: &str, bs: usize, be: usize, starts: &[usize]) -> Vec<(String, u32)> {
     let body = &clean[bs..be.min(clean.len())];
     let mut hits: Vec<(usize, (String, u32))> = Vec::new();
