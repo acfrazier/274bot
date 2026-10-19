@@ -389,9 +389,9 @@ import {
     bestHeldToolNames as rootBestHeldToolNames, surplusHeldToolNames as rootSurplusHeldToolNames,
     resolveBankOpenRoute as rootResolveBankOpenRoute, NEARBY_BANK_RADIUS as rootNearbyBankRadius,
     NAV_PURE_WALK as rootNavPureWalk, Inventory as RootInventory, InvItem as RootInvItem,
-    Equipment as RootEquipment, backpackSnapshots as rootBackpackSnapshots,
-    backpackCapacity as rootBackpackCapacity,
+    Equipment as RootEquipment,
 } from '@rs2b0t/api';
+import * as rootApi from '@rs2b0t/api';
 import { toolAttackLevel, toolsNeedingEquip } from '#/bot/api/acquisition/Tools.js';
 import { shouldBankNow, parseBankStrategy, matchesCommonBankLoot, RANDOM_EVENT_CASKET_ID } from '#/bot/api/bank/Banking.js';
 import type { EventMap, Task, InvItem as InvItemType } from '@rs2b0t/api';
@@ -451,15 +451,12 @@ check(new ModuleInvItem({ id: 1, name: 'Shark', count: 1, slot: 0, noted: true }
 check(foodIsEdible({ name: 'Shark', noted: false }, 'Shark') === true, 'isEdibleFood false for unnoted food');
 globalThis.__inventoryBackpackProbe = () => {
     const moduleRows = backpackSnapshots();
-    const rootRows = rootBackpackSnapshots();
     return {
-        rootFunctions: rootBackpackSnapshots === backpackSnapshots && rootBackpackCapacity === backpackCapacity,
+        rootHelpersAbsent: !('backpackSnapshots' in rootApi) && !('backpackCapacity' in rootApi),
         rootValues: RootInventory === ModuleInventory && RootInvItem === ModuleInvItem &&
             RootEquipment === ModuleEquipment,
         moduleName: moduleRows[0]?.name,
-        rootName: rootRows[0]?.name,
         moduleCapacity: backpackCapacity(),
-        rootCapacity: rootBackpackCapacity(),
     };
 };
 check(foodIsEdible({ name: 'Shark', noted: true }, 'Shark') === false, 'isEdibleFood accepted a noted item');
@@ -902,12 +899,10 @@ export default class RefreezeProbe extends LoopingBot { loop() {} }
     let closed = isolate
         .probe("__inventoryBackpackProbe()")
         .expect("closed-backpack compatibility probe");
-    assert_eq!(closed["rootFunctions"], json!(true));
+    assert_eq!(closed["rootHelpersAbsent"], json!(true));
     assert_eq!(closed["rootValues"], json!(true));
     assert_eq!(closed["moduleName"], json!("Shark"));
-    assert_eq!(closed["rootName"], json!("Shark"));
     assert_eq!(closed["moduleCapacity"], json!(4));
-    assert_eq!(closed["rootCapacity"], json!(4));
 
     snapshot.tick = 3;
     snapshot.bank_open = true;
@@ -920,12 +915,10 @@ export default class RefreezeProbe extends LoopingBot { loop() {} }
     let open = isolate
         .probe("__inventoryBackpackProbe()")
         .expect("bank-open backpack compatibility probe");
-    assert_eq!(open["rootFunctions"], json!(true));
+    assert_eq!(open["rootHelpersAbsent"], json!(true));
     assert_eq!(open["rootValues"], json!(true));
     assert_eq!(open["moduleName"], json!("Deposit note"));
-    assert_eq!(open["rootName"], json!("Deposit note"));
     assert_eq!(open["moduleCapacity"], json!(28));
-    assert_eq!(open["rootCapacity"], json!(28));
     let logs = isolate.join();
     assert!(
         ready.is_ok(),
