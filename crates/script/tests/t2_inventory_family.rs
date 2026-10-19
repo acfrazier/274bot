@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 mod common;
 
 const API_SURFACE: &str = r#"
+import * as Root from '@rs2b0t/api';
 import { Inventory, InvItem, backpackSnapshots, backpackCapacity } from '../../api/inventory/Inventory.js';
 import { Equipment } from '../../api/equipment/Equipment.js';
 import {
@@ -221,6 +222,25 @@ globalThis.__packRules = () => {
 };
 globalThis.__invItemClass = InvItem;
 globalThis.__inventoryObject = Inventory;
+globalThis.__inventoryRootIdentity = {
+    InvItem: Root.InvItem === InvItem,
+    Inventory: Root.Inventory === Inventory,
+    Equipment: Root.Equipment === Equipment,
+    backpackSnapshots: Root.backpackSnapshots === backpackSnapshots,
+    backpackCapacity: Root.backpackCapacity === backpackCapacity,
+    matchesAny: Root.matchesAny === matchesAny,
+    countMatching: Root.countMatching === countMatching,
+    slotsMatching: Root.slotsMatching === slotsMatching,
+    shouldBank: Root.shouldBank === shouldBank,
+    shouldRestock: Root.shouldRestock === shouldRestock,
+    shouldEat: Root.shouldEat === shouldEat,
+    shouldPanic: Root.shouldPanic === shouldPanic,
+};
+globalThis.__inventoryRootRead = () => ({
+    names: Root.backpackSnapshots().map(row => row.name),
+    capacity: Root.backpackCapacity(),
+    inventoryCount: Root.Inventory.count('apple'),
+});
 
 export default class T extends LoopingBot { loop() {} }
 "#;
@@ -886,5 +906,43 @@ fn item_actions_and_contains_keep_overridable_callees_and_original_rows() {
     ] {
         assert_eq!(result[key], true, "{key}: {result}");
     }
+    iso.join();
+}
+
+#[test]
+fn inventory_root_helpers_share_module_values_and_follow_bank_page_transitions() {
+    let iso = spawn();
+    let identity = iso.probe("__inventoryRootIdentity").unwrap();
+    let identity = identity.as_object().unwrap();
+    for (name, same) in identity {
+        assert_eq!(same.as_bool(), Some(true), "{name}");
+    }
+    let inventory = [row(Some("Apple"), 10, 3, 0, 503, false, -1, &[])];
+    let bank_side = [row(Some("Bank-side ore"), 20, 1, 0, 701, false, -1, &[])];
+    let mut snapshot = common::ingame_snapshot();
+    snapshot.tick = 1;
+    snapshot.inv = &inventory;
+    snapshot.inv_size = 19;
+    snapshot.bank_side = &bank_side;
+    snapshot.bank_open = false;
+    post(&iso, &snapshot, Some(700));
+    assert_eq!(
+        iso.probe("__inventoryRootRead()").unwrap(),
+        json!({"names": ["Apple"], "capacity": 19, "inventoryCount": 3})
+    );
+    snapshot.tick = 2;
+    snapshot.bank_open = true;
+    post(&iso, &snapshot, Some(700));
+    assert_eq!(
+        iso.probe("__inventoryRootRead()").unwrap(),
+        json!({"names": ["Bank-side ore"], "capacity": 28, "inventoryCount": 3})
+    );
+    snapshot.tick = 3;
+    snapshot.bank_open = false;
+    post(&iso, &snapshot, Some(-1));
+    assert_eq!(
+        iso.probe("__inventoryRootRead()").unwrap(),
+        json!({"names": ["Apple"], "capacity": 19, "inventoryCount": 3})
+    );
     iso.join();
 }
