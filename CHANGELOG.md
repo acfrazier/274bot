@@ -15,6 +15,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Skills lookups and HP fraction calculations now run in Rust over the
   already-posted stats rows. Compatibility names, row ordering, missing-skill
   errors and boosted levels keep their existing behavior.
+- World Tile copying, translation, equality, text conversion and posted-coordinate
+  validation now run in Rust. Area sampling returns a real Tile in the same native
+  call. Existing geometry bounds, plane rules and caller-visible values stay the
+  same.
 - Bank opening, selection, deposits, withdrawals, note mode and close operations
   now run in the native request seat. Compatibility callbacks keep their
   existing call order, return handling and thrown values. Bank snapshot reads
