@@ -370,7 +370,8 @@ fn backpack_capacity<'s>(
     scope: &mut v8::HandleScope<'s>,
     host: v8::Local<'s, v8::Value>,
 ) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
-    let bank_open = observed::with(|scene| scene.since_login().bank_open().unwrap_or_default());
+    let bank_open = observed::with(|scene| scene.since_login().bank_open())
+        .ok_or_else(|| cb::not_impl(scope, "backpackCapacity"))?;
     if bank_open {
         return Ok(cb::num(scope, 28.0));
     }

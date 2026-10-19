@@ -61,6 +61,10 @@ globalThis.__tryBackpack = () => {
     catch (error) { return String(error && error.message || error); }
 };
 globalThis.__backpackCapacity = () => backpackCapacity();
+globalThis.__tryBackpackCapacity = () => {
+    try { return backpackCapacity(); }
+    catch (error) { return String(error && error.message || error); }
+};
 globalThis.__countByIdValue = () => {
     try { return Inventory.countById(10); }
     catch (error) { return String(error && error.message || error); }
@@ -334,6 +338,22 @@ fn as_use_on(request: &InteractReq) -> Option<UseOnFields<'_>> {
         )),
         _ => None,
     }
+}
+
+#[test]
+fn backpack_helpers_refuse_an_unposted_bank_open_page() {
+    let iso = spawn();
+    for (read, name) in [
+        ("__tryBackpack()", "backpackSnapshots"),
+        ("__tryBackpackCapacity()", "backpackCapacity"),
+    ] {
+        assert_eq!(
+            iso.probe(read).unwrap(),
+            json!(format!("not impl: {name}")),
+            "an unposted bank-open page must remain unknown for {name}"
+        );
+    }
+    iso.join();
 }
 
 #[test]
