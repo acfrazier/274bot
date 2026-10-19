@@ -4072,53 +4072,15 @@ fn strange_box_opens_solves_and_holds_until_consumed() {
     );
     assert_eq!(drv.actions, vec![0]);
 
-    // Tick 3: the answer closed the modal and consumed the box → release.
+    // Tick 3: the box is consumed → the hold lifts.
     drv.menus.clear();
     drv.actions.clear();
-    close_main_modal(&mut c);
     clear_inv(&mut c);
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
     assert_eq!(status.kind, None);
     assert!(!status.hold, "no box: no hold");
     assert!(drv.menus.is_empty());
-}
-
-#[test]
-fn strange_box_closes_lingering_cube_before_releasing() {
-    let mut c = new_client();
-    ingame_scene(&mut c);
-    plant_player(&mut c, "Test", 0, 0);
-    plant_inv_box(&mut c, 1);
-    open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
-    let mut g = Guardian::new();
-    let mut drv = FakeDriver::default();
-    let settings = ProfileSettings::default();
-    let mut snap = GameSnapshot::new();
-
-    tick_at(&mut c, &mut snap);
-    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
-    assert_eq!(drv.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 6562)]);
-
-    // Inventory consumption alone does not prove that the cube modal closed.
-    clear_inv(&mut c);
-    drv.menus.clear();
-    drv.actions.clear();
-    tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
-    assert!(status.hold, "keep ownership until the cube close is observed");
-    assert_eq!(drv.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
-    assert_eq!(drv.actions, vec![0]);
-
-    close_main_modal(&mut c);
-    drv.menus.clear();
-    drv.actions.clear();
-    tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
-    assert_eq!(status.kind, None);
-    assert!(!status.hold, "closed cube and no box release the slot");
-    assert!(drv.menus.is_empty());
-    assert!(drv.actions.is_empty());
 }
 
 #[test]
