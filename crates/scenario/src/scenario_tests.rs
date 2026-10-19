@@ -13294,3 +13294,109 @@ fn e2e_port_conversions_register_converted_gates() {
         }
     );
 }
+
+#[test]
+fn quester_queue_seeds_each_chance_drop_before_start() {
+    let scenario = get("quester_queue").expect("registered queue fixture");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Quester Start");
+    let mut client = native_seed_client();
+    let snapshot = GameSnapshot::new();
+    for step in scenario.steps[..start]
+        .iter()
+        .filter(|step| step.name.starts_with("seed "))
+    {
+        if let StepKind::Perform { send } = &step.kind {
+            assert!(send(&mut client, &snapshot), "{}", step.name);
+        }
+    }
+    let written = String::from_utf8_lossy(&client.out.data()[..client.out.pos]);
+    for bead in ["red_bead", "yellow_bead", "black_bead", "white_bead"] {
+        assert!(
+            written.contains(&format!("give {bead} 1")),
+            "the queue must seed {bead}, not wait for an Imp drop: {written}"
+        );
+    }
+    assert!(
+        !written.contains("addnpc") && !written.contains("addobj"),
+        "the queue must not spawn gameplay targets"
+    );
+}
+
+#[test]
+fn quester_queue_watches_every_selected_quest() {
+    let scenario = get("quester_queue").expect("registered queue fixture");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Quester Start");
+    let watches: Vec<_> = scenario.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert_eq!(
+        watches,
+        [
+            Proof::QuestDone {
+                name: "Cook's Assistant"
+            },
+            Proof::QuestDone {
+                name: "Sheep Shearer"
+            },
+            Proof::QuestDone {
+                name: "Romeo & Juliet"
+            },
+            Proof::QuestDone {
+                name: "Imp Catcher"
+            },
+        ],
+        "Imp completion alone must not hide a parked earlier quest"
+    );
+    let names = [
+        "Cook's Assistant",
+        "Sheep Shearer",
+        "Romeo & Juliet",
+        "Imp Catcher",
+    ];
+    let mut snapshot = GameSnapshot::new();
+    for incomplete in 0..names.len() {
+        snapshot.seed_quest_statuses(
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| api::snapshot::QuestStatusView {
+                    name: (*name).into(),
+                    component_id: index as i32,
+                    colour: if index == incomplete {
+                        0xf80000
+                    } else {
+                        0xf800
+                    },
+                })
+                .collect(),
+            true,
+        );
+        assert!(
+            !watches.iter().all(|proof| proof.check(&snapshot, None)),
+            "{} must not be hidden by the other completed quests",
+            names[incomplete]
+        );
+    }
+    snapshot.seed_quest_statuses(
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| api::snapshot::QuestStatusView {
+                name: (*name).into(),
+                component_id: index as i32,
+                colour: 0xf800,
+            })
+            .collect(),
+        true,
+    );
+    assert!(watches.iter().all(|proof| proof.check(&snapshot, None)));
+}

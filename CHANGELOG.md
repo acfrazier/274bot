@@ -12,6 +12,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Fixed Quester rejecting quests whose game-journal title differs from the
+  script's label, including Rune Mysteries.
 - Gathering scripts can use the declared location options, booth defaults,
   map-square checks and location resolver. A shared Rust preset core serves
   compiled callers and compatibility adapters without a second resource catalog.
