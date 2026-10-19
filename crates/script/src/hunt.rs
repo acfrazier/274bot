@@ -886,6 +886,7 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
         },
         "deposit" => InteractReq::Deposit {
             name: string(effect, "name"),
+            id: opt_int(effect, "id"),
         },
         "withdraw" => InteractReq::Withdraw {
             name: string(effect, "name"),

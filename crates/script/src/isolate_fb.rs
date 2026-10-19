@@ -5954,6 +5954,7 @@ fn decode_interact_rows<'a>(
                     .name()
                     .ok_or_else(|| "deposit has no name".to_string())?
                     .to_string(),
+                id: row.bank_item_id(),
             }),
             "withdraw" => out.push(crate::shim::InteractReq::Withdraw {
                 name: row
@@ -6850,7 +6851,7 @@ fn interact_off<'b>(
         InteractReq::OpenBooth { name, .. } | InteractReq::OpenStand { name, .. } => {
             name.as_deref().map(|n| b.create_string(n))
         }
-        InteractReq::Deposit { name }
+        InteractReq::Deposit { name, .. }
         | InteractReq::Withdraw { name, .. }
         | InteractReq::WithdrawX { name, .. }
         | InteractReq::Held { name, .. }
@@ -7167,8 +7168,11 @@ fn interact_off<'b>(
                 table.add_action(off);
             }
         }
-        InteractReq::Deposit { .. } => {
+        InteractReq::Deposit { id, .. } => {
             table.add_name(name_off.unwrap());
+            if let Some(id) = id {
+                table.add_bank_item_id(*id);
+            }
         }
         InteractReq::Withdraw { .. } => {
             table.add_name(name_off.unwrap());

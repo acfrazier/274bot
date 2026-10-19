@@ -142,6 +142,12 @@ pub struct ScenarioSettings {
     /// operator `loadouts.json`. Scenario-scoped; not a global name reservation
     /// on profile Start/reload.
     pub fixture_loadouts: Option<&'static [FixtureLoadout]>,
+    /// Fail the run when the driven player dies after StartScript: the
+    /// content sends `Oh dear you are dead!` on every ordinary death
+    /// (`player/scripts/death.rs2:27`). A cell whose later watches a
+    /// respawn, restock and return could also satisfy sets this, so a death
+    /// and a recovery cannot stand in for the intended trip.
+    pub fail_on_death: bool,
 }
 /// Harness-owned multi-slot catalog launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,6 +394,7 @@ impl Default for ScenarioSettings {
             inject_companion_as: None,
             fixture_prereqs: None,
             fixture_loadouts: None,
+            fail_on_death: false,
         }
     }
 }

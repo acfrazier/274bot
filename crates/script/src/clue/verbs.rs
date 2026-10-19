@@ -96,6 +96,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
         }),
         "deposit" => Some(InteractReq::Deposit {
             name: text_field(step, "name")?.to_string(),
+            id: None,
         }),
         "withdraw" => Some(InteractReq::Withdraw {
             name: text_field(step, "name")?.to_string(),

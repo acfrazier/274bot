@@ -3,17 +3,6 @@ const STEEL_ARROW_ID: i32 = 886;
 const BODY_TALISMAN_ID: i32 = 1446;
 pub(crate) const BLOOD_RUNE_ID: i32 = 565;
 const CHAOS_RUNE_ID: i32 = 562;
-/// The six verifiable Guard drops ArdyFighter lists in DEFAULT_LOOT
-/// (`iron ore, steel arrow, body talisman, blood/chaos/nature rune`).
-/// Its bank cell starts empty of this class.
-pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
-    IRON_ORE_ID,
-    STEEL_ARROW_ID,
-    BODY_TALISMAN_ID,
-    BLOOD_RUNE_ID,
-    CHAOS_RUNE_ID,
-    NATURE_RUNE_ID,
-];
 /// ArdyFighter sets its combat style only when out of combat after the first
 /// cake restock, so the first Guard fight can come before it, and a Guard drop
 /// that lands first sends PeriodicBank (`bankEveryItems=1`) on a bank round
@@ -70,20 +59,16 @@ const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 const ARDY_FIGHTER_LOOT_EMPTY: &[i32] = &[CAKE_ID, BREAD_ID, CHOCOLATE_SLICE_ID, CHOCOLATE_CAKE_ID];
-/// Bank cell: stall food plus the deposit class. `bankEveryItems=1` would
-/// fire on a pre-Start listed Guard drop, so the class stays empty until a
-/// kill feeds it.
+/// Earned bank cell: stall food plus the deposit class, the Guard's Bones
+/// and their noted form. `bankEveryItems=1` would fire on pre-Start Bones,
+/// so the class stays empty until a kill feeds it.
 const ARDY_FIGHTER_BANK_LOOT_EMPTY: &[i32] = &[
     CAKE_ID,
     BREAD_ID,
     CHOCOLATE_SLICE_ID,
     CHOCOLATE_CAKE_ID,
-    IRON_ORE_ID,
-    STEEL_ARROW_ID,
-    BODY_TALISMAN_ID,
-    BLOOD_RUNE_ID,
-    CHAOS_RUNE_ID,
-    NATURE_RUNE_ID,
+    BONES_ID,
+    NOTED_BONES_ID,
 ];
 const ARDY_FIGHTER_BANK_SEEDED_LOOT_EMPTY: &[i32] = &[
     BREAD_ID,
@@ -156,14 +141,53 @@ const ARDY_FIGHTER_BANK_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Num(1.0),
     },
 ];
-/// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
-/// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
-/// card's own loot list and returns to the market anchor for further work.
-/// Nothing in the deposit class is prepared: `bankEveryItems=1` would
-/// otherwise treat a pre-Start listed item as the trip end.
-/// **Disposition:** the earned Guard-drop witness remains pending because its
-/// random-drop wait is not accepted in this cell; the seeded sibling below is
-/// the accepted route/PeriodicBank proof.
+/// Earned-kill variant: the loot list is the Guard's guaranteed death drop
+/// alone. Guard death unconditionally adds `npc_param(death_drop)` (Bones)
+/// before its random table (content `guard.rs2`), so every kill feeds the
+/// `bankEveryItems=1` trip end; the six DEFAULT_LOOT items are random-table
+/// outcomes (1-14/128 each) and a cell must not gate on them. This mirrors
+/// AutoFighter's Custom Bones bank inject. The seeded sibling keeps the
+/// default loot list because its seeded Iron ore is one of those six.
+const ARDY_FIGHTER_BANK_EARNED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankStrategy",
+        value: ScriptInjectValue::Str("Loot count"),
+    },
+    ScriptSettingInject {
+        id: "bankEveryItems",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "foodTarget",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Bones"]),
+    },
+];
+/// ArdyFighter's `bankStrategy=Loot count` trip on an earned kill: the loot
+/// list is pinned to the Guard's guaranteed Bones death drop (see
+/// `ARDY_FIGHTER_BANK_EARNED_INJECT`), so the first kill feeds the
+/// `bankEveryItems=1` trip end deterministically. The PeriodicBank walks to
+/// the East Ardougne booth, deposits the Bones and returns to the market
+/// anchor for further work. Nothing in the deposit class is prepared:
+/// `bankEveryItems=1` would otherwise treat a pre-Start listed item as the
+/// trip end. The looted Bones are watched in the pack before the deposit,
+/// so the kill and the trip each have their own ordinary watch. The seeded
+/// sibling below remains the default-loot proof.
 pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "ardy_fighter_bank",
@@ -177,15 +201,22 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
         COMBAT_SCIMITAR_ID,
         &[],
         ARDY_FIGHTER_BANK_LOOT_EMPTY,
-        ARDY_FIGHTER_BANK_INJECT,
+        ARDY_FIGHTER_BANK_EARNED_INJECT,
         5,
         "",
         0,
         &[
             (
+                "watch the Guard's looted Bones in pack before the bank trip",
+                Proof::ItemId {
+                    id: BONES_ID,
+                    count: 1,
+                },
+            ),
+            (
                 "watch a Guard drop enter a fresh East Ardougne bank",
-                Proof::BankItemIdAny {
-                    ids: &GUARD_DROP_IDS,
+                Proof::BankItemId {
+                    id: BONES_ID,
                     count: 1,
                 },
             ),
