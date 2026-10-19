@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader, Read};
+use std::num::NonZeroU16;
 use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
@@ -724,6 +725,7 @@ pub struct QuestRequirements {
 /// One seed join. `id` is the seed id. `complete` is one constant, not a range.
 /// `unknown_sides` stays empty. Enum index is not a field.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct QuestIdentityRow {
     pub id: String,
     pub component: String,
@@ -1056,6 +1058,7 @@ pub struct QuestCoverageRecord {
 /// Roster identity. Absence is `None`, not an empty list.
 /// A coverage record is a sibling, not a row.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct QuestIdentityFacts {
     pub rows: Vec<QuestIdentityRow>,
     #[serde(default)]
@@ -1355,6 +1358,15 @@ impl DialogueUiIds {
     }
 }
 
+/// Identity of the verified embedded `quests.json` artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuestFamilyIdentity {
+    /// SHA-256 of the complete artifact bytes.
+    pub sha256: [u8; 32],
+    /// Nonzero schema declared by the verified artifact descriptor.
+    pub schema: NonZeroU16,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1463,6 +1475,14 @@ impl SelectedGameData {
         })
     }
 
+    /// Return the verified quest artifact identity after preparation.
+    ///
+    /// This cache-only accessor returns `None` before preparation. It never
+    /// decodes or hashes the artifact.
+    pub fn quest_family_identity(&self) -> Option<QuestFamilyIdentity> {
+        crate::quest_facts::cached_identity(self)
+    }
+
     fn bind_pin(
         &self,
         byte_len: u64,
@@ -1531,14 +1551,12 @@ impl SelectedGameData {
         }))
     }
 
-    /// Body owned by M-296: no typed quest family is installed before its asset cutover.
+    /// Verify and prepare the selected identity-only quest family off-pump.
     pub fn prepare_quests(
         &self,
-        _worker: &mut crate::selected::FamilyPreparation,
+        worker: &mut crate::selected::FamilyPreparation,
     ) -> Result<Arc<crate::quest_facts::QuestCatalog>, crate::selected::FactError> {
-        Err(crate::selected::FactError::FamilyUnavailable(
-            crate::selected::QUESTS_FAMILY.clone(),
-        ))
+        crate::quest_facts::prepare(self, worker)
     }
 
     /// Verify and decode the selected gathering family, or share the copy another user holds. Off-pump only.
@@ -1549,9 +1567,9 @@ impl SelectedGameData {
         crate::gather_methods::prepare(self, worker)
     }
 
-    /// Cache-only; M-296 installs the weak cache with the typed family.
+    /// Return the prepared quest catalog from cache. This never decodes or hashes.
     pub fn try_quests(&self) -> Option<Arc<crate::quest_facts::QuestCatalog>> {
-        None
+        crate::quest_facts::cached(self)
     }
 
     /// Cache-only: the prepared gathering catalog after its first process decode. Never decodes.

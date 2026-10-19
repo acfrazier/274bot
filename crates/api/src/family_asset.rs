@@ -29,6 +29,13 @@ struct Descriptor {
     sha256: String,
 }
 
+/// Descriptor values returned only after manifest and byte verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VerifiedFamily {
+    pub schema: u16,
+    pub sha256: [u8; 32],
+}
+
 /// Refuse `family` bytes unless the manifest the pin was bound to describes exactly them.
 ///
 /// `PinMismatch`: the manifest is not the pinned one, or the bytes differ from the described size/digest/path.
@@ -40,7 +47,7 @@ pub(crate) fn verify_family(
     family_key: &LazyLock<FactKey>,
     schema: u16,
     family: &[u8],
-) -> Result<(), FactError> {
+) -> Result<VerifiedFamily, FactError> {
     let name: &str = &family_key.0;
     if <[u8; 32]>::from(Sha256::digest(manifest_bytes)) != pin.manifest_sha256 {
         return Err(FactError::PinMismatch);
@@ -72,11 +79,17 @@ pub(crate) fn verify_family(
             actual: descriptor.schema,
         });
     }
+    let digest = Sha256::digest(family);
+    let digest_hex = format!("{digest:x}");
+    let sha256 = digest.into();
     if descriptor.path != format!("{revision}/{name}.json")
         || descriptor.bytes != family.len() as u64
-        || descriptor.sha256 != format!("{:x}", Sha256::digest(family))
+        || descriptor.sha256 != digest_hex
     {
         return Err(FactError::PinMismatch);
     }
-    Ok(())
+    Ok(VerifiedFamily {
+        schema: descriptor.schema,
+        sha256,
+    })
 }

@@ -1,6 +1,6 @@
 //! Identity catalog: roster rows only. Stage resolution belongs to the Path.
 
-use crate::game_data::{QuestIdentityFacts, QuestIdentityRow};
+use crate::game_data::{QuestCoverageRecord, QuestIdentityFacts, QuestIdentityRow};
 use crate::quest_progress::{EvidenceStamp, JournalRead, ProgressError, QuestProgress};
 use crate::selected::{EntityId, FactKey, Knowledge, Requirement, SignalRange, SourceSpan};
 use crate::selected::{FactError, QuestGate, Truth};
@@ -11,6 +11,7 @@ use std::sync::Arc;
 /// Immutable prepared family. Identity rows come from selected `quest_identity`.
 pub struct QuestCatalog {
     rows: Arc<[QuestFacts]>,
+    identity_coverage: Arc<[QuestCoverageRecord]>,
 }
 
 impl QuestCatalog {
@@ -26,13 +27,23 @@ impl QuestCatalog {
             .map(facts_from_row)
             .collect::<Vec<_>>()
             .into();
-        Ok(Self { rows })
+        let identity_coverage = facts.coverage.clone().into();
+        Ok(Self {
+            rows,
+            identity_coverage,
+        })
     }
 
     pub fn empty() -> Self {
         Self {
             rows: Arc::from([]),
+            identity_coverage: Arc::from([]),
         }
+    }
+
+    /// Revision-absence facts from the quest identity source, separate from quest rows.
+    pub fn identity_coverage(&self) -> &[QuestCoverageRecord] {
+        &self.identity_coverage
     }
 
     pub fn len(&self) -> usize {
