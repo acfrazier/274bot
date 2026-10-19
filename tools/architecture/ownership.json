@@ -4599,10 +4599,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/bank_v2_load.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/tests/bank_withdraw_op.rs",
       "owner": "T2"
     },
