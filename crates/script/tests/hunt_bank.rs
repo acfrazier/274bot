@@ -904,7 +904,11 @@ fn noted_food_and_partial_flask_deposit_then_full_flask_draws() {
     proved.bank_op_result_seq = 3;
     set_observation(proved.clone());
     let step = call(token, proj.clone(), Some(json!({ "queued": true })));
-    assert_eq!(kind(&step), "deposit", "partial flask deposits next: {step}");
+    assert_eq!(
+        kind(&step),
+        "deposit",
+        "partial flask deposits next: {step}"
+    );
     assert_eq!(step["name"], "Super attack(1)", "{step}");
 
     proved.bank_side.clear();
@@ -914,7 +918,11 @@ fn noted_food_and_partial_flask_deposit_then_full_flask_draws() {
     let mut drew_full = false;
     for _ in 0..16 {
         let step = call(token, proj.clone(), Some(json!({ "queued": true })));
-        kinds.push(format!("{}:{}", kind(&step), step["name"].as_str().unwrap_or("")));
+        kinds.push(format!(
+            "{}:{}",
+            kind(&step),
+            step["name"].as_str().unwrap_or("")
+        ));
         if kind(&step) == "withdraw" && step["name"] == "Super attack(3)" {
             drew_full = true;
             break;

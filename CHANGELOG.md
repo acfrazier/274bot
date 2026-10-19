@@ -158,6 +158,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A Quester folder accepts at most 4,096 entries, 1 MiB per Path document and
   16 MiB of retained documents. Larger folders or documents report a typed
   validation error and leave the last successful registry available.
+- Fixed: on a bank trip, the JiveDragons, JiveDemons and JiveKBD hunting
+  scripts now deposit noted loot, such as noted Lobsters, instead of keeping
+  it as food. They also deposit part-used potions that the script keeps only
+  as full doses, and then withdraw fresh full doses.
 
 ### Navigation
 
