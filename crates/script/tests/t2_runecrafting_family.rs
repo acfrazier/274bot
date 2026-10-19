@@ -7,13 +7,16 @@ use serde_json::{json, Value};
 const SRC: &str = r#"
 import Tile from '../../geometry/Tile.js';
 import { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';
+import { RUNES as RootRunes, RUNE_OPTIONS as RootOptions, DEFAULT_RUNE as RootDefault } from '@rs2b0t/api';
 
 const keys = Object.keys(RUNES);
 globalThis.__rune_catalog_probe = {
     selectedFacts: globalThis.__rs2b0t_host.content.selected_facts,
+    rootIdentity: RUNES === RootRunes && RUNE_OPTIONS === RootOptions && DEFAULT_RUNE === RootDefault,
     keys,
     options: RUNE_OPTIONS,
     defaultRune: DEFAULT_RUNE,
+    servedJson: JSON.stringify({ RUNES, RUNE_OPTIONS, DEFAULT_RUNE }),
     rows: keys.map((name) => {
         const route = RUNES[name];
         return {
@@ -115,9 +118,22 @@ fn runecrafting_catalog_preserves_routes_shape_order_and_retention() {
         .map(|route| route.rune)
         .collect::<Vec<_>>();
     assert_eq!(catalog["selectedFacts"], json!(false));
+    assert_eq!(catalog["rootIdentity"], json!(true));
     assert_eq!(catalog["keys"], json!(expected_names));
     assert_eq!(catalog["options"], json!(expected_names));
     assert_eq!(catalog["defaultRune"], json!("Air rune"));
+    // Captured once from the served pre-cutover module at 7c72b3ff7, not
+    // regenerated from the native roster by this test.
+    assert_eq!(
+        catalog["servedJson"]
+            .as_str()
+            .expect("served catalog JSON string")
+            .as_bytes(),
+        include_bytes!("fixtures/t2_runecrafting_old_projection.json")
+            .strip_suffix(b"\n")
+            .expect("snapshot has one record-delimiter newline"),
+        "all served route values, ruin coordinates and property order stay byte-identical"
+    );
 
     let rows = catalog["rows"]
         .as_array()
@@ -125,7 +141,10 @@ fn runecrafting_catalog_preserves_routes_shape_order_and_retention() {
     assert_eq!(rows.len(), RUNE_ROUTES.len());
     for (observed, route) in rows.iter().zip(RUNE_ROUTES) {
         assert_eq!(observed["name"], json!(route.rune));
-        assert_eq!(observed["routeKeys"], json!(["rune", "talisman", "level", "bank", "ruins"]));
+        assert_eq!(
+            observed["routeKeys"],
+            json!(["rune", "talisman", "level", "bank", "ruins"])
+        );
         assert_eq!(
             json!({
                 "rune": observed["rune"],
