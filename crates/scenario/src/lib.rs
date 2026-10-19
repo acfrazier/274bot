@@ -464,6 +464,8 @@ pub enum StepKind {
     /// handshakes again — do not call blocking `Client::login` from the
     /// runner (that freezes the panel on "logging in…"). Side icons and
     /// quest-list colour refresh from that login payload.
+    /// An explicit [`Proof::LoggedOut`] arm completes on the observed
+    /// off-world frame; every other arm also requires the new online session.
     Relog,
     /// Like [`StepKind::Perform`], but re-sends every tick until `wait.arm`
     /// holds (`getvar` polls, sticky `setvar tutorial`).
