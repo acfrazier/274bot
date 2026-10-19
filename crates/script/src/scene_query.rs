@@ -4,8 +4,103 @@
 //! they read [`crate::observed`] and return the posted copy. They never
 //! enqueue a game op.
 
-use crate::observed::{self, EntityRow, QuestStatusRow, QuestTab, SceneRow};
+use crate::observed::{self, EntityRow, PlayerRow, QuestStatusRow, QuestTab, SceneRow};
 use api::line_of_sight::CollisionQuery;
+use std::rc::Rc;
+
+/// Shared ownership of one native scene generation, without copying its rows.
+#[derive(Clone, Default)]
+pub(crate) struct EntityGeneration {
+    pub npcs: Option<Rc<Vec<EntityRow>>>,
+    pub locs: Option<Rc<Vec<SceneRow>>>,
+    pub players: Option<Rc<Vec<PlayerRow>>>,
+    pub ground: Option<Rc<Vec<SceneRow>>>,
+    pub self_slot: i32,
+}
+
+/// Capture the already-decoded owner for a successful compatibility posting.
+pub(crate) fn entity_generation() -> EntityGeneration {
+    observed::with(|scene| {
+        let lens = scene.latest();
+        EntityGeneration {
+            npcs: lens.shared_npcs(),
+            locs: lens.shared_locs(),
+            players: lens.shared_players(),
+            ground: lens.shared_ground(),
+            self_slot: lens.self_slot().unwrap_or_default(),
+        }
+    })
+}
+
+/// The four posted entity pages, shared by native and compatibility readers.
+#[derive(Clone, Copy)]
+pub(crate) enum EntityCategory {
+    Npcs,
+    Players,
+    Locs,
+    Ground,
+}
+
+/// A borrowed entity fact. No query copies a native row or its interned text.
+#[derive(Clone, Copy)]
+pub(crate) enum EntityFacts<'a> {
+    Npc(&'a EntityRow),
+    Player(&'a PlayerRow),
+    Scene(&'a SceneRow),
+}
+
+impl EntityGeneration {
+    pub(crate) fn facts(&self, category: EntityCategory, index: usize) -> Option<EntityFacts<'_>> {
+        match category {
+            EntityCategory::Npcs => self.npcs.as_ref()?.get(index).map(EntityFacts::Npc),
+            EntityCategory::Players => self.players.as_ref()?.get(index).map(EntityFacts::Player),
+            EntityCategory::Locs => self.locs.as_ref()?.get(index).map(EntityFacts::Scene),
+            EntityCategory::Ground => self.ground.as_ref()?.get(index).map(EntityFacts::Scene),
+        }
+    }
+}
+
+impl<'a> EntityFacts<'a> {
+    pub(crate) fn name(self) -> Option<&'a str> {
+        match self {
+            Self::Npc(row) => row.name.as_deref(),
+            Self::Player(row) => row.name.as_deref(),
+            Self::Scene(row) => row.name.as_deref(),
+        }
+    }
+
+    pub(crate) fn actions(self) -> &'a [observed::Text] {
+        match self {
+            Self::Npc(row) => &row.actions,
+            Self::Player(row) => &row.actions,
+            Self::Scene(row) => &row.actions,
+        }
+    }
+
+    pub(crate) fn tile(self) -> observed::Tile {
+        match self {
+            Self::Npc(row) => row.tile(),
+            Self::Player(row) => row.tile(),
+            Self::Scene(row) => row.tile(),
+        }
+    }
+
+    pub(crate) fn distance(self) -> i32 {
+        match self {
+            Self::Npc(row) => row.distance,
+            Self::Player(row) => row.distance,
+            Self::Scene(row) => row.distance,
+        }
+    }
+
+    pub(crate) fn target(self) -> Option<(i32, i32)> {
+        match self {
+            Self::Npc(row) => Some((row.target_kind, row.target_index)),
+            Self::Player(row) => Some((row.target_kind, row.target_index)),
+            Self::Scene(_) => None,
+        }
+    }
+}
 
 pub const SCENE_LIMIT_MAX: i32 = 64;
 
