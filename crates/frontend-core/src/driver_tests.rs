@@ -524,6 +524,63 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert!(crate::log_file::session_log_path().is_none());
 }
 
+/// T3.3 r4 (review finding 1): a preference write the disk holds past the
+/// bounded wait leaves its command pending, never `Failed`: the operator
+/// is not told a save failed that later lands. It settles `Done` when the
+/// write is durable, and the file and a fresh read then hold the value.
+#[test]
+fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
+    use crate::nav_prefs::NavPreference;
+    let mut d = driver("held-pref", &["alice"]);
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    d.session()
+        .local_state()
+        .expect("the driver binds the process service")
+        .set_write_stall_for_test(std::sync::Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                // The busy disk: the first write waits for the test.
+                let _ = gate.lock().unwrap().recv();
+            }
+        }));
+
+    let submitted = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(
+        terminal_app(&d, submitted.request()),
+        None,
+        "a write still held after the bounded wait is pending, not failed"
+    );
+    d.poll();
+    assert_eq!(terminal_app(&d, submitted.request()), None);
+    assert_eq!(
+        d.session().nav_preference(NavPreference::AllowTeleports),
+        Some(false),
+        "nothing is durable yet"
+    );
+
+    release.send(()).unwrap();
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert_eq!(
+        preferences_file(&d)["nav"]["allow_teleports"],
+        serde_json::Value::Bool(true)
+    );
+    d.session()
+        .preferences()
+        .expect("bound preferences")
+        .reload()
+        .unwrap();
+    assert_eq!(
+        d.session().nav_preference(NavPreference::AllowTeleports),
+        Some(true)
+    );
+}
+
 #[test]
 fn marks_and_the_fleet_filter_change_only_through_their_rows() {
     let mut d = driver("marks", &["alice", "bob"]);
