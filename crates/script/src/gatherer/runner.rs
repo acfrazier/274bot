@@ -2469,6 +2469,9 @@ impl Script for Gatherer {
             self.pending = None;
             return Ok(SettingsApply::RestartRequired);
         }
+        if let Some(error) = &prepared.site_error {
+            return Err(error.clone());
+        }
         if self.prepared.settings.boundary_changed(&prepared.settings) {
             self.pending = Some(next);
             self.dirty = true;

@@ -143,7 +143,7 @@ pub struct GameSnapshot {
     /// gate so a movement rebuilds only that family.
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
-    /// Worn component slot data was received from the server.
+    /// Whether the loaded worn-items tab has non-empty, aligned item and count arrays.
     equipment_available: bool,
     /// Latest received equipment packet revision.
     #[serde(skip)]

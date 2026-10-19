@@ -107,7 +107,7 @@ Beta's **tested** path is the **local** engine on revision **289**. Revision 274
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **16**; v15 and older are `BadVersion` and must be rebaked), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see above) — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see above) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -210,9 +210,25 @@ table and the build-time identity rules: [docs/api/nav.md](docs/api/nav.md).
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **16**). **Rebake existing v15 and older packs after updating:** v16 adds the conjunctive `worn_all_req` list and an optional exact takeoff per edge. v15 added count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`. Spell runes and script-deleted fares/passes are consumed; charged jewellery returns its content-declared `next_obj_stage` after a successful rub. Resource counts must be positive, and returned items require consumption. The v14 kind-byte flag still marks content-derived player-relative ladder/stair landings without added wire bytes. v16 retains the zone table, selected quest-family binding, typed quest-stage gates and per-edge approach geometry; `decode` rejects v15 and older as `BadVersion`. Pass `[MAPS_DIR] [DOORS_D…
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **17**).
+Rebake existing v16 and older packs after you update 274bot.
 
-**External v16 packs keep their baked routing data.** The bundled pack is rebuilt automatically, but a pack you baked yourself (`--nav-pack`, `NAV_PACK`, or a file under `~/.274bot`) is not re-derived from the current content tree. Rebake it with `nav-pack` after content or format changes to refresh its zone table, resource accounting and routing data.
+Version 17 adds count-prefixed `forbidden_held` and `forbidden_worn` vectors after `worn_all_req`.
+These content-derived absence gates block an edge when listed items are held or worn.
+Version 16 added the conjunctive `worn_all_req` list and an optional exact takeoff per edge.
+Version 15 added count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`.
+
+Spell runes and script-deleted fares and passes are consumed.
+Charged jewellery returns its content-declared `next_obj_stage` after a successful rub.
+Resource counts must be positive, and returned items require consumption.
+The v14 kind-byte flag marks content-derived player-relative ladder and stair landings without added wire bytes.
+Version 17 retains the zone table, selected quest-family binding, typed quest-stage gates, and per-edge approach geometry.
+`decode` rejects v16 and older as `BadVersion`.
+See [the navigation API guide](docs/api/nav.md) for the full wire format and bake options.
+
+**External v17 packs keep their baked routing data.** The app rebuilds the bundled pack automatically.
+It does not derive a pack that you baked yourself from the current content tree.
+Rebake it with `cargo run -p nav --bin nav-pack` after content or format changes to refresh its routing data.
 
 ## Live tests and suite runner
 

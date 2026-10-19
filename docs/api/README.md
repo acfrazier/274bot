@@ -15,7 +15,7 @@ tested nor claimed.
 - [query.md](query.md) — the fluent `Query<T>` read DSL + typed filters
 - [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
 - [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
-- [nav.md](nav.md) — whole-world collision + transport graph (pack v16) +
+- [nav.md](nav.md) — whole-world collision + transport graph (pack v17) +
   Dijkstra router + `Traveller::follow` + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
