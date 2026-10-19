@@ -558,10 +558,14 @@ check(
 );
 check(objCatalog.find((item) => item.id === 1321)?.equippable === true, 'bronze scimitar worn model is missing');
 check(reader.objCatalog() === objCatalog, 'reader.objCatalog rebuilt its selected records');
-await refuses('GameMessages.record', () => gameMessagesExports.GameMessages.record('line'));
-await refuses('GameMessages.firstSince', () => gameMessagesExports.GameMessages.firstSince(0, /line/));
-await refuses('GameMessages.recent', () => gameMessagesExports.GameMessages.recent());
-await refuses('GameMessages.reset', () => gameMessagesExports.GameMessages.reset());
+const chatHistoryProbe = gameMessagesExports.GameMessages;
+check(chatHistoryProbe.reset() === undefined && chatHistoryProbe.recent().length === 0, 'GameMessages.reset did not clear history');
+check(chatHistoryProbe.record('line') === undefined, 'GameMessages.record must return void');
+const chatRecentProbe = chatHistoryProbe.recent();
+check(chatRecentProbe.length === 1 && chatRecentProbe[0].seq === 1 && chatRecentProbe[0].text === 'line', 'GameMessages.recent omitted the recorded history');
+check(chatHistoryProbe.firstSince(0, /line/g) === chatRecentProbe[0], 'GameMessages.firstSince must return the original history DTO');
+chatHistoryProbe.reset();
+check(chatHistoryProbe.recent().length === 0 && chatHistoryProbe.firstSince(0, /line/) === undefined, 'GameMessages.reset retained history');
 const rangingPlanValue = rangingPlan([{ item: 'Ranging potion(2)', qty: 3 }]);
 check(rangingPlanValue.potion === RANGING_POTION && rangingPlanValue.flask === 'Ranging potion(2)' && rangingPlanValue.want === 3, 'rangingPlan does not use the exported ranging descriptor');
 check(typeof AUTO_CHOOSE_COM === 'number' && typeof AUTO_TOGGLE_COM === 'number' && typeof SELL_STACK_STEP === 'number' && typeof NEARBY_BANK_RADIUS === 'number', 'combat, shop, or bank constant export missing');

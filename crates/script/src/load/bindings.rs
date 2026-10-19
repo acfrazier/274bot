@@ -755,6 +755,8 @@ pub(super) fn wire_runtime(
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
+    super::entities_v8::install(runtime).map_err(|e| format!("entities v8: {e}"))?;
+    super::chatbox_v8::install(runtime).map_err(|e| format!("chatbox v8: {e}"))?;
     super::gathering_v8::install(runtime).map_err(|e| format!("gathering locations v8: {e}"))?;
     super::skills_v8::install(runtime).map_err(|e| format!("skills v8: {e}"))?;
     super::inventory_v8::install(runtime).map_err(|e| format!("inventory v8: {e}"))?;
