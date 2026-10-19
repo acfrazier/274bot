@@ -3195,6 +3195,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/gather_locations.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/gather_tools.rs",
       "owner": "T2"
     },
@@ -3428,6 +3432,10 @@
     },
     {
       "path": "crates/script/src/load/gather_methods_v8.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/load/gathering_v8.rs",
       "owner": "T2"
     },
     {
@@ -4176,6 +4184,10 @@
     },
     {
       "path": "crates/script/src/shim/game_messages.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/shim/gathering_locations.js",
       "owner": "T2"
     },
     {
@@ -5076,6 +5088,10 @@
     },
     {
       "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_gathering_family.rs",
       "owner": "T2"
     },
     {
