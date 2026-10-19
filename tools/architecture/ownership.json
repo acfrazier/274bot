@@ -1475,6 +1475,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/t2_family_live.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/host-play/tests/toll_gate_live.rs",
       "owner": "T1"
     },
@@ -5060,6 +5064,10 @@
     },
     {
       "path": "crates/script/tests/t2_cow_family.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/t2_world_primitives.rs",
       "owner": "T2"
     },
     {
