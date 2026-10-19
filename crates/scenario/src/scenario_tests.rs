@@ -4819,7 +4819,7 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
     let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("searchRadius").and_then(Value::as_f64),
-        Some(8.0)
+        Some(10.0)
     );
 
     let flax = get("flax_picker").expect("flax_picker");
@@ -4873,6 +4873,541 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
     ] {
         assert!(names().contains(&name));
     }
+}
+
+#[test]
+fn gnome_course_radius_starts_off_course_and_watches_the_log_before_the_lap() {
+    let plain = get("gnome_course").expect("gnome_course");
+    let radius = get("gnome_course_radius").expect("gnome_course_radius");
+    let start_index = |scenario: &Scenario| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("the cell starts its card")
+    };
+    let (plain_start, radius_start) = (start_index(&plain), start_index(&radius));
+    let course_start_arm = Proof::ArrivedNear {
+        x: 2474,
+        z: 3436,
+        level: 0,
+        radius: 2,
+    };
+
+    // The plain cell keeps its steps: tele to the course start, Start, six lap
+    // watches, and no witness.
+    let plain_tele = &plain.steps[plain_start - 1];
+    assert_eq!(
+        plain_tele.name,
+        "tele to the gnome course start before Start"
+    );
+    assert_eq!(plain_tele.wait.arm, course_start_arm);
+    assert_eq!(plain_tele.wait.budget_ticks, 200);
+    assert_eq!(plain.steps.len(), plain_start + 1 + 6);
+    assert!(plain
+        .steps
+        .iter()
+        .all(|step| !matches!(step.kind, StepKind::Await { .. })));
+
+    // The radius cell: the same seed, tele off the course, Start, the witness,
+    // tele to the course start, then the same six lap watches.
+    assert_eq!(radius_start, plain_start);
+    assert_eq!(radius.steps.len(), plain.steps.len() + 2);
+    for index in 0..plain_start - 1 {
+        assert_eq!(
+            radius.steps[index].name, plain.steps[index].name,
+            "seed step {index}"
+        );
+    }
+    for (offset, plain_watch) in plain.steps[plain_start + 1..].iter().enumerate() {
+        let radius_watch = &radius.steps[radius_start + 3 + offset];
+        assert_eq!(radius_watch.name, plain_watch.name);
+        assert_eq!(radius_watch.wait.arm, plain_watch.wait.arm);
+        assert_eq!(
+            radius_watch.wait.budget_ticks,
+            plain_watch.wait.budget_ticks
+        );
+    }
+    assert_eq!(radius.proof, plain.proof);
+
+    let off_course = &radius.steps[radius_start - 1];
+    assert_eq!(
+        off_course.name,
+        "tele off the course, 11 tiles from the Log balance, before Start"
+    );
+    assert_eq!(
+        off_course.wait.arm,
+        Proof::Arrived {
+            x: 2474,
+            z: 3446,
+            level: 0
+        }
+    );
+    assert_eq!(off_course.wait.budget_ticks, 200);
+    let StepKind::Perform { send } = &off_course.kind else {
+        panic!("the off-course tele is a one-shot Perform");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "tele 0,38,53,42,54"));
+
+    // Right after Start: the witness. Like every first post-Start step it is a
+    // "watch" on the standing watch budget.
+    let witness = &radius.steps[radius_start + 1];
+    let StepKind::Await { evidence, .. } = &witness.kind else {
+        panic!("the step after Start is the witness");
+    };
+    assert_eq!(
+        *evidence,
+        "gnome_course_log_balance_left_alone_beyond_the_search_radius"
+    );
+    assert_eq!(
+        witness.name,
+        "watch the bot leave the Log balance alone beyond its search radius"
+    );
+    assert_eq!(witness.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+
+    let back = &radius.steps[radius_start + 2];
+    assert_eq!(
+        back.name,
+        "tele to the gnome course start after the witness"
+    );
+    assert_eq!(back.wait.arm, course_start_arm);
+    assert_eq!(back.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+    let StepKind::Perform { send } = &back.kind else {
+        panic!("the tele back is a one-shot Perform");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "tele 0,38,53,42,44"));
+}
+
+/// One loc as the client lists it: a single row at the loc's origin tile.
+fn gnome_loc(id: i32, name: &str, x: i32, z: i32, actions: &[&str]) -> api::snapshot::LocView {
+    api::snapshot::LocView {
+        typecode: 0,
+        info: 0,
+        id,
+        name: Some(name.into()),
+        description: None,
+        actions: actions
+            .iter()
+            .map(|action| Some((*action).into()))
+            .collect(),
+        tile: WorldTile { x, z, level: 0 },
+        distance: 0,
+        layer: api::snapshot::LocLayer::Ground,
+        shape: 10,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: true,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+/// Every level-0 loc named like a gnome course step near the course, at its
+/// origin tile: `content/maps/m38_53.jm2:5568-6111`, and the Log balance as
+/// raw plane 1 over a bridge tile (`:6606`, `:4339`).
+fn gnome_level0_course_locs() -> Vec<api::snapshot::LocView> {
+    let mut locs = vec![gnome_loc(2295, "Log balance", 2474, 3435, &["Walk-across"])];
+    for x in [2471, 2473, 2475] {
+        locs.push(gnome_loc(2285, "Obstacle net", x, 3425, &["Climb-over"]));
+    }
+    for x in [2483, 2485, 2487] {
+        locs.push(gnome_loc(2286, "Obstacle net", x, 3426, &["Climb-over"]));
+    }
+    for z in [3431, 3435] {
+        locs.push(gnome_loc(
+            154,
+            "Obstacle pipe",
+            2484,
+            z,
+            &["Squeeze-through"],
+        ));
+        locs.push(gnome_loc(
+            4058,
+            "Obstacle pipe",
+            2487,
+            z,
+            &["Squeeze-through"],
+        ));
+    }
+    locs
+}
+
+/// The snapshot of one observed game tick, in game, on a settled scene.
+fn gnome_radius_tick(
+    tick: u32,
+    tile: (i32, i32),
+    agility_xp: i32,
+    locs: Vec<api::snapshot::LocView>,
+) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tick(tick);
+    snapshot.seed_tile(WorldTile {
+        x: tile.0,
+        z: tile.1,
+        level: 0,
+    });
+    snapshot.seed_stats(vec![api::snapshot::StatView {
+        index: AGILITY_STAT,
+        name: "agility".into(),
+        effective: 1,
+        base: 1,
+        xp: agility_xp,
+        used: true,
+    }]);
+    snapshot.seed_locs(locs);
+    snapshot
+}
+
+/// The witness' `ready` closure of a fresh `gnome_course_radius` scenario.
+fn gnome_radius_ready() -> impl Fn(&GameSnapshot) -> bool {
+    let scenario = get("gnome_course_radius").expect("gnome_course_radius");
+    let step = scenario
+        .steps
+        .into_iter()
+        .find(|step| {
+            matches!(
+                &step.kind,
+                StepKind::Await { evidence, .. } if *evidence == GNOME_RADIUS_WITNESS_EVIDENCE
+            )
+        })
+        .expect("the radius cell carries its witness");
+    let StepKind::Await { ready, .. } = step.kind else {
+        unreachable!("the step was found by its Await kind");
+    };
+    ready
+}
+
+fn gnome_witness_tile() -> (i32, i32) {
+    let tile = GNOME_RADIUS_WITNESS_TILE;
+    (tile.x, tile.z)
+}
+
+/// The first tick at which a fresh witness accepts when the bot stands on the
+/// witness tile and `locs` is listed on every tick, over three windows.
+fn gnome_radius_first_accepted_tick(locs: impl Fn() -> Vec<api::snapshot::LocView>) -> Option<u32> {
+    let ready = gnome_radius_ready();
+    (1..=3 * GNOME_RADIUS_WITNESS_TICKS)
+        .find(|tick| ready(&gnome_radius_tick(*tick, gnome_witness_tile(), 0, locs())))
+}
+
+#[test]
+fn gnome_radius_witness_accepts_after_the_still_window_with_the_log_beyond_the_radius() {
+    let ready = gnome_radius_ready();
+    for tick in 1..GNOME_RADIUS_WITNESS_TICKS {
+        assert!(
+            !ready(&gnome_radius_tick(
+                tick,
+                gnome_witness_tile(),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "tick {tick} is inside the window"
+        );
+    }
+    let last = gnome_radius_tick(
+        GNOME_RADIUS_WITNESS_TICKS,
+        gnome_witness_tile(),
+        0,
+        gnome_level0_course_locs(),
+    );
+    assert!(ready(&last));
+    assert!(
+        ready(&last),
+        "later frames of the same tick keep the verdict"
+    );
+}
+
+#[test]
+fn gnome_radius_witness_counts_each_game_tick_once() {
+    let ready = gnome_radius_ready();
+    // The runner calls `ready` on every frame; frames of one tick are one
+    // observation.
+    let first = gnome_radius_tick(1, gnome_witness_tile(), 0, gnome_level0_course_locs());
+    for _ in 0..200 {
+        assert!(!ready(&first));
+    }
+    for tick in 2..GNOME_RADIUS_WITNESS_TICKS {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            gnome_witness_tile(),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_tick(
+        GNOME_RADIUS_WITNESS_TICKS,
+        gnome_witness_tile(),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    for tick in 1..=4 {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    // A bot that ignores the radius clicks the Log balance; its first step
+    // takes it off the tile.
+    let window = GNOME_RADIUS_WITNESS_TICKS;
+    assert!(!ready(&gnome_radius_tick(
+        5,
+        (x, z - 1),
+        0,
+        gnome_level0_course_locs()
+    )));
+    // Standing still elsewhere never counts, and walking back onto the tile
+    // does not clear the refusal.
+    for tick in 6..=5 + 3 * window {
+        assert!(
+            !ready(&gnome_radius_tick(
+                tick,
+                (x, z - 6),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "tick {tick}, still elsewhere"
+        );
+    }
+    for tick in 6 + 3 * window..=5 + 6 * window {
+        assert!(
+            !ready(&gnome_radius_tick(
+                tick,
+                (x, z),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "tick {tick}, back on the tile"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_never_accepts_after_agility_xp_rises() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    for tick in 1..=4 {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let window = GNOME_RADIUS_WITNESS_TICKS;
+    for tick in 5..=4 + 3 * window {
+        assert!(
+            !ready(&gnome_radius_tick(
+                tick,
+                (x, z),
+                75,
+                gnome_level0_course_locs()
+            )),
+            "tick {tick}, after the obstacle paid XP"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_waits_for_the_teleport_to_land() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    // Observations a tile short of the witness tile come before the watch
+    // began: they are neither counted nor refused.
+    for tick in 1..=5 {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z + 1),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let window = GNOME_RADIUS_WITNESS_TICKS;
+    for tick in 6..5 + window {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_tick(
+        5 + window,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_ticks() {
+    let (x, z) = gnome_witness_tile();
+    let window = GNOME_RADIUS_WITNESS_TICKS;
+    let ready = gnome_radius_ready();
+    let without_log = || {
+        let mut locs = gnome_level0_course_locs();
+        locs.retain(|loc| loc.id != 2295);
+        locs
+    };
+    // One tick without the Log balance in the scene breaks the run.
+    for tick in 1..window {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(!ready(&gnome_radius_tick(window, (x, z), 0, without_log())));
+    for tick in window + 1..2 * window {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_tick(
+        2 * window,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+
+    // A scene that is not ready breaks it as well.
+    let ready = gnome_radius_ready();
+    for tick in 1..window {
+        assert!(!ready(&gnome_radius_tick(
+            tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let mut loading = gnome_radius_tick(window, (x, z), 0, gnome_level0_course_locs());
+    loading.seed_ingame(1);
+    assert!(!ready(&loading));
+    assert!(!ready(&gnome_radius_tick(
+        window + 1,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_range() {
+    // The Log balance is not in the scene at all.
+    assert_eq!(
+        gnome_radius_first_accepted_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.retain(|loc| loc.id != 2295);
+            locs
+        }),
+        None
+    );
+    // The Log balance is inside the radius (6 tiles away).
+    assert_eq!(
+        gnome_radius_first_accepted_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.retain(|loc| loc.id != 2295);
+            locs.push(gnome_loc(2295, "Log balance", 2474, 3440, &["Walk-across"]));
+            locs
+        }),
+        None
+    );
+    // The Log balance is 11 away, but another obstacle the bot's search
+    // could take is inside the radius.
+    assert_eq!(
+        gnome_radius_first_accepted_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.push(gnome_loc(2285, "Obstacle net", 2474, 3440, &["Climb-over"]));
+            locs
+        }),
+        None
+    );
+}
+
+#[test]
+fn gnome_radius_witness_ignores_locs_the_bots_own_search_ignores() {
+    let window = Some(GNOME_RADIUS_WITNESS_TICKS);
+    for (label, extra) in [
+        (
+            "a course-named loc without actions",
+            gnome_loc(3552, "Balancing rope", 2474, 3441, &[]),
+        ),
+        (
+            "a course-named loc whose only action is hidden",
+            gnome_loc(2285, "Obstacle net", 2474, 3441, &["hidden"]),
+        ),
+        (
+            "a loc with another name",
+            gnome_loc(1276, "Tree", 2474, 3441, &["Chop down"]),
+        ),
+        ("a course-named loc on another plane", {
+            let mut loc = gnome_loc(2313, "Tree branch", 2474, 3441, &["Climb"]);
+            loc.tile.level = 1;
+            loc
+        }),
+    ] {
+        assert_eq!(
+            gnome_radius_first_accepted_tick(|| {
+                let mut locs = gnome_level0_course_locs();
+                locs.push(extra.clone());
+                locs
+            }),
+            window,
+            "{label} is inside the radius but is no candidate for the bot"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_tile_is_one_tile_beyond_the_radius_of_every_level0_course_loc() {
+    let radius = get("gnome_course_radius").expect("gnome_course_radius");
+    let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
+    let injected = inject
+        .get("searchRadius")
+        .and_then(Value::as_f64)
+        .expect("the radius cell injects searchRadius") as i32;
+    let tile = GNOME_RADIUS_WITNESS_TILE;
+    let distance =
+        |loc: &api::snapshot::LocView| (loc.tile.x - tile.x).abs().max((loc.tile.z - tile.z).abs());
+    let locs = gnome_level0_course_locs();
+    assert_eq!(
+        locs.iter().map(distance).min(),
+        Some(injected + 1),
+        "radius 10 sees no course loc from the witness tile and radius 11 sees one"
+    );
+    let log = locs
+        .iter()
+        .find(|loc| loc.id == 2295)
+        .map(distance)
+        .expect("the Log balance is listed");
+    // The default `searchRadius` is 20 (`AgilityBot.ts:34`).
+    assert!((injected + 1..=20).contains(&log));
+    // `TravelToCourse` only walks the bot back from more than 20 tiles away
+    // (`AgilityBot.ts:19-25`).
+    assert!((tile.x - 2474).abs().max((tile.z - 3436).abs()) <= 20);
 }
 
 #[test]
