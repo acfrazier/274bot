@@ -609,13 +609,13 @@ mod tests {
     }
 
     fn assert_cold_bounded(info: allocation_counter::AllocationInfo) {
-        const COLD_ALLOCATIONS: usize = 8;
-        const COLD_BYTES: usize = COLD_ALLOCATIONS * 112;
+        const COLD_ALLOCATIONS: u64 = 8;
+        const COLD_BYTES: u64 = COLD_ALLOCATIONS * 112;
         assert!(info.count_total <= COLD_ALLOCATIONS, "{info:?}");
-        assert!(info.count_current <= COLD_ALLOCATIONS, "{info:?}");
+        assert!(info.count_current <= COLD_ALLOCATIONS as i64, "{info:?}");
         assert!(info.count_max <= COLD_ALLOCATIONS, "{info:?}");
         assert!(info.bytes_total <= COLD_BYTES, "{info:?}");
-        assert!(info.bytes_current <= COLD_BYTES, "{info:?}");
+        assert!(info.bytes_current <= COLD_BYTES as i64, "{info:?}");
         assert!(info.bytes_max <= COLD_BYTES, "{info:?}");
     }
 
@@ -759,7 +759,8 @@ mod tests {
             let oldest = history.rows[history.oldest].as_ref().unwrap();
             let mut scope = runtime.deno_runtime().handle_scope();
             let oldest = v8::Local::new(&mut scope, oldest);
-            let text = cb::get(&mut scope, oldest.into(), "text").unwrap();
+            let text = cb::get(&mut scope, oldest.into(), "text")
+                .unwrap_or_else(|_| panic!("retained chat record text must remain readable"));
             assert_eq!(text.to_rust_string_lossy(&mut scope), "line 66");
         }
         runtime.eval::<()>("__rs2b0t_game_messages(6)").unwrap();
