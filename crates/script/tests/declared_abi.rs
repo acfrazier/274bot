@@ -247,11 +247,11 @@ export default class T extends LoopingBot {
                 return String(e.message || e);
             }
         };
+        globalThis.__gatheringMapSquare = api.MAP_SQUARE;
         globalThis.__probe = await Promise.all([
             use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
             use(() => String(api.COINS)),
             use(() => api.FISHING_LOCATIONS.length),
-            use(() => api.MAP_SQUARE + 1),
             use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
             use(() => api.AXE_SHOP_COSTS.map((c) => c)),
             use(() => bankPace()),
@@ -263,9 +263,17 @@ export default class T extends LoopingBot {
         .expect("declared stub probe must load");
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").expect("probe __probe");
+    let map_square = iso
+        .probe("__gatheringMapSquare")
+        .expect("completed Gathering constant");
     iso.join();
+    assert_eq!(map_square.as_i64(), Some(64));
     let rows = probe.as_array().cloned().unwrap_or_default();
-    assert_eq!(rows.len(), 7, "every stub use must be probed: {probe:?}");
+    assert_eq!(
+        rows.len(),
+        6,
+        "every remaining stub use must be probed: {probe:?}"
+    );
     for (i, row) in rows.iter().enumerate() {
         let text = row.as_str().unwrap_or("");
         assert!(
@@ -273,7 +281,7 @@ export default class T extends LoopingBot {
             "stub use {i} must throw not impl, got {text:?}"
         );
     }
-    let bank_pace = rows[6].as_str().unwrap_or("");
+    let bank_pace = rows[5].as_str().unwrap_or("");
     assert!(
         bank_pace.contains("not impl: bankPace"),
         "unimplemented call must name bankPace, got {bank_pace:?}"
