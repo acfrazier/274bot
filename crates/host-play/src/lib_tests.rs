@@ -29957,3 +29957,893 @@ fn direct_connection_has_no_world_type() {
     });
     assert_eq!(direct.world_members(), api::selected::Truth::Unknown);
 }
+#[cfg(test)]
+mod quest_route_evidence_tests {
+    use super::*;
+    use api::identity::Scope;
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{QuestGate, RunKey, Truth};
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
+    use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+    use std::num::NonZeroU16;
+    use std::sync::LazyLock;
+
+    #[derive(Clone, Copy)]
+    enum QuestListFrame {
+        Complete,
+        Unsupported,
+        Unavailable,
+    }
+
+    fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
+        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> =
+            LazyLock::new(|| {
+                let selected =
+                    api::game_data::for_revision(api::selected::ClientRevision::R289)
+                        .expect("selected R289 game data");
+                let worker_data = Arc::clone(&selected);
+                let input = script::preparation::PreparationInput::new(
+                    1,
+                    0,
+                    8 * 1024 * 1024,
+                    2 * 1024 * 1024,
+                )
+                .expect("quest preparation budget");
+                script::preparation::submit(
+                    script::preparation::PreparationKind::Profile,
+                    api::identity::Scope::Process,
+                    input,
+                    move |worker| worker_data.prepare_quests(worker),
+                )
+                .expect("submit production quest preparation")
+                .join()
+                .expect("quest preparation worker")
+                .expect("prepare selected quest family");
+                assert!(
+                    selected.try_quests().is_some(),
+                    "production preparation must retain the selected quest catalog"
+                );
+                selected
+            });
+        Arc::clone(&SELECTED)
+    }
+
+    fn selected_quest(
+        selected: &api::game_data::SelectedGameData,
+    ) -> (api::selected::FactKey, String) {
+        let facts = selected
+            .try_quests()
+            .expect("selected quest catalog")
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
+        (facts.id.clone(), facts.display.to_string())
+    }
+
+    fn family(selected: &api::game_data::SelectedGameData) -> nav::quest_gates::QuestFamilyId {
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        nav::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
+    }
+
+    fn tile(x: i32, z: i32) -> api::snapshot::WorldTile {
+        api::snapshot::WorldTile { x, z, level: 0 }
+    }
+
+    fn gate_world(
+        family: nav::quest_gates::QuestFamilyId,
+        quest: api::selected::FactKey,
+    ) -> Arc<NavWorld> {
+        use client::dash3d::CollisionFlag;
+        use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+
+        let origin = tile(0, 0);
+        let mut flags = vec![0; 5];
+        flags[0] |= CollisionFlag::W_E;
+        flags[1] |= CollisionFlag::W_W;
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: origin,
+            to: tile(3, 0),
+            takeoff: Some(origin),
+            player_delta: None,
+            loc_id: 1,
+            option: 0,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                    .expect("typed Complete gate"),
+            ),
+        };
+        let mut graph = TransportGraph::default();
+        graph.quest_family = Some(family);
+        graph.at.entry(origin).or_default().push(0);
+        graph.edges.push(edge);
+        Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: 5,
+                height: 1,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            Vec::new(),
+        ))
+    }
+
+    fn quest_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        frame: QuestListFrame,
+    ) -> GameSnapshot {
+        let (_, name) = selected_quest(selected);
+        let mut snapshot = nav_frame_at(0, 0);
+        let colour = match frame {
+            QuestListFrame::Complete | QuestListFrame::Unavailable => {
+                nav::world_state::QUEST_COMPLETE_COLOUR
+            }
+            QuestListFrame::Unsupported => 0x123456,
+        };
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name,
+                colour,
+            }],
+            !matches!(frame, QuestListFrame::Unavailable),
+        );
+        snapshot
+    }
+
+    fn start_compat_route(
+        world: Arc<NavWorld>,
+        selected: Arc<api::game_data::SelectedGameData>,
+    ) -> NavRig {
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("test slot");
+        let mut slot = slot.lock().unwrap();
+        slot.stop();
+        let source = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+globalThis.__fireWalk = false;
+export default class T extends LoopingBot {
+    async loop() {
+        if (!globalThis.__fireWalk) return;
+        globalThis.__fireWalk = false;
+        Traversal.walkTo(
+            { x: 4, z: 0, level: 0 },
+            { radius: 0, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+        slot.start_load_with_settings_and_game_data(
+            source.to_owned(),
+            script::LoadShape::CompatClass,
+            None,
+            vec![],
+            &[],
+            Some(selected),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+        .expect("start compatibility route script");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match slot.poll_start() {
+                script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                script::StartPoll::Pending => {
+                    assert!(Instant::now() < deadline, "compatibility script start stalled");
+                    std::thread::yield_now();
+                }
+                other => panic!("compatibility script start failed: {other:?}"),
+            }
+        }
+        slot.on_is_up(true);
+        let session = api::identity::SessionKey::first(
+            slot.slot_key_for_test().expect("compatibility slot key"),
+        );
+        slot.align_seat_session(Some(session));
+        drop(slot);
+        rig
+    }
+
+    fn observe(
+        rig: &NavRig,
+        driver: &mut NavRec,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        state: Option<nav::WorldState>,
+    ) {
+        script_observe(
+            driver,
+            "alice",
+            true,
+            true,
+            tick,
+            Some((0, 0, 0)),
+            None,
+            state,
+            Some(snapshot),
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+        );
+    }
+
+    fn route_run(slot: &script::SlotScript) -> RunKey {
+        slot.native_run().unwrap_or_else(|| {
+            let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
+                panic!("compatibility route must use slot scope");
+            };
+            RunKey {
+                slot: key.incarnation().get(),
+                run: slot.runtime_generation(),
+                session: slot.work_epoch(),
+            }
+        })
+    }
+
+    fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__fireWalk = true")
+            .expect("enable compatibility walk");
+    }
+
+    fn await_walk(rig: &NavRig) {
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.walk_request_id != 0
+            }),
+            "compatibility route request did not settle"
+        );
+    }
+
+    #[test]
+    fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let selected_family = family(&selected);
+
+        let rig = start_compat_route(
+            gate_world(selected_family, quest.clone()),
+            Arc::clone(&selected),
+        );
+        let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
+        let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
+        let mut driver = NavRec::default();
+
+        // Observation retains selected identity and its causal stamp only.
+        observe(&rig, &mut driver, &snapshot, 1, None);
+        {
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice").expect("navigation bot");
+            assert!(bot.quest_context.is_some());
+            assert!(bot.route_quest_evidence.is_none());
+            assert!(!bot.route_work_pending());
+        }
+
+        start_walk(&slot);
+        observe(&rig, &mut driver, &snapshot, 2, None);
+        await_walk(&rig);
+        let expected = EvidenceStamp {
+            run: route_run(&slot.lock().unwrap()),
+            tick: 2,
+            sequence: 2,
+        };
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        assert!(bot.has_route(), "the observed Complete row must open the gate");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published route retains request evidence");
+        assert_eq!(evidence.required_after(), expected);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the gate must use the captured ordinary quest-list evidence"
+        );
+    }
+
+    #[test]
+    fn compatibility_queue_route_fails_closed_for_wrong_family_and_bad_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let selected_family = family(&selected);
+        let wrong_family = nav::quest_gates::QuestFamilyId::new(
+            [0xA5; 32],
+            NonZeroU16::new(1).expect("nonzero test schema"),
+        );
+        assert_ne!(wrong_family, selected_family);
+
+        for (label, edge_family, frame) in [
+            ("wrong family", wrong_family, QuestListFrame::Complete),
+            (
+                "unavailable list",
+                selected_family,
+                QuestListFrame::Unavailable,
+            ),
+            (
+                "unsupported status colour",
+                selected_family,
+                QuestListFrame::Unsupported,
+            ),
+        ] {
+            let rig = start_compat_route(
+                gate_world(edge_family, quest.clone()),
+                Arc::clone(&selected),
+            );
+            let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
+            start_walk(&slot);
+            let snapshot = quest_snapshot(&selected, frame);
+            let mut driver = NavRec::default();
+            observe(&rig, &mut driver, &snapshot, 1, None);
+            await_walk(&rig);
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice").expect("navigation bot");
+            assert!(!bot.has_route(), "{label} must not open the typed gate");
+            assert!(bot.walk_outcome_failed, "{label} must report no route");
+        }
+    }
+
+    #[derive(Default)]
+    struct Advice {
+        request_id: Option<u64>,
+    }
+
+    struct Adviser {
+        shared: Arc<Mutex<Advice>>,
+    }
+
+    impl Script for Adviser {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            let mut shared = self.shared.lock().unwrap();
+            if shared.request_id.is_none() {
+                let id = tick
+                    .actions
+                    .assess_walk(
+                        script::native::WalkRequest {
+                            target: tile(4, 0),
+                            radius: 0,
+                            arrival: nav::arrival::ArrivalKind::Reach,
+                            loc_id: None,
+                            options: script::native::WalkOptions::default(),
+                            required_after: tick.cx.evidence(),
+                            evidence: None,
+                            cross: Box::default(),
+                            protect: false,
+                            food_guard: false,
+                            allow: Default::default(),
+                        },
+                        &mut tick.cx,
+                    )
+                    .map_err(|error| ScriptFailure {
+                        code: "quest-assess-test".into(),
+                        message: format!("{error:?}").into(),
+                    })?;
+                shared.request_id = Some(id);
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    #[test]
+    fn native_assessment_uses_the_same_complete_row_and_request_stamp() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let world = gate_world(family(&selected), quest);
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("test slot");
+        let shared = Arc::new(Mutex::new(Advice::default()));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(Adviser {
+                    shared: Arc::clone(&shared),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native assessment");
+        }
+        let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
+        let mut driver = NavRec::default();
+        observe(
+            &rig,
+            &mut driver,
+            &snapshot,
+            7,
+            Some(nav::WorldState::from_snapshot(&snapshot)),
+        );
+        assert!(shared.lock().unwrap().request_id.is_some());
+        assert!(
+            wait_until(60_000, || {
+                script_runtime::pump_route_work(&rig.navs, "alice");
+                rig.navs
+                    .lock()
+                    .unwrap()
+                    .get("alice")
+                    .is_some_and(|bot| bot.assess_result.is_some())
+            }),
+            "native advisory route did not settle"
+        );
+
+        let slot = slot.lock().unwrap();
+        let expected = EvidenceStamp {
+            run: slot.native_run().expect("native run key"),
+            tick: 7,
+            sequence: 7,
+        };
+        let navs = rig.navs.lock().unwrap();
+        let receipt = &navs
+            .get("alice")
+            .expect("navigation bot")
+            .assess_result
+            .as_ref()
+            .expect("assessment receipt")
+            .1;
+        assert_eq!(receipt.evidence, expected);
+        assert!(receipt.route_ticks > 0, "the assessed route crosses the gate");
+        assert_eq!(
+            receipt.refusal, None,
+            "the Complete row must not produce a no-route refusal"
+        );
+    }
+
+    fn gatherer_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        target: api::snapshot::WorldTile,
+    ) -> GameSnapshot {
+        let from = tile(target.x - 4, target.z);
+        let mut client = nav_client();
+        client.map_build_base_x = target.x - 52;
+        client.map_build_base_z = target.z - 52;
+        plant_nav_footprint_loc(&mut client, 52, 52, 3, 3);
+        for x in 52..55 {
+            for z in 52..55 {
+                client.collision[0].flags[x][z] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+            }
+        }
+        let mut snapshot = GameSnapshot::new();
+        nav_snapshot_at(&mut client, &mut snapshot, 48, 52);
+        let mut player = snapshot.local_player().unwrap().clone();
+        player.player.actor.tile = from;
+        snapshot.seed_local_player(player);
+        let mut locs = snapshot.locs().to_vec();
+        locs[0].id = 1309;
+        locs[0].name = Some("Yew".into());
+        locs[0].actions = vec![Some("Chop down".into())];
+        snapshot.seed_locs(locs);
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 60,
+            base: 60,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(vec![ItemView {
+            def: api::ItemDefView {
+                id: 1351,
+                name: Some("Bronze axe".into()),
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Equipment,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Remove".into())],
+            component_id: -1,
+        }]);
+        let (_, name) = selected_quest(selected);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name,
+                colour: nav::world_state::QUEST_COMPLETE_COLOUR,
+            }],
+            true,
+        );
+        snapshot
+    }
+
+    fn gatherer_world(
+        target: api::snapshot::WorldTile,
+        family: nav::quest_gates::QuestFamilyId,
+        quest: api::selected::FactKey,
+    ) -> Arc<NavWorld> {
+        use client::dash3d::CollisionFlag;
+        use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+
+        let origin = tile(target.x - 4, target.z - 2);
+        let width = 8usize;
+        let height = 5usize;
+        let mut flags = vec![0; width * height];
+        for z in 0..height {
+            flags[z * width] |= CollisionFlag::W_E;
+            flags[z * width + 1] |= CollisionFlag::W_W;
+        }
+        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let from = tile(origin.x, target.z);
+        let landing = tile(target.x - 1, target.z);
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: from,
+            to: landing,
+            takeoff: Some(from),
+            player_delta: None,
+            loc_id: 1,
+            option: 0,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                    .expect("typed Complete gate"),
+            ),
+        };
+        let mut graph = TransportGraph::default();
+        graph.quest_family = Some(family);
+        graph.at.entry(from).or_default().push(0);
+        graph.edges.push(edge);
+        Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: width as u16,
+                height: height as u16,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn native_gatherer_walk_crosses_the_typed_gate_from_live_quest_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let family = family(&selected);
+        let target = tile(3085, 3468);
+        let from = tile(target.x - 4, target.z);
+        let world = gatherer_world(target, family, quest.clone());
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("Gatherer slot");
+        let snapshot = gatherer_snapshot(&selected, target);
+        let mut settings = script::native::SettingsBag::new();
+        settings.insert("skill".into(), serde_json::json!("Woodcutting"));
+        settings.insert("woodcuttingResources".into(), serde_json::json!(["yew"]));
+        settings.insert("location".into(), serde_json::json!("Start"));
+        settings.insert("radius".into(), serde_json::json!(12));
+        settings.insert("disposition".into(), serde_json::json!("Power"));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.bind_incarnation(4271);
+            slot.start_compiled(
+                "alice",
+                script::CompiledId("Gatherer"),
+                Arc::new(settings),
+                Arc::clone(&selected),
+                Arc::default(),
+            )
+            .expect("start selected Gatherer");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                match slot.poll_start() {
+                    script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                    script::StartPoll::Pending => {
+                        assert!(Instant::now() < deadline, "Gatherer preparation stalled");
+                        std::thread::yield_now();
+                    }
+                    other => panic!("Gatherer start failed: {other:?}"),
+                }
+            }
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("Gatherer must request a native walk");
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "native Gatherer route did not publish across the gate"
+        );
+
+        let slot = slot.lock().unwrap();
+        let expected = EvidenceStamp {
+            run: slot.native_run().expect("Gatherer native run"),
+            tick: requested_at,
+            sequence: requested_at,
+        };
+        let destination = queued(&rig.navs).expect("Gatherer route destination");
+        assert!(destination.x > from.x, "the route must reach the far side");
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published Gatherer route retains its evidence");
+        assert_eq!(evidence.required_after(), expected);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the Gatherer route must use the captured Complete row"
+        );
+    }
+
+    fn cook_quest(selected: &api::game_data::SelectedGameData) -> api::selected::FactKey {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == "cook")
+            .expect("selected Cook's Assistant fact")
+            .id
+            .clone()
+    }
+
+    fn compiled_sheep_walk(
+        selected: &Arc<api::game_data::SelectedGameData>,
+    ) -> Arc<script::quester::compile::CompiledPath> {
+        use script::quester::path::{PathDocument, PredicateDocument};
+
+        let mut document: PathDocument =
+            serde_json::from_str(script::quester::compile::SHEEP_JSON)
+                .expect("bundled Sheep Shearer path");
+        let sequence = document.roles[0]
+            .sequences
+            .iter_mut()
+            .find(|sequence| sequence.stage.0.as_ref() == "sheep:0")
+            .expect("Sheep not-started sequence");
+        let step = &mut sequence.steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [4, 0, 0],
+            "source": "native Quester entrance-gate host test",
+            "radius": 0
+        });
+        step.advances = Some(false);
+        step.skip_if = PredicateDocument::Any(Vec::new());
+        step.settle = PredicateDocument::Fact {
+            kind: "near".into(),
+            version: 1,
+            args: serde_json::json!({"tile": [4, 0, 0], "radius": 0}),
+        };
+
+        let bytes = serde_json::to_vec(&document).expect("serialize modified Quester path");
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let selected = Arc::clone(selected);
+        let input = script::preparation::PreparationInput::new(
+            1,
+            0,
+            8 * 1024 * 1024,
+            2 * 1024 * 1024,
+        )
+        .expect("Quester path compilation budget");
+        script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            Scope::Process,
+            input,
+            move |worker| {
+                script::quester::compile::compile_path_for_gang(
+                    &bytes,
+                    &selected,
+                    &quests,
+                    worker,
+                    None,
+                    &script::local_state::OperatorLoadouts::absent(),
+                )
+            },
+        )
+        .expect("submit production Quester path compilation")
+        .join()
+        .expect("Quester path compilation worker")
+        .expect("compile native Quester path")
+    }
+
+    fn quester_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        gate_quest: &api::selected::FactKey,
+    ) -> GameSnapshot {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let gate = catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == gate_quest.0.as_ref())
+            .expect("selected route-gate quest");
+        let sheep = catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == "sheep")
+            .expect("selected Sheep Shearer fact");
+        let mut snapshot = nav_frame_at(0, 0);
+        snapshot.seed_quest_statuses(
+            vec![
+                QuestStatusView {
+                    component_id: 1,
+                    name: gate.display.to_string(),
+                    colour: nav::world_state::QUEST_COMPLETE_COLOUR,
+                },
+                QuestStatusView {
+                    component_id: 2,
+                    name: sheep.display.to_string(),
+                    colour: 0xF80000,
+                },
+            ],
+            true,
+        );
+        snapshot
+    }
+
+    struct QuesterWalkHarness {
+        control: Arc<Mutex<Option<script::quester::runner::Quester>>>,
+    }
+
+    impl Script for QuesterWalkHarness {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .tick(tick)
+        }
+
+        fn interrupt(&mut self, event: script::native::Interrupt) {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .interrupt(event);
+        }
+
+        fn on_random(&mut self, event: &api::DetectedRandom) -> api::RandomClaim {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .on_random(event)
+        }
+
+        fn on_stop(&mut self, reason: script::native::StopReason) {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .on_stop(reason);
+        }
+    }
+
+    #[test]
+    fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
+        let selected = selected_r289();
+        let quest = cook_quest(&selected);
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let path = compiled_sheep_walk(&selected);
+        let world = gate_world(family(&selected), quest.clone());
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
+        let snapshot = quester_snapshot(&selected, &quest);
+        let control = Arc::new(Mutex::new(None));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.bind_incarnation(4272);
+            slot.start_test_script(
+                Box::new(QuesterWalkHarness {
+                    control: Arc::clone(&control),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native Quester");
+            let run = slot.native_run().expect("native Quester run");
+            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
+                run,
+                Arc::clone(&path),
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            ));
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("native Quester must request a walk");
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "native Quester route did not publish across the typed gate"
+        );
+
+        let destination = queued(&rig.navs).expect("Quester route destination");
+        assert!(
+            destination.x > 0,
+            "the Quester route must reach the far side of the transport"
+        );
+        let slot = slot.lock().unwrap();
+        let run = slot.native_run().expect("native Quester run");
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published Quester route retains its evidence");
+        assert_eq!(evidence.required_after().run, run);
+        assert_eq!(evidence.required_after().tick, requested_at);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the Quester route must use the captured Complete row"
+        );
+    }
+}
