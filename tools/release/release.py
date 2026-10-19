@@ -643,7 +643,6 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
     else:
         environment = os.environ.copy()
         environment.pop("RUSTY_V8_ARCHIVE", None)
-        environment.pop("AWS_LC_SYS_PREBUILT_NASM", None)
     environment.update({
         "GIT_COMMIT": expect["host_commit"],
         "CLIENT_COMMIT": expect["client_commit"],
@@ -664,7 +663,6 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
     if platform == "windows":
         if not rusty_v8_archive:
             raise ReleaseError("Windows build requires --rusty-v8-archive")
-        environment["AWS_LC_SYS_PREBUILT_NASM"] = "1"
         environment["RUSTY_V8_ARCHIVE"] = rusty_v8_archive
     return environment
 

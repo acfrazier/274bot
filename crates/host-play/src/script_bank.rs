@@ -1827,7 +1827,7 @@ pub(super) fn queue_native_bank_pick_scoped(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     input: NativeBankPickInput,
     session_permissions: Option<script::native::WalkPermissions>,
 ) {
@@ -1868,7 +1868,7 @@ pub(super) fn queue_bank_pick_scoped(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     from: WorldTile,
     allow_wilderness: bool,
     request_id: u64,
@@ -1901,7 +1901,7 @@ pub(super) fn queue_bank_walk_scoped(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     from: WorldTile,
     fishing_base: Option<i32>,
 ) -> bool {
@@ -1921,6 +1921,9 @@ pub(super) fn queue_bank_walk_scoped(
     )
 }
 
+/// `state` borrows the observe frame's gating facts. The request copies them
+/// once, into its own shared backing, only after the admission gates pass, so
+/// it keeps that frame's facts while it waits.
 #[expect(
     clippy::too_many_arguments,
     reason = "one admission path serves native selection, compatibility selection and bank walking"
@@ -1930,7 +1933,7 @@ fn queue_bank(
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
-    state: Option<WorldState>,
+    state: Option<&WorldState>,
     from: WorldTile,
     mut opts: FindOptions,
     request_id: u64,
@@ -2044,7 +2047,8 @@ fn queue_bank(
     let Some(lease) = lease else {
         unreachable!("a present NavWorld has an owner lease");
     };
-    let state = state.unwrap_or_default();
+    let empty = WorldState::default();
+    let state = state.unwrap_or(&empty);
     let from = native.as_ref().map_or(from, |native| native.request.from);
     let BankCandidates {
         order,
@@ -2053,7 +2057,7 @@ fn queue_bank(
         world.as_ref(),
         facts.as_ref(),
         from,
-        &state,
+        state,
         preferences,
         fishing_base,
         native.as_ref().map(|native| &native.request),
@@ -2080,7 +2084,7 @@ fn queue_bank(
         facts,
         from,
         opts,
-        state,
+        state.clone(),
         order,
         target_count,
         walk_generation,

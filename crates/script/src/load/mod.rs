@@ -36,6 +36,8 @@ mod clue_pack_v8;
 #[cfg(feature = "load")]
 mod combat_style_v8;
 #[cfg(feature = "load")]
+mod crypto_stub;
+#[cfg(feature = "load")]
 mod dialog_v8;
 #[cfg(feature = "load")]
 mod distance;
