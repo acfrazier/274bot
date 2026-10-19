@@ -627,9 +627,9 @@ mod tests {
     fn changed_preferences_round_trip_without_replacing_unrelated_values() {
         let store = TempStore::new();
         let path = store.prefs().path();
-        std::fs::write(
+        vault::write_private_file(
             &path,
-            r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"custom":"preserve"},"quester_paths":{"enabled":false,"folder":"old","future":"preserve"}}"#,
+            br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"custom":"preserve"},"quester_paths":{"enabled":false,"folder":"old","future":"preserve"}}"#,
         )
         .unwrap();
         store.prefs().reload().unwrap();

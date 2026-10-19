@@ -81,6 +81,31 @@ pub(crate) fn scratch_service(dir: &Path) -> Arc<LocalStateService> {
     LocalStateService::open_process(StateRoot::new(dir.to_path_buf()))
 }
 
+/// Write a private-state fixture, usually a preferences file, with mode
+/// 0600 whatever the process umask. A plain write creates the file 0664
+/// under umask 0002, and the product reader refuses a group- or
+/// world-writable preferences file. The panel has no `vault` dependency,
+/// so the mode is set here, before any read.
+pub(crate) fn write_private_fixture(
+    path: impl AsRef<Path>,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    let path = path.as_ref();
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// The preferences of a new service on [`thread_state_root`]: the files a
 /// `Session` on this thread uses, before one exists, or as a second writer
 /// of them (a peer process, as far as the files go). A `Session` sees a

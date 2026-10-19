@@ -121,9 +121,9 @@ mod tests {
     #[test]
     fn legacy_and_default_values_and_cross_surface_writes_preserve_other_preferences() {
         let (dir, prefs) = scratch("roundtrip");
-        std::fs::write(
-            prefs.path(),
-            r#"{"last_focus":"alice","capture":false,"nav":{"show_special_areas":false,"custom":{"keep":7}}}"#,
+        vault::write_private_file(
+            &prefs.path(),
+            br#"{"last_focus":"alice","capture":false,"nav":{"show_special_areas":false,"custom":{"keep":7}}}"#,
         )
         .unwrap();
         prefs.reload().unwrap();
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(saved["nav"]["survivable_routing_notice_ack"], true);
 
         let (missing_dir, missing) = scratch("legacy");
-        std::fs::write(missing.path(), r#"{"last_focus":"bob","nav":{}}"#).unwrap();
+        vault::write_private_file(&missing.path(), br#"{"last_focus":"bob","nav":{}}"#).unwrap();
         missing.reload().unwrap();
         assert!(nav_preference(&missing, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         assert!(
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn survivable_preference_fails_closed_for_malformed_files() {
         let (dir, prefs) = scratch("malformed-survivable");
-        std::fs::write(prefs.path(), b"{malformed").unwrap();
+        vault::write_private_file(&prefs.path(), b"{malformed").unwrap();
         assert!(!nav_preference(&prefs, NavPreference::SurvivableRouting).unwrap());
         std::fs::remove_dir_all(dir).unwrap();
     }
