@@ -2803,6 +2803,7 @@ mod tests {
                 },
                 InteractReq::Deposit {
                     name: "Bronze platebody".into(),
+                    id: None,
                 },
                 InteractReq::Withdraw {
                     name: "Bronze platebody".into(),
