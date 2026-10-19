@@ -22,7 +22,7 @@
 //! a missing client cache a failure for the loading-splash assertions.
 
 use std::net::{SocketAddr, TcpListener};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -697,6 +697,7 @@ struct SlotControl {
     draw: AtomicBool,
     stop: AtomicBool,
     frames: AtomicU64,
+    dynamic_sprite_bytes: AtomicUsize,
 }
 
 /// What a test inspects on the slot's `Client` once its loop stops. A
@@ -746,6 +747,10 @@ fn with_slot<R>(
                 |client, _, _, _, _| {
                     client.set_draw(control.draw.load(Ordering::SeqCst));
                     control.frames.fetch_add(1, Ordering::SeqCst);
+                    control.dynamic_sprite_bytes.store(
+                        client.world.dynamic_sprite_storage_bytes(),
+                        Ordering::SeqCst,
+                    );
                     true
                 },
                 |_| control.stop.load(Ordering::SeqCst),
@@ -850,6 +855,11 @@ fn slot_head_detach_and_reattach_keep_the_session_without_reconnect() {
             );
             wait_frames(&control, 5);
             assert_eq!(mailbox.generation(), generation, "{head:?}: no paints");
+            assert_eq!(
+                control.dynamic_sprite_bytes.load(Ordering::SeqCst),
+                0,
+                "{head:?}: detach releases transient draw-sprite backing storage"
+            );
             if head == Head::Gpu {
                 let detached = client::profiling::gpu_bytes();
                 assert_eq!(
