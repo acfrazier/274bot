@@ -11790,6 +11790,588 @@
       "mapping_kind": "direct-function"
     }
   ],
+  "typed_modules": [
+    {
+      "module": "@rs2b0t/api",
+      "family_id": "compat-runtime",
+      "nav_consuming": false
+    },
+    {
+      "module": "adapter/ClientAdapter.js",
+      "family_id": "client-adapter",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/acquisition/Tools.js",
+      "family_id": "acquisition",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/bankAccess.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/ClueExecutor.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/cluePaint.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/data/cluedb.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/data/toolAcquire.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/duelTravel.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/clues/SolveClue.js",
+      "family_id": "clues",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/defs/murder/areas.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/engine/QuestEngine.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/exec/primitives.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/Bank.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/Banking.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/BankLocations.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankOps.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankQuestJunk.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankRules.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankSort.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bank/bankSortRules.js",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/bot/Bot.js",
+      "family_id": "bot",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/chatbox/gameMessages.js",
+      "family_id": "chatbox",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/boostPotions.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/CombatStyle.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/CombatStyleLogic.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/eatTiming.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/equipment.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/fightUpkeep.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/food.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/hunting/combat.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/guarded.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/logic.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/sites.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/hunting/supply.js",
+      "family_id": "hunt",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/combat/keepList.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/meleeWeapons.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/ranged.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/rangedSettings.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/combat/Special.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/cooking/CookLocations.js",
+      "family_id": "cooking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/duel/ClueDuel.js",
+      "family_id": "duel",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/duel/Duel.js",
+      "family_id": "duel",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/equipment/Equipment.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/execution/EventSignal.js",
+      "family_id": "execution",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/execution/Execution.js",
+      "family_id": "execution",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/firemaking/Firemaking.js",
+      "family_id": "firemaking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/firemaking/LightFire.js",
+      "family_id": "firemaking",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/game/Game.js",
+      "family_id": "game-state",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/grounditems/GroundItems.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/inventory/Inventory.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/inventory/packRules.js",
+      "family_id": "inventory",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/loadout/loadoutPlan.js",
+      "family_id": "loadouts",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/loadout/loadoutSetting.js",
+      "family_id": "loadouts",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/locs/Locs.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/magic/Autocast.js",
+      "family_id": "magic",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/market/catalog.js",
+      "family_id": "market",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/market/MarketMaker.js",
+      "family_id": "market",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Loc.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Npc.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/model/Player.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/npcs/Npcs.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/players/Players.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/prayer/Prayer.js",
+      "family_id": "prayer",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/query/Query.js",
+      "family_id": "entities",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/shop/BuyoutLogic.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/shop/Shop.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/shop/types.js",
+      "family_id": "shop",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/skills/Skills.js",
+      "family_id": "skills",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/sustain/Sustain.js",
+      "family_id": "combat",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/tasks/Anchor.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/ContinueDialog.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/DeathRecovery.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/tasks/PeriodicBank.js",
+      "family_id": "tasks",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/CakeStall.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/cakeStallData.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/stealRules.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/thieving/targets.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/trade/drivePartnerTrade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/trade/PartnerTrade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/trade/Trade.js",
+      "family_id": "trade",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/dialogue/ChatDialog.js",
+      "family_id": "dialogue",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/questlog/Quests.js",
+      "family_id": "questlog",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/ui/widgets/Modals.js",
+      "family_id": "dialogue",
+      "nav_consuming": false
+    },
+    {
+      "module": "api/walking/DirectNavigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/walking/Reach.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/walking/Traversal.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "data/cookLocations.js",
+      "family_id": "cooking",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/cowKillerLocations.js",
+      "family_id": "cow",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/dropdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/herbs.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/itemdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/miningRocks.js",
+      "family_id": "mining",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/pickpocketTargets.js",
+      "family_id": "thieving",
+      "nav_consuming": true
+    },
+    {
+      "module": "data/runeCraftLocations.js",
+      "family_id": "runecrafting",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/shopdb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/spelldb.js",
+      "family_id": "catalog-data",
+      "nav_consuming": false
+    },
+    {
+      "module": "data/woodcuttingLocations.js",
+      "family_id": "woodcutting",
+      "nav_consuming": false
+    },
+    {
+      "module": "event/webwalk/DirectNavigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/geometry/Reachability.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/Navigator.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "event/webwalk/walkOpening.js",
+      "family_id": "walking",
+      "nav_consuming": true
+    },
+    {
+      "module": "geometry/Area.js",
+      "family_id": "world-primitives",
+      "nav_consuming": false
+    },
+    {
+      "module": "geometry/Tile.js",
+      "family_id": "world-primitives",
+      "nav_consuming": false
+    },
+    {
+      "module": "input/Input.js",
+      "family_id": "input",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/jive.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/levelProgress.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/Paint.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "paint/paintLogic.js",
+      "family_id": "paint",
+      "nav_consuming": false
+    },
+    {
+      "module": "runtime/BotHost.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/RecoveryHints.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/RunManager.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/ScriptRunner.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/Settings.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/Supervisor.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "shim/_kernel.js",
+      "family_id": "compat-runtime",
+      "nav_consuming": false
+    }
+  ],
   "overlays": [
     {
       "id": "native-kernel",
@@ -24899,6 +25481,18 @@
       "not_impl_debt": 6
     },
     {
+      "family_id": "catalog-data",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
+    },
+    {
       "family_id": "chatbox",
       "nav_consuming": false,
       "declarations": 0,
@@ -25139,6 +25733,18 @@
       "not_impl_debt": 0
     },
     {
+      "family_id": "magic",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
+    },
+    {
       "family_id": "market",
       "nav_consuming": false,
       "declarations": 0,
@@ -25173,6 +25779,18 @@
       "name_aliases": 0,
       "callbacks": 0,
       "not_impl_debt": 33
+    },
+    {
+      "family_id": "prayer",
+      "nav_consuming": false,
+      "declarations": 0,
+      "members": 0,
+      "overloads": 0,
+      "aliases": 0,
+      "type_aliases": 0,
+      "name_aliases": 0,
+      "callbacks": 0,
+      "not_impl_debt": 0
     },
     {
       "family_id": "questlog",

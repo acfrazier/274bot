@@ -95,6 +95,33 @@
       }
     },
     {
+      "family_id": "catalog-data",
+      "nav_consuming": false,
+      "activation_unit": "I-family(catalog-data)",
+      "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
       "family_id": "chatbox",
       "nav_consuming": false,
       "activation_unit": "I-family(chatbox)",
@@ -641,6 +668,33 @@
       }
     },
     {
+      "family_id": "magic",
+      "nav_consuming": false,
+      "activation_unit": "I-family(magic)",
+      "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
+      }
+    },
+    {
       "family_id": "market",
       "nav_consuming": false,
       "activation_unit": "I-family(market)",
@@ -719,6 +773,33 @@
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 33
+      }
+    },
+    {
+      "family_id": "prayer",
+      "nav_consuming": false,
+      "activation_unit": "I-family(prayer)",
+      "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
+      "canonical_endpoint_predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "predecessors": [
+        "F0",
+        "T1.3",
+        "T2.1"
+      ],
+      "counts": {
+        "declarations": 0,
+        "members": 0,
+        "overloads": 0,
+        "aliases": 0,
+        "callbacks": 0,
+        "type_aliases": 0,
+        "name_aliases": 0,
+        "not_impl_debt": 0
       }
     },
     {
