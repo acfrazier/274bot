@@ -208,24 +208,6 @@
   }
 ,
   {
-    "id": "not-impl:api/inventory/Inventory.js:backpackSnapshots",
-    "module": "api/inventory/Inventory.js",
-    "selector": "backpackSnapshots",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: bank-side backpack snapshots are not exposed by the native inventory adapter.",
-    "runtime": "crates/script/src/shim/inventory.js:19",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/inventory/Inventory.js:backpackCapacity",
-    "module": "api/inventory/Inventory.js",
-    "selector": "backpackCapacity",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: bank-side backpack capacity is not exposed by the native inventory adapter.",
-    "runtime": "crates/script/src/shim/inventory.js:23",
-    "async": false
-  },
-  {
     "id": "not-impl:api/trade/drivePartnerTrade.js:stableClosedPoll",
     "module": "api/trade/drivePartnerTrade.js",
     "selector": "stableClosedPoll",
@@ -682,46 +664,6 @@
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint statistic layout remains unavailable.",
     "runtime": "crates/script/src/shim/paintLogic.js:84",
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.record",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.record",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: mutable game-message recording remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:17",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.firstSince",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.firstSince",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: message matching after a mark remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:37",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.recent",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.recent",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: a mutable recent-message ring remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:41",
-    "preserveParameters": true,
-    "async": false
-  },
-  {
-    "id": "not-impl:api/chatbox/gameMessages.js:GameMessages.reset",
-    "module": "api/chatbox/gameMessages.js",
-    "selector": "GameMessages.reset",
-    "operation": "not-impl",
-    "reason": "Unconditional not-impl: mutable game-message reset remains unavailable.",
-    "runtime": "crates/script/src/shim/game_messages.js:45",
-    "preserveParameters": true,
     "async": false
   },
   {

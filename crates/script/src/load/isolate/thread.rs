@@ -1481,10 +1481,20 @@ fn tick_loop(
                         }
                         if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
-                        } else if events_consumed {
-                            let observed = event_producer.observe(&snap);
-                            if let Some(diag) = observed.diagnostic {
-                                let _ = out.send(ThreadMsg::Log(diag));
+                        } else {
+                            if snap.has_chat_lines() {
+                                if let Err(e) =
+                                    super::super::chatbox_v8::ingest_posted(&mut runtime)
+                                {
+                                    let _ =
+                                        out.send(ThreadMsg::Log(format!("chatbox snapshot: {e}")));
+                                }
+                            }
+                            if events_consumed {
+                                let observed = event_producer.observe(&snap);
+                                if let Some(diag) = observed.diagnostic {
+                                    let _ = out.send(ThreadMsg::Log(diag));
+                                }
                             }
                         }
                     }
@@ -2259,6 +2269,9 @@ fn tick_loop(
                 // posts a keyframe for the next one.
                 crate::observed::on_reset();
                 super::super::entity_pages::reset(&mut runtime);
+                if let Err(e) = super::super::chatbox_v8::reset_session(&mut runtime) {
+                    let _ = out.send(ThreadMsg::Log(format!("chatbox reset: {e}")));
+                }
                 super::reach_query::on_reset();
                 if !keep_work {
                     crate::cake_stall::on_reset();

@@ -1366,14 +1366,14 @@ export const CANT_REACH: RegExp;
 /** The op reached the loc and the server refused the side it came from; retry from a different tile. */
 export const WRONG_SIDE: RegExp;
 export const GameMessages: {
-    record(text: string): never;
+    record(text: string): void;
     mark(): number;
     since(mark: number): GameMessage[];
     sawSince(mark: number, pattern: RegExp): boolean;
-    firstSince(mark: number, pattern: RegExp): never;
+    firstSince(mark: number, pattern: RegExp): GameMessage | undefined;
     /** Newest-first slice of the ring (for death / failure dumps). */
-    recent(limit?: number): never;
-    reset(): never;
+    recent(limit?: number): GameMessage[];
+    reset(): void;
 };
 
 }
@@ -2816,10 +2816,11 @@ declare module '*api/inventory/Inventory.js' {
 import * as ___model_Player_js from "*api/model/Player.js";
 import * as ___grounditems_GroundItems_js from "*api/grounditems/GroundItems.js";
 import * as ______adapter_ClientAdapter_js from "*adapter/ClientAdapter.js";
+import { InvItemSnapshot } from "*adapter/ClientAdapter.js";
 import { Loc } from "*api/model/Loc.js";
 import { Npc } from "*api/model/Npc.js";
-export function backpackSnapshots(): never;
-export function backpackCapacity(): never;
+export function backpackSnapshots(): InvItemSnapshot[];
+export function backpackCapacity(): number;
 export class InvItem {
     readonly name: string | null;
     readonly count: number;
