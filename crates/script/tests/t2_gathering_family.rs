@@ -350,3 +350,41 @@ fn gathering_helpers_reject_malformed_calls_with_js_errors() {
         assert_eq!(result[key], true, "{key}: {result}");
     }
 }
+
+#[test]
+fn gathering_alias_classification_keeps_full_utf16_and_non_string_identity() {
+    let isolate = gathering_isolate();
+    let result = isolate
+        .probe(
+            r#"(() => {
+                const api = globalThis.__gathering;
+                const start = { x: 1, z: 1, level: 0 };
+                const names = [
+                    'use custom position with a longer name',
+                    'use start position with a longer name',
+                    'use custom positio\u016f',
+                    'a named camp with a lone surrogate \ud800',
+                ];
+                const rows = names.map(name => ({ name, spot: start }));
+                const token = {};
+                let coerced = false;
+                token.toString = () => { coerced = true; return 'use custom position'; };
+                const setting = { trim() { return { toLowerCase() { return token; } }; } };
+                const identityRow = { name: { toLowerCase() { return token; } } };
+                return {
+                    namedRows: rows.map(row =>
+                        api.resolveGatheringLocation(row.name, start, rows) === row),
+                    nonStringIdentity:
+                        api.resolveGatheringLocation(setting, null, [identityRow]) === identityRow,
+                    noCoercion: !coerced,
+                };
+            })()"#,
+        )
+        .unwrap();
+    assert_eq!(
+        result["namedRows"],
+        serde_json::json!([true, true, true, true])
+    );
+    assert_eq!(result["nonStringIdentity"], true);
+    assert_eq!(result["noCoercion"], true);
+}

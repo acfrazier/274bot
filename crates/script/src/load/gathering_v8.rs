@@ -1,21 +1,21 @@
-//! Typed native V8 helpers for the generic gathering-location API.
+//! V8 conversion for the shared typed gathering-location helpers.
 //!
 //! The shim only maps public names to this callback. Location rows remain
 //! caller-owned V8 values, and each exported helper makes one native call.
 
-use super::bank_locations_v8;
 use super::callback_v8::{self as cb, Flow, JsResult};
+use crate::gather_locations::{
+    self, Axis, Nearest, Resolution, DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE,
+};
 use rustyscript::Runtime;
 
-const DEFAULT_BOOTH_NAME: &str = "Bank booth";
-const DEFAULT_BOOTH_OP: &str = "Use-quickly";
-const MAP_SQUARE: f64 = 64.0;
-
-const AUTO_LEGACY: &str = "Auto";
-const USE_CLOSEST: &str = "Use Closest";
-const USE_START_POSITION: &str = "Use Start Position";
-const USE_CUSTOM_POSITION: &str = "Use Custom Position";
-const NONE_LEGACY: &str = "None";
+const BOOTH_NAME: i32 = 0;
+const BOOTH_OP: i32 = 1;
+const MAP_SQUARE_OP: i32 = 2;
+const SAME_MAP_SQUARE: i32 = 3;
+const LOCATION_OPTIONS: i32 = 4;
+const BOOTH_FIELDS: i32 = 5;
+const RESOLVE: i32 = 6;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_gathering_locations", gathering_callback)
@@ -34,30 +34,23 @@ fn dispatch<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let op = args.get(0);
-    if op.strict_equals(cb::string(scope, "DEFAULT_BOOTH_NAME")) {
-        return Ok(cb::string(scope, DEFAULT_BOOTH_NAME));
+    let operation = args.get(0);
+    if !operation.is_int32() {
+        return Err(cb::not_impl(scope, "gathering location helper"));
     }
-    if op.strict_equals(cb::string(scope, "DEFAULT_BOOTH_OP")) {
-        return Ok(cb::string(scope, DEFAULT_BOOTH_OP));
+    match operation.int32_value(scope).unwrap_or(-1) {
+        BOOTH_NAME => Ok(cb::string(scope, DEFAULT_BOOTH_NAME)),
+        BOOTH_OP => Ok(cb::string(scope, DEFAULT_BOOTH_OP)),
+        MAP_SQUARE_OP => Ok(cb::num(scope, MAP_SQUARE)),
+        SAME_MAP_SQUARE => {
+            let same = same_map_square(scope, args.get(1), args.get(2))?;
+            Ok(v8::Boolean::new(scope, same).into())
+        }
+        LOCATION_OPTIONS => location_options(scope, args.get(1)),
+        BOOTH_FIELDS => booth_fields(scope, args.get(1)),
+        RESOLVE => resolve_gathering_location(scope, args.get(1), args.get(2), args.get(3)),
+        _ => Err(cb::not_impl(scope, "gathering location helper")),
     }
-    if op.strict_equals(cb::string(scope, "MAP_SQUARE")) {
-        return Ok(cb::num(scope, MAP_SQUARE));
-    }
-    if op.strict_equals(cb::string(scope, "sameMapSquare")) {
-        let same = same_map_square(scope, args.get(1), args.get(2))?;
-        return Ok(v8::Boolean::new(scope, same).into());
-    }
-    if op.strict_equals(cb::string(scope, "locationOptions")) {
-        return location_options(scope, args.get(1));
-    }
-    if op.strict_equals(cb::string(scope, "boothFields")) {
-        return booth_fields(scope, args.get(1));
-    }
-    if op.strict_equals(cb::string(scope, "resolveGatheringLocation")) {
-        return resolve_gathering_location(scope, args.get(1), args.get(2), args.get(3));
-    }
-    Err(cb::not_impl(scope, "gathering location helper"))
 }
 
 /// Frozen `sameMapSquare`: strict level equality, then floor-divided x and z
@@ -69,19 +62,15 @@ fn same_map_square<'s>(
 ) -> JsResult<'s, bool> {
     let a_level = cb::get(scope, a, "level")?;
     let b_level = cb::get(scope, b, "level")?;
-    if !a_level.strict_equals(b_level) {
-        return Ok(false);
-    }
-
-    let a_x = floor_chunk(scope, a, "x")?;
-    let b_x = floor_chunk(scope, b, "x")?;
-    if !a_x.strict_equals(b_x) {
-        return Ok(false);
-    }
-
-    let a_z = floor_chunk(scope, a, "z")?;
-    let b_z = floor_chunk(scope, b, "z")?;
-    Ok(a_z.strict_equals(b_z))
+    gather_locations::same_square_with(a_level.strict_equals(b_level), |axis| {
+        let coordinate = match axis {
+            Axis::X => "x",
+            Axis::Z => "z",
+        };
+        let a_chunk = floor_chunk(scope, a, coordinate)?;
+        let b_chunk = floor_chunk(scope, b, coordinate)?;
+        Ok(a_chunk.strict_equals(b_chunk))
+    })
 }
 
 fn floor_chunk<'s>(
@@ -103,13 +92,7 @@ pub(super) fn location_options<'s>(
     scope: &mut v8::HandleScope<'s>,
     table: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let prefix = [
-        cb::string(scope, AUTO_LEGACY),
-        cb::string(scope, USE_CLOSEST),
-        cb::string(scope, USE_START_POSITION),
-        cb::string(scope, USE_CUSTOM_POSITION),
-        cb::string(scope, NONE_LEGACY),
-    ];
+    let prefix = gather_locations::OPTION_PREFIX.map(|name| cb::string(scope, name));
     let output = v8::Array::new_with_elements(scope, &prefix);
     let map = cb::get(scope, table, "map")?;
     let Some(map_callback) = v8::Function::builder(map_name_callback).build(scope) else {
@@ -168,26 +151,20 @@ fn booth_fields<'s>(
     scope: &mut v8::HandleScope<'s>,
     location: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    let booth_name = if location.is_null_or_undefined() {
-        cb::string(scope, DEFAULT_BOOTH_NAME)
+    let name = if location.is_null_or_undefined() {
+        None
     } else {
         let value = cb::get(scope, location, "boothName")?;
-        if value.is_null_or_undefined() {
-            cb::string(scope, DEFAULT_BOOTH_NAME)
-        } else {
-            value
-        }
+        (!value.is_null_or_undefined()).then_some(value)
     };
-    let booth_op = if location.is_null_or_undefined() {
-        cb::string(scope, DEFAULT_BOOTH_OP)
+    let booth_name = gather_locations::booth_name(name, |default| cb::string(scope, default));
+    let op = if location.is_null_or_undefined() {
+        None
     } else {
         let value = cb::get(scope, location, "boothOp")?;
-        if value.is_null_or_undefined() {
-            cb::string(scope, DEFAULT_BOOTH_OP)
-        } else {
-            value
-        }
+        (!value.is_null_or_undefined()).then_some(value)
     };
+    let booth_op = gather_locations::booth_op(op, |default| cb::string(scope, default));
     cb::object(scope, &[("boothName", booth_name), ("boothOp", booth_op)])
 }
 
@@ -204,24 +181,32 @@ pub(super) fn resolve_gathering_location<'s>(
     let to_lower_case = cb::get(scope, trimmed, "toLowerCase")?;
     let normalized = cb::call(scope, to_lower_case, trimmed, &[], "toLowerCase")?;
 
-    if normalized.strict_equals(cb::string(scope, "use custom position"))
-        || normalized.strict_equals(cb::string(scope, "use start position"))
-    {
-        return Ok(v8::null(scope).into());
+    match resolution_mode(scope, normalized) {
+        Resolution::Freeform => Ok(v8::null(scope).into()),
+        mode @ (Resolution::Closest | Resolution::Auto) => {
+            let pool = if mode == Resolution::Auto {
+                filtered_same_square(scope, table, start_tile)?
+            } else {
+                table
+            };
+            nearest_row(scope, start_tile, pool)
+        }
+        Resolution::Named => find_named_row(scope, table, normalized),
     }
+}
 
-    let closest = normalized.strict_equals(cb::string(scope, "use closest"));
-    let auto = normalized.strict_equals(cb::string(scope, "auto"));
-    if closest || auto {
-        let pool = if auto {
-            filtered_same_square(scope, table, start_tile)?
-        } else {
-            table
-        };
-        return nearest_row(scope, start_tile, pool);
+fn resolution_mode(scope: &mut v8::HandleScope, normalized: v8::Local<v8::Value>) -> Resolution {
+    let Ok(text) = v8::Local::<v8::String>::try_from(normalized) else {
+        return Resolution::Named;
+    };
+    let length = text.length();
+    if length > gather_locations::MAX_ALIAS_LEN {
+        return Resolution::Named;
     }
-
-    find_named_row(scope, table, normalized)
+    let mut units = [0_u16; gather_locations::MAX_ALIAS_LEN];
+    let units = &mut units[..length];
+    text.write_v2(scope, 0, units, v8::WriteFlags::empty());
+    gather_locations::resolution(|alias| units.iter().copied().eq(alias.bytes().map(u16::from)))
 }
 
 fn filtered_same_square<'s>(
@@ -269,7 +254,7 @@ fn nearest_row<'s>(
 
     let mut best = cb::get_index(scope, pool, 0)?;
     let best_spot = cb::get(scope, best, "spot")?;
-    let mut best_distance = bank_distance(scope, start_tile, best_spot)?;
+    let mut rank = Nearest::new(bank_distance(scope, start_tile, best_spot)?);
     let mut index = 1.0;
 
     loop {
@@ -283,8 +268,7 @@ fn nearest_row<'s>(
             let location = cb::get_index(inner, pool, index as u32)?;
             let spot = cb::get(inner, location, "spot")?;
             let distance = bank_distance(inner, start_tile, spot)?;
-            if distance < best_distance {
-                best_distance = distance;
+            if rank.consider(distance) {
                 Ok(Flow::Continue(Some(location)))
             } else {
                 Ok(Flow::Continue(None))
@@ -301,8 +285,8 @@ fn nearest_row<'s>(
 }
 
 /// Read the frozen bankDistance operands in order. `sub` performs V8
-/// ToPrimitive/ToNumeric, then the existing native bank-distance owner applies
-/// its shared `hypot` core to the two deltas.
+/// ToPrimitive/ToNumeric, then the shared typed core applies `hypot` to both
+/// deltas. No coordinate object or row is copied into a Rust collection.
 fn bank_distance<'s>(
     scope: &mut v8::HandleScope<'s>,
     from: v8::Local<'s, v8::Value>,
@@ -318,7 +302,7 @@ fn bank_distance<'s>(
 
     let dx = cb::number(scope, dx)?;
     let dz = cb::number(scope, dz)?;
-    Ok(bank_locations_v8::bank_distance_delta(dx, dz))
+    Ok(gather_locations::distance_delta(dx, dz))
 }
 
 fn find_named_row<'s>(
@@ -373,23 +357,23 @@ const rows = [
 ];
 const call = (operation, ...args) => __rs2b0t_gathering_locations(operation, ...args);
 globalThis.checkGathering = () => {
-    const options = call('locationOptions', rows);
-    const defaults = call('boothFields', null);
-    const custom = call('boothFields', rows[2]);
-    return call('DEFAULT_BOOTH_NAME') === 'Bank booth' &&
-        call('DEFAULT_BOOTH_OP') === 'Use-quickly' &&
-        call('MAP_SQUARE') === 64 &&
-        call('sameMapSquare', from, rows[0].spot) &&
-        !call('sameMapSquare', from, rows[1].spot) &&
+    const options = call(4, rows);
+    const defaults = call(5, null);
+    const custom = call(5, rows[2]);
+    return call(0) === 'Bank booth' &&
+        call(1) === 'Use-quickly' &&
+        call(2) === 64 &&
+        call(3, from, rows[0].spot) &&
+        !call(3, from, rows[1].spot) &&
         options.length === 8 && options[5] === 'Far' && options[7] === 'Local' &&
         defaults.boothName === 'Bank booth' && defaults.boothOp === 'Use-quickly' &&
         custom.boothName === 'Chest' && custom.boothOp === 'Bank' &&
-        call('resolveGatheringLocation', 'Use Closest', from, rows) === rows[1] &&
-        call('resolveGatheringLocation', 'Auto', from, rows) === rows[0] &&
-        call('resolveGatheringLocation', ' cross plane ', from, rows) === rows[1] &&
-        call('resolveGatheringLocation', 'Use Start Position', from, rows) === null &&
-        call('resolveGatheringLocation', 'Use Custom Position', from, rows) === null &&
-        call('resolveGatheringLocation', 'unknown', from, rows) === null;
+        call(6, 'Use Closest', from, rows) === rows[1] &&
+        call(6, 'Auto', from, rows) === rows[0] &&
+        call(6, ' cross plane ', from, rows) === rows[1] &&
+        call(6, 'Use Start Position', from, rows) === null &&
+        call(6, 'Use Custom Position', from, rows) === null &&
+        call(6, 'unknown', from, rows) === null;
 };
 "#;
 

@@ -3195,6 +3195,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/gather_locations.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/gather_tools.rs",
       "owner": "T2"
     },
