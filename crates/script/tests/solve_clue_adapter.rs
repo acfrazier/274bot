@@ -2455,6 +2455,7 @@ export default class T extends TaskBot {
         iso.drain_interacts(),
         vec![InteractReq::Deposit {
             name: "Dragon dagger(p)".to_string(),
+            id: None,
         }],
         "the category-restricted dagger is deposited"
     );
@@ -2479,6 +2480,7 @@ export default class T extends TaskBot {
         iso.drain_interacts(),
         vec![InteractReq::Deposit {
             name: "Rune full helm".to_string(),
+            id: None,
         }],
         "the category-restricted helm and nothing else is deposited"
     );

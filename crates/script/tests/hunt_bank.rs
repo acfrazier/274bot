@@ -936,3 +936,435 @@ fn noted_food_and_partial_flask_deposit_then_full_flask_draws() {
         "flask stage draws the full form after the partial deposits: {kinds:?}"
     );
 }
+
+const LOBSTER: i32 = 379;
+const NOTED_LOBSTER: i32 = 380;
+const BONES: i32 = 526;
+const SUPER_ATTACK_3: i32 = 145;
+const NOTED_SUPER_ATTACK_3: i32 = 146;
+
+/// A bank the kernel's effects act on, so one trip runs from the booth to
+/// its yield. Deposit selects the side row the way the host does
+/// (`host-play` `dispatch_observed_bank_op`): the row with the effect's `id`
+/// and name when the effect carries an id, else the first side row with the
+/// name; Deposit-All then moves every copy of that row's id. The pack is one
+/// row per item id, which keeps the counts the kernel reads.
+struct TripSim {
+    pack: Vec<BankRow>,
+    bank: Vec<BankRow>,
+    open: bool,
+    seq: u64,
+    x_seq: u64,
+    deposited: Vec<i32>,
+    trace: Vec<String>,
+}
+
+impl TripSim {
+    fn new(pack: Vec<BankRow>, bank: Vec<BankRow>) -> Self {
+        Self {
+            pack,
+            bank,
+            open: false,
+            seq: 1,
+            x_seq: 0,
+            deposited: Vec::new(),
+            trace: Vec::new(),
+        }
+    }
+
+    fn observation(&self) -> BankObservation {
+        let mut obs = at(booth());
+        let slotted = |has_slot: bool| -> Vec<BankRow> {
+            self.pack
+                .iter()
+                .enumerate()
+                .map(|(slot, row)| BankRow {
+                    slot: slot as i32,
+                    has_slot,
+                    ..row.clone()
+                })
+                .collect()
+        };
+        obs.inv = slotted(true);
+        if self.open {
+            obs = open_loaded(obs);
+            obs.bank = self.bank.clone();
+            obs.bank_side = slotted(false);
+        }
+        obs.bank_op_result = self.seq > 1;
+        obs.bank_op_result_seq = self.seq;
+        obs.withdraw_x_result = self.x_seq > 0;
+        obs.withdraw_x_result_seq = self.x_seq;
+        obs
+    }
+
+    fn held(&self, id: i32) -> i32 {
+        self.pack
+            .iter()
+            .filter(|row| row.id == id)
+            .map(|row| row.count)
+            .sum()
+    }
+
+    fn take_from_bank(&mut self, name: &str, id: Option<i32>, count: Option<i32>) {
+        let Some(row) = self.bank.iter_mut().find(|row| {
+            row.count > 0 && id.is_none_or(|id| row.id == id) && row.name.eq_ignore_ascii_case(name)
+        }) else {
+            return;
+        };
+        let moved = count.map_or(row.count, |count| count.min(row.count));
+        row.count -= moved;
+        let taken = BankRow {
+            count: moved,
+            ..row.clone()
+        };
+        match self.pack.iter_mut().find(|held| held.id == taken.id) {
+            Some(held) => held.count += moved,
+            None => self.pack.push(taken),
+        }
+    }
+
+    /// Apply one effect; the result is the reply the next call carries.
+    fn apply(&mut self, step: &Value) -> Option<Value> {
+        let name = step["name"].as_str().unwrap_or("");
+        let queued = Some(json!({ "queued": true }));
+        match kind(step) {
+            "bank-open" => {
+                self.open = true;
+                Some(json!({ "opened": true }))
+            }
+            "deposit" => {
+                let id = step["id"].as_i64().map(|id| id as i32);
+                let picked = self
+                    .pack
+                    .iter()
+                    .find(|row| {
+                        id.is_none_or(|id| row.id == id) && row.name.eq_ignore_ascii_case(name)
+                    })
+                    .cloned();
+                if let Some(row) = picked {
+                    let moved = self.held(row.id);
+                    self.pack.retain(|held| held.id != row.id);
+                    match self.bank.iter_mut().find(|stock| stock.id == row.id) {
+                        Some(stock) => stock.count += moved,
+                        None => self.bank.push(BankRow {
+                            count: moved,
+                            ..row.clone()
+                        }),
+                    }
+                    self.deposited.push(row.id);
+                }
+                self.seq += 1;
+                queued
+            }
+            "withdraw" => {
+                let action = step["action"].as_str().unwrap_or("");
+                let count = match action.to_ascii_lowercase().replace(' ', "-").as_str() {
+                    "withdraw-1" => Some(1),
+                    "withdraw-5" => Some(5),
+                    "withdraw-10" => Some(10),
+                    "withdraw-all" => None,
+                    other => panic!("unexpected withdraw action {other}: {step}"),
+                };
+                self.take_from_bank(name, None, count);
+                self.seq += 1;
+                queued
+            }
+            "withdraw-x" => {
+                let id = step["bank_item_id"].as_i64().map(|id| id as i32);
+                let count = step["count"].as_i64().map(|count| count as i32);
+                self.take_from_bank(name, id, count);
+                self.x_seq += 1;
+                queued
+            }
+            "close" => {
+                self.open = false;
+                queued
+            }
+            "delay-ticks" | "wait" | "log" | "status" | "count-bank-trip" => None,
+            other => panic!("the trip simulation does not model {other}: {step}"),
+        }
+    }
+}
+
+/// Run one bank trip from the booth until the kernel yields; `None` when it
+/// never does within the step cap.
+fn run_trip(proj: &Value, sim: &mut TripSim) -> Option<bool> {
+    reset();
+    let token = begin();
+    let mut reply = None;
+    for _ in 0..400 {
+        set_observation(sim.observation());
+        let step = call(token, proj.clone(), reply.take());
+        assert_not_forbidden(&step);
+        sim.trace.push(format!(
+            "{}:{}{}",
+            kind(&step),
+            step["name"].as_str().unwrap_or(""),
+            step["id"]
+                .as_i64()
+                .map_or(String::new(), |id| format!("#{id}"))
+        ));
+        match kind(&step) {
+            "yield" => return step["value"].as_bool(),
+            "aborted" => panic!("trip aborted: {step}; {:?}", sim.trace),
+            _ => reply = sim.apply(&step),
+        }
+    }
+    None
+}
+
+fn swapped<T: Clone>(rows: &[T; 2]) -> [T; 2] {
+    [rows[1].clone(), rows[0].clone()]
+}
+
+fn lobster_trip(food_want: i32) -> Value {
+    site(json!({
+        "keyItem": null,
+        "foodName": "Lobster",
+        "withdrawFood": true,
+        "foodWant": food_want,
+        "keepExtra": ["Super attack(3)"],
+    }))
+}
+
+/// R1: with edible and noted Lobsters on the pack in either order, the trip
+/// deposits exactly the noted row and the Bones, keeps the edible food and
+/// the explicitly kept flask, and completes.
+#[test]
+fn mixed_lobster_rows_deposit_only_the_notes_in_either_order() {
+    let mixed = [
+        row(LOBSTER, 5, "Lobster", 0, false),
+        noted_row(NOTED_LOBSTER, 20, "Lobster"),
+    ];
+    for food in [mixed.clone(), swapped(&mixed)] {
+        let mut pack = food.to_vec();
+        pack.push(row(SUPER_ATTACK_3, 1, "Super attack(3)", 0, false));
+        pack.push(row(BONES, 3, "Bones", 0, false));
+        let mut sim = TripSim::new(pack, vec![row(LOBSTER, 40, "Lobster", 0, false)]);
+        let done = run_trip(&lobster_trip(8), &mut sim);
+        let order = &food[0].noted;
+        assert_eq!(done, Some(true), "noted first: {order}; {:?}", sim.trace);
+        let mut deposited = sim.deposited.clone();
+        deposited.sort_unstable();
+        assert_eq!(
+            deposited,
+            vec![NOTED_LOBSTER, BONES],
+            "only the notes and the loot deposit: {:?}",
+            sim.trace
+        );
+        assert_eq!(sim.held(NOTED_LOBSTER), 0, "{:?}", sim.trace);
+        assert!(sim.held(LOBSTER) >= 8, "{:?}", sim.trace);
+        assert_eq!(sim.held(SUPER_ATTACK_3), 1, "the kept flask stays");
+        assert!(
+            sim.trace.iter().any(|step| step == "count-bank-trip:"),
+            "{:?}",
+            sim.trace
+        );
+    }
+}
+
+/// R1, potion form: an explicitly kept flask name with noted and unnoted
+/// rows in either order deposits the notes only and keeps the flask.
+#[test]
+fn kept_flask_name_with_noted_and_unnoted_rows_deposits_only_the_notes() {
+    let rows = [
+        row(SUPER_ATTACK_3, 1, "Super attack(3)", 0, false),
+        noted_row(NOTED_SUPER_ATTACK_3, 5, "Super attack(3)"),
+    ];
+    let proj = site(json!({
+        "keyItem": null,
+        "foodName": "Lobster",
+        "keepExtra": ["Super attack(3)"],
+        "flasks": [{
+            "flask": "Super attack(3)",
+            "doses": ["Super attack(4)", "Super attack(3)", "Super attack(2)", "Super attack(1)"],
+            "want": 1,
+        }],
+    }));
+    for pack in [rows.clone(), swapped(&rows)] {
+        let mut sim = TripSim::new(
+            pack.to_vec(),
+            vec![row(SUPER_ATTACK_3, 3, "Super attack(3)", 0, false)],
+        );
+        let done = run_trip(&proj, &mut sim);
+        assert_eq!(done, Some(true), "{:?}", sim.trace);
+        assert_eq!(sim.deposited, vec![NOTED_SUPER_ATTACK_3], "{:?}", sim.trace);
+        assert_eq!(sim.held(SUPER_ATTACK_3), 1, "{:?}", sim.trace);
+        assert_eq!(sim.held(NOTED_SUPER_ATTACK_3), 0, "{:?}", sim.trace);
+    }
+}
+
+/// R1 proof: a same-name row leaving the pack is not the selected deposit.
+/// The kernel names the noted row; when the edible row leaves instead, the
+/// op stays pending instead of advancing to the next stage.
+#[test]
+fn another_same_name_row_leaving_does_not_prove_the_selected_deposit() {
+    reset();
+    let mut obs = at(booth());
+    obs.bank_side = vec![
+        row(LOBSTER, 5, "Lobster", 0, false),
+        noted_row(NOTED_LOBSTER, 20, "Lobster"),
+    ];
+    obs.bank = vec![row(LOBSTER, 40, "Lobster", 0, false)];
+    let token = begin();
+    let proj = lobster_trip(8);
+    let step = reach_open(token, &proj, obs.clone());
+    assert_eq!(kind(&step), "deposit", "{step}");
+    assert_eq!(step["name"], "Lobster", "{step}");
+    assert_eq!(
+        step["id"], NOTED_LOBSTER,
+        "the effect names the noted row: {step}"
+    );
+
+    let mut wrong = open_loaded(obs);
+    wrong.bank_side = vec![noted_row(NOTED_LOBSTER, 20, "Lobster")];
+    wrong.bank_op_result = true;
+    wrong.bank_op_result_seq = 3;
+    set_observation(wrong.clone());
+    let step = call(token, proj.clone(), Some(json!({ "queued": true })));
+    assert_eq!(
+        kind(&step),
+        "delay-ticks",
+        "the edible row leaving is not proof: {step}"
+    );
+
+    wrong.bank_side.clear();
+    wrong.bank_op_result_seq = 4;
+    set_observation(wrong);
+    let step = call(token, proj, None);
+    assert_ne!(
+        kind(&step),
+        "delay-ticks",
+        "the notes leaving is proof: {step}"
+    );
+    assert_ne!(kind(&step), "yield", "{step}");
+}
+
+/// Food withdrawal after a same-name note deposit: the edible Lobsters stay,
+/// and the food stage tops them up to `foodWant`.
+#[test]
+fn food_withdrawal_tops_up_edible_food_kept_beside_deposited_notes() {
+    let mut sim = TripSim::new(
+        vec![
+            row(LOBSTER, 2, "Lobster", 0, false),
+            noted_row(NOTED_LOBSTER, 20, "Lobster"),
+        ],
+        vec![row(LOBSTER, 40, "Lobster", 0, false)],
+    );
+    let done = run_trip(&lobster_trip(8), &mut sim);
+    assert_eq!(done, Some(true), "{:?}", sim.trace);
+    assert_eq!(sim.deposited, vec![NOTED_LOBSTER], "{:?}", sim.trace);
+    assert!(
+        sim.trace
+            .iter()
+            .any(|step| step.starts_with("withdraw:Lobster")),
+        "{:?}",
+        sim.trace
+    );
+    assert!(sim.held(LOBSTER) >= 8, "{:?}", sim.trace);
+}
+
+/// Noted food is not food: with only notes on the pack the food stage
+/// still withdraws edible Lobsters to `foodWant`.
+#[test]
+fn noted_only_food_does_not_count_toward_food_want() {
+    let mut sim = TripSim::new(
+        vec![noted_row(NOTED_LOBSTER, 20, "Lobster")],
+        vec![row(LOBSTER, 40, "Lobster", 0, false)],
+    );
+    let done = run_trip(&lobster_trip(8), &mut sim);
+    assert_eq!(done, Some(true), "{:?}", sim.trace);
+    assert_eq!(sim.deposited, vec![NOTED_LOBSTER], "{:?}", sim.trace);
+    assert!(sim.held(LOBSTER) >= 8, "{:?}", sim.trace);
+}
+
+/// Final readiness: edible food of a deposited noted name does not block the
+/// trip, and a noted row still held after the close does.
+#[test]
+fn final_readiness_accepts_kept_food_and_rejects_a_held_note() {
+    let mut sim = TripSim::new(
+        vec![
+            row(LOBSTER, 8, "Lobster", 0, false),
+            noted_row(NOTED_LOBSTER, 20, "Lobster"),
+        ],
+        vec![row(LOBSTER, 40, "Lobster", 0, false)],
+    );
+    let done = run_trip(&lobster_trip(8), &mut sim);
+    assert_eq!(done, Some(true), "{:?}", sim.trace);
+    assert_eq!(sim.held(LOBSTER), 8, "{:?}", sim.trace);
+
+    reset();
+    let mut obs = at(booth());
+    obs.bank_side = vec![
+        row(LOBSTER, 8, "Lobster", 0, false),
+        noted_row(NOTED_LOBSTER, 20, "Lobster"),
+    ];
+    let edible = row(LOBSTER, 8, "Lobster", 1, true);
+    let held_note = BankRow {
+        slot: 2,
+        has_slot: true,
+        ..noted_row(NOTED_LOBSTER, 20, "Lobster")
+    };
+    obs.inv = vec![edible.clone(), held_note.clone()];
+    let token = begin();
+    let proj = lobster_trip(8);
+    let step = reach_open(token, &proj, obs.clone());
+    assert_eq!(step["id"], NOTED_LOBSTER, "{step}");
+    let mut proved = open_loaded(obs);
+    proved.bank_side = vec![row(LOBSTER, 8, "Lobster", 0, false)];
+    proved.inv = vec![edible.clone()];
+    proved.bank_op_result = true;
+    proved.bank_op_result_seq = 3;
+    set_observation(proved);
+    let close = call(token, proj.clone(), Some(json!({ "queued": true })));
+    assert_eq!(kind(&close), "close", "{close}");
+    let mut shut = at(booth());
+    shut.inv = vec![edible, held_note];
+    set_observation(shut);
+    let failed = call(token, proj, Some(json!({ "queued": true })));
+    assert_yield(&failed, false);
+    assert_ne!(kind(&failed), "count-bank-trip");
+}
+
+/// The keep-all-dose policy (frozen `JiveDragons.ts:409-410` outside melee):
+/// every dose form is in `keepExtra`, so the unnoted partials stay and count
+/// toward the flask target; a noted partial of the same name still deposits.
+#[test]
+fn keep_all_dose_policy_keeps_partials_and_deposits_their_notes() {
+    const STRENGTH_2: i32 = 159;
+    const NOTED_STRENGTH_2: i32 = 160;
+    const STRENGTH_1: i32 = 161;
+    let doses = [
+        "Super strength(4)",
+        "Super strength(3)",
+        "Super strength(2)",
+        "Super strength(1)",
+    ];
+    let proj = site(json!({
+        "keyItem": null,
+        "foodName": "Lobster",
+        "keepExtra": doses,
+        "flasks": [{ "flask": "Super strength(4)", "doses": doses, "want": 2 }],
+    }));
+    let rows = [
+        row(STRENGTH_2, 1, "Super strength(2)", 0, false),
+        noted_row(NOTED_STRENGTH_2, 3, "Super strength(2)"),
+    ];
+    for partials in [rows.clone(), swapped(&rows)] {
+        let mut pack = partials.to_vec();
+        pack.push(row(STRENGTH_1, 1, "Super strength(1)", 0, false));
+        let mut sim = TripSim::new(pack, vec![row(2440, 4, "Super strength(4)", 0, false)]);
+        let done = run_trip(&proj, &mut sim);
+        assert_eq!(done, Some(true), "{:?}", sim.trace);
+        assert_eq!(sim.deposited, vec![NOTED_STRENGTH_2], "{:?}", sim.trace);
+        assert_eq!(sim.held(STRENGTH_2), 1, "{:?}", sim.trace);
+        assert_eq!(sim.held(STRENGTH_1), 1, "{:?}", sim.trace);
+        assert_eq!(
+            sim.held(2440),
+            0,
+            "two kept partials meet want 2: {:?}",
+            sim.trace
+        );
+    }
+}
