@@ -76,6 +76,14 @@ pub(crate) fn hill_giant_scenario() -> Scenario {
 /// HillGiant's always-on trip end (`lootSlots=1`): one looted Giant drop ends
 /// the trip, Varrock West banks it and withdraws trout back, then the pit
 /// fight resumes.
+///
+/// The looted Big bones are watched in the pack before the deposit, so each
+/// leg has its own ordinary 150-dirty watch. Big bones are the Giant's
+/// guaranteed death drop (`giant.rs2` adds `npc_param(death_drop)` before the
+/// random table). One watch from the first Strength hit to the deposit had
+/// to cover the rest of a 35-HP kill and the whole trip: Engine A 2026-10-19
+/// (`FIX-024/combat-bank/diagA3`) measured 118 dirties from the first hit to
+/// the looted bones and 113 more to the Varrock West deposit, 231 in total.
 pub(crate) fn hill_giant_bank_scenario() -> Scenario {
     combat_bank_scenario(
         "hill_giant_bank",
@@ -94,6 +102,13 @@ pub(crate) fn hill_giant_bank_scenario() -> Scenario {
         "trout",
         12,
         &[
+            (
+                "watch looted Big bones in pack before the bank trip",
+                Proof::ItemId {
+                    id: BIG_BONES_ID,
+                    count: 1,
+                },
+            ),
             (
                 "watch the trip's Big bones enter a fresh Varrock West bank",
                 Proof::BankItemId {

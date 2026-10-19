@@ -2511,6 +2511,10 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
     );
     assert_eq!(ardy.get("bankEveryItems"), Some(&Value::from(1.0)));
     assert_eq!(ardy.get("target"), Some(&Value::String("Guard".into())));
+    // Guard death always drops Bones (content `guard.rs2` adds
+    // `npc_param(death_drop)` before the random table); the default loot list
+    // holds only random-table drops, which a cell must not wait for.
+    assert_eq!(ardy.get("loot"), Some(&serde_json::json!(["Bones"])));
     let ardy_scenario = get("ardy_fighter_bank").unwrap();
     let ardy_start = ardy_scenario
         .steps
@@ -2519,11 +2523,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         .unwrap();
     for step in &ardy_scenario.steps[..ardy_start] {
         assert!(
-            !matches!(step.wait.arm, Proof::ItemId { id, .. } if GUARD_DROP_IDS.contains(&id)),
+            !matches!(step.wait.arm, Proof::ItemId { id, .. } if id == BONES_ID || id == NOTED_BONES_ID),
             "ardy_fighter_bank must not prepare a deposit-class item before Start"
         );
     }
-    for &id in &GUARD_DROP_IDS {
+    for id in [BONES_ID, NOTED_BONES_ID] {
         assert!(
             ardy_scenario.steps[..ardy_start].iter().any(|step| {
                 matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
@@ -2535,12 +2539,28 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(
-        ardy_watch.contains(&Proof::BankItemIdAny {
-            ids: &GUARD_DROP_IDS,
-            count: 1,
-        }),
-        "ardy_fighter_bank watches a Guard drop enter a fresh bank"
+    let ardy_looted = ardy_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: BONES_ID,
+                count: 1,
+            }
+        })
+        .expect("ardy_fighter_bank watches the looted Bones in the pack");
+    let ardy_banked = ardy_watch
+        .iter()
+        .position(|arm| {
+            *arm == Proof::BankItemId {
+                id: BONES_ID,
+                count: 1,
+            }
+        })
+        .expect("ardy_fighter_bank watches the Bones enter a fresh bank");
+    assert_eq!(
+        ardy_looted + 1,
+        ardy_banked,
+        "the deposit watch arms at the looted Bones, not at the first hit"
     );
     let seeded = get("ardy_fighter_bank_seeded").expect("ardy_fighter_bank_seeded registered");
     let seeded_start = seeded
@@ -2777,14 +2797,51 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         == Proof::EquipmentId {
             id: DRAGONFIRE_SHIELD_ID
         }));
-    let watch = dragon.steps[start + 1..]
-        .iter()
-        .map(|step| step.wait.arm)
-        .collect::<Vec<_>>();
-    assert!(watch.contains(&Proof::BankItemIdAny {
+    let watch = &dragon.steps[start + 1..];
+    let arms = watch.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
+    // The 40-stat profile runs out of food before any kill, so the trip it
+    // always makes is the food-gone restock; a bones/hide deposit on that
+    // trip would be a chance outcome and is not gated.
+    assert!(!arms.contains(&Proof::BankItemIdAny {
         ids: &GREEN_DRAGON_BANK_DEPOSIT,
         count: 1,
     }));
+    let food_out = arms
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemIdAtMost {
+                id: LOBSTER_ID,
+                count: 0,
+            }
+        })
+        .expect("green_dragon_bank watches the carried Lobsters run out");
+    let restock = arms
+        .iter()
+        .position(|arm| {
+            *arm == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 20,
+            }
+        })
+        .expect("green_dragon_bank watches the Lobster restock");
+    let returned = arms
+        .iter()
+        .position(|arm| {
+            matches!(
+                arm,
+                Proof::ArrivedNear {
+                    x: 3096,
+                    z: 3814,
+                    ..
+                }
+            )
+        })
+        .expect("green_dragon_bank watches the return to the field");
+    assert!(food_out < restock && restock < returned);
+    assert_eq!(watch[food_out].wait.budget_ticks, 400);
+    assert_eq!(watch[restock].wait.budget_ticks, 420);
+    assert_eq!(watch[returned].wait.budget_ticks, 420);
+    assert_eq!(dragon.settings.deadline, Duration::from_secs(540));
 
     let tele = get("green_dragon_tele").expect("green_dragon_tele registered");
     let inject = settings_inject_map(tele.settings.script_settings_inject).unwrap();
@@ -3694,14 +3751,35 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
             }
         })
         .unwrap();
+    // The full cycle watches the looted Big bones before the deposit, so the
+    // kill and the Varrock West trip each get the ordinary watch instead of
+    // one watch from the first hit to the deposit.
     assert_eq!(
         full_watch[full_xp + 1],
+        Proof::ItemId {
+            id: BIG_BONES_ID,
+            count: 1,
+        },
+        "full-cycle cell watches the looted Big bones after first XP"
+    );
+    assert_eq!(
+        full_watch[full_xp + 2],
         Proof::BankItemId {
             id: BIG_BONES_ID,
             count: 1,
         },
-        "frozen full-cycle cell still arms bank deposit at first XP"
+        "full-cycle cell arms the bank deposit at the looted Big bones"
     );
+    for offset in [1, 2] {
+        assert_eq!(
+            full.steps[full_start + 1 + full_xp + offset]
+                .wait
+                .budget_ticks,
+            SCRIPT_GOLD_WATCH_TICKS,
+            "kill and trip legs keep the ordinary watch"
+        );
+    }
+    assert_eq!(full.settings.deadline, SCRIPT_GOLD_DEADLINE);
 }
 
 #[test]
