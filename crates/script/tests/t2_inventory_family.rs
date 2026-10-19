@@ -255,8 +255,7 @@ fn row<'a>(
     count: i32,
     slot: i32,
     component_id: i32,
-    noted: bool,
-    cert: i32,
+    (noted, cert): (bool, i32),
     ops: &'a [String],
 ) -> ItemRowInput<'a> {
     ItemRowInput {
@@ -292,12 +291,10 @@ fn schedule_work(iso: &LoadIsolate, expression: &str) {
     .unwrap();
 }
 
-fn as_use_on(
-    request: &InteractReq,
-) -> Option<(
-    &str,
-    &str,
-    Option<&str>,
+type UseOnFields<'a> = (
+    &'a str,
+    &'a str,
+    Option<&'a str>,
     i32,
     i32,
     i32,
@@ -306,7 +303,9 @@ fn as_use_on(
     Option<i32>,
     Option<i32>,
     Option<i32>,
-)> {
+);
+
+fn as_use_on(request: &InteractReq) -> Option<UseOnFields<'_>> {
     match request {
         InteractReq::UseOn {
             name,
@@ -356,7 +355,7 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
     assert_eq!(iso.probe("__backpackCapacity()").unwrap(), json!(0));
     assert_eq!(iso.probe("__countByIdValue()").unwrap(), json!(0));
 
-    let side_only = [row(Some("Deposit note"), 99, 2, 0, 701, false, -1, &[])];
+    let side_only = [row(Some("Deposit note"), 99, 2, 0, 701, (false, -1), &[])];
     snapshot.tick = 2;
     snapshot.bank_open = true;
     snapshot.bank_side = &side_only;
@@ -390,13 +389,13 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
 
     let ops = vec!["Eat".to_string(), "Drop".to_string()];
     let inventory = [
-        row(Some("Apple"), 10, 2, 0, 503, false, -1, &ops),
-        row(Some("Apple"), 10, 1, 1, 503, true, 17, &ops),
-        row(Some("Mystery"), 0, 7, 2, 503, false, -1, &[]),
-        row(Some(""), 77, 4, 3, 503, false, -1, &[]),
-        row(None, 0, 8, 4, 503, false, -1, &[]),
+        row(Some("Apple"), 10, 2, 0, 503, (false, -1), &ops),
+        row(Some("Apple"), 10, 1, 1, 503, (true, 17), &ops),
+        row(Some("Mystery"), 0, 7, 2, 503, (false, -1), &[]),
+        row(Some(""), 77, 4, 3, 503, (false, -1), &[]),
+        row(None, 0, 8, 4, 503, (false, -1), &[]),
     ];
-    let equipment = [row(Some("Bronze sword"), 130, 1, 0, 600, false, -1, &[])];
+    let equipment = [row(Some("Bronze sword"), 130, 1, 0, 600, (false, -1), &[])];
     snapshot.tick = 5;
     snapshot.inv = &inventory;
     snapshot.inv_size = 28;
@@ -450,7 +449,7 @@ fn inventory_equipment_and_snapshot_exports_use_their_intended_views() {
         })
     );
 
-    let unidentified = [row(Some("Unidentified"), 0, 1, 0, 503, false, -1, &[])];
+    let unidentified = [row(Some("Unidentified"), 0, 1, 0, 503, (false, -1), &[])];
     snapshot.tick = 6;
     snapshot.inv = &unidentified;
     post(&iso, &snapshot, Some(700));
@@ -489,8 +488,8 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
     let iso = spawn();
     let ops = vec!["Eat".to_string()];
     let inventory = [
-        row(Some("Apple"), 10, 2, 0, 503, false, -1, &ops),
-        row(Some("Apple"), 10, 1, 1, 503, false, -1, &ops),
+        row(Some("Apple"), 10, 2, 0, 503, (false, -1), &ops),
+        row(Some("Apple"), 10, 1, 1, 503, (false, -1), &ops),
     ];
     let mut snapshot = common::ingame_snapshot();
     snapshot.tick = 1;
@@ -603,7 +602,7 @@ fn use_on_preserves_item_identity_and_each_supported_target_kind() {
 fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     let iso = spawn();
     let ops = vec!["Wear".to_string()];
-    let inventory = [row(Some("Apple"), 10, 1, 0, 503, false, -1, &ops)];
+    let inventory = [row(Some("Apple"), 10, 1, 0, 503, (false, -1), &ops)];
     let empty: [ItemRowInput<'_>; 0] = [];
     let mut snapshot = common::ingame_snapshot();
     snapshot.tick = 1;
@@ -617,7 +616,7 @@ fn equipment_waits_keep_queue_order_and_public_method_overrides() {
     );
     assert_eq!(iso.probe("__equipResult").unwrap(), json!("pending"));
 
-    let equipped = [row(Some("Apple"), 10, 1, 0, 600, false, -1, &[])];
+    let equipped = [row(Some("Apple"), 10, 1, 0, 600, (false, -1), &[])];
     snapshot.tick = 2;
     snapshot.equipment = &equipped;
     post(&iso, &snapshot, None);
@@ -936,8 +935,8 @@ fn inventory_root_identity_and_module_only_helpers_follow_bank_page_transitions(
     for (name, same) in identity {
         assert_eq!(same.as_bool(), Some(true), "{name}");
     }
-    let inventory = [row(Some("Apple"), 10, 3, 0, 503, false, -1, &[])];
-    let bank_side = [row(Some("Bank-side ore"), 20, 1, 0, 701, false, -1, &[])];
+    let inventory = [row(Some("Apple"), 10, 3, 0, 503, (false, -1), &[])];
+    let bank_side = [row(Some("Bank-side ore"), 20, 1, 0, 701, (false, -1), &[])];
     let mut snapshot = common::ingame_snapshot();
     snapshot.tick = 1;
     snapshot.inv = &inventory;
