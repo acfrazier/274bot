@@ -49,6 +49,20 @@ test('the generated ABI contract and family graph are complete', () => {
     );
 });
 
+test('only the complete bank family is activated', () => {
+    assert.equal(contract.activation_state, 'partially-activated');
+    assert.deepEqual(contract.active_families, ['bank']);
+    for (const family of predecessors.families) {
+        assert.equal(
+            family.activation_state,
+            family.family_id === 'bank' ? 'activated' : 'not-activated',
+            family.family_id,
+        );
+    }
+    assert.ok(!contract.not_impl_debt.some(row => row.selector === 'nearestUsableBank'));
+    assert.equal(nativeFamilyFamilies.get('bank_wait'), 'bank');
+});
+
 test('a declared-only runtime member roots its implementation for nav scanning', () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-declared-nav-'));
     const sourceRoot = path.join(scratch, 'src');
@@ -172,7 +186,7 @@ test('types follow the family their ABI describes', () => {
 });
 
 test('refusal debt is unique and names each missing notImplValue export', () => {
-    assert.equal(contract.not_impl_debt.length, 212);
+    assert.equal(contract.not_impl_debt.length, 211);
     const selectors = contract.not_impl_debt.map(row => row.selector);
     assert.equal(new Set(selectors).size, selectors.length);
     for (const selector of [

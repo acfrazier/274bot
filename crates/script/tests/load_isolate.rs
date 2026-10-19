@@ -18,6 +18,8 @@ use script::ctx::ScriptCtx;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CompiledId, ScriptSource, SlotScript};
 
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
 mod common;
 
 /// Spawn and wait (bounded) for setup to finish. `spawn` returns before V8
@@ -238,34 +240,6 @@ fn deposit_ops() -> Vec<String> {
     .to_vec()
 }
 
-/// Deposit-All of side row `id` at `slot` in bank session `generation`.
-fn deposit_all(id: i32, slot: i32, generation: u64) -> script::shim::InteractReq {
-    script::shim::InteractReq::InvButton {
-        id,
-        slot,
-        component: SIDE_GRID,
-        operation: 4,
-        bank_generation: generation,
-    }
-}
-
-/// Post `input` with the bank's side root up, as the host does while the
-/// bank-side backpack is shown.
-fn post_with_side_root(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotInput<'_>) {
-    post_side(iso, input, SIDE_ROOT);
-}
-
-/// Post `input` with the posted side root `side` (`-1` none).
-fn post_side(iso: &LoadIsolate, input: &script::isolate_fb::SnapshotInput<'_>, side: i32) {
-    let native = script::isolate_fb::NativeFactsInput {
-        side_modal_id: Some(side),
-        ..Default::default()
-    };
-    let (bytes, _) =
-        script::isolate_fb::encode_snapshot_delta_with_native(None, input, native, false);
-    iso.post_snapshot(bytes);
-}
-
 /// The empty fail-closed snapshot; tests override the fields they post.
 fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
     script::isolate_fb::SnapshotInput {
@@ -285,8 +259,6 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         hold: false,
@@ -343,6 +315,241 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: Default::default(),
     }
+}
+
+const BANK_GAME_COMPONENT: i32 = 600;
+
+fn new_bank_slot(
+    source: &str,
+    shape: LoadShape,
+    named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+) -> bank_slot::BankSlot {
+    bank_slot::BankSlot::new(source, shape, None, named_banks)
+}
+
+fn empty_named_banks() -> std::sync::Arc<api::named_banks::NamedBankFacts> {
+    std::sync::Arc::new(api::named_banks::NamedBankFacts::empty())
+}
+
+fn native_loc_view(row: &script::isolate_fb::SceneEntityInput<'_>) -> api::snapshot::LocView {
+    api::snapshot::LocView {
+        typecode: 0,
+        info: 0,
+        id: row.id,
+        name: row.name.map(str::to_owned),
+        description: None,
+        actions: row.actions.iter().cloned().map(Some).collect(),
+        tile: api::snapshot::WorldTile {
+            x: row.x,
+            z: row.z,
+            level: row.level,
+        },
+        distance: row.distance,
+        layer: api::snapshot::LocLayer::Ground,
+        shape: row.shape,
+        angle: row.angle,
+        width: row.size.max(1),
+        length: row.size.max(1),
+        footprint_width: row.size.max(1),
+        footprint_length: row.size.max(1),
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+fn update_native_bank_snapshot(
+    snapshot: &mut api::snapshot::GameSnapshot,
+    input: &script::isolate_fb::SnapshotInput<'_>,
+    tick: u64,
+    snapshot_generation: i64,
+    side_root: i32,
+    component_id: i32,
+) {
+    use api::snapshot::WorldTile;
+
+    bank_slot::update_native_snapshot(
+        snapshot,
+        input,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(snapshot_generation),
+            side_modal_id: Some(side_root),
+            ..Default::default()
+        },
+        Some(component_id),
+    );
+    snapshot.seed_ingame(2);
+    snapshot.seed_tick(tick as u32);
+    // These original isolate fixtures describe an open local scene. Supply its
+    // raw collision grid, rather than echoing a preselected approach to native.
+    if !input.reach.available {
+        if let Some(here) = input.here {
+            snapshot.seed_scene(api::snapshot::SceneView {
+                available: true,
+                base_x: here.x - 52,
+                base_z: here.z - 52,
+                level: here.level,
+                width: 104,
+                height: 104,
+                collision_flags: vec![0; 104 * 104],
+            });
+        }
+    }
+
+    let mut locs: Vec<_> = input.locs.iter().map(native_loc_view).collect();
+    if let Some(booth) = input.nearest_booth.as_ref() {
+        if !locs.iter().any(|row| {
+            row.id == booth.id
+                && row.tile.x == booth.x
+                && row.tile.z == booth.z
+                && row.tile.level == booth.level
+        }) {
+            let distance = input.here.map_or(0, |here| {
+                (here.x - booth.x).abs().max((here.z - booth.z).abs())
+            });
+            locs.push(api::snapshot::LocView {
+                typecode: 0,
+                info: 0,
+                id: booth.id,
+                name: Some(booth.name.to_owned()),
+                description: None,
+                actions: vec![Some(booth.op.to_owned())],
+                tile: WorldTile {
+                    x: booth.x,
+                    z: booth.z,
+                    level: booth.level,
+                },
+                distance,
+                layer: api::snapshot::LocLayer::Ground,
+                shape: 10,
+                angle: 0,
+                width: 1,
+                length: 1,
+                footprint_width: 1,
+                footprint_length: 1,
+                block_walk: false,
+                block_range: false,
+                active: true,
+                animation: -1,
+                map_function: -1,
+                map_scene: -1,
+                force_approach: 0,
+            });
+        }
+    }
+    snapshot.seed_locs(locs);
+}
+
+fn tick_bank_slot_with_component(
+    slot: &mut bank_slot::BankSlot,
+    input: &mut script::isolate_fb::SnapshotInput<'_>,
+    tick: u64,
+    snapshot_generation: i64,
+    side_root: i32,
+    component_id: i32,
+    snapshot: &mut api::snapshot::GameSnapshot,
+) {
+    input.tick = tick;
+    update_native_bank_snapshot(
+        snapshot,
+        input,
+        tick,
+        snapshot_generation,
+        side_root,
+        component_id,
+    );
+    slot.tick(
+        tick,
+        input,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(snapshot_generation),
+            side_modal_id: Some(side_root),
+            ..Default::default()
+        },
+        snapshot,
+    );
+}
+
+fn tick_bank_slot(
+    slot: &mut bank_slot::BankSlot,
+    input: &mut script::isolate_fb::SnapshotInput<'_>,
+    tick: u64,
+    snapshot_generation: i64,
+    side_root: i32,
+    snapshot: &mut api::snapshot::GameSnapshot,
+) {
+    let component_id = if input.bank_open {
+        BANK_GAME_COMPONENT
+    } else {
+        -1
+    };
+    tick_bank_slot_with_component(
+        slot,
+        input,
+        tick,
+        snapshot_generation,
+        side_root,
+        component_id,
+        snapshot,
+    );
+}
+
+fn bank_interaction(action: &script::native::HostAction) -> &script::shim::InteractReq {
+    let script::native::HostEffect::Interaction(request) = &action.effect else {
+        panic!("expected a native bank interaction");
+    };
+    request
+}
+
+fn accept_bank_interaction(
+    slot: &mut bank_slot::BankSlot,
+    action: &script::native::HostAction,
+    tick: u64,
+    accepted: bool,
+) {
+    let authority = action.authority();
+    slot.slot.complete_native_interaction(
+        &authority,
+        script::native::InteractionReceipt {
+            request_id: action.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: action.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted,
+            chat_since: -1,
+        },
+    );
+}
+
+fn accept_bank_walk(
+    slot: &mut bank_slot::BankSlot,
+    action: &script::native::HostAction,
+    tick: u64,
+) {
+    let authority = action.authority();
+    slot.slot.complete_native_walk(
+        &authority,
+        script::native::WalkReceipt {
+            request_id: action.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: action.run(),
+                tick,
+                sequence: tick,
+            },
+            end: script::native::WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+        },
+    );
 }
 
 /// An in-game, loaded scene: a tile, scene state 2 and every used stat
@@ -2923,8 +3130,7 @@ export default class T extends TaskBot {
 // advancing the observed tick or replaying lifecycle work.
 #[test]
 fn snapshot_wake_settles_bank_open_machine_without_advancing_tick() {
-    let iso = spawn_ready(
-        r#"
+    let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 import { BotHost } from '../../runtime/BotHost.js';
 import { Execution } from '../../api/execution/Execution.js';
@@ -2942,11 +3148,8 @@ export default class T extends LoopingBot {
     }
     onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
 }
-"#
-        .into(),
-        LoadShape::CompatClass,
-        vec![],
-    );
+"#;
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let actions = ["Use-quickly".to_string()];
     let locs = [script::isolate_fb::SceneEntityInput {
         index: 0,
@@ -2969,82 +3172,103 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
-    let mut snap = ready_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let mut input = ready_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
         level: 0,
     });
-    snap.locs = &locs;
-    snap.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
-    post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
-    iso.on_game_tick(1);
-    iso.probe("true").unwrap();
+    input.locs = &locs;
+    input.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
     assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::OpenBooth { id: 2213, .. }]
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::OpenBooth { id: 2213, .. }
     ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
     assert_eq!(
-        iso.probe("globalThis.__opened ?? null").unwrap(),
+        slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
-    let loops = iso.probe("globalThis.__loops").unwrap();
-    let paints = iso.probe("globalThis.__paints ?? 0").unwrap();
-    let listeners = iso.probe("globalThis.__listeners").unwrap();
+    let loops = slot.probe("globalThis.__loops").unwrap();
+    let paints = slot.probe("globalThis.__paints ?? 0").unwrap();
+    let listeners = slot.probe("globalThis.__listeners").unwrap();
 
-    // Unrelated evidence changes while the bank remains closed; the open
-    // wait observes this generation but stays parked.
-    snap.run_energy = 1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 1, 1);
+    input.run_energy = 1;
+    let closed_native = script::isolate_fb::NativeFactsInput {
+        bank_snapshot_generation: Some(-1),
+        side_modal_id: Some(-1),
+        ..Default::default()
+    };
+    slot.snapshot_change(1, &input, closed_native, &snapshot);
     assert_eq!(
-        iso.probe("globalThis.__opened ?? null").unwrap(),
-        serde_json::Value::Null
-    );
-
-    // A full unchanged retransmission keeps the same evidence generation.
-    post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 1, 1);
-    assert_eq!(
-        iso.probe("globalThis.__opened ?? null").unwrap(),
+        slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
 
-    // A second changed observation at the same game tick and native identity
-    // must recheck the wait and settle it.
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_snapshot_change_at(1, 1, 2);
-
-    assert_eq!(iso.probe("globalThis.__opened").unwrap(), true);
-    assert_eq!(iso.probe("globalThis.__openedAt").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__rs2b0t_host.tick").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__loops").unwrap(), loops);
-    assert_eq!(iso.probe("globalThis.__paints ?? 0").unwrap(), paints);
-    assert_eq!(iso.probe("globalThis.__listeners").unwrap(), listeners);
+    slot.snapshot_change(1, &input, closed_native, &snapshot);
     assert_eq!(
-        iso.probe("globalThis.__delayed ?? null").unwrap(),
+        slot.probe("globalThis.__opened ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 1;
+    update_native_bank_snapshot(&mut snapshot, &input, 1, 1, SIDE_ROOT, BANK_GAME_COMPONENT);
+    slot.snapshot_change(
+        1,
+        &input,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(1),
+            side_modal_id: Some(SIDE_ROOT),
+            ..Default::default()
+        },
+        &snapshot,
+    );
+
+    assert_eq!(
+        slot.probe("globalThis.__opened").unwrap(),
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        slot.probe("globalThis.__openedAt").unwrap(),
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        slot.probe("globalThis.__rs2b0t_host.tick").unwrap(),
+        serde_json::json!(1)
+    );
+    assert_eq!(slot.probe("globalThis.__loops").unwrap(), loops);
+    assert_eq!(slot.probe("globalThis.__paints ?? 0").unwrap(), paints);
+    assert_eq!(slot.probe("globalThis.__listeners").unwrap(), listeners);
+    assert_eq!(
+        slot.probe("globalThis.__delayed ?? null").unwrap(),
         serde_json::Value::Null,
         "delayTicks(1) must retain its requested next game tick"
     );
 
-    snap.tick = 2;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert_eq!(iso.probe("globalThis.__delayed").unwrap(), 2);
-    assert_eq!(iso.probe("globalThis.__listeners").unwrap(), 2);
-    iso.join();
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__delayed").unwrap(),
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        slot.probe("globalThis.__listeners").unwrap(),
+        serde_json::json!(2)
+    );
+    slot.stop();
 }
 
 #[test]
 fn snapshot_wake_settles_bank_wait_without_advancing_tick_or_loop() {
-    let iso = spawn_ready(
-        r#"
+    let src = r#"
 import { Execution } from '../../api/execution/Execution.js';
 import { Game } from '../../api/game/Game.js';
 import { Bank } from '../../api/bank/Bank.js';
@@ -3058,44 +3282,66 @@ export default class T extends LoopingBot {
     }
     onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
 }
-"#
-        .into(),
-        LoadShape::CompatClass,
-        vec![],
-    );
-    let mut snap = common::ingame_snapshot();
-    common::post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
-    let paints = iso.probe("globalThis.__paints").unwrap();
+"#;
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = ready_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
     assert_eq!(
-        iso.probe("globalThis.__opened ?? null").unwrap(),
+        slot.probe("globalThis.__loops").unwrap(),
+        serde_json::json!(1)
+    );
+    let paints = slot.probe("globalThis.__paints ?? 0").unwrap();
+    assert_eq!(
+        slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
 
-    snap.bank_open = true;
-    common::post_snapshot_input(&iso, &snap);
-    iso.pause();
-    iso.on_snapshot_change_at(1, 1, 1);
+    input.bank_open = true;
+    input.bank_generation = 1;
+    update_native_bank_snapshot(&mut snapshot, &input, 1, -1, -1, BANK_GAME_COMPONENT);
+    let native = script::isolate_fb::NativeFactsInput {
+        bank_snapshot_generation: Some(-1),
+        side_modal_id: Some(-1),
+        ..Default::default()
+    };
+    slot.slot.pause();
+    slot.snapshot_change(1, &input, native, &snapshot);
     assert_eq!(
-        iso.probe("globalThis.__opened ?? null").unwrap(),
+        slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
-    iso.resume();
-    iso.on_snapshot_change_at(1, 1, 1);
-    assert_eq!(iso.probe("globalThis.__opened").unwrap(), 1);
+    slot.slot.resume();
+    slot.snapshot_change(1, &input, native, &snapshot);
     assert_eq!(
-        iso.probe("globalThis.__delayed ?? null").unwrap(),
+        slot.probe("globalThis.__opened").unwrap(),
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        slot.probe("globalThis.__delayed ?? null").unwrap(),
         serde_json::Value::Null
     );
-    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__paints").unwrap(), paints);
-    iso.on_snapshot_change_at(1, 1, 1);
-    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 1);
-    iso.on_game_tick(2);
-    assert_eq!(iso.probe("globalThis.__delayed").unwrap(), 2);
-    assert_eq!(iso.probe("globalThis.__loops").unwrap(), 2);
-    iso.join();
+    assert_eq!(
+        slot.probe("globalThis.__loops").unwrap(),
+        serde_json::json!(1)
+    );
+    assert_eq!(slot.probe("globalThis.__paints ?? 0").unwrap(), paints);
+    slot.snapshot_change(1, &input, native, &snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__loops").unwrap(),
+        serde_json::json!(1)
+    );
+
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__delayed").unwrap(),
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        slot.probe("globalThis.__loops").unwrap(),
+        serde_json::json!(2)
+    );
+    slot.stop();
 }
 
 // Task 4 — Execution.delayUntil parks the loop: `loop()` awaits a cond on
@@ -4563,36 +4809,6 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     iso.join();
 }
 
-// Bank-opening fixtures post the native operability fact used by the runtime.
-// The caller must place the actor on an operable tile for the selected booth.
-fn post_operable_bank_snapshot(
-    iso: &LoadIsolate,
-    input: &script::isolate_fb::SnapshotInput<'_>,
-    loc_id: i32,
-    x: i32,
-    z: i32,
-) {
-    let here = input.here.as_ref().expect("bank fixture has an actor tile");
-    let approaches = [script::isolate_fb::BankApproachInput {
-        loc_id,
-        x,
-        z,
-        level: here.level,
-        can_operate: true,
-        dest_ok: true,
-        dest_x: here.x,
-        dest_z: here.z,
-        dest_level: here.level,
-    }];
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        input,
-        script::isolate_fb::NativeFactsInput {
-            bank_approaches: Some(&approaches),
-            ..Default::default()
-        },
-    ));
-}
-
 // Banking opening preserves the exact nearest-booth identity posted in the
 // snapshot so dispatch cannot retarget between observation and action.
 #[test]
@@ -4605,19 +4821,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 199,
         z: 100,
         level: 0,
     });
-    snap.booths = &[script::isolate_fb::TileInput {
+    input.booths = &[script::isolate_fb::TileInput {
         x: 200,
         z: 100,
         level: 0,
     }];
-    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+    input.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
         x: 200,
         z: 100,
         level: 0,
@@ -4625,50 +4841,71 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
-    post_operable_bank_snapshot(&iso, &snap, 2213, 200, 100);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::OpenBooth {
+        actions.len(),
+        1,
+        "Banking.open starts one native booth action"
+    );
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::OpenBooth {
             x: 200,
             z: 100,
             level: 0,
             id: 2213,
-            name: None,
-            action: None,
-        }],
-        "Banking.open carries the snapshot-selected Use-quickly loc"
+            ..
+        }
+    ));
+    assert_eq!(
+        slot.probe("typeof globalThis.__rs_ok").unwrap(),
+        serde_json::json!("undefined"),
+        "the open promise remains pending before host dispatch"
     );
-    iso.join();
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    input.bank_open = true;
+    input.bank_generation = 1;
+    tick_bank_slot(&mut slot, &mut input, 2, 0, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("typeof globalThis.__rs_ok").unwrap(),
+        serde_json::json!("undefined"),
+        "an open bank without its item list is not ready"
+    );
+    input.bank_loaded = true;
+    tick_bank_slot(&mut slot, &mut input, 3, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__rs_ok").unwrap(),
+        serde_json::json!(true)
+    );
+    slot.stop();
 }
 
 #[test]
 fn isolate_bank_open_nearest_and_open_booth_queue_open_booth() {
-    let src = r#"
+    let sources = [
+        r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    loop() {
-        Bank.openNearest('Bank booth', 'Use-quickly');
-        Bank.openBooth({ x: 100, z: 100, level: 0 }, 'Bank booth', 'Use-quickly');
+    async loop() {
+        globalThis.__opened = await Bank.openNearest('Bank booth', 'Use-quickly');
     }
 }
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 100,
-        z: 100,
-        level: 0,
-    });
-    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
-        x: 101,
-        z: 100,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    });
+"#,
+        r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__opened = await Bank.openBooth(
+            { x: 100, z: 100, level: 0 },
+            'Bank booth',
+            'Use-quickly',
+        );
+    }
+}
+"#,
+    ];
     let use_quickly = ["Use-quickly".to_string()];
     let locs = [script::isolate_fb::SceneEntityInput {
         index: 0,
@@ -4691,36 +4928,113 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
-    snap.locs = &locs;
-    post_operable_bank_snapshot(&iso, &snap, 2213, 101, 100);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![
+    for source in sources {
+        let mut slot = new_bank_slot(source, LoadShape::CompatClass, empty_named_banks());
+        let mut input = base_snapshot();
+        input.here = Some(script::isolate_fb::TileInput {
+            x: 100,
+            z: 100,
+            level: 0,
+        });
+        input.locs = &locs;
+        input.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+            x: 101,
+            z: 100,
+            level: 0,
+            id: 2213,
+            name: "Bank booth",
+            op: "Use-quickly",
+        });
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+        let actions = slot.take_actions();
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            bank_interaction(&actions[0]),
             script::shim::InteractReq::OpenBooth {
                 x: 101,
                 z: 100,
                 level: 0,
                 id: 2213,
-                name: Some("Bank booth".into()),
-                action: Some("Use-quickly".into()),
-            },
-            script::shim::InteractReq::OpenBooth {
-                x: 101,
-                z: 100,
-                level: 0,
-                id: 2213,
-                name: Some("Bank booth".into()),
-                action: Some("Use-quickly".into()),
-            },
-        ],
-        "openNearest / openBooth preserve the posted booth identity"
+                name: Some(name),
+                action: Some(action),
+            } if name == "Bank booth" && action == "Use-quickly"
+        ));
+        assert_eq!(
+            slot.probe("typeof globalThis.__opened").unwrap(),
+            serde_json::json!("undefined"),
+            "the native open promise awaits the host action"
+        );
+        slot.stop();
+    }
+}
+
+#[test]
+fn isolate_bank_access_with_long_name_logs_and_resolves_false() {
+    let name = "x".repeat(300);
+    let src = format!(
+        r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__done = false;
+        globalThis.__result = 'pending';
+        globalThis.__logs = [];
+        globalThis.__result = await Bank.openNearestAccess(
+            {{ name: {name:?}, op: 'Use' }},
+            (message) => {{
+                globalThis.__logs.push(message);
+            }},
+        );
+        globalThis.__done = true;
+    }}
+}}
+"#
     );
-    iso.join();
+    let mut slot = new_bank_slot(&src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    for tick in 1..=3 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        assert!(
+            slot.take_actions().is_empty(),
+            "a missing object should not emit an interaction"
+        );
+        if slot.probe("__done").unwrap() == serde_json::json!(true) {
+            break;
+        }
+    }
+
+    assert_eq!(
+        slot.probe("__done").unwrap(),
+        serde_json::json!(true),
+        "the long-name opening should resolve instead of failing in its log prompt"
+    );
+    assert_eq!(slot.probe("__result").unwrap(), serde_json::json!(false));
+    assert_eq!(slot.probe("__logs.length").unwrap(), serde_json::json!(1));
+    let log = slot
+        .probe("__logs[0]")
+        .unwrap()
+        .as_str()
+        .expect("the log callback receives text")
+        .to_owned();
+    assert!(log.starts_with("no usable '"));
+    assert_eq!(
+        log.len() + 6,
+        api::script_contract::PROMPT_ARGS_MAX_BYTES,
+        "only the log text is truncated; the one-string binary argument fills the prompt budget"
+    );
+    assert!(
+        slot.slot.last_error().is_none(),
+        "the log prompt must not fail: {:?}",
+        slot.slot.last_error()
+    );
+    slot.stop();
 }
 
 #[test]
@@ -4739,7 +5053,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let bank = ["Bank".to_string()];
     let locs = [script::isolate_fb::SceneEntityInput {
         index: 0,
@@ -4762,67 +5076,74 @@ export default class T extends LoopingBot {
         size: 0,
         nx: 0,
         nz: 0,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let mut input = base_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
         level: 0,
     });
-    snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert!(
-        matches!(
-            iso.drain_interacts().as_slice(),
-            [script::shim::InteractReq::WalkNear {
-                x: 150,
-                z: 150,
-                radius: 2,
-                ..
-            }]
-        ),
-        "the preset uses the frozen radius-two approach"
+    input.locs = &locs;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1, "the preset starts its real approach walk");
+    let script::native::HostEffect::Walk(request) = &actions[0].effect else {
+        panic!("the bank preset must emit a native walk");
+    };
+    assert_eq!(
+        request.target,
+        api::snapshot::WorldTile {
+            x: 150,
+            z: 150,
+            level: 0,
+        }
     );
+    assert_eq!(request.radius, 2);
+    accept_bank_walk(&mut slot, &actions[0], 1);
 
-    snap.tick = 2;
-    snap.here = Some(script::isolate_fb::TileInput {
+    input.here = Some(script::isolate_fb::TileInput {
         x: 150,
         z: 150,
         level: 0,
     });
-    post_operable_bank_snapshot(&iso, &snap, 4483, 151, 150);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::OpenBooth {
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1, "the arrived preset opens its live chest");
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::OpenBooth {
             x: 151,
             z: 150,
             level: 0,
             id: 4483,
-            name: Some("Bank chest".into()),
-            action: Some("Bank".into()),
-        }],
-        "the exact requested name and op survive isolate IPC"
+            name: Some(name),
+            action: Some(action),
+        } if name == "Bank chest" && action == "Bank"
+    ));
+    assert_eq!(
+        slot.probe("typeof globalThis.__ok").unwrap(),
+        serde_json::json!("undefined")
     );
-    assert!(iso.probe("globalThis.__ok").unwrap().is_null());
-    snap.bank_open = true;
-    snap.bank_generation = 1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    assert!(
-        iso.probe("globalThis.__ok").unwrap().is_null(),
+    accept_bank_interaction(&mut slot, &actions[0], 2, true);
+
+    input.bank_open = true;
+    input.bank_generation = 1;
+    tick_bank_slot(&mut slot, &mut input, 3, 0, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("typeof globalThis.__ok").unwrap(),
+        serde_json::json!("undefined"),
         "open without stock is not ready"
     );
-    snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
-    assert_eq!(iso.probe("globalThis.__ok").unwrap(), true);
-    iso.join();
+    input.bank_loaded = true;
+    tick_bank_slot(&mut slot, &mut input, 4, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__ok").unwrap(),
+        serde_json::json!(true)
+    );
+    slot.stop();
 }
 
 #[test]
@@ -4837,85 +5158,93 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn_with_content(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        None,
-        std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
-            api::named_banks::NamedBank::new(
-                "Selected bank",
-                api::snapshot::WorldTile {
-                    x: 299,
-                    z: 400,
-                    level: 0,
-                },
-            ),
-        ])),
-    )
-    .unwrap();
-    let stands = [script::isolate_fb::BankStandInput {
-        name: "Falador east bank",
-        x: 300,
+    let bank_tile = api::snapshot::WorldTile {
+        x: 299,
         z: 400,
         level: 0,
-        kind: "booth",
-        op: 2,
-        choose: None,
-    }];
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    };
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank::new("Selected bank", bank_tile),
+    ]));
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+    let mut input = base_snapshot();
+    input.inv_size = 28;
+    input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
         level: 0,
     });
-    snap.banks = &stands;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let requests = iso.drain_interacts();
-    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
-        panic!("bankNearest must await selection, got {requests:?}");
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    let [pick] = actions.as_slice() else {
+        panic!(
+            "bankNearest must request native bank selection, got {} actions",
+            actions.len()
+        );
     };
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        &snap,
-        script::isolate_fb::NativeFactsInput {
-            bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id,
-                generation: 1,
-                bank_index: 0,
-                kind: 2,
+    let script::native::HostEffect::BankPick(request) = &pick.effect else {
+        panic!("bankNearest must request native bank selection");
+    };
+    assert_eq!(request.eligible.as_ref(), [0]);
+    assert_eq!(
+        request.from,
+        api::snapshot::WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        }
+    );
+    assert_eq!(
+        slot.probe("globalThis.__banked ?? null").unwrap(),
+        serde_json::Value::Null,
+        "bankNearest remains pending until the host returns its selected stand"
+    );
+    let authority = pick.authority();
+    slot.slot.complete_native_bank_pick(
+        &authority,
+        script::native_bank::BankPickReceipt {
+            request_id: pick.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: pick.run(),
+                tick: 1,
+                sequence: 1,
             },
-            ..Default::default()
+            selected: script::native_bank::SelectedBank {
+                bank_index: 0,
+                access_tile: bank_tile,
+                kind: script::native_bank::PickKind::Reachable,
+                access: Some(std::sync::Arc::new(script::native_bank::BankStandAccess {
+                    bank: api::named_banks::NamedBank::new("Selected bank", bank_tile),
+                    stand_tile: api::snapshot::WorldTile {
+                        x: 300,
+                        z: 400,
+                        level: 0,
+                    },
+                    kind: script::native_bank::AccessKind::Booth,
+                    stand_op: 2,
+                    name: Some(std::sync::Arc::from("Bank booth")),
+                    choose: None,
+                })),
+            },
         },
-    ));
-    iso.on_game_tick(2);
-    iso.probe("true").unwrap();
-    assert!(matches!(
-        iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::WalkNear {
-            x: 299,
-            z: 400,
-            radius: 4,
-            ..
-        }]
-    ));
+    );
 
-    snap.tick = 2;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 299,
-        z: 400,
-        level: 0,
-    });
-    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
-        x: 300,
-        z: 400,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    });
-    let actions = ["Use-quickly".to_string()];
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(
+        actions.len(),
+        1,
+        "the selected bank requires an approach walk"
+    );
+    let script::native::HostEffect::Walk(request) = &actions[0].effect else {
+        panic!("bankNearest must walk to the selected bank access tile");
+    };
+    assert_eq!(request.target, bank_tile);
+    assert_eq!(request.radius, 4);
+    accept_bank_walk(&mut slot, &actions[0], 2);
+
+    let quick = ["Use-quickly".to_string()];
     let locs = [script::isolate_fb::SceneEntityInput {
         index: 0,
         id: 2213,
@@ -4928,7 +5257,7 @@ export default class T extends LoopingBot {
         max_health: -1,
         in_combat: false,
         animating: false,
-        actions: &actions,
+        actions: &quick,
         reachable: true,
         reachable_adj: true,
         combat_level: 0,
@@ -4937,39 +5266,63 @@ export default class T extends LoopingBot {
         size: 1,
         nx: 300,
         nz: 400,
-        shape: 0,
+        shape: 10,
         angle: 0,
     }];
-    snap.locs = &locs;
-    post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
-    iso.on_game_tick(3);
-    let _ = iso.probe("true");
-    assert!(
-        matches!(
-            iso.drain_interacts().as_slice(),
-            [script::shim::InteractReq::OpenBooth {
-                x: 300,
-                z: 400,
-                level: 0,
-                id: 2213,
-                ..
-            }]
-        ),
-        "the run must open the live selected booth identity"
+    input.here = Some(script::isolate_fb::TileInput {
+        x: 299,
+        z: 400,
+        level: 0,
+    });
+    input.locs = &locs;
+    input.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+        x: 300,
+        z: 400,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
+    tick_bank_slot(&mut slot, &mut input, 3, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(
+        actions.len(),
+        1,
+        "the arrived bank selection opens the live booth"
     );
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::OpenBooth {
+            x: 300,
+            z: 400,
+            level: 0,
+            id: 2213,
+            ..
+        }
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 3, true);
 
-    snap.tick = 3;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
-    let _ = iso.probe("true");
-    snap.tick = 4;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(5);
-    assert_eq!(iso.probe("__banked").unwrap(), true);
-    iso.join();
+    input.bank_open = true;
+    input.bank_generation = 1;
+    tick_bank_slot(&mut slot, &mut input, 4, 0, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__banked ?? null").unwrap(),
+        serde_json::Value::Null,
+        "open without loaded stock is not ready"
+    );
+    input.bank_loaded = true;
+    tick_bank_slot(&mut slot, &mut input, 5, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__banked ?? null").unwrap(),
+        serde_json::Value::Null,
+        "bankNearest waits one frozen settle tick after the loaded bank",
+    );
+    tick_bank_slot(&mut slot, &mut input, 6, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__banked").unwrap(),
+        serde_json::json!(true)
+    );
+    slot.stop();
 }
 
 #[test]
@@ -4984,38 +5337,24 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 3200,
         z: 3200,
         level: 0,
     });
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let requests = iso.drain_interacts();
-    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
-        panic!("bankNearest must await selection, got {requests:?}");
-    };
-    assert!(iso.probe("globalThis.__bank_result").unwrap().is_null());
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        &snap,
-        script::isolate_fb::NativeFactsInput {
-            bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id,
-                generation: 1,
-                bank_index: -1,
-                kind: 4,
-            },
-            ..Default::default()
-        },
-    ));
-    iso.on_game_tick(2);
-    iso.probe("true").unwrap();
-    assert!(iso.drain_interacts().is_empty());
-    assert_eq!(iso.probe("globalThis.__bank_result").unwrap(), false);
-    iso.join();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert!(
+        slot.take_actions().is_empty(),
+        "an empty bank catalogue must not start a selection or bank action"
+    );
+    assert_eq!(
+        slot.probe("globalThis.__bank_result").unwrap(),
+        serde_json::json!(false)
+    );
+    slot.stop();
 }
 
 #[test]
@@ -5035,18 +5374,20 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    post_snapshot_input(&iso, &base_snapshot());
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("globalThis.__refused").unwrap(), true);
-    assert!(iso.drain_interacts().is_empty());
-    iso.join();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__refused").unwrap(),
+        serde_json::json!(true)
+    );
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
 fn isolate_bank_snapshot_wait_requires_new_items_not_just_a_reopened_session() {
-    use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput};
-
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -5058,39 +5399,62 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    let mut native = NativeFactsInput {
-        bank_snapshot_generation: Some(10),
-        ..Default::default()
-    };
-    let (bytes, first) = encode_snapshot_delta_with_native(None, &snap, native, false);
-    iso.post_snapshot(bytes);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__generation").unwrap(), 10);
-    assert_eq!(iso.probe("typeof globalThis.__after").unwrap(), "undefined");
-
-    snap.tick = 2;
-    snap.bank_generation = 9;
-    let (bytes, reopened) = encode_snapshot_delta_with_native(Some(&first), &snap, native, false);
-    iso.post_snapshot(bytes);
-    iso.on_game_tick(2);
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 10, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__generation").unwrap(), serde_json::json!(10));
     assert_eq!(
-        iso.probe("typeof globalThis.__after").unwrap(),
-        "undefined",
-        "a close/reopen without newer item data cannot satisfy the wait"
+        slot.probe("typeof globalThis.__after").unwrap(),
+        serde_json::json!("undefined")
     );
 
-    snap.tick = 3;
-    native.bank_snapshot_generation = Some(11);
-    let (bytes, _) = encode_snapshot_delta_with_native(Some(&reopened), &snap, native, false);
-    iso.post_snapshot(bytes);
-    iso.on_game_tick(3);
-    assert_eq!(iso.probe("__after").unwrap(), true);
-    iso.join();
+    input.tick = 2;
+    input.bank_generation = 9;
+    snapshot.seed_tick(2);
+    snapshot.seed_bank_observation(BANK_GAME_COMPONENT + 1, 10, Some(Vec::new()), Vec::new());
+    snapshot.seed_side_modal(SIDE_ROOT);
+    slot.tick(
+        2,
+        &input,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(10),
+            side_modal_id: Some(SIDE_ROOT),
+            ..Default::default()
+        },
+        &snapshot,
+    );
+    assert_eq!(
+        slot.probe("typeof globalThis.__after").unwrap(),
+        serde_json::json!("undefined"),
+        "a new bank session without a newer item packet cannot satisfy the wait"
+    );
+
+    input.tick = 3;
+    snapshot.seed_tick(3);
+    snapshot.seed_bank_observation(BANK_GAME_COMPONENT + 1, 11, Some(Vec::new()), Vec::new());
+    slot.tick(
+        3,
+        &input,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(11),
+            side_modal_id: Some(SIDE_ROOT),
+            ..Default::default()
+        },
+        &snapshot,
+    );
+    let logs = slot.slot.drain_logs();
+    assert_eq!(
+        slot.probe("globalThis.__after ?? null").unwrap(),
+        serde_json::json!(true),
+        "native bank generation: {:?}; loaded: {}; logs: {logs:?}",
+        snapshot.bank_snapshot_generation(),
+        snapshot.bank_loaded(),
+    );
+    slot.stop();
 }
 
 #[test]
@@ -5105,9 +5469,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
         level: 0,
@@ -5119,20 +5483,48 @@ export default class T extends LoopingBot {
     let pack = (0..27)
         .map(|slot| pack_row(62, Some("Willow shortbow (u)"), 1, slot))
         .collect::<Vec<_>>();
-    snap.bank_side = &bank_side;
-    snap.inv = &pack;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![deposit_all(62, 0, 0)],
-        "one helper step must queue one deposit, not one request per duplicate row"
+    input.bank_side = &bank_side;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let (action_tick, actions) = (1..=3)
+        .find_map(|tick| {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            let actions = slot.take_actions();
+            (!actions.is_empty()).then_some((tick, actions))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "the native predicate callback emits its matched deposit; error={:?}; logs={:?}",
+                slot.slot.last_error().map(str::to_owned),
+                slot.slot.drain_logs()
+            )
+        });
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 62,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], action_tick, true);
+    input.inv = &[];
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        action_tick + 1,
+        1,
+        SIDE_ROOT,
+        &mut snapshot,
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -5147,23 +5539,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = deposit_ops();
     let bank_side = [side_row(526, Some("Bones"), 1, &ops, 0)];
-    let mut snap = base_snapshot();
-    snap.inv = &[];
-    snap.inv_size = 28;
-    snap.bank_side = &bank_side;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "a side row absent from the current pack cannot be clicked"
-    );
-    iso.join();
+    let mut input = base_snapshot();
+    input.inv = &[];
+    input.inv_size = 28;
+    input.bank_side = &bank_side;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// `Bank.depositAllExcept(keep)` resolves the kept names (case-insensitive)
@@ -5180,8 +5568,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
     let ops = deposit_ops();
     let bank_side = [
         side_row(946, Some("Knife"), 1, &ops, 0),
@@ -5191,16 +5579,31 @@ export default class T extends LoopingBot {
         pack_row(946, Some("Knife"), 1, 0),
         pack_row(526, Some("Bones"), 1, 1),
     ];
-    snap.bank_side = &bank_side;
-    snap.inv = &pack;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 1, 0)]);
-    iso.join();
+    input.bank_side = &bank_side;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 526,
+            slot: 1,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    let pack_after = [pack[0]];
+    input.inv = &pack_after;
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// L-except's frozen half: `bankRules.depositAllExcept(keep)` is a
@@ -5254,8 +5657,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = deposit_ops();
     let bank_side = [
         side_row(526, Some("Bones"), 1, &ops, 0),
@@ -5265,20 +5667,43 @@ export default class T extends LoopingBot {
         pack_row(526, Some("Bones"), 1, 0),
         pack_row(995, Some("Coins"), 25, 1),
     ];
-    snap.bank_side = &bank_side;
-    snap.inv = &pack;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![deposit_all(526, 0, 0)],
-        "the async matcher's Promise is truthy for the first row"
+    let mut input = base_snapshot();
+    input.bank_side = &bank_side;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let (action_tick, actions) = (1..=3)
+        .find_map(|tick| {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            let actions = slot.take_actions();
+            (!actions.is_empty()).then_some((tick, actions))
+        })
+        .expect("the Promise-valued matcher selects the first deposit row");
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 526,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], action_tick, true);
+    input.inv = &[];
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        action_tick + 1,
+        2,
+        SIDE_ROOT,
+        &mut snapshot,
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 
     let src = r#"
 import { withdrawTo } from '../../api/thieving/stealRules.js';
@@ -5324,33 +5749,33 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Close]
-    );
-    // The host's close: shut, and the bank session generation acknowledges it.
-    snap.bank_open = false;
-    snap.bank_loaded = false;
-    snap.bank_generation += 1;
-    for n in 2..=4 {
-        snap.tick = n;
-        post_snapshot_input(&iso, &snap);
-        iso.on_game_tick(n);
-        let _ = iso.probe("1 + 1");
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_generation += 1;
+    for tick in 2..=4 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
     }
     assert_eq!(
-        iso.probe("typeof __closed").unwrap(),
-        "undefined",
-        "a Promise count never reaches 22; the 3 s wait runs"
+        slot.probe("typeof __closed").unwrap(),
+        serde_json::json!("undefined"),
+        "a Promise count never reaches 22"
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// One press of the matched row by id, then the loop waits for that id to
@@ -5369,39 +5794,67 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = deposit_ops();
     let first = [
         side_row(526, Some("Bones"), 3, &ops, 0),
         side_row(995, Some("Coins"), 5, &ops, 1),
     ];
-    let mut snap = base_snapshot();
-    snap.bank_side = &first;
-    snap.inv = &first;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.drain_interacts(), vec![deposit_all(526, 0, 7)]);
-    assert!(
-        iso.probe("__depositDone").is_err(),
-        "the helper stays parked"
+    let pack = [
+        pack_row(526, Some("Bones"), 3, 0),
+        pack_row(995, Some("Coins"), 5, 1),
+    ];
+    let mut input = base_snapshot();
+    input.bank_side = &first;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let (action_tick, actions) = (1..=3)
+        .find_map(|tick| {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            let actions = slot.take_actions();
+            (!actions.is_empty()).then_some((tick, actions))
+        })
+        .expect("the native matcher emits the matching deposit");
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 526,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], action_tick, true);
+    assert_eq!(
+        slot.probe("typeof globalThis.__depositDone").unwrap(),
+        serde_json::json!("undefined"),
+        "the helper stays parked until the pressed id leaves the pack"
     );
 
-    // The pressed id left the pack; only a refused row remains.
-    let rest = [side_row(995, Some("Coins"), 5, &ops, 1)];
-    snap.tick = 2;
-    snap.bank_side = &rest;
-    snap.inv = &rest;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__depositDone").unwrap(), true);
-    assert!(iso.drain_interacts().is_empty());
-    iso.join();
+    let rest_side = [side_row(995, Some("Coins"), 5, &ops, 1)];
+    let rest_pack = [pack_row(995, Some("Coins"), 5, 1)];
+    input.bank_side = &rest_side;
+    input.inv = &rest_pack;
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        action_tick + 1,
+        2,
+        SIDE_ROOT,
+        &mut snapshot,
+    );
+    assert_eq!(
+        slot.probe("__depositDone").unwrap(),
+        serde_json::json!(true)
+    );
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -5413,6 +5866,8 @@ import { isDisposableGatherJunk as bankRulesDisposable, shouldBankNow as bankRul
 import { shouldBankNow as publicShouldBankNow } from '@rs2b0t/api';
 export default class T extends LoopingBot {
     loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
         let calls = 0;
         const ownTrue = depositMatcher(() => { calls += 1; return true; }, true);
         const ownFalse = depositMatcher(() => { calls += 1; return false; }, false);
@@ -5458,23 +5913,25 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
-            .unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = deposit_ops();
     let bank_side = [side_row(405, Some("Mystery box"), 1, &ops, 0)];
     let pack = [pack_row(405, Some("Mystery box"), 1, 0)];
-    let mut snap = base_snapshot();
-    snap.bank_side = &bank_side;
-    snap.inv = &pack;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    let value: serde_json::Value = iso.probe("globalThis.__common").unwrap();
+    let mut input = base_snapshot();
+    input.bank_side = &bank_side;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let (action_tick, actions) = (1..=3)
+        .find_map(|tick| {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            let actions = slot.take_actions();
+            (!actions.is_empty()).then_some((tick, actions))
+        })
+        .expect("the observed casket id reaches the native common-loot predicate");
+    let value: serde_json::Value = slot.probe("globalThis.__common").unwrap();
     assert_eq!(
         value["names"],
         serde_json::json!(api::content::COMMON_BANK_LOOT)
@@ -5501,12 +5958,29 @@ export default class T extends LoopingBot {
         value["calls"], 2,
         "own=true short-circuits the Rust common arm"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![deposit_all(405, 0, 0)],
-        "the observed id reaches the Rust predicate even when its name is unrelated"
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 405,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], action_tick, true);
+    input.inv = &[];
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        action_tick + 1,
+        2,
+        SIDE_ROOT,
+        &mut snapshot,
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -5561,7 +6035,6 @@ export default class T extends LoopingBot {
 fn isolate_wait_bank_ready_adapts_existing_bank_wait() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
-import { Execution } from '../../api/execution/Execution.js';
 import { waitBankReady } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
@@ -5575,50 +6048,58 @@ export default class T extends LoopingBot {
         }
         if (globalThis.__neverArrived === undefined) {
             globalThis.__readyBeforeTimeout = Bank.ready();
-            const delayUntil = Execution.delayUntil;
-            Execution.delayUntil = async () => false;
-            try {
-                globalThis.__neverArrived = await waitBankReady((message) => {
-                    globalThis.__waitLog = message;
-                });
-            } finally {
-                Execution.delayUntil = delayUntil;
-            }
+            globalThis.__neverArrived = await Bank.waitReady(1000, (message) => {
+                globalThis.__waitLog = message;
+            });
         }
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
 
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__closed").unwrap(), false);
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__closed").unwrap(), serde_json::json!(false));
 
-    snap.bank_open = true;
-    snap.tick = 2;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-
-    snap.bank_open = false;
-    snap.tick = 3;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    assert_eq!(iso.probe("__closedDuringWait").unwrap(), false);
-
-    // Model the existing wait's timeout outcome without spending its
-    // five-second wall-clock bound; the open bank still has no item list.
-    snap.bank_open = true;
-    snap.tick = 4;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
-    assert_eq!(iso.probe("__readyBeforeTimeout").unwrap(), false);
-    assert_eq!(iso.probe("__neverArrived").unwrap(), true);
+    input.bank_open = true;
+    tick_bank_slot(&mut slot, &mut input, 2, -1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.probe("__waitLog").unwrap(),
-        "bank: opened but the item list never arrived"
+        slot.probe("typeof globalThis.__closedDuringWait").unwrap(),
+        serde_json::json!("undefined"),
+        "an open bank without its item list keeps the native wait pending"
     );
-    iso.join();
+
+    input.bank_open = false;
+    tick_bank_slot(&mut slot, &mut input, 3, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("__closedDuringWait").unwrap(),
+        serde_json::json!(false)
+    );
+
+    input.bank_open = true;
+    tick_bank_slot(&mut slot, &mut input, 4, -1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("__readyBeforeTimeout").unwrap(),
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        slot.probe("typeof globalThis.__neverArrived").unwrap(),
+        serde_json::json!("undefined")
+    );
+
+    thread::sleep(Duration::from_millis(1002));
+    tick_bank_slot(&mut slot, &mut input, 5, -1, SIDE_ROOT, &mut snapshot);
+    tick_bank_slot(&mut slot, &mut input, 6, -1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("__neverArrived").unwrap(),
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        slot.probe("__waitLog").unwrap(),
+        serde_json::json!("bank: opened but the item list never arrived")
+    );
+    slot.stop();
 }
 
 /// A row without a Withdraw-X op answers frozen `false` (`Bank.ts`
@@ -5631,37 +6112,25 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        this.log('ops:' + JSON.stringify(Bank.items()[0].ops));
+        globalThis.__ops = Bank.items()[0].ops;
         globalThis.__ok = await Bank.withdrawX('Bones', 25);
         globalThis.__absent = await Bank.withdrawX('Feather', 25);
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
     let bank = [nc(Some("Bones"), 40)];
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter().any(|l| l.contains("ops:[]")),
-        "empty posted ops must stay empty, not a fabricated withdraw menu: {logs:?}"
-    );
-    assert_eq!(iso.probe("__ok").unwrap(), false, "no usable op: {logs:?}");
-    assert_eq!(
-        iso.probe("__absent").unwrap(),
-        false,
-        "no bank row: {logs:?}"
-    );
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "withdrawX must not paper a Withdraw-10"
-    );
-    iso.join();
+    input.bank = &bank;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__ops").unwrap(), serde_json::json!([]));
+    assert_eq!(slot.probe("__ok").unwrap(), serde_json::json!(false));
+    assert_eq!(slot.probe("__absent").unwrap(), serde_json::json!(false));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -5676,57 +6145,52 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = ["Withdraw 1".into(), "Withdraw-X".into()];
     let bank = [item_row(526, Some("Bones"), 40, &ops, false, -1, 0)];
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WithdrawX {
-            name: "Bones".into(),
+    let mut input = base_snapshot();
+    input.bank = &bank;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::WithdrawX {
+            name,
             count: 25,
             bank_item_id: 526,
             lands_as_id: 526,
-            action: "Withdraw-X".into(),
-            bank_generation: 7,
-        }],
-        "first tick queues one host-owned Withdraw-X continuation"
-    );
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
+            action,
+            bank_generation,
+        } if name == "Bones"
+            && action == "Withdraw-X"
+            && *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
+    input.count_dialog_open = true;
+    tick_bank_slot(&mut slot, &mut input, 3, 1, SIDE_ROOT, &mut snapshot);
     assert!(
-        iso.drain_interacts().is_empty(),
-        "no count answer before the matching dialog is observed"
+        slot.take_actions().is_empty(),
+        "the native seat never owns or sends the count dialog answer"
     );
-    snap.tick = 3;
-    snap.count_dialog_open = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    let _ = iso.probe("1 + 1");
+    tick_bank_slot(&mut slot, &mut input, 4, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
-        "the isolate never owns or sends the dialog answer"
+        slot.probe("typeof globalThis.__ok").unwrap(),
+        serde_json::json!("undefined")
     );
-    iso.on_game_tick(4);
-    assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
     let inv = [item_row(526, Some("Bones"), 25, &[], false, -1, 0)];
-    snap.inv = &inv;
-    snap.withdraw_x_result_seq = 1;
-    snap.withdraw_x_result = true;
-    snap.tick = 5;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(5);
-    let ok = iso.probe("__ok").unwrap();
-    assert_eq!(ok, true, "withdrawX resolves after inventory publication");
-    iso.join();
+    input.inv = &inv;
+    tick_bank_slot(&mut slot, &mut input, 5, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__ok").unwrap(), serde_json::json!(true));
+    slot.stop();
 }
 
 /// Frozen `withdrawTo`: Withdraw-X for a need above 10, a failed X falls
@@ -5749,9 +6213,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    use script::shim::InteractReq;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = [
         "Withdraw-1".into(),
         "Withdraw-5".into(),
@@ -5759,86 +6221,76 @@ export default class T extends LoopingBot {
         "Withdraw-X".into(),
     ];
     let bank = [item_row(379, Some("Lobster"), 100, &ops, false, -1, 0)];
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::WithdrawX {
-            name: "Lobster".into(),
+    let inv = [item_row(379, Some("Lobster"), 2, &[], false, -1, 0)];
+    let mut input = base_snapshot();
+    input.bank = &bank;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    input.inv = &inv;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::WithdrawX {
+            name,
             count: 20,
             bank_item_id: 379,
             lands_as_id: 379,
-            action: "Withdraw-X".into(),
-            bank_generation: 7,
-        }]
-    );
+            action,
+            ..
+        } if name == "Lobster" && action == "Withdraw-X"
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, false);
 
-    snap.tick = 2;
-    snap.withdraw_x_result_seq = 1;
-    snap.withdraw_x_result = false;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Withdraw {
-            name: "Lobster".into(),
-            action: "Withdraw-10".into(),
-        }],
-        "a failed Withdraw-X falls back to the labelled 10"
-    );
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Withdraw { name, action }
+            if name == "Lobster" && action == "Withdraw-10"
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 2, true);
 
-    iso.probe("globalThis.__food = 12").unwrap();
-    snap.tick = 3;
-    snap.bank_op_result_seq = 1;
-    snap.bank_op_result = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Withdraw {
-            name: "Lobster".into(),
-            action: "Withdraw-10".into(),
-        }],
-        "the landed 10 leaves a need of 10: the labelled 10 again"
-    );
+    slot.probe("globalThis.__food = 12").unwrap();
+    tick_bank_slot(&mut slot, &mut input, 3, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Withdraw { name, action }
+            if name == "Lobster" && action == "Withdraw-10"
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 3, true);
 
-    iso.probe("globalThis.__food = 22").unwrap();
-    snap.tick = 4;
-    snap.bank_op_result_seq = 2;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__got").unwrap(), 20);
-    assert!(iso.probe("__counts").unwrap().as_i64().unwrap() >= 6);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Close],
-        "closeBankAndConfirmCount closes first"
-    );
+    slot.probe("globalThis.__food = 22").unwrap();
+    tick_bank_slot(&mut slot, &mut input, 4, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__got").unwrap(), serde_json::json!(20));
+    assert!(slot.probe("__counts").unwrap().as_i64().unwrap() >= 6);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 4, true);
 
-    snap.tick = 5;
-    snap.bank_open = false;
-    snap.bank_generation += 1;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(5);
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_generation += 1;
+    tick_bank_slot(&mut slot, &mut input, 5, -1, -1, &mut snapshot);
     assert_eq!(
-        iso.probe("typeof __closed").unwrap(),
-        "undefined",
-        "one tick after the close"
+        slot.probe("typeof __closed").unwrap(),
+        serde_json::json!("undefined"),
+        "the frozen confirm waits one observed tick after the bank actually closes",
     );
-    snap.tick = 6;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(6);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__closed").unwrap(), true);
-    iso.join();
+    tick_bank_slot(&mut slot, &mut input, 6, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__closed").unwrap(), serde_json::json!(true));
+    slot.stop();
 }
 
 #[test]
@@ -5854,17 +6306,14 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    post_snapshot_input(&iso, &base_snapshot());
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__by_name").unwrap(), true);
-    assert_eq!(iso.probe("__by_id").unwrap(), true);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "non-positive requests are successful no-ops"
-    );
-    iso.join();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__by_name").unwrap(), serde_json::json!(true));
+    assert_eq!(slot.probe("__by_id").unwrap(), serde_json::json!(true));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// `withdrawLoad` through its Rust family: one exact Withdraw-All press on
@@ -5872,8 +6321,6 @@ export default class T extends LoopingBot {
 /// grew in the same bank session; a reopened session settles it false.
 #[test]
 fn isolate_bank_withdraw_load_keeps_item_updates_but_rejects_reopened_sessions() {
-    use script::isolate_fb::{encode_snapshot_delta_with_native, NativeFactsInput};
-
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -5896,49 +6343,64 @@ export default class T extends LoopingBot {
         slot: 3,
         ..item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 601)
     }];
-    let filled: Vec<_> = (0..28).map(|_| nc(Some("Yew logs"), 1)).collect();
+    let bank_after = [script::isolate_fb::ItemRowInput {
+        slot: 3,
+        ..item_row(1515, Some("Yew logs"), 52, &ops, false, -1, 601)
+    }];
+    let filled: Vec<_> = (0..28)
+        .map(|slot| pack_row(1515, Some("Yew logs"), 1, slot))
+        .collect();
     for reopened in [false, true] {
-        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-        let mut snap = base_snapshot();
-        snap.inv_size = 28;
-        snap.bank = &bank;
-        snap.bank_open = true;
-        snap.bank_loaded = true;
-        snap.bank_generation = 12;
-        let mut native = NativeFactsInput {
-            bank_snapshot_generation: Some(40),
-            ..Default::default()
-        };
-        let (bytes, first) = encode_snapshot_delta_with_native(None, &snap, native, false);
-        iso.post_snapshot(bytes);
-        iso.on_game_tick(1);
-        assert_eq!(iso.probe("typeof globalThis.__ok").unwrap(), "undefined");
+        let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+        let mut input = base_snapshot();
+        input.inv_size = 28;
+        input.bank = &bank;
+        input.bank_open = true;
+        input.bank_loaded = true;
+        input.bank_generation = 12;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        tick_bank_slot(&mut slot, &mut input, 1, 40, SIDE_ROOT, &mut snapshot);
         assert_eq!(
-            iso.drain_interacts(),
-            vec![script::shim::InteractReq::InvButton {
+            slot.probe("typeof globalThis.__ok").unwrap(),
+            serde_json::json!("undefined")
+        );
+        let actions = slot.take_actions();
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            bank_interaction(&actions[0]),
+            script::shim::InteractReq::InvButton {
                 id: 1515,
                 slot: 3,
                 component: 601,
                 operation: 4,
-                bank_generation: 12,
-            }],
-            "the press carries the session, not item snapshot 40"
-        );
+                bank_generation,
+            } if *bank_generation == snapshot.bank_session_generation()
+        ));
+        accept_bank_interaction(&mut slot, &actions[0], 1, true);
 
-        snap.tick = 2;
-        snap.bank_generation = if reopened { 14 } else { 12 };
-        snap.inv = &filled;
-        native.bank_snapshot_generation = Some(41);
-        let (bytes, _) = encode_snapshot_delta_with_native(Some(&first), &snap, native, false);
-        iso.post_snapshot(bytes);
-        iso.on_game_tick(2);
+        input.bank = &bank_after;
+        input.inv = &filled;
+        input.bank_generation = if reopened { 14 } else { 12 };
+        if reopened {
+            tick_bank_slot_with_component(
+                &mut slot,
+                &mut input,
+                2,
+                41,
+                SIDE_ROOT,
+                BANK_GAME_COMPONENT + 1,
+                &mut snapshot,
+            );
+        } else {
+            tick_bank_slot(&mut slot, &mut input, 2, 41, SIDE_ROOT, &mut snapshot);
+        }
         assert_eq!(
-            iso.probe("__ok").unwrap(),
-            !reopened,
-            "item updates preserve the withdrawal; a replaced session invalidates it"
+            slot.probe("__ok").unwrap(),
+            serde_json::json!(!reopened),
+            "pack growth resolves only in the original bank session"
         );
-        assert!(iso.drain_interacts().is_empty());
-        iso.join();
+        assert!(slot.take_actions().is_empty());
+        slot.stop();
     }
 }
 
@@ -5956,30 +6418,34 @@ export default class T extends LoopingBot {
 "#;
     let bank = [nc(Some("Yew logs"), 80)];
 
-    let stale = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut stale_snap = base_snapshot();
-    stale_snap.bank = &bank;
-    post_snapshot_input(&stale, &stale_snap);
-    stale.on_game_tick(1);
-    let _ = stale.probe("1 + 1");
-    assert_eq!(stale.probe("globalThis.__ok").unwrap(), false);
-    assert!(stale.drain_interacts().is_empty());
-    stale.join();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut stale = base_snapshot();
+    stale.bank = &bank;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut stale, 1, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__ok").unwrap(),
+        serde_json::json!(false)
+    );
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 
-    let full = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let inv = [nc(Some("Knife"), 1)];
-    let mut full_snap = base_snapshot();
-    full_snap.inv = &inv;
-    full_snap.inv_size = 1;
-    full_snap.bank = &bank;
-    full_snap.bank_open = true;
-    full_snap.bank_loaded = true;
-    post_snapshot_input(&full, &full_snap);
-    full.on_game_tick(1);
-    let _ = full.probe("1 + 1");
-    assert_eq!(full.probe("globalThis.__ok").unwrap(), true);
-    assert!(full.drain_interacts().is_empty());
-    full.join();
+    let mut full = base_snapshot();
+    full.inv = &inv;
+    full.inv_size = 1;
+    full.bank = &bank;
+    full.bank_open = true;
+    full.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut full, 1, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("globalThis.__ok").unwrap(),
+        serde_json::json!(true)
+    );
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -5994,30 +6460,39 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = ["Withdraw 5".into(), "Withdraw X".into()];
     let bank = [item_row(100, Some("Rune item"), 20, &ops, false, 101, 0)];
-    let mut snap = base_snapshot();
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 9;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WithdrawX {
-            name: "Rune item".into(),
+    let mut input = base_snapshot();
+    input.bank = &bank;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 9;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::WithdrawX {
+            name,
             count: 5,
             bank_item_id: 100,
             lands_as_id: 101,
-            action: "Withdraw 5".into(),
-            bank_generation: 9,
-        }],
-        "the selected bank id, noted output id, and fixed op survive IPC"
-    );
-    iso.join();
+            action,
+            bank_generation,
+        } if name == "Rune item"
+            && action == "Withdraw 5"
+            && *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    let inv = [pack_row(101, Some("Rune item"), 5, 0)];
+    input.inv = &inv;
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__ok").unwrap(), serde_json::json!(true));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -6032,32 +6507,29 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = ["Withdraw-X".into()];
     let bank = [item_row(526, Some("Bones"), 40, &ops, false, -1, 0)];
-    snap.bank = &bank;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.drain_interacts().len(), 1);
+    let mut input = base_snapshot();
+    input.bank = &bank;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
 
-    snap.tick = 2;
-    snap.bank_open = false;
-    snap.bank_loaded = false;
-    snap.bank_generation = 8;
-    snap.count_dialog_open = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "a later session's dialog must never receive the stale amount"
-    );
-    assert_eq!(iso.probe("__ok").unwrap(), false);
-    iso.join();
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_generation = 8;
+    input.count_dialog_open = true;
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
+    assert_eq!(slot.probe("__ok").unwrap(), serde_json::json!(false));
+    slot.stop();
 }
 
 /// `Bank.close()` through its Rust family: one Close, then true only once
@@ -6077,43 +6549,38 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 3;
-    post_side(&iso, &snap, SIDE_ROOT);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 3;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
+
+    input.bank_open = false;
+    input.bank_loaded = false;
+    input.bank_generation = 4;
+    tick_bank_slot(&mut slot, &mut input, 2, -1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Close],
-        "close queues the host Close verb"
-    );
-    let pending = iso.probe("__ok").unwrap();
-    assert_eq!(
-        pending,
-        serde_json::Value::Null,
-        "close must not resolve while the posted bank is still open"
-    );
-    snap.tick = 2;
-    snap.bank_open = false;
-    snap.bank_loaded = false;
-    snap.bank_generation = 4;
-    post_side(&iso, &snap, SIDE_ROOT);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.probe("__ok").unwrap(),
+        slot.probe("__ok").unwrap(),
         serde_json::Value::Null,
         "main shut with the old side root up is not closed"
     );
-    snap.tick = 3;
-    post_side(&iso, &snap, -1);
-    iso.on_game_tick(3);
-    let ok = iso.probe("__ok").unwrap();
-    assert_eq!(ok, true, "close resolves after the posted bank shuts");
-    iso.join();
+    tick_bank_slot(&mut slot, &mut input, 3, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("__ok").unwrap(),
+        serde_json::json!(true),
+        "close resolves after the posted bank shuts and releases its side root"
+    );
+    slot.stop();
 
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
@@ -6126,27 +6593,26 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_side(&iso, &snap, SIDE_ROOT);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::Close
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::Close]
+        slot.probe("__ok").unwrap(),
+        serde_json::json!(false),
+        "the caller's zero bound, not Rust's default, expires close"
     );
-    snap.tick = 2;
-    post_side(&iso, &snap, SIDE_ROOT);
-    iso.on_game_tick(2);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.probe("__ok").unwrap(),
-        false,
-        "the caller's bound, not Rust's 4 s default"
-    );
-    iso.join();
+    slot.stop();
 }
 
 // A nameless bank-side row (a cache-miss name) is still an item taking a
@@ -6158,34 +6624,53 @@ fn isolate_banking_deposit_presses_nameless_rows_by_id_and_missing_members_throw
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
         Bank.depositAllMatching(() => true);
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 100,
-        z: 100,
-        level: 0,
-    });
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
     let ops = deposit_ops();
     let bank_side = [side_row(4242, None, 3, &ops, 0)];
     let pack = [pack_row(4242, None, 3, 0)];
-    snap.bank_side = &bank_side;
-    snap.inv = &pack;
-    snap.inv_size = 28;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_with_side_root(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![deposit_all(4242, 0, 0)],
-        "a null-name row is pressed by id"
+    input.bank_side = &bank_side;
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    let (action_tick, actions) = (1..=3)
+        .find_map(|tick| {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            let actions = slot.take_actions();
+            (!actions.is_empty()).then_some((tick, actions))
+        })
+        .expect("the native matcher presses the nameless row");
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 4242,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], action_tick, true);
+    input.inv = &[];
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        action_tick + 1,
+        2,
+        SIDE_ROOT,
+        &mut snapshot,
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 
     let src = "import { Banking } from '../../api/bank/Banking.js'; export default class T extends LoopingBot { loop() { Banking.close(); } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -6588,7 +7073,20 @@ fn nearest_bank_isolate() -> LoadIsolate {
     LoadIsolate::spawn_with_content(
         r#"
 import { nearestBank } from '../../api/bank/BankLocations.js';
+import {
+    nearestUsableBank as moduleNearestUsableBank,
+    approachOf,
+    BANK_LOCATIONS,
+    nearestBanks,
+} from '../../api/bank/BankLocations.js';
+import { nearestUsableBank as publicNearestUsableBank } from '@rs2b0t/api';
 globalThis.pick = origin => nearestBank(origin)?.name ?? null;
+globalThis.nearestPick = nearestBank;
+globalThis.bankCatalog = BANK_LOCATIONS;
+globalThis.rankedBankPick = nearestBanks;
+globalThis.moduleUsablePick = (origin, usable) => moduleNearestUsableBank(origin, usable);
+globalThis.publicUsablePick = (origin, usable) => publicNearestUsableBank(origin, usable);
+globalThis.approachPick = bank => approachOf(bank);
 export default class T extends LoopingBot { loop() {} }
 "#
         .to_string(),
@@ -6655,23 +7153,111 @@ fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known(
     );
     iso.join();
 }
-
-/// Post `snap` at ticks `1..=ticks`, run each game tick, and collect every
-/// interact the isolate sent.
-fn run_ticks(
-    iso: &LoadIsolate,
-    snap: &mut script::isolate_fb::SnapshotInput<'_>,
-    ticks: u64,
-) -> Vec<script::shim::InteractReq> {
-    let mut sent = Vec::new();
-    for tick in 1..=ticks {
-        snap.tick = tick;
-        post_snapshot_input(iso, snap);
-        iso.on_game_tick(tick);
-        let _ = iso.probe("1 + 1");
-        sent.extend(iso.drain_interacts());
-    }
-    sent
+#[test]
+fn isolate_root_nearest_usable_bank_matches_module_and_preserves_predicate_order_and_throw() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    let result: serde_json::Value = iso
+        .probe(
+            r#"(() => {
+                const origin = { x: 101, z: 100, level: 0 };
+                const publicOrder = [];
+                const moduleOrder = [];
+                const publicPredicateTiles = [];
+                const publicBank = publicUsablePick(origin, bank => {
+                    publicOrder.push(bank.name);
+                    publicPredicateTiles.push(bank.tile.toString());
+                    return bank.name === 'East';
+                });
+                const moduleBank = moduleUsablePick(origin, bank => {
+                    moduleOrder.push(bank.name);
+                    return bank.name === 'East';
+                });
+                const nearest = nearestPick(origin);
+                const catalogTile = bankCatalog[0].tile.toString();
+                const rankedTiles = rankedBankPick(origin).map(bank => bank.tile.toString());
+                const sentinel = {};
+                let sameThrownValue = false;
+                try {
+                    publicUsablePick(origin, () => { throw sentinel; });
+                } catch (error) {
+                    sameThrownValue = error === sentinel;
+                }
+                return {
+                    publicName: publicBank?.name,
+                    moduleName: moduleBank?.name,
+                    publicTile: publicBank?.tile.toString(),
+                    moduleTile: moduleBank?.tile.toString(),
+                    nearestTile: nearest?.tile.toString(),
+                    catalogTile,
+                    rankedTiles,
+                    publicOrder,
+                    moduleOrder,
+                    publicPredicateTiles,
+                    sameThrownValue,
+                };
+            })()"#,
+        )
+        .unwrap();
+    assert_eq!(result["publicName"], "East");
+    assert_eq!(result["moduleName"], "East");
+    assert_eq!(result["publicTile"], "(120, 100, 0)");
+    assert_eq!(result["moduleTile"], "(120, 100, 0)");
+    assert_eq!(result["nearestTile"], "(100, 100, 0)");
+    assert_eq!(result["catalogTile"], "(100, 100, 0)");
+    assert_eq!(
+        result["rankedTiles"],
+        serde_json::json!(["(100, 100, 0)", "(120, 100, 0)"])
+    );
+    assert_eq!(result["publicOrder"], serde_json::json!(["West", "East"]));
+    assert_eq!(result["moduleOrder"], serde_json::json!(["West", "East"]));
+    assert_eq!(
+        result["publicPredicateTiles"],
+        serde_json::json!(["(100, 100, 0)", "(120, 100, 0)"])
+    );
+    assert_eq!(result["sameThrownValue"], true);
+    iso.join();
+}
+#[test]
+fn isolate_approach_of_preserves_value_identity_nullish_fallback_and_throws() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    let result: serde_json::Value = iso
+        .probe(
+            r#"(() => {
+                const explicit = {};
+                const fallback = {};
+                const explicitIdentity =
+                    approachPick({ approach: explicit, tile: fallback }) === explicit;
+                const nullFallback =
+                    approachPick({ approach: null, tile: fallback }) === fallback;
+                const undefinedFallback =
+                    approachPick({ tile: fallback }) === fallback;
+                const sentinel = {};
+                const throwingBank = {
+                    tile: fallback,
+                    get approach() { throw sentinel; },
+                };
+                let sameThrownValue = false;
+                try {
+                    approachPick(throwingBank);
+                } catch (error) {
+                    sameThrownValue = error === sentinel;
+                }
+                return {
+                    explicitIdentity,
+                    nullFallback,
+                    undefinedFallback,
+                    sameThrownValue,
+                };
+            })()"#,
+        )
+        .unwrap();
+    assert_eq!(result["explicitIdentity"], true);
+    assert_eq!(result["nullFallback"], true);
+    assert_eq!(result["undefinedFallback"], true);
+    assert_eq!(result["sameThrownValue"], true);
+    iso.join();
 }
 
 // Frozen `Bank.setNoteMode(on): Promise<void>` on an open bank: one
@@ -6688,23 +7274,28 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_note_on = 602;
-    snap.bank_note_off = 603;
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_note_on = 602;
+    input.bank_note_off = 603;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::SetNoteMode { on: true }
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        run_ticks(&iso, &mut snap, 4),
-        vec![script::shim::InteractReq::SetNoteMode { on: true }],
-        "setNoteMode(true) queues one set-note-mode, not a silent success"
+        slot.probe("__rs_ok").unwrap(),
+        serde_json::json!(true),
+        "setNoteMode resolves void after the accepted host action"
     );
-    assert_eq!(
-        iso.probe("__rs_ok").unwrap(),
-        true,
-        "setNoteMode resolves void after a tick"
-    );
-    iso.join();
+    slot.stop();
 }
 
 // Frozen `setNoteMode` never throws: a closed bank is a void no-op with no
@@ -6727,32 +7318,40 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = false;
-    assert!(
-        run_ticks(&iso, &mut snap, 3).is_empty(),
-        "bank closed must not queue set-note-mode"
-    );
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
     assert_eq!(
-        iso.probe("__probe").unwrap(),
-        "void",
+        slot.probe("__probe").unwrap(),
+        serde_json::json!("void"),
         "a closed bank resolves void"
     );
-    iso.join();
+    slot.stop();
 
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_note_on = -1;
-    snap.bank_note_off = -1;
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_note_on = -1;
+    input.bank_note_off = -1;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::SetNoteMode { on: true }
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, false);
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        run_ticks(&iso, &mut snap, 4),
-        vec![script::shim::InteractReq::SetNoteMode { on: true }]
+        slot.probe("__probe").unwrap(),
+        serde_json::json!("void"),
+        "no throw"
     );
-    assert_eq!(iso.probe("__probe").unwrap(), "void", "no throw");
-    iso.join();
+    slot.stop();
 }
 
 #[test]
@@ -8458,6 +9057,248 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn bank_snapshot_methods_read_posted_native_rows_and_preserve_shape() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__bankRead = {
+            isOpen: Bank.isOpen(),
+            loaded: Bank.loaded(),
+            ready: Bank.ready(),
+            snapshotReady: Bank.snapshotReady(),
+            snapshotGeneration: Bank.snapshotGeneration(),
+            items: Bank.items(),
+            count: Bank.count('STRAẞE'),
+            countById: Bank.countById(526),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw 1".to_string(), "Deposit-All".to_string()];
+    let first = script::isolate_fb::ItemRowInput {
+        slot: 4,
+        ..item_row(526, Some("Straße"), 3, &ops, true, 105, 701)
+    };
+    let second = script::isolate_fb::ItemRowInput {
+        slot: 5,
+        ..item_row(526, Some("Straße"), 2, &ops, false, 106, 702)
+    };
+    let bank = [first, second];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = false;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_snapshot_generation: Some(17),
+            ..Default::default()
+        },
+    ));
+    iso.on_game_tick(1);
+    let result: serde_json::Value = iso.probe("__bankRead").unwrap();
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "isOpen": true,
+            "loaded": true,
+            "ready": true,
+            "snapshotReady": false,
+            "snapshotGeneration": 17,
+            "items": [
+                {
+                    "name": "Straße",
+                    "count": 3,
+                    "id": 526,
+                    "slot": 4,
+                    "comId": 701,
+                    "ops": ["Withdraw 1", "Deposit-All"],
+                    "noted": true,
+                    "cert": 105
+                },
+                {
+                    "name": "Straße",
+                    "count": 2,
+                    "id": 526,
+                    "slot": 5,
+                    "comId": 702,
+                    "ops": ["Withdraw 1", "Deposit-All"],
+                    "noted": false,
+                    "cert": 106
+                }
+            ],
+            "count": 5,
+            "countById": 5
+        })
+    );
+    iso.join();
+}
+
+#[test]
+fn bank_count_by_id_keeps_missing_id_failure_and_empty_result() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        try {
+            globalThis.__countById = Bank.countById(526);
+        } catch (error) {
+            globalThis.__countById = error.message;
+        }
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bank = [item_row(0, Some("Bones"), 12, &[], false, -1, -1)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__countById").unwrap(),
+        "not impl: Bank.countById"
+    );
+
+    snap.tick = 2;
+    snap.bank = &[];
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__countById").unwrap(), 0);
+    iso.join();
+}
+
+#[test]
+fn banking_native_predicates_preserve_callbacks_and_settings() {
+    let src = r#"
+import {
+    depositMatcher,
+    depositAllExcept,
+    PERIODIC_BANK_SETTINGS,
+    RANDOM_EVENT_CASKET_ID,
+} from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__bankingNative) return;
+        let nameCoercions = 0;
+        const shortInput = {
+            toString() {
+                nameCoercions += 1;
+                return 'Uncut ruby';
+            },
+        };
+        const marker = { marker: true };
+        let sawOriginal = false;
+        const shortMatcher = depositMatcher((name) => {
+            sawOriginal = name === shortInput;
+            return marker;
+        }, true);
+        const shortResult = shortMatcher(shortInput, RANDOM_EVENT_CASKET_ID);
+
+        const commonInput = {
+            toString() {
+                nameCoercions += 1;
+                return 'Mystery box';
+            },
+        };
+        let commonSawOriginal = false;
+        const commonMatcher = depositMatcher((name) => {
+            commonSawOriginal ||= name === commonInput;
+            return 0;
+        }, true);
+        const commonById = commonMatcher(commonInput, RANDOM_EVENT_CASKET_ID);
+        const missingId = commonMatcher('Mystery box');
+        const explicitUndefinedId = commonMatcher('Mystery box', undefined);
+        const noCommonMatcher = depositMatcher(() => false, false);
+        const noCommon = noCommonMatcher({
+            toString() {
+                nameCoercions += 1;
+                return 'Mystery box';
+            },
+        }, RANDOM_EVENT_CASKET_ID);
+
+        const thrown = { thrown: true };
+        let sameThrownValue = false;
+        try {
+            depositMatcher(() => { throw thrown; }, true)('Uncut sapphire');
+        } catch (error) {
+            sameThrownValue = error === thrown;
+        }
+
+        const except = depositAllExcept(['Straße']);
+        globalThis.__bankingNative = {
+            settings: PERIODIC_BANK_SETTINGS,
+            shortValuePreserved: shortResult === marker,
+            sawOriginal,
+            commonById,
+            commonSawOriginal,
+            missingId,
+            explicitUndefinedId,
+            noCommon,
+            sameThrownValue,
+            nameCoercions,
+            keptCaseInsensitive: except('STRAẞE'),
+            otherName: except('Bones'),
+            emptyName: except(''),
+        };
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let result: serde_json::Value = iso.probe("__bankingNative").unwrap();
+    assert_eq!(result["shortValuePreserved"], true);
+    assert_eq!(result["sawOriginal"], true);
+    assert_eq!(result["commonById"], true);
+    assert_eq!(result["commonSawOriginal"], true);
+    assert_eq!(result["missingId"], false);
+    assert_eq!(result["explicitUndefinedId"], false);
+    assert_eq!(result["noCommon"], false);
+    assert_eq!(result["sameThrownValue"], true);
+    assert_eq!(result["nameCoercions"], 1);
+    assert_eq!(result["keptCaseInsensitive"], false);
+    assert_eq!(result["otherName"], true);
+    assert_eq!(result["emptyName"], false);
+    assert_eq!(
+        result["settings"],
+        serde_json::json!({
+            "bankStrategy": {
+                "type": "string",
+                "default": "Off",
+                "options": ["Off", "Loot count", "Time", "Either"],
+                "label": "Periodic bank",
+                "help": "save accumulated loot so a death does not lose it all"
+            },
+            "bankEveryItems": {
+                "type": "number",
+                "default": 15,
+                "min": 1,
+                "max": 27,
+                "label": "Bank at N loot items"
+            },
+            "bankEveryMinutes": {
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 120,
+                "label": "Bank every N minutes"
+            },
+            "bankCommonJunk": {
+                "type": "boolean",
+                "default": true,
+                "label": "Also bank gems/fruit/beer/kebabs/caskets"
+            }
+        })
+    );
+    iso.join();
+}
+
+#[test]
 fn bank_wait_ready_resolves_when_posted_open_and_loaded() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
@@ -8471,19 +9312,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    iso.on_game_tick(2);
-    let probe = iso.probe("__probe").unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    let probe = slot.probe("__probe").unwrap();
     assert_eq!(
         probe, true,
-        "waitReady is delayUntil of posted Bank.ready(), got {probe:?}"
+        "open, loaded native bank returns ready immediately, got {probe:?}"
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -8559,19 +9400,18 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__closed").unwrap(), false);
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__closed").unwrap(), serde_json::json!(false));
 
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.tick = 2;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert_eq!(iso.probe("__ready").unwrap(), true);
-    iso.join();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__ready").unwrap(), serde_json::json!(true));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -8586,23 +9426,22 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = false;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert!(
-        iso.probe("__probe").is_err(),
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(
+        slot.probe("typeof globalThis.__probe").unwrap(),
+        serde_json::json!("undefined"),
         "waitReady stays parked until open-and-ready or close"
     );
 
-    snap.bank_open = false;
-    snap.tick = 2;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(2);
-    assert_eq!(iso.probe("__probe").unwrap(), false);
-    iso.join();
+    input.bank_open = false;
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__probe").unwrap(), serde_json::json!(false));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -8615,15 +9454,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), false);
-    iso.join();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__probe").unwrap(), serde_json::json!(false));
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 #[test]
@@ -10198,28 +11038,6 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-fn post_case23_open_bank<'a>(
-    iso: &LoadIsolate,
-    tick: u64,
-    pack: &'a [script::isolate_fb::ItemRowInput<'a>],
-    side: &'a [script::isolate_fb::ItemRowInput<'a>],
-) {
-    let mut snap = base_snapshot();
-    snap.tick = tick;
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3222,
-        z: 3222,
-        level: 0,
-    });
-    snap.inv = pack;
-    snap.inv_size = 28;
-    snap.bank_side = side;
-    snap.bank_open = true;
-    snap.bank_loaded = true;
-    snap.bank_generation = 7;
-    post_with_side_root(iso, &snap);
-}
-
 fn case23_chicken<'a>(
     actions: &'a [String],
     index: i32,
@@ -10620,24 +11438,45 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
     let ops = deposit_ops();
     let side = [side_row(1963, Some("Strange fruit"), 1, &ops, 0)];
     let pack = [pack_row(1963, Some("Strange fruit"), 1, 0)];
-    post_case23_open_bank(&iso, 1, &pack, &side);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
+    let mut input = base_snapshot();
+    input.inv = &pack;
+    input.inv_size = 28;
+    input.bank_side = &side;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.probe("__picked").unwrap(),
-        serde_json::json!(["Strange fruit"])
+        slot.probe("__picked").unwrap(),
+        serde_json::json!(["Strange fruit"]),
+        "periodic bank error: {:?}",
+        slot.probe("__error"),
     );
-    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![deposit_all(1963, 0, 7)],
-        "commonJunk's Promise object is truthy despite resolving false, overriding the false matcher"
-    );
-    iso.join();
+    assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
+    let actions = slot.take_actions();
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::shim::InteractReq::InvButton {
+            id: 1963,
+            slot: 0,
+            component: SIDE_GRID,
+            operation: 4,
+            bank_generation,
+        } if *bank_generation == snapshot.bank_session_generation()
+    ));
+    accept_bank_interaction(&mut slot, &actions[0], 1, true);
+    input.inv = &[];
+    input.bank_side = &[];
+    tick_bank_slot(&mut slot, &mut input, 2, 2, SIDE_ROOT, &mut snapshot);
+    assert!(slot.take_actions().is_empty());
+    assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
+    slot.stop();
 }
 
 /// §28.7 case 23: call-sync PeriodicBank options treat Promise objects as
@@ -10687,74 +11526,99 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = ready_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
+    let bank_tile = api::snapshot::WorldTile {
+        x: 4000,
+        z: 4000,
+        level: 0,
+    };
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank::new("Fallback bank", bank_tile),
+    ]));
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+    let mut input = ready_snapshot();
+    input.here = Some(script::isolate_fb::TileInput {
         x: 100,
         z: 100,
         level: 0,
     });
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let calls = iso.probe("__calls").unwrap();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let calls = slot.probe("__calls").unwrap();
     assert_eq!(calls["status"], 1);
     assert_eq!(calls["destination"], 1);
     assert_eq!(calls["common"], 1);
     assert_eq!(calls["returnTo"], 1);
-    let requests = iso.drain_interacts();
-    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
-        panic!("a non-destination Promise must take the native selection path, got {requests:?}");
+    let actions = slot.take_actions();
+    let [pick] = actions.as_slice() else {
+        panic!(
+            "a destination Promise is not a tile; expected native bank selection, got {} actions",
+            actions.len()
+        );
     };
-    let request_id = *request_id;
-    assert!(
-        !requests.iter().any(|request| matches!(
-            request,
-            script::shim::InteractReq::WalkNear {
-                x: 4000,
-                z: 4000,
-                ..
-            }
-        )),
-        "a Promise result is not a destination tile"
+    let script::native::HostEffect::BankPick(request) = &pick.effect else {
+        panic!("a destination Promise is not a tile; expected native bank selection");
+    };
+    assert_eq!(request.eligible.as_ref(), [0]);
+    assert_eq!(
+        request.from,
+        api::snapshot::WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        }
     );
-    assert_eq!(iso.probe("__done").unwrap(), false);
+    assert_eq!(slot.probe("__done").unwrap(), serde_json::json!(false));
 
-    snap.tick = 2;
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-        &snap,
-        script::isolate_fb::NativeFactsInput {
-            bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id,
-                generation: 1,
-                bank_index: -1,
-                kind: 4,
+    let authority = pick.authority();
+    slot.slot.complete_native_bank_pick(
+        &authority,
+        script::native_bank::BankPickReceipt {
+            request_id: pick.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: pick.run(),
+                tick: 1,
+                sequence: 1,
             },
-            ..Default::default()
+            selected: script::native_bank::SelectedBank {
+                bank_index: u16::MAX,
+                access_tile: api::snapshot::WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                kind: script::native_bank::PickKind::NoCandidate,
+                access: None,
+            },
         },
-    ));
-    iso.on_game_tick(2);
-    let _ = iso.probe("true");
-    for tick in 3..=6 {
-        snap.tick = tick;
-        post_snapshot_input(&iso, &snap);
-        iso.on_game_tick(tick);
-        let _ = iso.probe("true");
-        if iso.probe("__done").unwrap().as_bool() == Some(true) {
+    );
+    for tick in 2..=6 {
+        tick_bank_slot(&mut slot, &mut input, tick, -1, -1, &mut snapshot);
+        for action in slot.take_actions() {
+            let script::native::HostEffect::Walk(request) = &action.effect else {
+                panic!("the air fallback must walk to its captured bank");
+            };
+            assert_eq!(request.target, bank_tile);
+            accept_bank_walk(&mut slot, &action, tick);
+            input.here = Some(script::isolate_fb::TileInput {
+                x: bank_tile.x,
+                z: bank_tile.z,
+                level: bank_tile.level,
+            });
+        }
+        if slot.probe("__done").unwrap().as_bool() == Some(true) {
             break;
         }
     }
-    assert_eq!(iso.probe("__done").unwrap(), true);
-    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
+    assert_eq!(slot.probe("__done").unwrap(), serde_json::json!(true));
+    assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
     assert_eq!(
-        iso.probe("__logMessages").unwrap(),
+        slot.probe("__logMessages").unwrap(),
         serde_json::json!([
             "no usable 'Bank booth' in the scene",
             "periodic bank: no bank reachable — will retry later",
-        ]),
-        "an unsuccessful native selection logs the fallback access failure, then PeriodicBank logs the failed run"
+        ])
     );
-    iso.join();
+    slot.stop();
 }
 
 /// §28.7 case 23: the PeriodicBank call-sync path rejects a throwing hook
@@ -10784,18 +11648,18 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let snap = base_snapshot();
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    assert_eq!(iso.probe("__calls").unwrap(), 1);
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    assert_eq!(slot.probe("__calls").unwrap(), serde_json::json!(1));
     assert_eq!(
-        iso.probe("__same").unwrap(),
-        true,
+        slot.probe("__same").unwrap(),
+        serde_json::json!(true),
         "PeriodicBank's product promise must reject with the call-sync hook's object"
     );
-    iso.join();
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// §28.7 case 23: a non-undefined value from the awaited/ignored
@@ -10831,39 +11695,60 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let empty: [script::isolate_fb::ItemRowInput<'_>; 0] = [];
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.inv_size = 28;
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
     let mut tick = 0;
     for next_tick in 1..=4 {
         tick = next_tick;
-        post_case23_open_bank(&iso, tick, &empty, &empty);
-        iso.on_game_tick(tick);
-        let _ = iso.probe("true");
-        if iso.probe("__afterCalls").unwrap().as_i64() == Some(1) {
+        tick_bank_slot(
+            &mut slot,
+            &mut input,
+            tick,
+            tick as i64,
+            SIDE_ROOT,
+            &mut snapshot,
+        );
+        if slot.probe("__afterCalls").unwrap().as_i64() == Some(1) {
             break;
         }
     }
-    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
-    assert_eq!(iso.probe("__done").unwrap(), false);
-    iso.probe("__releaseAfter(false)").unwrap();
+    assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+    assert_eq!(slot.probe("__done").unwrap(), serde_json::json!(false));
+    slot.probe("__releaseAfter(false)").unwrap();
 
     tick += 1;
-    post_case23_open_bank(&iso, tick, &empty, &empty);
-    iso.on_game_tick(tick);
-    let _ = iso.probe("true");
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        tick,
+        tick as i64,
+        SIDE_ROOT,
+        &mut snapshot,
+    );
     assert_eq!(
-        iso.probe("__done").unwrap(),
-        false,
+        slot.probe("__done").unwrap(),
+        serde_json::json!(false),
         "afterDeposit's settled value is ignored, then the run waits its settle tick"
     );
     tick += 1;
-    post_case23_open_bank(&iso, tick, &empty, &empty);
-    iso.on_game_tick(tick);
-    let _ = iso.probe("true");
-    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
-    assert_eq!(iso.probe("__done").unwrap(), true);
-    assert_eq!(iso.probe("__error").unwrap(), serde_json::Value::Null);
-    iso.join();
+    tick_bank_slot(
+        &mut slot,
+        &mut input,
+        tick,
+        tick as i64,
+        SIDE_ROOT,
+        &mut snapshot,
+    );
+    assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+    assert_eq!(slot.probe("__done").unwrap(), serde_json::json!(true));
+    assert_eq!(slot.probe("__error").unwrap(), serde_json::Value::Null);
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
 }
 
 /// §28.7 case 11 and case 23: a delayed rejection from bankNearest's
@@ -10894,27 +11779,155 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let empty: [script::isolate_fb::ItemRowInput<'_>; 0] = [];
-    post_case23_open_bank(&iso, 1, &empty, &empty);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    assert_eq!(iso.probe("__afterCalls").unwrap(), 1);
-    assert_eq!(iso.probe("__same").unwrap(), false);
-    iso.probe("__rejectAfter()").unwrap();
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.bank_open = true;
+    input.bank_loaded = true;
+    input.bank_generation = 7;
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+    assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+    assert_eq!(slot.probe("__same").unwrap(), serde_json::json!(false));
+    slot.probe("__rejectAfter()").unwrap();
 
-    post_case23_open_bank(&iso, 2, &empty, &empty);
-    iso.on_game_tick(2);
-    let _ = iso.probe("true");
-    post_case23_open_bank(&iso, 3, &empty, &empty);
-    iso.on_game_tick(3);
+    tick_bank_slot(&mut slot, &mut input, 2, 2, SIDE_ROOT, &mut snapshot);
+    tick_bank_slot(&mut slot, &mut input, 3, 3, SIDE_ROOT, &mut snapshot);
     assert_eq!(
-        iso.probe("__same").unwrap(),
-        true,
+        slot.probe("__same").unwrap(),
+        serde_json::json!(true),
         "the awaited bank hook's rejection object must reach the caller unchanged"
     );
-    assert_eq!(iso.probe("__unexpected").unwrap(), false);
-    iso.join();
+    assert_eq!(
+        slot.probe("__unexpected").unwrap(),
+        serde_json::json!(false)
+    );
+    assert!(slot.take_actions().is_empty());
+    slot.stop();
+}
+
+#[test]
+fn bank_nearest_pause_and_kept_reconnect_revalidate_return_follow_without_repeating_hooks() {
+    for reconnect in [false, true] {
+        let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__settled = 0;
+        globalThis.__afterCalls = 0;
+        globalThis.__result = await Banking.bankNearest({
+            returnTo: { x: 3252, z: 3222, level: 0 },
+            afterDeposit() { globalThis.__afterCalls++; },
+        });
+        globalThis.__settled++;
+    }
+}
+"#;
+        let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+        let mut input = ready_snapshot();
+        input.bank_open = true;
+        input.bank_loaded = true;
+        input.bank_generation = 7;
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        tick_bank_slot(&mut slot, &mut input, 1, 1, SIDE_ROOT, &mut snapshot);
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
+        let actions = slot.take_actions();
+        let [first] = actions.as_slice() else {
+            panic!("the settled bank trip must start exactly one return follow");
+        };
+        let script::native::HostEffect::Walk(first_request) = &first.effect else {
+            panic!("returnTo must use the native walk primitive");
+        };
+        assert_eq!(first_request.target.x, 3252);
+        assert_eq!(first_request.target.z, 3222);
+        assert_eq!(first_request.radius, 6);
+        let first_authority = first.authority();
+        if reconnect {
+            slot.reconnect_session_work();
+            assert!(
+                !first_authority.live(),
+                "the old session is irrevocably fenced"
+            );
+            accept_bank_walk(&mut slot, first, 2);
+            input.hold = true;
+        } else {
+            slot.slot.pause();
+            assert!(
+                first_authority.live(),
+                "Pause retains the bank continuation"
+            );
+            slot.slot.complete_native_walk(
+                &first_authority,
+                script::native::WalkReceipt {
+                    request_id: first.request_id.get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: first.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    end: script::native::WalkEnd::Cancelled,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+            );
+        }
+        for tick in 3..=4 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            assert!(
+                slot.take_actions().is_empty(),
+                "a paused or held trip emits no follow"
+            );
+            assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(0));
+        }
+        input.hold = false;
+        if !reconnect {
+            slot.slot.resume();
+        }
+        let mut resumed = Vec::new();
+        for tick in 5..=6 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            resumed.extend(slot.take_actions());
+        }
+        let [next] = resumed.as_slice() else {
+            panic!("Resume must revalidate and re-arm the return follow exactly once");
+        };
+        let script::native::HostEffect::Walk(next_request) = &next.effect else {
+            panic!("Resume must not replay a bank click or callback");
+        };
+        assert_eq!(next_request.target, first_request.target);
+        assert_eq!(next_request.radius, first_request.radius);
+        assert_ne!(
+            (next.run(), next.request_id),
+            (first.run(), first.request_id),
+            "a resumed follow must have fresh scoped request authority"
+        );
+        assert_eq!(next.run().session != first.run().session, reconnect);
+        assert!(
+            !first_authority.live(),
+            "the interrupted follow's authority is retired"
+        );
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(0));
+        accept_bank_walk(&mut slot, next, 6);
+        input.here = Some(script::isolate_fb::TileInput {
+            x: 3252,
+            z: 3222,
+            level: 0,
+        });
+        for tick in 7..=8 {
+            tick_bank_slot(&mut slot, &mut input, tick, 1, SIDE_ROOT, &mut snapshot);
+            assert!(slot.take_actions().is_empty());
+        }
+        assert_eq!(slot.probe("__result").unwrap(), serde_json::json!(true));
+        assert_eq!(slot.probe("__settled").unwrap(), serde_json::json!(1));
+        assert_eq!(slot.probe("__afterCalls").unwrap(), serde_json::json!(1));
+        slot.stop();
+    }
 }
 
 #[path = "load_isolate/seat_product_cases.rs"]

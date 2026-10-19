@@ -1,7 +1,9 @@
 use super::*;
+use api::identity::SlotKeyMinter;
 use api::interact::RUN_ORB_IFACE;
 use client::dash3d::TerrainOverlayShape;
 use client::io::ClientProt;
+use client::render::Renderer;
 use std::sync::{Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
@@ -48,6 +50,14 @@ fn cfg() -> ClientConfig {
         members: true,
         lowmem: true,
     }
+}
+
+/// The render envelope a spawned slot gets: a fresh `SlotKey` and its
+/// output mailbox. A drawing slot attaches its head to the process render
+/// service through it; one key per envelope, as Play mints one per worker.
+fn slot_render(buf: &Arc<FrameBuf>) -> SlotRender {
+    static SLOTS: SlotKeyMinter = SlotKeyMinter::new();
+    SlotRender::new(SLOTS.mint().expect("test slot key"), Arc::clone(buf))
 }
 
 #[test]
@@ -1165,18 +1175,35 @@ fn client_frame_skips_frame_store_when_draw_off() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     // Renderer off: no frame is rendered and nothing is stored.
     c.set_draw(false);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert!(buf.snapshot().is_empty(), "draw off must not store pixels");
     // Renderer on: the first (rising-edge) tick paints a full applet
     // into the buffer (with no title assets in this test the paint is
     // empty, but the frame still packs a full applet; the non-zero
     // paint is proven live by the panel_view e2e).
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(
         buf.snapshot().len(),
         (client::client::APPLET_W * client::client::APPLET_H) as usize
@@ -1200,10 +1227,7 @@ fn headless_slot_constructs_no_renderer_and_never_draws() {
     for _ in 0..3 {
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     }
-    assert!(
-        slot.renderer.is_none(),
-        "draw off must not construct a Renderer"
-    );
+    assert!(slot.head.is_none(), "draw off must not attach a head");
     assert_eq!(slot.skip_n, 3);
     assert_eq!(slot.paint_n, 0);
     assert!(slot.loop_ns > 0, "mainloop still ran");
@@ -1222,6 +1246,7 @@ fn draw_off_logout_edge_constructs_no_renderer_and_publishes_no_frame() {
     client.last_response = Some(Instant::now() - Duration::from_secs(16));
     client.set_draw(false);
     let mailbox = FrameBuf::new();
+    let render = slot_render(&mailbox);
     let mut slot = SlotLoop::new();
     let mut sends = 0;
 
@@ -1230,15 +1255,15 @@ fn draw_off_logout_edge_constructs_no_renderer_and_publishes_no_frame() {
         &mut slot,
         "headless",
         None,
-        Some(&mailbox),
+        Some(&render),
         &mut sends,
         None,
     );
 
     assert!(!client.ingame, "the watchdog must cross onto the title");
     assert!(
-        slot.renderer.is_none(),
-        "a draw-off logout edge must not construct a renderer"
+        slot.head.is_none(),
+        "a draw-off logout edge must not attach a head"
     );
     assert_eq!(slot.paint_n, 0);
     assert_eq!(mailbox.generation(), 0);
@@ -1254,17 +1279,59 @@ fn draw_off_drops_renderer_draw_on_reattaches() {
         Arc::new(vec![]),
         Vec::new(),
     );
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert!(slot.renderer.is_some());
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    let first = slot
+        .head
+        .as_ref()
+        .expect("draw on attaches a head")
+        .identity();
+    assert_eq!(first.slot(), render.slot());
     c.set_draw(false);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert!(slot.renderer.is_none(), "unheaded must drop headed data");
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert!(slot.head.is_none(), "unheaded must drop headed data");
+    assert_eq!(
+        render.output().head(),
+        None,
+        "the retired head no longer publishes"
+    );
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert!(slot.renderer.is_some(), "attach at any time");
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    let second = slot.head.as_ref().expect("attach at any time").identity();
+    assert_eq!(second.slot(), first.slot());
+    assert_ne!(
+        second.generation(),
+        first.generation(),
+        "reattach is a new head generation"
+    );
+    assert_eq!(render.output().head(), Some(second));
 }
 
 /// Draw-off (only-render-selected, 49 heads dropping) must drain the
@@ -1280,17 +1347,42 @@ fn draw_off_drains_the_frame_mailbox_before_dropping_the_head() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert!(buf.take().is_some(), "a paint tick stores a frame");
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
-    assert!(slot.renderer.is_some());
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert!(slot.head.is_some());
     c.set_draw(false);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
-    assert!(slot.renderer.is_none());
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert!(slot.head.is_none());
     assert!(
         buf.take().is_none(),
         "draw-off must take the mailbox before dropping the renderer"
@@ -1312,6 +1404,7 @@ fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
         Arc::new(vec![]),
         Vec::new(),
     );
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     // A headed overlay mesh, planted on the sim directly (no full
@@ -1340,7 +1433,15 @@ fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
         0x99,
         0xaa,
     );
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert!(
         c.world
             .square(0, 2, 2)
@@ -1352,8 +1453,16 @@ fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
     // Draw off drops the head and the headed mesh; the stamp survives
     // and the next attach is re-armed.
     c.set_draw(false);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert!(slot.renderer.is_none());
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert!(slot.head.is_none());
     let sq = c.world.square(0, 2, 2).expect("stamped tile");
     assert!(sq.ground.is_none(), "draw off must drop the overlay mesh");
     assert!(sq.quick_ground.is_none());
@@ -1379,8 +1488,16 @@ fn draw_off_dematerializes_overlay_draw_on_restores_mesh() {
     c.ingame = true;
     c.scene_state = 2;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert!(slot.renderer.is_some());
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert!(slot.head.is_some());
     assert!(
         c.world
             .square(0, 2, 2)
@@ -1436,31 +1553,53 @@ fn prefer_cpu_rebuilds_renderer_not_client() {
     );
     let inp = SlotInput::new();
     inp.set_prefer_cpu(false);
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    let gpu_request = slot.head.as_ref().expect("first paint attaches").identity();
     let uid = c.login_uid;
     inp.set_prefer_cpu(true);
-    Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&render),
+        &mut sends,
+        None,
+    );
     match prev {
         Some(v) => std::env::set_var("BOT_CPU", v),
         None => std::env::remove_var("BOT_CPU"),
     }
     assert_eq!(c.login_uid, uid);
-    assert!(slot.renderer.is_some());
+    let head = slot.head.as_ref().expect("the flip reattaches a head");
     // Under `force_cpu_backend` both preferences land on
     // `BackendKind::Cpu`, so the kind alone cannot prove a rebuild:
     // the head must carry the *new* `prefer_cpu` request, and the flip
     // tick must have repainted with it.
-    assert_eq!(
-        slot.renderer_prefer_cpu,
-        Some(true),
+    assert!(
+        head.prefer_cpu(),
         "the flip must rebuild the head for the new prefer_cpu"
+    );
+    assert_ne!(
+        head.identity().generation(),
+        gpu_request.generation(),
+        "a backend flip retires the head and attaches a new generation"
     );
     assert_eq!(slot.paint_n, 2, "the flip tick must repaint the new head");
     assert_eq!(
-        slot.renderer.as_ref().unwrap().backend_kind(),
+        head.backend_kind(),
         client::render::backend::BackendKind::Cpu
     );
 }
@@ -1480,16 +1619,25 @@ fn bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu() {
     );
     let inp = SlotInput::new();
     inp.set_prefer_cpu(false);
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", Some(&inp), None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&render),
+        &mut sends,
+        None,
+    );
     match prev {
         Some(v) => std::env::set_var("BOT_CPU", v),
         None => std::env::remove_var("BOT_CPU"),
     }
     assert_eq!(
-        slot.renderer_prefer_cpu,
+        slot.head.as_ref().map(|head| head.prefer_cpu()),
         Some(true),
         "BOT_CPU=1 must force CpuPix3D even when SlotInput.prefer_cpu is false"
     );
@@ -1505,19 +1653,36 @@ fn next_login_memory_mode_rebuilds_the_renderer() {
         Arc::new(vec![]),
         Vec::new(),
     );
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
     assert!(c.config.lowmem, "cfg() spawns lowmem");
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
-    assert_eq!(slot.renderer_lowmem, Some(true));
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
+    assert_eq!(slot.head.as_ref().map(|head| head.lowmem()), Some(true));
     let uid = c.login_uid;
     c.configure_login_memory(false);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(c.login_uid, uid);
-    assert!(slot.renderer.is_some());
+    assert!(slot.head.is_some());
     assert_eq!(
-        slot.renderer_lowmem,
+        slot.head.as_ref().map(|head| head.lowmem()),
         Some(false),
         "the next login's mode must rebuild the head before its first paint"
     );
@@ -1551,10 +1716,19 @@ fn client_frame_draw_on_paints_this_tick() {
         Arc::new(vec![]),
         Vec::new(),
     );
+    let render = slot_render(&FrameBuf::new());
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
-    Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(slot.paint_n, 1);
     assert_eq!(slot.skip_n, 0);
 }
@@ -1570,6 +1744,7 @@ fn mainredraw_runs_check_minimap_on_a_paint_tick() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
@@ -1582,7 +1757,15 @@ fn mainredraw_runs_check_minimap_on_a_paint_tick() {
     // pins the render dispatch to `mainredraw`.
     assert_eq!(c.minimap_level, -1);
     assert_ne!(c.minimap_level, c.minusedlevel);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(
         c.minimap_level, c.minusedlevel,
         "mainredraw must run the check_minimap render half"
@@ -1707,6 +1890,7 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     assert!(!c.draw, "slots start with the renderer off");
@@ -1718,7 +1902,7 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         &mut slot,
         "t",
         None,
-        Some(&buf),
+        Some(&render),
         &mut sends,
         &mut |c, _, _, _, _| {
             c.set_draw(true);
@@ -1738,7 +1922,7 @@ fn client_tick_observe_runs_before_the_frame_paint() {
         &mut slot,
         "t",
         None,
-        Some(&buf),
+        Some(&render),
         &mut sends,
         &mut |c, _, _, _, _| {
             c.set_draw(false);
@@ -1909,6 +2093,7 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     // The paint cadence is measured on a pinned clock: how long a loaded
     // machine takes to run a tick (the first one builds the renderer) must
@@ -1926,14 +2111,14 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
     let first_cycle = slot
-        .renderer
+        .head
         .as_ref()
-        .and_then(|r| r.title_flames.as_ref())
+        .and_then(|head| head.renderer().title_flames.as_ref())
         .expect("title flames")
         .cycle;
     Host::client_frame(
@@ -1941,7 +2126,7 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -1954,14 +2139,14 @@ fn watch_rate_title_catches_up_flames_without_extra_paints() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
     let second_cycle = slot
-        .renderer
+        .head
         .as_ref()
-        .and_then(|r| r.title_flames.as_ref())
+        .and_then(|head| head.renderer().title_flames.as_ref())
         .expect("title flames")
         .cycle;
     assert_eq!(buf.generation(), 2, "watch title repaints after one second");
@@ -1982,6 +2167,7 @@ fn watch_only_paints_first_tick_then_once_per_second() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     // Pinned pacing clock: the ticks' own run time must not decide how much
     // "time" passed between them.
@@ -1991,14 +2177,38 @@ fn watch_only_paints_first_tick_then_once_per_second() {
     c.set_draw(true);
     c.ingame = true;
     c.scene_state = 2;
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(buf.generation(), 1);
     // A fast second tick (the parked slot draining a burst) must not
     // repaint before a wall-clock second elapses.
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(buf.generation(), 1);
     slot.pacing_now = Some(t0 + Duration::from_secs(1) + Duration::from_millis(50));
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(buf.generation(), 2, "watch-only repaints after 1 s");
 }
 
@@ -2013,6 +2223,7 @@ fn full_rate_paints_every_tick_after_scene_ready() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
@@ -2027,7 +2238,7 @@ fn full_rate_paints_every_tick_after_scene_ready() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -2037,7 +2248,7 @@ fn full_rate_paints_every_tick_after_scene_ready() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -2053,7 +2264,7 @@ fn full_rate_paints_every_tick_after_scene_ready() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -2075,14 +2286,31 @@ fn loading_scene_paints_every_tick_for_tv_static() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let mut slot = SlotLoop::new();
     let mut sends = 0u32;
     c.set_draw(true);
     c.ingame = true;
     c.scene_state = 1;
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(buf.generation(), 1);
-    Host::client_frame(&mut c, &mut slot, "t", None, Some(&buf), &mut sends, None);
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        None,
+        Some(&render),
+        &mut sends,
+        None,
+    );
     assert_eq!(
         buf.generation(),
         2,
@@ -2101,6 +2329,7 @@ fn capture_draw_copies_every_tick() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
+    let render = slot_render(&buf);
     let inp = SlotInput::new();
     inp.set_full_rate(true);
     let mut slot = SlotLoop::new();
@@ -2115,7 +2344,7 @@ fn capture_draw_copies_every_tick() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -2124,7 +2353,7 @@ fn capture_draw_copies_every_tick() {
         &mut slot,
         "t",
         Some(&inp),
-        Some(&buf),
+        Some(&render),
         &mut sends,
         None,
     );
@@ -2157,7 +2386,7 @@ fn title_wait_animates_a_captured_title_and_drops_its_log_in() {
     inp.set_enabled(true);
     let (tx, rx) = std::sync::mpsc::channel();
     inp.connect_rx(rx);
-    let mut wait = TitleWait::new(Some(Arc::clone(&inp)), Some(Arc::clone(&buf)));
+    let mut wait = TitleWait::new(Some(Arc::clone(&inp)), Some(slot_render(&buf)));
     // The wait's cadence runs on a pinned clock: how long a loaded machine
     // takes to paint the first frame must not decide whether the next call
     // is already due.
@@ -2198,17 +2427,14 @@ fn title_wait_keeps_draw_off_and_watch_titles_on_their_parks() {
         Vec::new(),
     );
     let buf = FrameBuf::new();
-    let mut wait = TitleWait::new(Some(SlotInput::new()), Some(Arc::clone(&buf)));
+    let mut wait = TitleWait::new(Some(SlotInput::new()), Some(slot_render(&buf)));
 
     let next = wait.frame(&mut c, "alice", |_| {});
     assert!(
         next > IDLE_PARK_MS / 2 && next <= IDLE_PARK_MS,
         "a draw-off wait frames on the idle park"
     );
-    assert!(
-        wait.slot.renderer.is_none(),
-        "a draw-off wait builds no renderer"
-    );
+    assert!(wait.slot.head.is_none(), "a draw-off wait attaches no head");
     assert_eq!(buf.generation(), 0);
 
     thread::sleep(next);
@@ -2331,6 +2557,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
     let stop2 = Arc::clone(&stop);
     let inp = SlotInput::new();
     inp.set_enabled(true);
+    let render = slot_render(&FrameBuf::new());
     let handle = thread::spawn(move || {
         let mut c = prepare_client(
             cfg(),
@@ -2348,7 +2575,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
             Arc::new(AtomicBool::new(true)),
             Arc::new(Mutex::new("strength".to_string())),
             Some(inp),
-            None,
+            Some(render),
             None,
             ScriptRunPolicy::default(),
             |c, _, _, _, _| {
@@ -2444,7 +2671,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
     let (wake, park) = crate::slot_io::wake_channel();
     let (mirror, seen) = seen();
     let buf = FrameBuf::new();
-    let buf2 = Arc::clone(&buf);
+    let render = slot_render(&buf);
     let stop = Arc::new(AtomicBool::new(false));
     let stop2 = Arc::clone(&stop);
     let handle = thread::spawn(move || {
@@ -2466,7 +2693,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             Arc::new(AtomicBool::new(true)),
             Arc::new(Mutex::new("strength".to_string())),
             None,
-            Some(buf2),
+            Some(render),
             Some(Arc::new(park)),
             ScriptRunPolicy::default(),
             |c, _, _, _, _| {

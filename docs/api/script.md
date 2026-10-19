@@ -514,9 +514,9 @@ The catalog tile need not be one of those access tiles. An unreachable staff-sid
 tile cannot displace a reachable public approach.
 Standing near a bank across a wall is not proof of reachability. A selection
 timeout may offer an air-nearest candidate, but the subsequent walk must still
-route successfully and fails closed otherwise. Compatibility `SelectBank` and
-`WalkNearestBank` retain their frozen four-tile shortcut, 500,000-expansion
-budget, five-second timeout and air fallback.
+route successfully and fails closed otherwise. Compatibility bank selection
+and `WalkNearestBank` retain their frozen four-tile shortcut,
+500,000-expansion budget, five-second timeout and air fallback.
 
 An authored Path bank tile is not an exclusive destination by default:
 `{"tile": [3092, 3242, 0], "source": "author reference"}` still selects the

@@ -488,7 +488,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts:298,313; $S/periodic_bank.rs:268-282,384-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:298,313; $TS/api/tasks/PeriodicBank.ts:15,48; $S/slot/bank.rs"
     },
     {
       "families": [
@@ -534,7 +534,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:331; $TS/api/bank/bankRules.ts:103-105; $S/bank_deposit.rs:458-462"
+      "evidence": "$TS/api/bank/Bank.ts:322-334; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "families": [
@@ -564,7 +564,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/bankRules.ts:103-105; $S/periodic_bank.rs:385-410,474-493"
+      "evidence": "$TS/api/bank/Banking.ts:291-313; $TS/api/bank/bankRules.ts:103-105; $S/bank/seat_transfer.rs"
     },
     {
       "families": [
@@ -663,7 +663,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:49-51; $S/periodic_bank.rs:486-493,518-524,529-536"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs"
     },
     {
       "families": [
@@ -686,7 +686,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,525-532"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs"
     },
     {
       "families": [
@@ -709,7 +709,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:486-493,533-537"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs"
     },
     {
       "families": [
@@ -985,7 +985,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:474-493,512-517"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs"
     },
     {
       "families": [
@@ -1099,7 +1099,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Banking.ts (openBankAccess); $S/shim/banking.js:81-104; $S/periodic_bank.rs:385-388,474-493; $S/banking_open.rs:345-346; $S/bank_access.rs:689-702,713-714,874-875,951-953; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "families": [
@@ -1122,7 +1122,30 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/periodic_bank.rs:380-410"
+      "evidence": "$TS/api/bank/Banking.ts:299-307; $S/slot/bank.rs; $S/bank/seat_open.rs"
+    },
+    {
+      "families": [
+        "bank_wait"
+      ],
+      "family_semantics": [
+        {
+          "family": "bank_wait",
+          "order": "synchronous-at-call-site",
+          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+        }
+      ],
+      "member": "log",
+      "call_site": "Bank.waitReady synchronous item-snapshot notification",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs"
     },
     {
       "families": [

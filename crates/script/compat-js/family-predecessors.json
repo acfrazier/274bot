@@ -13,6 +13,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(acquisition)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -41,6 +42,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(bank)",
       "activation_endpoint": "T2.3",
+      "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -59,10 +61,10 @@
         "members": 55,
         "overloads": 0,
         "aliases": 2,
-        "callbacks": 9,
+        "callbacks": 10,
         "type_aliases": 2,
         "name_aliases": 0,
-        "not_impl_debt": 11
+        "not_impl_debt": 10
       }
     },
     {
@@ -70,6 +72,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(bot)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -96,6 +99,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(chatbox)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -122,6 +126,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(client-adapter)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -148,6 +153,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(clues)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -176,6 +182,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(combat)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -202,6 +209,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(compat-runtime)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -228,6 +236,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(cooking)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -254,6 +263,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(cow)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -280,6 +290,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(dialogue)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -306,6 +317,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(duel)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -334,6 +346,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(entities)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -360,6 +373,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(events)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -386,6 +400,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(execution)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -412,6 +427,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(firemaking)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -438,6 +454,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(fishing)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -464,6 +481,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(game-state)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -490,6 +508,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(gathering)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -516,6 +535,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(hunt)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -544,6 +564,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(input)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -570,6 +591,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(inventory)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -596,6 +618,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(loadouts)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -622,6 +645,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(market)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -648,6 +672,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(mining)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -674,6 +699,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(paint)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -700,6 +726,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(questlog)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -726,6 +753,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(quests)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -754,6 +782,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(runecrafting)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -780,6 +809,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(runtime)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -808,6 +838,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(shop)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -836,6 +867,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(skills)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -862,6 +894,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(tasks)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -890,6 +923,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(thieving)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -918,6 +952,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(trade)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -944,6 +979,7 @@
       "nav_consuming": true,
       "activation_unit": "I-family(walking)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -972,6 +1008,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(woodcutting)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -998,6 +1035,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(world-primitives)",
       "activation_endpoint": "T2.rest",
+      "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",

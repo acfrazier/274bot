@@ -20,6 +20,8 @@ use std::os::windows::io::{AsRawSocket, RawSocket};
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
 
+use crate::render::{HeadIdentity, RenderRefusal};
+
 /// OS socket handle used by the idle park (`poll` / `WSAPoll`).
 #[cfg(unix)]
 pub(crate) type WaitHandle = RawFd;
@@ -121,12 +123,16 @@ pub struct JournalProofFrame {
     pub gpu: bool,
 }
 
-/// Per-slot frame mailbox: the slot thread stores each rendered
-/// [`FrameOutput`] into [`FrameBuf::store`]; the panel hands it to the
-/// frame consumer with [`FrameBuf::take`] (one consumer per mailbox — a
+/// Per-slot frame mailbox: the slot's attached render head publishes each
+/// rendered [`FrameOutput`] here; the panel hands it to the frame consumer
+/// with [`FrameBuf::take`] (one consumer per mailbox — a
 /// `FrameOutput::Texture` hands its wgpu view off once, no Clone).
 /// [`FrameBuf::snapshot`] stays for the CPU packing path and the tests.
 /// Replaces the old packed-pixels byte buffer.
+///
+/// Publication is identity-checked: the mailbox accepts frames only from
+/// the head attached to it (`(SlotKey, head_generation)`), so a retired
+/// head can never publish into a reattached head's mailbox.
 pub struct FrameBuf {
     inner: Mutex<Mailbox>,
     gen: AtomicU64,
@@ -134,11 +140,17 @@ pub struct FrameBuf {
     proof_frames: Option<parking_lot::Mutex<VecDeque<JournalProofFrame>>>,
 }
 
-/// One lock owns the latest frame and, under `render-diagnostics`, the
-/// sidecar that belongs to it. Store and take share this critical section
-/// so a later store cannot attach a new ROI to an earlier take.
+/// One lock owns the latest frame, the head allowed to publish it and,
+/// under `render-diagnostics`, the sidecar that belongs to it. Publish and
+/// take share this critical section so a later publish cannot attach a new
+/// ROI to an earlier take.
 struct Mailbox {
     frame: Option<FrameOutput>,
+    /// The attached head whose frames this mailbox accepts: set when the
+    /// head attaches, cleared when it retires.
+    head: Option<HeadIdentity>,
+    /// Why the slot's draw request has no head, while its attach is refused.
+    refused: Option<RenderRefusal>,
     #[cfg(feature = "render-diagnostics")]
     stored_roi: Option<client::render::diagnostics::PixelRoiMeta>,
     #[cfg(feature = "render-diagnostics")]
@@ -150,6 +162,8 @@ impl FrameBuf {
         std::sync::Arc::new(Self {
             inner: Mutex::new(Mailbox {
                 frame: None,
+                head: None,
+                refused: None,
                 #[cfg(feature = "render-diagnostics")]
                 stored_roi: None,
                 #[cfg(feature = "render-diagnostics")]
@@ -177,22 +191,34 @@ impl FrameBuf {
     }
 
     #[cfg(feature = "journal-paint-proof")]
-    pub fn store_journal_paint(&self, frame: FrameOutput, stamp: JournalPaintStamp) {
+    pub(crate) fn publish_journal_paint(
+        &self,
+        head: HeadIdentity,
+        frame: FrameOutput,
+        stamp: JournalPaintStamp,
+    ) -> bool {
         if let Some(queue) = &self.proof_frames {
-            self.store_proof(queue, frame, Some(stamp));
+            self.publish_proof(queue, head, frame, Some(stamp))
         } else {
-            self.store(frame);
+            self.publish(head, frame)
         }
     }
 
+    /// Publish `head`'s paint into the proof queue, if `head` is attached.
+    /// The identity check and the publication share one mailbox critical
+    /// section, as in [`FrameBuf::publish`]: `retire_head`/`attach_head`
+    /// take the same lock, so a head retired after its check cannot publish
+    /// into its slot's reattached generation.
     #[cfg(feature = "journal-paint-proof")]
-    fn store_proof(
+    fn publish_proof(
         &self,
         queue: &parking_lot::Mutex<VecDeque<JournalProofFrame>>,
+        head: HeadIdentity,
         frame: FrameOutput,
         stamp: Option<JournalPaintStamp>,
-    ) {
-        let mut queue = queue.lock();
+    ) -> bool {
+        // Read the pixels back before taking the mailbox lock: a GPU readback
+        // waits on the device, and the frame still belongs to this producer.
         let (pixmap, gpu) = match frame {
             FrameOutput::PixMap(pixmap) => (pixmap, false),
             FrameOutput::Texture(handle) => (
@@ -204,6 +230,13 @@ impl FrameBuf {
                 true,
             ),
         };
+        let inner = self.inner.lock().unwrap();
+        if inner.head != Some(head) {
+            return false;
+        }
+        #[cfg(test)]
+        tests::pause_in_publication_gap();
+        let mut queue = queue.lock();
         let generation = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
         queue.push_back(JournalProofFrame {
             generation,
@@ -211,18 +244,26 @@ impl FrameBuf {
             stamp,
             gpu,
         });
+        drop(queue);
+        drop(inner);
+        true
     }
 
-    /// Store the latest frame and bump the generation. The full
-    /// [`FrameOutput`] is kept so the panel can bind a
+    /// Store `head`'s latest frame and bump the generation, if `head` is the
+    /// head attached to this mailbox; otherwise drop the frame and return
+    /// false. The full [`FrameOutput`] is kept so the panel can bind a
     /// `FrameOutput::Texture` or pack a `PixMap`.
-    pub fn store(&self, frame: FrameOutput) {
+    pub(crate) fn publish(&self, head: HeadIdentity, frame: FrameOutput) -> bool {
         #[cfg(feature = "journal-paint-proof")]
         if let Some(queue) = &self.proof_frames {
-            self.store_proof(queue, frame, None);
-            return;
+            return self.publish_proof(queue, head, frame, None);
         }
         let mut inner = self.inner.lock().unwrap();
+        if inner.head != Some(head) {
+            return false;
+        }
+        #[cfg(test)]
+        tests::pause_in_publication_gap();
         #[cfg(feature = "render-diagnostics")]
         {
             inner.stored_roi = client::render::diagnostics::take_thread_pixel_roi();
@@ -230,13 +271,62 @@ impl FrameBuf {
         inner.frame = Some(frame);
         drop(inner);
         self.gen.fetch_add(1, Ordering::Relaxed);
+        true
     }
+
+    /// `head` attached: from now on its frames are accepted, and a refusal
+    /// shown for this slot is over.
+    pub(crate) fn attach_head(&self, head: HeadIdentity) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.head = Some(head);
+        inner.refused = None;
+    }
+
+    /// `head` retired at a detach: stop accepting its frames and drain the
+    /// mailbox (the frame is dropped before the head's backend). One critical
+    /// section, so the drain cannot take a frame a later head published.
+    pub(crate) fn retire_head(&self, head: HeadIdentity) -> Option<FrameOutput> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head == Some(head) {
+            inner.head = None;
+        }
+        Self::take_locked(&mut inner)
+    }
+
+    /// `head` ended with its slot loop: stop accepting its frames, but keep
+    /// the last one for the consumer.
+    pub(crate) fn release_head(&self, head: HeadIdentity) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.head == Some(head) {
+            inner.head = None;
+        }
+    }
+
+    /// Record why the slot's draw request has no head, or clear it.
+    pub(crate) fn set_refusal(&self, refusal: Option<RenderRefusal>) {
+        self.inner.lock().unwrap().refused = refusal;
+    }
+
+    /// The attached head whose frames this mailbox accepts, if any.
+    pub fn head(&self) -> Option<HeadIdentity> {
+        self.inner.lock().unwrap().head
+    }
+
+    /// Why this slot draws no picture though its draw policy is on: the
+    /// render service refused its head. Shown in the slot's own cell.
+    pub fn refusal(&self) -> Option<RenderRefusal> {
+        self.inner.lock().unwrap().refused
+    }
+
     /// Move the stored frame out and clear the mailbox: the single
     /// consumer's handoff (a `FrameOutput::Texture` is single-consumer, no
     /// Clone). `None` when nothing was stored since the last take. The
-    /// generation is untouched — only [`FrameBuf::store`] bumps it.
+    /// generation is untouched — only [`FrameBuf::publish`] bumps it.
     pub fn take(&self) -> Option<FrameOutput> {
-        let mut inner = self.inner.lock().unwrap();
+        Self::take_locked(&mut self.inner.lock().unwrap())
+    }
+
+    fn take_locked(inner: &mut Mailbox) -> Option<FrameOutput> {
         let frame = inner.frame.take();
         #[cfg(feature = "render-diagnostics")]
         if frame.is_some() {
@@ -268,7 +358,7 @@ impl FrameBuf {
         }
         out
     }
-    /// Bumps on every [`FrameBuf::store`]. The panel skips uploads while
+    /// Bumps on every accepted [`FrameBuf::publish`]. The panel skips uploads while
     /// this stays unchanged (avoids Poll-spin on a frozen blit).
     pub fn generation(&self) -> u64 {
         self.gen.load(Ordering::Relaxed)
@@ -895,9 +985,13 @@ mod tests {
         map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, ManualMoveIntent,
         MouseOwner, SlotInput,
     };
+    use crate::render::{HeadIdentity, RenderRefusal, RenderService};
+    use api::identity::{Notice, Notifier, SlotKey};
     use client::client::GameShell;
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
+    use std::cell::RefCell;
+    use std::sync::{Arc, Barrier, TryLockError};
     use std::time::{Duration, Instant};
 
     fn applet_pixmap(pixels: Vec<i32>) -> FrameOutput {
@@ -906,6 +1000,338 @@ mod tests {
             height: 503,
             pixels,
         })
+    }
+
+    struct Silent;
+
+    impl Notifier for Silent {
+        fn notify(&self, _notice: Notice) {}
+    }
+
+    /// Real head identities from one test-local render service: the first
+    /// head of `slot`, retired, then its reattached generation. The mailbox
+    /// only accepts frames from the head attached to it.
+    fn head_generations(slot: u64) -> (HeadIdentity, HeadIdentity) {
+        let service = RenderService::new(Duration::from_millis(20)).unwrap();
+        let pump = service.register_pump().unwrap();
+        let key = SlotKey::from_incarnation(slot).unwrap();
+        let first = service
+            .attach(&pump, key, Arc::new(Silent))
+            .unwrap()
+            .identity();
+        let second = service
+            .attach(&pump, key, Arc::new(Silent))
+            .unwrap()
+            .identity();
+        (first, second)
+    }
+
+    fn head_identity(slot: u64) -> HeadIdentity {
+        head_generations(slot).0
+    }
+
+    /// Publish the way a slot head does, attaching a head first if the
+    /// mailbox has none.
+    fn store(buf: &FrameBuf, frame: FrameOutput) {
+        let head = buf.head().unwrap_or_else(|| {
+            let head = head_identity(1);
+            buf.attach_head(head);
+            head
+        });
+        assert!(buf.publish(head, frame), "the attached head publishes");
+    }
+
+    #[test]
+    fn publish_accepts_only_the_attached_head() {
+        let buf = FrameBuf::new();
+        let (retired, reattached) = head_generations(7);
+        assert!(
+            !buf.publish(retired, applet_pixmap(vec![1; 765 * 503])),
+            "no head attached yet"
+        );
+        buf.attach_head(retired);
+        assert!(buf.publish(retired, applet_pixmap(vec![2; 765 * 503])));
+        assert_eq!(buf.generation(), 1);
+        assert!(
+            buf.retire_head(retired).is_some(),
+            "a detach drains the mailbox"
+        );
+        assert_eq!(reattached.slot(), retired.slot());
+        assert_ne!(reattached.generation(), retired.generation());
+        buf.attach_head(reattached);
+        assert!(
+            !buf.publish(retired, applet_pixmap(vec![3; 765 * 503])),
+            "a retired head cannot publish into the reattached head's mailbox"
+        );
+        assert_eq!(buf.generation(), 1, "a refused frame bumps nothing");
+        assert!(buf.take().is_none());
+        assert!(buf.publish(reattached, applet_pixmap(vec![4; 765 * 503])));
+        assert_eq!(buf.generation(), 2);
+        assert!(buf.take().is_some());
+    }
+
+    #[test]
+    fn release_keeps_the_last_frame_and_stops_publication() {
+        let buf = FrameBuf::new();
+        let head = head_identity(8);
+        buf.attach_head(head);
+        assert!(buf.publish(head, applet_pixmap(vec![5; 765 * 503])));
+        buf.release_head(head);
+        assert_eq!(buf.head(), None);
+        assert!(!buf.publish(head, applet_pixmap(vec![6; 765 * 503])));
+        match buf.take() {
+            Some(FrameOutput::PixMap(pix)) => assert_eq!(pix.pixels[0], 5),
+            _ => panic!("the released head's last frame stays for the consumer"),
+        }
+    }
+
+    #[test]
+    fn refusal_is_shown_until_a_head_attaches() {
+        let buf = FrameBuf::new();
+        let refusal = RenderRefusal::HeadCap {
+            cap: crate::render::RENDER_HEAD_CAP,
+        };
+        buf.set_refusal(Some(refusal));
+        assert_eq!(buf.refusal(), Some(refusal));
+        buf.attach_head(head_identity(9));
+        assert_eq!(buf.refusal(), None);
+        buf.set_refusal(Some(refusal));
+        buf.set_refusal(None);
+        assert_eq!(buf.refusal(), None);
+    }
+
+    /// A scheduling point between a publication's identity check and its
+    /// publication point: the publisher reaches `checked`, then waits at
+    /// `resume` until the test has tried to retire and reattach its slot.
+    struct PublicationGap {
+        checked: Barrier,
+        resume: Barrier,
+    }
+
+    thread_local! {
+        /// Set only on a test's publisher thread, so every other test's
+        /// publication runs straight through.
+        static PUBLICATION_GAP: RefCell<Option<Arc<PublicationGap>>> =
+            const { RefCell::new(None) };
+    }
+
+    /// Called by `FrameBuf` right after a publication's identity check.
+    pub(super) fn pause_in_publication_gap() {
+        if let Some(gap) = PUBLICATION_GAP.with(|gap| gap.borrow().clone()) {
+            gap.checked.wait();
+            gap.resume.wait();
+        }
+    }
+
+    /// How a reattach landed against a publication paused in its gap.
+    struct Raced {
+        /// The paused publication by the retired head returned `true`.
+        accepted: bool,
+        /// The mailbox let the retire and reattach run inside the gap.
+        interleaved: bool,
+    }
+
+    fn retire_and_reattach(buf: &FrameBuf, retired: HeadIdentity, reattached: HeadIdentity) {
+        let _ = buf.retire_head(retired);
+        buf.attach_head(reattached);
+    }
+
+    /// Pause `publish` by the slot's first head right after its identity
+    /// check, retire that head and attach the slot's next generation, then
+    /// let the publication finish. If the mailbox lock is free in the gap,
+    /// the retire and reattach run there and then (`interleaved`); if not,
+    /// they run on another thread and wait for the publication.
+    fn publish_across_a_reattach(
+        buf: &Arc<FrameBuf>,
+        slot: u64,
+        publish: fn(&FrameBuf, HeadIdentity) -> bool,
+    ) -> Raced {
+        let (retired, reattached) = head_generations(slot);
+        buf.attach_head(retired);
+        let gap = Arc::new(PublicationGap {
+            checked: Barrier::new(2),
+            resume: Barrier::new(2),
+        });
+        let publisher = {
+            let buf = Arc::clone(buf);
+            let gap = Arc::clone(&gap);
+            std::thread::spawn(move || {
+                PUBLICATION_GAP.with(|slot| *slot.borrow_mut() = Some(gap));
+                publish(&buf, retired)
+            })
+        };
+        gap.checked.wait();
+        let interleaved = match buf.inner.try_lock() {
+            Ok(_) => true,
+            Err(TryLockError::WouldBlock) => false,
+            Err(TryLockError::Poisoned(_)) => panic!("mailbox poisoned"),
+        };
+        let retirer = if interleaved {
+            retire_and_reattach(buf, retired, reattached);
+            None
+        } else {
+            let buf = Arc::clone(buf);
+            Some(std::thread::spawn(move || {
+                retire_and_reattach(&buf, retired, reattached)
+            }))
+        };
+        gap.resume.wait();
+        let accepted = publisher.join().unwrap();
+        if let Some(retirer) = retirer {
+            retirer.join().unwrap();
+        }
+        assert_eq!(buf.head(), Some(reattached));
+        Raced {
+            accepted,
+            interleaved,
+        }
+    }
+
+    #[test]
+    fn a_publication_past_its_identity_check_is_ordered_before_a_reattach() {
+        let buf = FrameBuf::new();
+        let raced = publish_across_a_reattach(&buf, 10, |buf, head| {
+            buf.publish(head, applet_pixmap(vec![7; 765 * 503]))
+        });
+        assert!(
+            !(raced.interleaved && raced.accepted),
+            "a retired head's frame was published after its slot reattached"
+        );
+        assert!(raced.accepted, "published while its head was attached");
+        assert_eq!(buf.generation(), 1);
+        assert!(
+            buf.take().is_none(),
+            "the retire drained the frame published before it"
+        );
+    }
+
+    #[cfg(feature = "journal-paint-proof")]
+    #[test]
+    fn a_journal_proof_past_its_identity_check_is_ordered_before_a_reattach() {
+        let buf = FrameBuf::new_for_journal_proof();
+        let raced = publish_across_a_reattach(&buf, 11, |buf, head| {
+            buf.publish_journal_paint(
+                head,
+                FrameOutput::PixMap(PixMap {
+                    width: 1,
+                    height: 1,
+                    pixels: vec![7],
+                }),
+                super::JournalPaintStamp {
+                    modal_root: 1,
+                    journal_paint_hidden: false,
+                },
+            )
+        });
+        let proof = buf.take_journal_proof();
+        assert!(
+            !(raced.interleaved && (raced.accepted || proof.is_some())),
+            "a retired head's journal proof was published after its slot reattached \
+             (accepted={}, queued={})",
+            raced.accepted,
+            proof.is_some()
+        );
+        assert!(raced.accepted, "published while its head was attached");
+        assert_eq!(proof.map(|proof| proof.generation), Some(1));
+        assert!(buf.take_journal_proof().is_none());
+    }
+
+    /// Release micro-bench of the work T4.2 adds around a CPU head's paint
+    /// (not a gate): the head dispatch inside the raster timer, the
+    /// identity-checked publish against the pre-T4.2 unchecked store, and
+    /// one render-pump call with 16 attached CPU heads (the M3 consumer
+    /// pumps every 16 ms; a CPU head never touches the service per paint).
+    #[test]
+    #[ignore = "bench: cargo test -p host --release --lib cpu_head_paint_path_added_work -- --ignored --nocapture"]
+    fn cpu_head_paint_path_added_work() {
+        use client::render::backend::BackendKind;
+        use std::hint::black_box;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Mutex;
+
+        const ROUNDS: usize = 5;
+        const ITERS: u32 = 2_000_000;
+        fn per_iter(mut body: impl FnMut()) -> f64 {
+            let mut best = f64::MAX;
+            for _ in 0..ROUNDS {
+                let start = Instant::now();
+                for _ in 0..ITERS {
+                    body();
+                }
+                best = best.min(start.elapsed().as_nanos() as f64 / f64::from(ITERS));
+            }
+            best
+        }
+
+        // Inside the raster timer: `slot.head` is checked and `Head::paint`
+        // asks the backend kind before the unchanged `mainredraw`.
+        let renderer = client::render::Renderer::new_prefer(true, false);
+        let head_slot = Some(&renderer);
+        let dispatch = per_iter(|| {
+            let head = black_box(head_slot);
+            black_box(head.is_none());
+            black_box(head.is_some_and(|renderer| renderer.backend_kind() != BackendKind::Gpu));
+        });
+
+        // Publication of one full-applet CPU frame and the consumer's take,
+        // reusing the frame so no allocation is timed: T4.2 `publish`
+        // against the pre-T4.2 `store` shape (lock, store, unlock, bump).
+        struct Unchecked {
+            frame: Mutex<Option<FrameOutput>>,
+            gen: AtomicU64,
+        }
+        let old = Unchecked {
+            frame: Mutex::new(None),
+            gen: AtomicU64::new(0),
+        };
+        let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
+        let unchecked = per_iter(|| {
+            *old.frame.lock().unwrap() = spare.take();
+            old.gen.fetch_add(1, Ordering::Relaxed);
+            spare = black_box(old.frame.lock().unwrap().take());
+        });
+        let buf = FrameBuf::new();
+        let head = head_identity(12);
+        buf.attach_head(head);
+        let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
+        let checked = per_iter(|| {
+            black_box(buf.publish(head, spare.take().unwrap()));
+            spare = black_box(buf.take());
+        });
+
+        // One pump call with 16 attached CPU heads and no reservations.
+        let service = RenderService::new(Duration::from_millis(100)).unwrap();
+        let pump = service.register_pump().unwrap();
+        let heads: Vec<_> = (0..16)
+            .map(|slot| {
+                service
+                    .attach(
+                        &pump,
+                        SlotKey::from_incarnation(100 + slot).unwrap(),
+                        Arc::new(Silent),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let pumped = per_iter(|| {
+            black_box(service.pump(&pump, Instant::now()).unwrap());
+        });
+        drop(heads);
+
+        // M3 cpu-n16-full: 16 heads at about 50 paints/s, one pump per 16 ms.
+        let pump_per_paint = pumped * (1000.0 / 16.0) / (16.0 * 50.0);
+        let added = dispatch + (checked - unchecked) + pump_per_paint;
+        println!("cpu head paint path, best of {ROUNDS} x {ITERS} iterations, ns:");
+        println!("  head dispatch (is_none + backend_kind)       {dispatch:8.2}");
+        println!("  publish+take, pre-T4.2 unchecked store shape {unchecked:8.2}");
+        println!("  publish+take, T4.2 identity-checked          {checked:8.2}");
+        println!(
+            "  identity check (difference)                  {:8.2}",
+            checked - unchecked
+        );
+        println!("  render pump call, 16 CPU heads               {pumped:8.2}");
+        println!("  pump share per paint at cpu-n16-full rates   {pump_per_paint:8.2}");
+        println!("  added per paint, total                       {added:8.2}");
     }
 
     #[cfg(feature = "journal-paint-proof")]
@@ -932,6 +1358,8 @@ mod tests {
         ];
         // All paints precede the consumer: the ordinary latest-only mailbox
         // would discard the owned paint and conflate its state with release.
+        let head = head_identity(2);
+        buf.attach_head(head);
         for (pixel, stamp) in witnesses {
             let frame = FrameOutput::PixMap(PixMap {
                 width: 1,
@@ -939,9 +1367,9 @@ mod tests {
                 pixels: vec![pixel],
             });
             if let Some(stamp) = stamp {
-                buf.store_journal_paint(frame, stamp);
+                assert!(buf.publish_journal_paint(head, frame, stamp));
             } else {
-                buf.store(frame);
+                assert!(buf.publish(head, frame));
             }
         }
         for (index, (pixel, stamp)) in witnesses.into_iter().enumerate() {
@@ -961,7 +1389,7 @@ mod tests {
         let mut pix = vec![0i32; (client::client::APPLET_W * client::client::APPLET_H) as usize];
         pix[0] = 0x00aa_bbcc;
         pix[1] = 0x0011_2233;
-        buf.store(applet_pixmap(pix));
+        store(&buf, applet_pixmap(pix));
         let out = buf.snapshot();
         assert_eq!(
             out.len(),
@@ -981,11 +1409,14 @@ mod tests {
     #[test]
     fn snapshot_of_wrong_shape_pixmap_is_empty() {
         let buf = FrameBuf::new();
-        buf.store(FrameOutput::PixMap(PixMap {
-            width: 2,
-            height: 2,
-            pixels: vec![1, 2, 3],
-        }));
+        store(
+            &buf,
+            FrameOutput::PixMap(PixMap {
+                width: 2,
+                height: 2,
+                pixels: vec![1, 2, 3],
+            }),
+        );
         assert!(buf.snapshot().is_empty());
         // The frame is still stored and the generation bumped; only the
         // CPU packing is shape-gated.
@@ -999,7 +1430,7 @@ mod tests {
         // Here the mailbox contract: a stored frame of any variant is taken
         // out whole, and `snapshot` (the CPU packing view) never sees it.
         let buf = FrameBuf::new();
-        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        store(&buf, applet_pixmap(vec![0i32; 765 * 503]));
         assert!(!buf.snapshot().is_empty());
         let frame = buf.take();
         assert!(matches!(frame, Some(FrameOutput::PixMap(_))));
@@ -1017,7 +1448,7 @@ mod tests {
         let buf = FrameBuf::new();
         assert!(buf.take().is_none());
         assert_eq!(buf.generation(), 0);
-        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        store(&buf, applet_pixmap(vec![0i32; 765 * 503]));
         assert!(buf.take().is_some());
         assert!(buf.take().is_none());
         assert_eq!(buf.generation(), 1);
@@ -1027,9 +1458,9 @@ mod tests {
     fn store_bumps_generation() {
         let buf = FrameBuf::new();
         assert_eq!(buf.generation(), 0);
-        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        store(&buf, applet_pixmap(vec![0i32; 765 * 503]));
         assert_eq!(buf.generation(), 1);
-        buf.store(applet_pixmap(vec![1i32; 765 * 503]));
+        store(&buf, applet_pixmap(vec![1i32; 765 * 503]));
         assert_eq!(buf.generation(), 2);
     }
 
@@ -1060,7 +1491,7 @@ mod tests {
         );
         stamp_thread_pixel_roi(first.clone());
         let buf = FrameBuf::new();
-        buf.store(applet_pixmap(vec![0i32; 765 * 503]));
+        store(&buf, applet_pixmap(vec![0i32; 765 * 503]));
         let later = PixelRoiMeta::produced(
             9,
             PixelRoiCam {
@@ -1120,10 +1551,10 @@ mod tests {
         }
         let buf = FrameBuf::new();
         stamp_thread_pixel_roi(tagged(4, 10));
-        buf.store(pix(0x00aa));
+        store(&buf, pix(0x00aa));
         let frame_a = buf.take().expect("frame A");
         stamp_thread_pixel_roi(tagged(9, 99));
-        buf.store(pix(0x00bb));
+        store(&buf, pix(0x00bb));
         let roi = buf.take_pixel_roi().expect("roi taken with frame A");
         match frame_a {
             FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00aa, "took frame A pixels"),
@@ -1187,7 +1618,7 @@ mod tests {
                     stamp_thread_pixel_roi(tagged(n));
                     let mut pixels = vec![0i32; 765 * 503];
                     pixels[0] = n as i32;
-                    buf.store(applet_pixmap(pixels));
+                    store(&buf, applet_pixmap(pixels));
                     n = n.wrapping_add(1);
                     if n == 0 {
                         n = 1;

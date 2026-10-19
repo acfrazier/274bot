@@ -1565,7 +1565,9 @@ impl Scenario {
                 deadline: PREP_DEADLINE,
                 start_script: None,
                 terminal_shot: Some(PREREQ_SHOT),
-                nav: scenario::ScenarioNav::default().with_tick_ms(600),
+                // External-loader cells run at the engine's default tick and
+                // request no world-wide `::speed` change.
+                nav: scenario::ScenarioNav::default(),
                 ..Default::default()
             },
         }))

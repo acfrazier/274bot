@@ -12,6 +12,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Scripts
 
+- Bank opening, selection, deposits, withdrawals, note mode and close operations
+  now run in the native request seat. Compatibility callbacks keep their
+  existing call order, return handling and thrown values. Bank snapshot reads
+  and local bank calculations are owned by Rust.
+  Paused bank walks revalidate their saved destination on Resume without
+  repeating bank callbacks or extending the operation's active-time limit.
+  The v2 BoneBurier example uses `Bank.withdrawLoad`. The public v2
+  `withdraw-load` request and its snapshot result fields remain supported
+  through the same native operation, with the caller's bank generation.
+  Bank-opening log text is shortened at a UTF-8 boundary to fit the prompt
+  byte limit, without changing the operation's result.
 - Scripts no longer have WebCrypto (`crypto.subtle`, `Crypto`, `CryptoKey`,
   `SubtleCrypto`) or the `URL`, `URLSearchParams` and `URLPattern` globals.
   `crypto.randomUUID()` and `crypto.getRandomValues()` still work.
@@ -311,6 +322,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Panel and TUI now share `frontend-core` live scenario preparation, runner
   state and proof gates; screenshot capture and TUI proof output remain
   surface-specific.
+- Render-all draws up to 128 clients at once. A client past that shows
+  "renderer refused: render head cap of 128 is full" in its own tile.
 
 ### TUI
 
@@ -353,6 +366,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Fixed during development
 
+#### Scripts
+
+- A v2 `withdraw-load` request now completes with `false` if a later bank
+  operation replaces it, its start fails, or a session boundary cancels it.
+  Its result sequence stays unchanged across session boundaries without
+  pending work and resets only for a fresh script runtime.
+
 #### Navigation
 
 - Planning a bank trip for route supplies is fast again from places such as
@@ -390,6 +410,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - Route searches avoid repeated comparisons when they select the next tile.
   They skip finished reachability proofs and unnecessary zone-check futures.
   Routes, search budgets and cancellation checks stay unchanged.
+
+#### Live scenarios
+
+- Live script scenarios no longer send a world-wide `::speed 600` command by
+  default. A scenario sends `::speed` only when it explicitly asks for a
+  tick, such as `QUESTER_TICK_MS=300` on Engine Q. Every request is sent and
+  then confirmed by a system-chat line newer than that send; a matching
+  confirmation already in the ring neither suppresses nor satisfies it.
+  Scenario pass criteria are unchanged.
 
 #### Maps
 
@@ -459,6 +488,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   needs an operator commit in `274bot-arch` (`policy.toml` plus a
   regenerated `graph-provenance.json`, operator publishes first); propose
   it as a patch or branch bundle for the operator to push.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`),
+  pack purging at a bank (`purgePackAtBank`) and coin withdrawal
+  (`withdrawCoins`) are **Planned**, not included here. These calls still
+  report `not impl`; moving existing banking into the native seat does not
+  implement them.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 

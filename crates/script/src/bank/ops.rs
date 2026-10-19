@@ -1,6 +1,6 @@
 //! The one bank transfer kernel. Compiled cards ([`crate::native_bank`]),
-//! the compatibility families ([`crate::bank_op`]) and the host dispatch
-//! paths for their requests all decide through here.
+//! native bank seats, and the host dispatch paths for their requests all
+//! decide through here.
 //!
 //! The kernel is stateless and copies nothing. Callers pass the rows they
 //! already hold through [`BankRow`]: native `ItemView` and isolate `ItemRow`
@@ -1017,8 +1017,8 @@ pub fn withdraw_count_op_in(actions: &[Option<String>], count: i32) -> Option<i3
         .map(|index| index as i32 + 1)
 }
 
-/// The host fill policy (BankBudget's bounded fill and the legacy
-/// `withdraw-load` dispatch): an exact `Withdraw {count}` label, then
+/// The compiled host fill policy (BankBudget's bounded fill): an exact
+/// `Withdraw {count}` label, then
 /// All only when the fill consumes the current stock, then the
 /// Withdraw-X continuation. The boolean is "needs the amount dialog".
 /// Distinct from [`load_click`], the compat `withdrawLoad` policy.

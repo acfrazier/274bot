@@ -83,20 +83,6 @@ pub enum InteractReq {
         #[serde(default)]
         cross: Vec<String>,
     },
-    /// Read-only, bounded native bank selection; never arms movement.
-    #[serde(rename = "select-bank")]
-    SelectBank {
-        x: i32,
-        z: i32,
-        level: i32,
-        #[serde(default)]
-        allow_wilderness: bool,
-        #[serde(default)]
-        use_mage_bank: bool,
-        #[serde(default)]
-        use_zanaris_bank: bool,
-        request_id: u64,
-    },
     /// Select the nearest packed booth stand in Rust and route to that exact stand.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
@@ -163,8 +149,8 @@ pub enum InteractReq {
         action: String,
         bank_generation: u64,
     },
-    /// Fill free inventory slots from one fresh bank row. Rust selects
-    /// Withdraw-All or the shared Withdraw-X continuation and observes settlement.
+    /// Fill free inventory slots through the native bank seat. The caller's
+    /// bank session generation fences admission and every later poll.
     #[serde(rename = "withdraw-load")]
     WithdrawLoad { name: String, bank_generation: u64 },
     /// Interact with a held inventory item by label. When `target_item_id` is

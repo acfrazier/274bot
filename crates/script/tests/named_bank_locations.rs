@@ -1,14 +1,21 @@
 //! Catalog ranking uses captured account facts, not scene-booth proximity.
 
 use std::sync::Arc;
+#[path = "common/bank_slot.rs"]
+mod bank_slot;
+use bank_slot::BankSlot;
 
 use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
+use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use nav::named_banks::resolve;
+use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use script::isolate_fb::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
 };
-use script::{LoadIsolate, LoadShape};
+use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
+use script::shim::InteractReq;
+use script::LoadShape;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
@@ -32,8 +39,6 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
-        withdraw_load_result_seq: 0,
-        withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
         hold: false,
@@ -92,15 +97,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
-fn spawn(src: &str, facts: NamedBankFacts) -> LoadIsolate {
-    LoadIsolate::spawn_with_content(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        None,
-        Arc::new(facts),
-    )
-    .unwrap()
+fn spawn(src: &str, facts: NamedBankFacts) -> BankSlot {
+    BankSlot::new(src, LoadShape::CompatClass, None, Arc::new(facts))
 }
 
 const PROBE: &str = r#"
@@ -118,7 +116,7 @@ fn catalog() -> NamedBankFacts {
     })
 }
 
-fn post(iso: &LoadIsolate, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
+fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
     let stats = [StatInput {
         index: 10,
         name: "Fishing",
@@ -128,20 +126,20 @@ fn post(iso: &LoadIsolate, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
     }];
     let mut snapshot = base_snapshot();
     snapshot.stats = &stats;
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+    iso.post_snapshot(
         &snapshot,
         NativeFactsInput {
             quest_statuses: Some(quests),
             ..Default::default()
         },
-    ));
+    );
     iso.probe("true").unwrap();
 }
 
 #[test]
 fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
-    let iso = spawn(PROBE, catalog());
-    post(&iso, 67, &[]);
+    let mut iso = spawn(PROBE, catalog());
+    post(&mut iso, 67, &[]);
     assert_eq!(
         iso.probe("ranked(2586,3420).includes('Fishing Guild')")
             .unwrap(),
@@ -165,38 +163,39 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
             component_id: None,
         },
     ];
-    post(&iso, 68, &quests);
+    post(&mut iso, 68, &quests);
     assert_eq!(iso.probe("pick(2586,3420)").unwrap(), "Fishing Guild");
     assert_eq!(iso.probe("pick(2852,2954)").unwrap(), "Shilo Village");
     assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
-    iso.post_settings_bag(
+    iso.slot.post_settings_bag(
         serde_json::json!({"useZanarisBank":true})
             .as_object()
             .unwrap(),
     );
     assert_eq!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
-    post(&iso, 68, &[]);
+    post(&mut iso, 68, &[]);
     assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
-    iso.join();
+    iso.stop();
 }
 
 #[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
-    let iso = spawn(PROBE, catalog());
-    post(&iso, 1, &[]);
+    let mut iso = spawn(PROBE, catalog());
+    post(&mut iso, 1, &[]);
     assert_ne!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
     assert_eq!(
         iso.probe("custom(3091,3958,'Mage Arena')").unwrap(),
         "Mage Arena"
     );
-    iso.post_settings_bag(serde_json::json!({"useMageBank":true}).as_object().unwrap());
+    iso.slot
+        .post_settings_bag(serde_json::json!({"useMageBank":true}).as_object().unwrap());
     assert_eq!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
-    iso.join();
+    iso.stop();
 }
 
 #[test]
 fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
-    let a = spawn(
+    let mut a = spawn(
         PROBE,
         NamedBankFacts::from_banks(vec![
             NamedBank::new(
@@ -217,7 +216,7 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
             ),
         ]),
     );
-    let b = spawn(
+    let mut b = spawn(
         PROBE,
         NamedBankFacts::from_banks(vec![NamedBank::new(
             "Other world",
@@ -228,22 +227,23 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
             },
         )]),
     );
+    post(&mut a, 1, &[]);
+    post(&mut b, 1, &[]);
     assert_eq!(a.probe("pick(10,10)").unwrap(), "Upstairs");
     assert_eq!(
         a.probe("ranked(10,10)").unwrap(),
         serde_json::json!(["Upstairs", "Ground"])
     );
     assert_eq!(b.probe("pick(10,10)").unwrap(), "Other world");
-    a.join();
-    b.join();
+    a.stop();
+    b.stop();
 }
 
-/// The selected identity controls opening, not a later nearest-booth snapshot.
-/// A selection (including an air fallback) is not a successful bank session.
+/// A selected identity controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
-    use script::isolate_fb::{BankSelectionInput, SceneEntityInput};
-    use script::shim::InteractReq;
+    use script::isolate_fb::{ChatOptionInput, ItemRowInput, SceneEntityInput};
+
     for (call, after) in [
         ("Banking.open()", 0),
         ("Bank.openNearestWorld()", 0),
@@ -271,51 +271,119 @@ export default class T extends LoopingBot {{
             .iter()
             .position(|bank| bank.name == "Shilo Village")
             .unwrap();
-        let stand = facts.banks()[index].tile;
-        let iso = spawn(&source, facts);
+        let index_u16 = u16::try_from(index).unwrap();
+        let bank = facts.banks()[index];
+        let stand = bank.tile;
+        let teller = WorldTile {
+            x: stand.x + 1,
+            z: stand.z,
+            level: stand.level,
+        };
+        let mut slot = spawn(&source, facts);
         let quests = [QuestStatusInput {
             name: "Shilo Village",
             status: "complete",
             component_id: None,
         }];
+        let stats = [StatInput {
+            index: 10,
+            name: "Fishing",
+            xp: 0,
+            base: 68,
+            effective: 68,
+        }];
         let mut snapshot = base_snapshot();
+        snapshot.stats = &stats;
         let mut native = NativeFactsInput {
             quest_statuses: Some(&quests),
             ..Default::default()
         };
-        let tick = |snapshot: &SnapshotInput<'_>, native: NativeFactsInput<'_>| {
-            iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-                snapshot, native,
-            ));
-            iso.on_game_tick(snapshot.tick);
-            iso.probe("true").unwrap();
+
+        slot.tick_from_input(1, &snapshot, native);
+        let mut actions = slot.take_actions();
+        assert_eq!(actions.len(), 1, "{call}: expected native bank pick");
+        let pick = actions.pop().unwrap();
+        let HostEffect::BankPick(request) = &pick.effect else {
+            panic!("{call}: expected native bank pick");
         };
-        tick(&snapshot, native);
-        let requests = iso.drain_interacts();
-        let [InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
-            panic!("{call}: expected an off-scene bank selection, got {requests:?}");
-        };
-        snapshot.tick = 2;
-        native.bank_selection = BankSelectionInput {
-            request_id: request_id + 1,
-            generation: 1,
-            bank_index: index as i32,
-            kind: 2,
-        };
-        tick(&snapshot, native);
         assert!(
-            iso.drain_interacts().is_empty(),
-            "a stale identity must not start a walk"
+            request.eligible.contains(&index_u16),
+            "{call}: Shilo must be eligible from native quest and level facts"
+        );
+        let authority = pick.authority();
+        let request_id = pick.request_id.get();
+        let selected = SelectedBank {
+            bank_index: index_u16,
+            access_tile: stand,
+            kind: PickKind::Reachable,
+            access: Some(Arc::new(BankStandAccess {
+                bank,
+                stand_tile: teller,
+                kind: AccessKind::Teller,
+                stand_op: 0,
+                name: Some(Arc::from("Banker")),
+                choose: None,
+            })),
+        };
+        slot.slot.complete_native_bank_pick(
+            &authority,
+            BankPickReceipt {
+                request_id: request_id + 1,
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                selected: selected.clone(),
+            },
+        );
+        snapshot.tick = 2;
+        slot.tick_from_input(2, &snapshot, native);
+        assert!(
+            slot.take_actions().is_empty(),
+            "{call}: a stale native selection must not start a walk"
+        );
+
+        slot.slot.complete_native_bank_pick(
+            &authority,
+            BankPickReceipt {
+                request_id,
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                selected,
+            },
         );
         snapshot.tick = 3;
-        native.bank_selection.request_id = *request_id;
-        native.bank_selection.kind = if after == 1 { 3 } else { 2 };
-        tick(&snapshot, native);
-        assert!(
-            matches!(iso.drain_interacts().as_slice(), [InteractReq::WalkNear { x, z, radius: 4, .. }]
-            if (*x, *z) == (stand.x, stand.z)),
-            "{call} must approach the selected stand"
+        slot.tick_from_input(3, &snapshot, native);
+        let mut actions = slot.take_actions();
+        assert_eq!(actions.len(), 1, "{call}: expected walk to selected access");
+        let walk = actions.pop().unwrap();
+        let HostEffect::Walk(request) = &walk.effect else {
+            panic!("{call}: expected native walk");
+        };
+        assert_eq!((request.target, request.radius), (stand, 4));
+        let walk_authority = walk.authority();
+        slot.slot.complete_native_walk(
+            &walk_authority,
+            WalkReceipt {
+                request_id: walk.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: walk_authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+                end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
+                refusal: None,
+                assessment: None,
+                escape: None,
+            },
         );
+
         snapshot.tick = 4;
         snapshot.here = Some(TileInput {
             x: stand.x,
@@ -343,9 +411,9 @@ export default class T extends LoopingBot {{
             index: 42,
             id: 499,
             name: Some("Banker"),
-            x: stand.x + 1,
-            z: stand.z,
-            level: stand.level,
+            x: teller.x,
+            z: teller.z,
+            level: teller.level,
             distance: 1,
             health: 1,
             max_health: 1,
@@ -358,52 +426,75 @@ export default class T extends LoopingBot {{
             target_kind: 0,
             target_index: -1,
             size: 1,
-            nx: stand.x + 1,
-            nz: stand.z,
+            nx: teller.x,
+            nz: teller.z,
             shape: 0,
             angle: 0,
         }];
         snapshot.npcs = &npcs;
-        tick(&snapshot, native);
-        assert_eq!(
-            iso.drain_interacts(),
-            vec![InteractReq::Npc {
-                name: "Banker".into(),
-                action: "Bank".into(),
-                index: Some(42),
-            }],
-            "{call}: NPC access must not wait for a booth or require a dialogue choice"
+        slot.tick_from_input(4, &snapshot, native);
+        let mut actions = slot.take_actions();
+        assert_eq!(actions.len(), 1, "{call}: expected teller interaction");
+        let interaction = actions.pop().unwrap();
+        assert!(
+            matches!(
+                &interaction.effect,
+                HostEffect::Interaction(InteractReq::Npc { name, action, index })
+                    if name == "Banker" && action == "Bank" && *index == Some(42)
+            ),
+            "{call}: NPC access must not wait for a booth"
         );
+        let interaction_authority = interaction.authority();
+        slot.slot.complete_native_interaction(
+            &interaction_authority,
+            InteractionReceipt {
+                request_id: interaction.request_id.get(),
+                evidence: EvidenceStamp {
+                    run: interaction_authority.run(),
+                    tick: 4,
+                    sequence: 4,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+
         snapshot.tick = 5;
-        let choices = [script::isolate_fb::ChatOptionInput {
+        let choices = [ChatOptionInput {
             text: "Tell me about this village.",
             com_id: 2493,
         }];
         snapshot.chat_open = true;
         snapshot.chat_options = &choices;
-        tick(&snapshot, native);
+        slot.tick_from_input(5, &snapshot, native);
         assert!(
-            iso.drain_interacts().is_empty(),
+            slot.take_actions().is_empty(),
             "absent npcAccess.choose must not select an unrelated first option"
         );
         assert_eq!(
-            iso.probe("[__ok,__after]").unwrap(),
+            slot.probe("[__ok,__after]").unwrap(),
             serde_json::json!([null, 0])
         );
+
         snapshot.tick = 6;
         snapshot.chat_open = false;
         snapshot.chat_options = &[];
         snapshot.bank_open = true;
         snapshot.bank_generation = 1;
-        // The host raises the bank-side root with the bank modal.
         native.side_modal_id = Some(700);
-        tick(&snapshot, native);
+        native.bank_snapshot_generation = Some(0);
+        slot.tick_from_input(6, &snapshot, native);
+        assert!(
+            slot.take_actions().is_empty(),
+            "{call}: open bank is not loaded yet"
+        );
         assert_eq!(
-            iso.probe("[__ok,__after]").unwrap(),
+            slot.probe("[__ok,__after]").unwrap(),
             serde_json::json!([null, 0])
         );
+
         snapshot.bank_loaded = true;
-        let side = [script::isolate_fb::ItemRowInput {
+        let side = [ItemRowInput {
             name: Some("Coins"),
             count: 1,
             id: 995,
@@ -414,15 +505,20 @@ export default class T extends LoopingBot {{
             slot: 0,
         }];
         snapshot.bank_side = &side;
-        for n in 7..=9 {
-            snapshot.tick = n;
-            tick(&snapshot, native);
+        native.bank_snapshot_generation = Some(1);
+        for tick in 7..=9 {
+            snapshot.tick = tick;
+            slot.tick_from_input(tick, &snapshot, native);
+            assert!(
+                slot.take_actions().is_empty(),
+                "{call}: empty held inventory must not create a transfer action"
+            );
         }
         assert_eq!(
-            iso.probe("[__ok,__after]").unwrap(),
+            slot.probe("[__ok,__after]").unwrap(),
             serde_json::json!([true, after]),
             "{call}"
         );
-        iso.join();
+        slot.stop();
     }
 }

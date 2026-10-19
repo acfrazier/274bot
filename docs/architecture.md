@@ -299,9 +299,10 @@ unchanged manifest; compression does not change selected-content identities.
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | slot pump and crate facade | one OS thread per slot |
-| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; inactive until T4.2 |
+| `render.rs` | neutral render reservation protocol (D12, §23 §2) | metadata only; no render thread; one process instance, owned by `render_head.rs` |
+| `render_head.rs` | per-slot render heads over the process `RenderService` (T4.2 wrap) | `HeadLease` per drawing slot; GPU scene submissions under a `FrameLease` through the client's scene-workspace hook, CPU heads take none; the client's `GPU_SCENE_LOCK` wait is retained until T4.4 |
 | `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
-| `slot_io.rs` | frame and input channels | mailbox, input, park and wake |
+| `slot_io.rs` | frame and input channels | mailbox (accepts only its attached head's frames), input, park and wake |
 | `login_queue.rs` | login FIFO and backoff | production rate limits |
 | `auto_run.rs` | auto-run toggle | run-energy threshold |
 | `performance_profile.rs` | per-slot host work timers | opt-in, `performance-profile` feature |
@@ -510,6 +511,7 @@ the operator's consent and adopts the tiles already verified).
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
 | `slot/combat.rs` | API-owned combat seat; one `api.combat.fight` session per slot | mirrors the gather seat; Pause, reconnect and manual movement cancel at any point |
+| `slot/bank.rs`, `bank/seat_open.rs`, `bank/seat_transfer.rs` | native bank seat, opening and transfer continuations | shared `bank/ops.rs` and `bank/npc.rs` kernels; hooks use seat prompts, not a second isolate behavior |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
@@ -525,7 +527,7 @@ the operator's consent and adopts the tiles already verified).
 | `channel.rs` | bounded structured-clone subset for the BroadcastChannel broker | bytes over the FlatBuffer wire |
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
-| `bank_access.rs`, `bank_deposit.rs`, `bank_op.rs`, `bank_open.rs`, `bank_withdraw.rs`, `bank_select.rs`, `banking_open.rs` | bank open, op, deposit, withdraw and select steps | machine families, shared pieces |
+| `bank/request.rs`, `bank/compat.rs`, `bank_select.rs`, `bank_withdraw.rs` | typed bank arguments, local calculations, catalog materialization and thieving bank sequencing | bank actions use the native seat; no isolate-owned bank transfer, access or selection loop |
 | `bank_hints.rs` | persisted last-seen bank hint | one schema-1 file per account; planning before any bank opens in a new process |
 | `clue.rs`, `clue/isolate.rs` | native recovery declaration; load-only clue session machine | isolate token, clock, identify, verbs stay private to the crate |
 | `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
@@ -571,6 +573,11 @@ the operator's consent and adopts the tiles already verified).
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
 | `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
 | `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
+
+Native bank booth approach borrows the current scene and the host's cached
+exact reach plane. The snapshot query shares the existing footprint,
+force-approach, directional-wall and stand-ranking rules. It does not copy
+the scene, build a second flood, or allocate a temporary stand vector.
 
 The crate root holds the data the modules embed: `paths/289/` (the built-in
 Quester Path documents) with `paths/path.schema.json`, `schema/isolate.fbs`
@@ -702,7 +709,7 @@ retained by a consumer.
 | `shot.rs` | window shot files | shared naming for both runners |
 | `catalog.rs` | scenario catalog | names and lookup |
 | `quester.rs` | Path-backed Quester qualification fixtures | `QuesterStage`, `FIXTURE_PROFILES`, miniquest and role stages; never product gameplay |
-| `quest_fast.rs` | shared world tick-speed send and fresh confirmation | one `::speed` command with its chat sequence; Engine Q only |
+| `quest_fast.rs` | shared world tick-speed request and fresh confirmation | one `::speed` command with its chat sequence, sent only for an explicitly requested change; Engine Q only |
 | `tutorial.rs` | post-relog tutorial reseed for fresh live accounts | fresh same-session `tutorial 1000` confirm before the cell continues |
 | `render_betty_views.rs` | fixed-orbit render captures | station times yaw and pitch |
 | `scenarios/mod.rs` | scenario facade | re-exports families |

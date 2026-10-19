@@ -40,6 +40,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use host::render_head;
 use host::{FrameBuf, SlotInput};
 use host_play::{
     current_resident_bytes, mint_live_names, run_with_template, sample_process, Play,
@@ -128,7 +129,7 @@ impl Publication {
 ///
 /// The host publishes a slot's cumulative raster time at most once a second
 /// (`SlotLoop::publish_profile`), inside the slot frame: after that frame's
-/// paint and before its `FrameBuf::store`. The per-frame hook runs in the
+/// paint and before its head's `FrameBuf::publish`. The per-frame hook runs in the
 /// next slot frame's observe, before that frame's paint, and on every slot
 /// frame. So when the hook first sees a new published total, the mailbox
 /// generation is exactly the number of paints that total covers. Both
@@ -294,6 +295,7 @@ struct Mark {
     frames: Vec<u64>,
     histograms: Vec<Vec<u64>>,
     taken: u64,
+    workspace: render_head::WorkspaceStats,
 }
 
 fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
@@ -308,6 +310,7 @@ fn mark(heads: &[HeadProbe], taken: &AtomicU64) -> Mark {
             .collect(),
         histograms: heads.iter().map(|h| h.frames.histogram()).collect(),
         taken: taken.load(Relaxed),
+        workspace: render_head::workspace_stats(),
     }
 }
 
@@ -410,6 +413,12 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
         })
         .collect();
     let gpu = client::profiling::gpu_bytes();
+    // GPU scene submissions leased from the one scene workspace in this
+    // interval, and how long those that found it held waited for their
+    // grant (the wrap's retained wait). The max is the process lifetime's.
+    let (ws_from, ws_to) = (from.workspace, to.workspace);
+    let waited = ws_to.waited() - ws_from.waited();
+    let wait = ws_to.wait() - ws_from.wait();
     json!({
         "observe_s": secs,
         "from_t_s": since_epoch(from.at),
@@ -419,6 +428,14 @@ fn summarize(heads: &[HeadProbe], focused: &[bool], from: &Mark, to: &Mark) -> V
         "gpu_tracked_mib": (gpu.buffers + gpu.textures) as f64 / 1048576.0,
         "gpu_peak_tracked_mib": gpu.peak as f64 / 1048576.0,
         "frames_taken_by_consumer": to.taken - from.taken,
+        "scene_workspace": {
+            "leased": ws_to.leased() - ws_from.leased(),
+            "waited": waited,
+            "wait_ms_total": wait.as_secs_f64() * 1e3,
+            "wait_us_mean": (waited > 0).then(|| wait.as_secs_f64() * 1e6 / waited as f64),
+            "max_wait_ms_process": ws_to.max_wait().as_secs_f64() * 1e3,
+            "unleased": ws_to.unleased() - ws_from.unleased(),
+        },
         "groups": groups,
         "heads": rows,
     })
@@ -570,7 +587,8 @@ fn live_m3_render_contention() {
         .expect("play")
     };
 
-    // The panel's frame consumer: take every mailbox at ~60 Hz.
+    // The panel's frame consumer: take every mailbox at ~60 Hz, and run the
+    // independent render pump on the same loop, as the panel window does.
     let stop = Arc::new(AtomicBool::new(false));
     let taken = Arc::new(AtomicU64::new(0));
     let consumer = {
@@ -583,6 +601,7 @@ fn live_m3_render_contention() {
                         taken.fetch_add(1, Relaxed);
                     }
                 }
+                render_head::pump(Instant::now());
                 thread::sleep(CONSUMER_PERIOD);
             }
         })
@@ -668,6 +687,15 @@ fn live_m3_render_contention() {
         assert_eq!(ingame, n, "{cell}: every head stayed in game");
     }
 
+    // T4.2: live head detach and reattach on the logged-in sessions.
+    let reattach = live_reattach(&play, &heads, &draw, warmup);
+    std::fs::write(
+        out.join(format!("{backend}-n{n}-reattach.json")),
+        serde_json::to_string_pretty(&reattach).unwrap(),
+    )
+    .unwrap();
+    eprintln!("m3 {backend}-n{n}-reattach: {reattach}");
+
     for head in &heads {
         if let Some(arm) = play.arm(&head.name) {
             arm.request_logout();
@@ -679,4 +707,113 @@ fn live_m3_render_contention() {
     }
     stop.store(true, Relaxed);
     consumer.join().unwrap();
+}
+
+/// Live head detach and reattach (T4.2, ADR 0001). Draw off retires every
+/// head: its mailbox stops accepting frames and nothing paints. Draw on
+/// attaches a new generation of the same slot over the same connection and
+/// login: the stream epoch is unchanged and its byte counters keep growing.
+fn live_reattach(play: &Play, heads: &[HeadProbe], draw: &AtomicBool, settle: Duration) -> Value {
+    let session = |name: &str| {
+        play.statuses()
+            .into_iter()
+            .find(|status| status.username == name)
+            .expect("a status row per head")
+    };
+    let before: Vec<_> = heads
+        .iter()
+        .map(|head| {
+            let status = session(&head.name);
+            let attached = head.mailbox.head().expect("a drawing slot has a head");
+            (attached, status)
+        })
+        .collect();
+
+    draw.store(false, Relaxed);
+    thread::sleep(settle);
+    let detached: Vec<bool> = heads.iter().map(|h| h.mailbox.head().is_none()).collect();
+    let paints_off: Vec<u64> = heads.iter().map(|h| h.mailbox.generation()).collect();
+    thread::sleep(Duration::from_secs(2));
+    let painted_while_off: Vec<u64> = heads
+        .iter()
+        .zip(&paints_off)
+        .map(|(h, &paints)| h.mailbox.generation() - paints)
+        .collect();
+
+    draw.store(true, Relaxed);
+    let reattach_from = Instant::now();
+    let deadline = reattach_from + Duration::from_secs(30);
+    while heads
+        .iter()
+        .zip(&paints_off)
+        .any(|(h, &paints)| h.mailbox.generation() <= paints)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "every head paints again after reattach"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    let repainted_after_s = reattach_from.elapsed().as_secs_f64();
+    thread::sleep(Duration::from_secs(1));
+
+    let mut rows = Vec::new();
+    for ((head, (first, status)), &detached) in heads.iter().zip(&before).zip(&detached) {
+        let now = session(&head.name);
+        let second = head.mailbox.head().expect("draw on reattaches a head");
+        let row = json!({
+            "head": head.name,
+            "slot": first.slot().incarnation().get(),
+            "generation_before": first.generation().get(),
+            "generation_after": second.generation().get(),
+            "detached": detached,
+            "same_slot": second.slot() == first.slot(),
+            "new_generation": second.generation() != first.generation(),
+            "stream_epoch_before": status.stream_epoch,
+            "stream_epoch_after": now.stream_epoch,
+            "same_login": now.login_started == status.login_started,
+            "bytes_in_before": status.bytes_in,
+            "bytes_in_after": now.bytes_in,
+            "ingame": now.ingame,
+            "scene_state": now.scene_state,
+        });
+        assert!(detached, "{}: draw off retires the head", head.name);
+        assert_eq!(second.slot(), first.slot(), "{}: same slot", head.name);
+        assert_ne!(
+            second.generation(),
+            first.generation(),
+            "{}: reattach is a new head generation",
+            head.name
+        );
+        assert_eq!(
+            now.stream_epoch, status.stream_epoch,
+            "{}: attach never reconnects (ADR 0001)",
+            head.name
+        );
+        assert_eq!(
+            now.login_started, status.login_started,
+            "{}: no new login",
+            head.name
+        );
+        assert!(
+            now.bytes_in >= status.bytes_in,
+            "{}: the same stream",
+            head.name
+        );
+        assert!(
+            now.ingame && now.scene_state == 2,
+            "{}: still in game",
+            head.name
+        );
+        rows.push(row);
+    }
+    assert!(
+        painted_while_off.iter().all(|&paints| paints == 0),
+        "no head paints while detached: {painted_while_off:?}"
+    );
+    json!({
+        "painted_while_detached": painted_while_off,
+        "repainted_after_s": repainted_after_s,
+        "heads": rows,
+    })
 }

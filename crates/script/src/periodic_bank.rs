@@ -1,39 +1,18 @@
-//! Rust-owned PeriodicBank and `Banking.bankNearest`.
+//! PeriodicBank task bookkeeping and its native bank child.
 //!
-//! - [`Run`] is one frozen `bankNearest`: share [`crate::banking_open`]'s
-//!   local/preset/reachable selection and object/NPC access continuation,
-//!   deposit through the caller's matcher ([`crate::bank_deposit`]), run
-//!   `afterDeposit`, wait a tick,
-//!   and walk back to `returnTo` (the bank left open, as frozen). It is the
-//!   `bank_nearest` [`crate::machine`] family, and the body of
-//!   `periodic_bank`.
-//! - `periodic_bank` is frozen `PeriodicBank.execute`: status, the caller's
-//!   destination/commonJunk/returnTo, one run, the bank clocks, the frozen
-//!   log line and the 3-tick pause after a failure.
-//! - The due check (`validate`) is one typed helper
-//!   (`load/bank_tasks_v8.rs`) over [`should_bank_now`], [`suppressed`] and
-//!   [`minutes_since_last_bank`]; the clocks freeze across Pause and
-//!   guardian hold.
-//!
-//! Scene facts come from the isolate scene; script callbacks go through the
-//! machine's callback path.
+//! The task owns its status callbacks and pause-aware schedule. Bank selection,
+//! access, deposit, afterDeposit, and return walking belong to the native seat.
 
-use crate::bank_deposit::{truthy, Deposit, Matcher};
-use crate::banking_open::{read_dest, read_tile, BankingOpen, Dest};
-use crate::load::reach_query::arrived;
-use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
+use crate::bank::compat::{read_destination, read_tile, truthy};
+use crate::bank::request::{BankSeatArgs, BankSeatDestination, BankSeatOperation};
+use crate::machine::{Begin, Call, Cx, Family, NativeBankChild, Reply, Step, Thrown};
 use crate::observed;
-use crate::shim::InteractReq;
 use api::snapshot::WorldTile as Tile;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-/// Frozen `walkResilient(returnTo, { timeoutMs: 120_000 })`.
-pub const RETURN_WALK_MS: u64 = 120_000;
 pub const FAILURE_BACKOFF_MS: u64 = 180_000;
-pub const RETURN_RADIUS: i32 = 6;
 /// Frozen `delayTicks(3)` after a failed run.
 const FAIL_TICKS: u64 = 3;
 
@@ -184,249 +163,24 @@ pub fn on_hold(held: bool) {
     });
 }
 
-/// What the run deposits.
-pub(crate) enum DepositPlan {
-    /// No deposit (the shim's falsy `deposit`).
-    None,
-    /// PeriodicBank without its required `deposit`: the run fails there.
-    Missing,
-    /// Everything (the shim's non-function `deposit`).
-    All,
-    /// `depositMatcher(hook, common)`.
-    Hook { hook: usize, common: bool },
-}
-
-enum RunPhase {
-    Open,
-    Deposit(Deposit),
-    AfterDeposit { asked: bool },
-    Settle(u64),
-    Return,
-    ReturnWalk(Tile),
-}
-
-/// One frozen `Banking.bankNearest`.
-pub(crate) struct Run {
-    open: BankingOpen,
-    return_to: Option<Tile>,
-    deposit: Option<DepositPlan>,
-    after_hook: Option<usize>,
-    phase: RunPhase,
-}
-
-/// One decision: keep deciding, wait for the next tick, or end the step.
-enum Next {
-    Decide,
-    Wait,
-    Out(Step<bool>),
+struct Run {
+    child: NativeBankChild,
+    missing_deposit: bool,
 }
 
 impl Run {
-    pub(crate) fn new(
-        dest: Option<Dest>,
-        return_to: Option<Tile>,
-        deposit: DepositPlan,
-        after_hook: Option<usize>,
-        log_hook: Option<usize>,
-    ) -> Self {
-        Self {
-            open: BankingOpen::for_destination(dest, log_hook),
-            return_to,
-            deposit: Some(deposit),
-            after_hook,
-            phase: RunPhase::Open,
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        match self.child.step(cx) {
+            Step::Done(value) => Step::Done(!self.missing_deposit && value == Value::Bool(true)),
+            Step::Wait => Step::Wait,
+            Step::Call(call) => Step::Call(call),
+            Step::Fail(thrown) => Step::Fail(thrown),
         }
-    }
-
-    pub(crate) fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        loop {
-            match self.decide(cx) {
-                Next::Decide => {}
-                Next::Wait => return Step::Wait,
-                Next::Out(step) => return step,
-            }
-        }
-    }
-
-    fn to(&mut self, phase: RunPhase) -> Next {
-        self.phase = phase;
-        Next::Decide
-    }
-
-    fn decide(&mut self, cx: &mut Cx<'_>) -> Next {
-        let phase = std::mem::replace(&mut self.phase, RunPhase::Return);
-        match phase {
-            RunPhase::Open => {
-                self.phase = RunPhase::Open;
-                match self.open.run(cx) {
-                    Step::Done(true) => self.deposit_phase(),
-                    Step::Done(false) => Next::Out(Step::Done(false)),
-                    other => Next::Out(other),
-                }
-            }
-            RunPhase::Deposit(mut deposit) => match deposit.step(cx) {
-                Step::Done(()) => self.to(RunPhase::AfterDeposit { asked: false }),
-                Step::Wait => {
-                    self.phase = RunPhase::Deposit(deposit);
-                    Next::Wait
-                }
-                Step::Call(call) => {
-                    self.phase = RunPhase::Deposit(deposit);
-                    Next::Out(Step::Call(call))
-                }
-                Step::Fail(thrown) => Next::Out(Step::Fail(thrown)),
-            },
-            RunPhase::AfterDeposit { asked } => {
-                if let Some(hook) = self.after_hook.filter(|hook| cx.has(*hook)) {
-                    if !asked {
-                        self.phase = RunPhase::AfterDeposit { asked: true };
-                        return Next::Out(Step::Call(Call {
-                            hook,
-                            args: Vec::new(),
-                        }));
-                    }
-                    if let Some(Reply::Threw(thrown)) = cx.reply() {
-                        return Next::Out(Step::Fail(thrown));
-                    }
-                }
-                // Frozen `await Execution.delayTicks(1)`.
-                self.to(RunPhase::Settle(posted_tick().saturating_add(1)))
-            }
-            RunPhase::Settle(due) => {
-                if posted_tick() < due {
-                    self.phase = RunPhase::Settle(due);
-                    return Next::Wait;
-                }
-                // Frozen never closes the bank: the walk back (if any) starts
-                // with it open.
-                self.to(RunPhase::Return)
-            }
-            RunPhase::Return => {
-                let Some(ret) = self.return_to else {
-                    return Next::Out(Step::Done(true));
-                };
-                if arrived(ret, RETURN_RADIUS) {
-                    return Next::Out(Step::Done(true));
-                }
-                cx.clock().arm(RETURN_WALK_MS);
-                cx.emit(walk_near(ret, RETURN_RADIUS));
-                self.phase = RunPhase::ReturnWalk(ret);
-                Next::Wait
-            }
-            RunPhase::ReturnWalk(ret) => {
-                // Frozen: the walk's own result does not fail the run.
-                if arrived(ret, RETURN_RADIUS) || cx.clock().bound_reached() {
-                    return Next::Out(Step::Done(true));
-                }
-                self.phase = RunPhase::ReturnWalk(ret);
-                Next::Wait
-            }
-        }
-    }
-
-    fn deposit_phase(&mut self) -> Next {
-        let matcher = match self.deposit.take() {
-            None | Some(DepositPlan::None) => {
-                return self.to(RunPhase::AfterDeposit { asked: false })
-            }
-            Some(DepositPlan::Missing) => return Next::Out(Step::Done(false)),
-            Some(DepositPlan::All) => Matcher::All,
-            Some(DepositPlan::Hook { hook, common }) => Matcher::Hook {
-                hook,
-                with_id: false,
-                common,
-            },
-        };
-        self.to(RunPhase::Deposit(Deposit::new(matcher, None)))
-    }
-}
-
-fn walk_near(tile: Tile, radius: i32) -> InteractReq {
-    InteractReq::WalkNear {
-        x: tile.x,
-        z: tile.z,
-        level: tile.level,
-        radius,
-        compat_tile_intent: false,
-        allow_teleports: false,
-        allow_wilderness: true,
-        allow_bank_fetch: true,
-        request_id: 0,
-        avoid: Vec::new(),
-        cross: Vec::new(),
     }
 }
 
 fn posted_tick() -> u64 {
     observed::with(|scene| scene.tick().unwrap_or(0))
-}
-
-/// `Banking.bankNearest(opts)`: the shim passes the destination, return
-/// tile, whether a non-function `deposit` means everything, and the common
-/// junk flag; `deposit`/`afterDeposit`/`log` are hooks.
-#[derive(Deserialize)]
-pub(crate) struct BankNearestArgs {
-    #[serde(default)]
-    destination: Value,
-    #[serde(default)]
-    booth_name: Option<String>,
-    #[serde(default)]
-    booth_op: Option<String>,
-    #[serde(default)]
-    return_to: Value,
-    #[serde(default)]
-    deposit_all: bool,
-    #[serde(default = "yes")]
-    common_junk: bool,
-}
-
-fn yes() -> bool {
-    true
-}
-
-const NEAREST_DEPOSIT: usize = 0;
-const NEAREST_AFTER_DEPOSIT: usize = 1;
-const NEAREST_LOG: usize = 2;
-
-/// One awaited `Banking.bankNearest`.
-pub(crate) struct BankNearest(Run);
-
-impl Family for BankNearest {
-    const NAME: &'static str = "bank_nearest";
-    const CALLBACKS: &'static [&'static str] = &["deposit", "afterDeposit", "log"];
-    /// Frozen awaits only `afterDeposit`; the matcher and `log` are
-    /// synchronous calls.
-    const SYNC_HOOKS: &'static [usize] = &[NEAREST_DEPOSIT, NEAREST_LOG];
-    /// The first verb joins the caller's tick.
-    const KICK_ON_START: bool = true;
-    type Args = BankNearestArgs;
-    type Output = bool;
-
-    fn begin(args: BankNearestArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let deposit = if cx.has(NEAREST_DEPOSIT) {
-            DepositPlan::Hook {
-                hook: NEAREST_DEPOSIT,
-                common: args.common_junk,
-            }
-        } else if args.deposit_all {
-            DepositPlan::All
-        } else {
-            DepositPlan::None
-        };
-        let mut run = Run::new(
-            read_dest(&args.destination),
-            read_tile(&args.return_to),
-            deposit,
-            Some(NEAREST_AFTER_DEPOSIT),
-            Some(NEAREST_LOG),
-        );
-        run.open.booth(args.booth_name, args.booth_op);
-        Begin::Run(Self(run))
-    }
-
-    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        self.0.step(cx)
-    }
 }
 
 const SET_STATUS: usize = 0;
@@ -451,7 +205,7 @@ enum TaskPhase {
 pub(crate) struct PeriodicBank {
     phase: TaskPhase,
     asked: bool,
-    dest: Option<Dest>,
+    dest: Option<BankSeatDestination>,
     common_junk: bool,
     return_to: Option<Tile>,
 }
@@ -483,6 +237,7 @@ impl PeriodicBank {
 
 impl Family for PeriodicBank {
     const NAME: &'static str = "periodic_bank";
+    const SNAPSHOT_SENSITIVE: bool = true;
     const CALLBACKS: &'static [&'static str] = &[
         "setStatus",
         "deposit",
@@ -529,7 +284,7 @@ impl Family for PeriodicBank {
                 TaskPhase::Destination => match self.ask(DESTINATION, Vec::new(), cx) {
                     Err(step) => return step,
                     Ok(value) => {
-                        self.dest = value.as_ref().and_then(read_dest);
+                        self.dest = value.as_ref().and_then(read_destination);
                         self.phase = TaskPhase::CommonJunk;
                     }
                 },
@@ -545,23 +300,41 @@ impl Family for PeriodicBank {
                     Err(step) => return step,
                     Ok(value) => {
                         self.return_to = value.as_ref().and_then(read_tile);
-                        // `deposit` is required: a run without it fails at
-                        // the deposit, as the shim's did.
-                        let deposit = if cx.has(DEPOSIT) {
-                            DepositPlan::Hook {
-                                hook: DEPOSIT,
-                                common: self.common_junk,
-                            }
+                        let missing_deposit = !cx.has(DEPOSIT);
+                        let operation = if missing_deposit {
+                            BankSeatOperation::Open
                         } else {
-                            DepositPlan::Missing
+                            BankSeatOperation::BankNearest
                         };
-                        self.phase = TaskPhase::Run(Box::new(Run::new(
-                            self.dest.take(),
-                            self.return_to,
-                            deposit,
-                            Some(AFTER_DEPOSIT),
-                            Some(LOG),
-                        )));
+                        let mut args = BankSeatArgs::new(operation);
+                        args.destination = self.dest.take();
+                        if missing_deposit {
+                            args.hooks_present = u32::from(cx.has(LOG));
+                        } else {
+                            args.return_to = self.return_to;
+                            args.common_junk = self.common_junk;
+                            args.hooks_present = 1
+                                | (u32::from(cx.has(AFTER_DEPOSIT)) << 1)
+                                | (u32::from(cx.has(LOG)) << 2);
+                        }
+                        let hooks: &[(&str, usize)] = if missing_deposit {
+                            &[("log", LOG)]
+                        } else {
+                            &[
+                                ("deposit", DEPOSIT),
+                                ("afterDeposit", AFTER_DEPOSIT),
+                                ("log", LOG),
+                            ]
+                        };
+                        match NativeBankChild::start(args, hooks, cx) {
+                            Ok(child) => {
+                                self.phase = TaskPhase::Run(Box::new(Run {
+                                    child,
+                                    missing_deposit,
+                                }));
+                            }
+                            Err(error) => return Step::Fail(Thrown::new(error)),
+                        }
                     }
                 },
                 TaskPhase::Run(run) => match run.step(cx) {

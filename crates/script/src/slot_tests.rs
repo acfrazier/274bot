@@ -1149,17 +1149,6 @@ fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
         "session reset publishes an explicit abort even if a later bank reuses the generation"
     );
 
-    slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_load_dialog(
-        2, 20, 1, 0, 20, 3,
-    )));
-    let before_load_reset = slot.withdraw_load_result();
-    slot.reset_session_work();
-    assert_eq!(
-        slot.withdraw_load_result(),
-        (before_load_reset.0.wrapping_add(1), false),
-        "withdrawLoad gets the same explicit abort on generation-reusing session reset"
-    );
-
     let settlement = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3).waiting_settlement();
     assert_eq!(settlement.remaining, Duration::from_millis(4000));
 

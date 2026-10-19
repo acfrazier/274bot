@@ -4,8 +4,10 @@
 //! production frame entry) with the CPU (`CpuBackend`) and, where an adapter
 //! exists, the GPU (`GpuBackend`) backend. They pin what the backend does now
 //! so T4.2 (wrap) can prove it preserved it and T4.4 (fair) can see exactly
-//! what it changes. Nothing here constructs or activates the frozen F0 render
-//! seam in `host::render`; its names are only the vocabulary:
+//! what it changes. The renderer-level tests construct heads directly; the
+//! slot-level tests drive the production slot loop, whose heads attach
+//! through the process render service since T4.2. The seam's names are the
+//! vocabulary:
 //!
 //! - **head** (`HeadLease`): one `Renderer` attached to one slot `Client`.
 //!   Today a head is created by the first paint and dropped on detach.
@@ -24,12 +26,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use api::identity::{SlotKey, SlotKeyMinter};
 use client::client::{Client, ClientConfig, ClientRevision};
 use client::dash3d::{ClientNpc, TerrainOverlayShape};
 use client::io::ClientStream;
 use client::render::backend::{BackendKind, FrameOutput, GpuBackend};
 use client::render::Renderer;
-use host::{FrameBuf, Host, RandomClaim, ScriptRunPolicy, SlotInput};
+use host::render_head;
+use host::{FrameBuf, Host, RandomClaim, ScriptRunPolicy, SlotInput, SlotRender};
 use vault::ProfileSettings;
 
 const FRAME_W: usize = 765;
@@ -736,7 +740,7 @@ fn with_slot<R>(
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(Mutex::new(String::new())),
                 Some(Arc::clone(input)),
-                Some(Arc::clone(mailbox)),
+                Some(SlotRender::new(slot_key(), Arc::clone(mailbox))),
                 None,
                 ScriptRunPolicy::default(),
                 |client, _, _, _, _| {
@@ -779,6 +783,12 @@ fn wait_frames(control: &SlotControl, n: u64) {
     wait_for("slot frames", Duration::from_secs(10), || {
         control.frames.load(Ordering::SeqCst) >= target
     });
+}
+
+/// A fresh `SlotKey` per slot loop, as Play mints one per spawned worker.
+fn slot_key() -> SlotKey {
+    static SLOTS: SlotKeyMinter = SlotKeyMinter::new();
+    SLOTS.mint().expect("test slot key")
 }
 
 fn wait_paints(mailbox: &FrameBuf, n: u64) {
@@ -939,4 +949,118 @@ fn window(mailbox: &FrameBuf, control: &SlotControl, span: Duration) -> (u64, u6
         mailbox.generation() - g0,
         control.frames.load(Ordering::SeqCst) - f0,
     )
+}
+
+/// T4.2 wrap, family **head**: a slot's head attaches to the process render
+/// service with its `(SlotKey, head_generation)`, and reattach is a new
+/// generation of the same slot. A GPU head runs each 3D scene submission
+/// under a frame lease; a CPU head takes no scene-workspace reservation.
+#[test]
+fn wrap_heads_carry_slot_and_generation_and_only_gpu_scenes_lease_the_workspace() {
+    let _serial = serial();
+    for head in heads() {
+        let input = SlotInput::new();
+        input.set_full_rate(true);
+        input.set_prefer_cpu(head == Head::Cpu);
+        let mailbox = FrameBuf::new();
+        let control = SlotControl::default();
+        with_slot(None, &input, &mailbox, &control, || {
+            let before = render_head::workspace_stats();
+            control.draw.store(true, Ordering::SeqCst);
+            wait_paints(&mailbox, 5);
+            let first = mailbox.head().expect("a drawing slot has an attached head");
+            let after = render_head::workspace_stats();
+            let leased = after.leased() - before.leased();
+            match head {
+                Head::Gpu => assert!(
+                    leased >= 5,
+                    "GPU: every scene submission leases the workspace ({leased} for 5 paints)"
+                ),
+                Head::Cpu => assert_eq!(leased, 0, "CPU: no scene-workspace reservation"),
+            }
+            assert_eq!(
+                after.unleased(),
+                before.unleased(),
+                "{head:?}: no unleased scene"
+            );
+
+            control.draw.store(false, Ordering::SeqCst);
+            wait_frames(&control, 3);
+            assert_eq!(mailbox.head(), None, "{head:?}: detach retires the head");
+            control.draw.store(true, Ordering::SeqCst);
+            wait_paints(&mailbox, 1);
+            let second = mailbox.head().expect("draw on reattaches");
+            assert_eq!(
+                second.slot(),
+                first.slot(),
+                "{head:?}: the same slot worker"
+            );
+            assert_ne!(
+                second.generation(),
+                first.generation(),
+                "{head:?}: reattach is a new head generation"
+            );
+        });
+    }
+}
+
+/// T4.2 wrap: two GPU heads painting at full rate share the one scene
+/// workspace. Both keep painting, every scene runs under a lease, and a head
+/// that finds the workspace held waits for its own grant (the retained wait).
+#[test]
+fn wrap_gpu_heads_share_the_scene_workspace_and_both_paint() {
+    let _serial = serial();
+    if !heads().contains(&Head::Gpu) {
+        return;
+    }
+    let inputs = [SlotInput::new(), SlotInput::new()];
+    for input in &inputs {
+        input.set_full_rate(true);
+        input.set_prefer_cpu(false);
+    }
+    let mailboxes = [FrameBuf::new(), FrameBuf::new()];
+    let controls = [SlotControl::default(), SlotControl::default()];
+    with_slot(None, &inputs[0], &mailboxes[0], &controls[0], || {
+        with_slot(None, &inputs[1], &mailboxes[1], &controls[1], || {
+            for control in &controls {
+                control.draw.store(true, Ordering::SeqCst);
+            }
+            for mailbox in &mailboxes {
+                wait_paints(mailbox, 1);
+            }
+            let before = render_head::workspace_stats();
+            let starts = mailboxes.each_ref().map(|mailbox| mailbox.generation());
+            std::thread::sleep(Duration::from_millis(1500));
+            let after = render_head::workspace_stats();
+            let paints: Vec<u64> = mailboxes
+                .iter()
+                .zip(starts)
+                .map(|(mailbox, start)| mailbox.generation() - start)
+                .collect();
+            let leased = after.leased() - before.leased();
+            let waited = after.waited() - before.waited();
+            println!(
+                "wrap shared workspace: paints {paints:?}, leased {leased}, waited {waited}, wait {:?}, max wait {:?}",
+                after.wait() - before.wait(),
+                after.max_wait()
+            );
+            assert!(
+                paints.iter().all(|&paints| paints >= 20),
+                "both GPU heads keep painting: {paints:?}"
+            );
+            // The two counters are read at slightly different instants while
+            // both heads paint, so a paint in flight at either window edge
+            // can be leased on one side of the edge and published on the
+            // other: at most one paint per head per edge. Every other
+            // painted scene ran under a lease.
+            let edges = 2 * paints.len() as u64;
+            assert!(
+                leased + edges >= paints.iter().sum::<u64>(),
+                "every painted scene ran under a lease ({leased} for {paints:?})"
+            );
+            assert_eq!(after.unleased(), before.unleased());
+            let (first, second) = (mailboxes[0].head().unwrap(), mailboxes[1].head().unwrap());
+            assert_ne!(first.slot(), second.slot(), "two slot workers, two heads");
+        });
+    });
 }

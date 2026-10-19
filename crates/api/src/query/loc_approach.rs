@@ -236,6 +236,13 @@ pub fn arrived_at(
 /// Every walkable tile from which `loc` can be operated; `None` when
 /// the loc's shape has no approach model.
 pub fn operable_tiles(loc: &LocView, scene: &SceneView) -> Option<Vec<WorldTile>> {
+    Some(operable_tiles_iter(loc, scene)?.collect())
+}
+
+fn operable_tiles_iter<'a>(
+    loc: &'a LocView,
+    scene: &'a SceneView,
+) -> Option<impl Iterator<Item = WorldTile> + 'a> {
     if !FOOTPRINT_SHAPES.contains(&loc.shape) {
         return None;
     }
@@ -247,22 +254,19 @@ pub fn operable_tiles(loc: &LocView, scene: &SceneView) -> Option<Vec<WorldTile>
     let force_approach = rotate_force_approach(loc.force_approach, loc.angle);
     let size_x = loc.footprint_width;
     let size_z = loc.footprint_length;
-    let mut tiles = Vec::new();
-    for lx in (dst_x - 1).max(0)..=(dst_x + size_x).min(scene.width - 1) {
-        for lz in (dst_z - 1).max(0)..=(dst_z + size_z).min(scene.height - 1) {
-            if collision_at(scene, lx, lz) & CollisionFlag::SQ_BLOCKED != 0 {
-                continue;
-            }
-            if test_loc(lx, lz, dst_x, dst_z, size_x, size_z, force_approach, scene) {
-                tiles.push(WorldTile {
+    Some(
+        ((dst_x - 1).max(0)..=(dst_x + size_x).min(scene.width - 1)).flat_map(move |lx| {
+            ((dst_z - 1).max(0)..=(dst_z + size_z).min(scene.height - 1)).filter_map(move |lz| {
+                (collision_at(scene, lx, lz) & CollisionFlag::SQ_BLOCKED == 0
+                    && test_loc(lx, lz, dst_x, dst_z, size_x, size_z, force_approach, scene))
+                .then_some(WorldTile {
                     x: scene.base_x + lx,
                     z: scene.base_z + lz,
                     level: scene.level,
-                });
-            }
-        }
-    }
-    Some(tiles)
+                })
+            })
+        }),
+    )
 }
 
 /// Compact operate-from-here + exact stand dest for one footprint loc.
@@ -284,6 +288,15 @@ pub fn booth_approach(
     from: WorldTile,
     flood: &super::ReachFlood,
 ) -> Option<BoothApproach> {
+    booth_approach_by(loc, scene, from, |tile| flood.at(&tile).0)
+}
+
+pub(crate) fn booth_approach_by(
+    loc: &LocView,
+    scene: &SceneView,
+    from: WorldTile,
+    exact_reachable: impl Fn(WorldTile) -> bool,
+) -> Option<BoothApproach> {
     let can_operate = can_operate_from(loc, scene, from)?;
     if can_operate {
         return Some(BoothApproach {
@@ -291,9 +304,8 @@ pub fn booth_approach(
             dest: Some(from),
         });
     }
-    let dest = operable_tiles(loc, scene)?
-        .into_iter()
-        .filter(|tile| flood.at(tile).0)
+    let dest = operable_tiles_iter(loc, scene)?
+        .filter(|tile| exact_reachable(*tile))
         .min_by_key(|tile| {
             let cheb = (from.x - tile.x).abs().max((from.z - tile.z).abs());
             (cheb, tile.x, tile.z)

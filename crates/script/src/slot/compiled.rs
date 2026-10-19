@@ -1307,8 +1307,6 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = 0;
         self.withdraw_x_result = false;
-        self.withdraw_load_result_seq = 0;
-        self.withdraw_load_result = false;
         self.pending_bank_op = None;
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;

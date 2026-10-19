@@ -104,7 +104,10 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
         );
     }
     if ident == "PERIODIC_BANK_SETTINGS" {
-        return setting_object_body(include_str!("../shim/banking.js"), "PERIODIC_BANK_SETTINGS");
+        return Some(
+            serde_json::to_string(&crate::bank::PERIODIC_SETTINGS)
+                .expect("the fixed bank settings fact serializes"),
+        );
     }
     // Frozen `src/bot/api/combat/rangedSettings.ts:3-6`: the imported
     // static settings spread is shared with the shim's name map.

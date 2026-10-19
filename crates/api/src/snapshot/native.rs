@@ -226,6 +226,30 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Borrow the live loc geometry and cached exact flood for a bank stand.
+    /// This uses the same footprint and wall rules as scene queries, without
+    /// building a second flood or copying the scene.
+    pub fn booth_approach(
+        &self,
+        loc: &super::LocView,
+    ) -> Option<Observed<crate::query::loc_approach::BoothApproach>> {
+        let snapshot = self.scene_ready()?;
+        let reach = self.reach()?.value;
+        let from = snapshot.local_player()?.player.actor.tile;
+        let options = crate::query::SceneReachOptions {
+            max_steps: Some(u32::MAX),
+            adjacent_ok: false,
+        };
+        let value =
+            crate::query::loc_approach::booth_approach_by(loc, snapshot.scene(), from, |tile| {
+                reach.can_reach(tile, &options)
+            })?;
+        Some(Observed {
+            value,
+            stamp: self.stamp,
+        })
+    }
+
     pub fn inventory(&self) -> Option<Observed<&'a [ItemView]>> {
         let snapshot = self.snapshot?;
         (snapshot.ingame() && snapshot.inventory_size() > 0).then(|| Observed {
@@ -243,12 +267,29 @@ impl<'a> SnapshotView<'a> {
             .flatten()
     }
 
+    /// The latest bank rows while in game, even before the table's loaded flag.
+    /// Compatibility readiness accepts a nonempty posted table while the bank
+    /// modal is open. Callers that require a complete snapshot use [`Self::bank`].
+    pub fn bank_rows(&self) -> Option<Observed<&[ItemView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.bank(),
+            stamp: self.stamp,
+        })
+    }
+
     pub fn bank(&self) -> Option<Observed<&[ItemView]>> {
         let snapshot = self.snapshot?;
         (snapshot.ingame() && snapshot.bank_loaded()).then(|| Observed {
             value: snapshot.bank(),
             stamp: self.stamp,
         })
+    }
+
+    /// Packet generation of the open bank's item table. This is independent
+    /// of both the enclosing observation stamp and snapshot readiness.
+    pub fn bank_snapshot_generation(&self) -> Option<u64> {
+        self.ingame()?.bank_snapshot_generation()
     }
 
     /// Whether the bank modal is open, with the current session generation.
@@ -651,6 +692,73 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn raw_bank_rows_borrow_the_table_without_claiming_snapshot_readiness() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::new();
+        assert!(SnapshotView::new(Some(&snapshot), stamp)
+            .bank_rows()
+            .is_none());
+        snapshot.seed_ingame(2);
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let rows = view.bank_rows().expect("raw table is observable in game");
+        assert!(std::ptr::eq(rows.value, snapshot.bank()));
+        assert_eq!(rows.stamp, stamp);
+        assert!(
+            view.bank().is_none(),
+            "raw rows do not assert the loaded flag"
+        );
+        snapshot.bank_loaded = true;
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert!(std::ptr::eq(
+            view.bank_rows().unwrap().value,
+            view.bank().unwrap().value
+        ));
+        snapshot.ingame = false;
+        assert!(SnapshotView::new(Some(&snapshot), stamp)
+            .bank_rows()
+            .is_none());
+    }
+
+    #[test]
+    fn bank_packet_generation_is_not_the_observation_sequence() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 900,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_bank_observation(10, 41, Some(Vec::new()), Vec::new());
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).bank_snapshot_generation(),
+            Some(41),
+        );
+        snapshot.seed_bank_observation(-1, 42, None, Vec::new());
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).bank_snapshot_generation(),
+            None,
+        );
+        snapshot.seed_bank_observation(10, 43, Some(Vec::new()), Vec::new());
+        snapshot.ingame = false;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).bank_snapshot_generation(),
+            None,
+        );
+    }
 
     #[test]
     fn trade_view_is_borrowed_and_unready_outside_a_session() {

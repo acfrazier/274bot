@@ -666,12 +666,12 @@ impl ClueRuntime {
             bank.opened = false;
             bank.open_issued = false;
             bank.approach_dest = None;
-            self.clock.arm(crate::bank_open::WALK_BOUND_MS);
+            self.clock.arm(crate::bank::compat::WALK_BOUND_MS);
         }
         let booth = nearest_booth(input);
         if !bank.started {
             bank.started = true;
-            self.clock.arm(crate::bank_open::WALK_BOUND_MS);
+            self.clock.arm(crate::bank::compat::WALK_BOUND_MS);
             if !booth.as_ref().is_some_and(|booth| booth.approach_present) {
                 return Some(walk_nearest_bank_verb(self.token));
             }
@@ -687,7 +687,7 @@ impl ClueRuntime {
                 if let Some(approach) = booth.approach {
                     if approach.can_operate {
                         bank.open_issued = true;
-                        self.clock.arm(crate::bank_open::BANK_READY_MS);
+                        self.clock.arm(crate::bank::compat::BANK_READY_MS);
                         return Some(open_booth_verb(&booth, self.token));
                     }
                     if let Some(dest) = approach.dest {
@@ -702,7 +702,7 @@ impl ClueRuntime {
                 // approach projection. Keep their existing admission rule,
                 // but still latch and bound the one open request.
                 bank.open_issued = true;
-                self.clock.arm(crate::bank_open::BANK_READY_MS);
+                self.clock.arm(crate::bank::compat::BANK_READY_MS);
                 return Some(open_booth_verb(&booth, self.token));
             }
         }

@@ -191,6 +191,7 @@ impl Script for MemoryCell {
                         },
                         options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::clone(&self.bank_name)),
+                        allow_air_fallback: false,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
                         Ok(handle) => self.select = Some(handle),
