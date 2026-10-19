@@ -1,31 +1,26 @@
 // String contains pack filters + posted HP/count predicates.
 import { shouldEatToUseFood } from '../combat/food.js';
 
+const native = (...args) => globalThis.__rs2b0t_pack_rules(...args);
+
 export function matchesAny(name, patterns) {
-    if (name == null) return false;
-    const n = String(name).toLowerCase();
-    return (patterns || []).some((p) => {
-        const pat = String(p).trim().toLowerCase();
-        return pat.length > 0 && n.includes(pat);
-    });
+    return native('matchesAny', name, patterns);
 }
 
 export function countMatching(items, patterns) {
-    return (items || [])
-        .filter((i) => i && matchesAny(i.name, patterns))
-        .reduce((sum, i) => sum + (typeof i.count === 'number' ? i.count : 0), 0);
+    return native('countMatching', items, patterns);
 }
 
 export function slotsMatching(items, patterns) {
-    return (items || []).filter((i) => i && matchesAny(i.name, patterns)).length;
+    return native('slotsMatching', items, patterns);
 }
 
 export function shouldBank(lootSlots, bankAt, invFull) {
-    return lootSlots >= bankAt || (invFull && lootSlots > 0);
+    return native('shouldBank', lootSlots, bankAt, invFull);
 }
 
 export function shouldRestock(foodCount, threshold) {
-    return foodCount < threshold;
+    return native('shouldRestock', foodCount, threshold);
 }
 
 export function shouldEat(hp, maxHp, heal, foodCount) {
@@ -33,5 +28,5 @@ export function shouldEat(hp, maxHp, heal, foodCount) {
 }
 
 export function shouldPanic(hpFrac, gate, foodCount) {
-    return hpFrac < gate && foodCount === 0;
+    return native('shouldPanic', hpFrac, gate, foodCount);
 }
