@@ -140,6 +140,11 @@ pub const START_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Losing a save is worse than a slower exit.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// A front-end test's stall at the start of each file write
+/// ([`LocalStateService::set_write_stall_for_test`]).
+#[cfg(any(test, feature = "test-support"))]
+pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
+
 /// A test's stand-in for the file publication step: run on the writer
 /// thread with no state lock held (the file's write lock is held), so a
 /// test can stall or fail it. It replaces the real publication, including
@@ -355,6 +360,11 @@ struct State {
     shutdown_timeout: Option<Duration>,
     #[cfg(test)]
     hooks: Hooks,
+    /// A front end's test stall at the start of each file write (it holds
+    /// a write to watch a command stay pending), run on the writer thread
+    /// with no lock held.
+    #[cfg(any(test, feature = "test-support"))]
+    write_stall: Option<WriteStall>,
 }
 
 #[cfg(test)]
@@ -828,6 +838,13 @@ impl LocalStateService {
                 },
             }
         }
+    }
+
+    /// Test-support seam for front-end tests: run `stall` on the writer
+    /// thread at the start of every file write (a busy disk on demand).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_write_stall_for_test(&self, stall: WriteStall) {
+        self.shared.state.lock().write_stall = Some(stall);
     }
 
     /// Publish every file write through `hook` instead of the real file.
@@ -1988,6 +2005,13 @@ impl Shared {
         let domain = key.domain();
         let path = key.path(&self.root);
         let request = queued.request;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let stall = self.state.lock().write_stall.clone();
+            if let Some(stall) = stall {
+                stall();
+            }
+        }
         let guard =
             match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned
