@@ -126,7 +126,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(chatbox)",
       "activation_endpoint": "T2.rest",
-      "activation_state": "not-activated",
+      "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -145,7 +145,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 4
+        "not_impl_debt": 0
       }
     },
     {
@@ -373,7 +373,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(entities)",
       "activation_endpoint": "T2.rest",
-      "activation_state": "not-activated",
+      "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -392,7 +392,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 1,
-        "not_impl_debt": 2
+        "not_impl_debt": 0
       }
     },
     {
@@ -618,7 +618,7 @@
       "nav_consuming": false,
       "activation_unit": "I-family(inventory)",
       "activation_endpoint": "T2.rest",
-      "activation_state": "not-activated",
+      "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
         "T1.3",
@@ -637,7 +637,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 2
+        "not_impl_debt": 0
       }
     },
     {

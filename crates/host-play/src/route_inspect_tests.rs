@@ -3267,13 +3267,42 @@ fn real_content_inspection_capture_bytes() {
     let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
     let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
 
-    // The public v2 result fields retain their original field ids and defaults.
-    assert_eq!(old_snapshot.withdraw_load_result_seq(), 0);
-    assert!(!old_snapshot.withdraw_load_result());
+    assert_eq!(bytes.len(), 1_360, "new capture size");
+    let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
-        bytes, old_bytes,
-        "the restored result slots preserve the exact immutable capture"
+        nav::pack::sha256_hex(&new_digest),
+        "342c6caaccae1009d420d0e32a632042a60dbe3d056f62b22aaee48764b7ea5d",
+        "new real-content inspection capture authority"
     );
+
+    let old_vtable = old_snapshot._tab.vtable();
+    let new_vtable = snapshot._tab.vtable();
+    // The retired fields keep their original wire slots.
+    for retired_field in [126_u16, 128] {
+        assert_ne!(
+            old_vtable.get(retired_field),
+            0,
+            "old capture contains retired vtable offset {retired_field}"
+        );
+        assert_eq!(
+            new_vtable.get(retired_field),
+            0,
+            "new capture omits retired vtable offset {retired_field}"
+        );
+    }
+    let field_count = old_vtable.num_fields().max(new_vtable.num_fields());
+    for field_index in 0..field_count {
+        let field_offset =
+            4 + 2 * u16::try_from(field_index).expect("snapshot vtable field index fits in u16");
+        if field_offset == 126 || field_offset == 128 {
+            continue;
+        }
+        assert_eq!(
+            old_vtable.get(field_offset) != 0,
+            new_vtable.get(field_offset) != 0,
+            "snapshot field at vtable offset {field_offset} changed presence"
+        );
+    }
 
     // flatc's generated Debug visits every active accessor recursively;
     // FlatBuffers Vector Debug iterates every entry without truncation.

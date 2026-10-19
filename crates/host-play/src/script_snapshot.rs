@@ -1501,8 +1501,6 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         },
         collision,
         bank_selection,
-        // SlotScript injects its seat completion when encoding the script page.
-        withdraw_load_result: (0, false),
         self_anim: Some(local.map_or(-1, |lp| lp.player.actor.animation)),
         local_player_moving: local.map(|lp| lp.player.actor.moving),
         bank_snapshot_generation: Some(
