@@ -1,4 +1,4 @@
-//! Typed V8 marshalling for tile-distance shim callers.
+//! Typed V8 marshalling for world tiles and shared tile-distance callers.
 //!
 //! Frozen `Tile.distanceTo` (`Tile.ts`) is Chebyshev on the plane and
 //! `1_000_000 + xz` across planes. Entity-query `withinOf` uses the same
@@ -9,6 +9,7 @@ use super::callback_v8::{self as cb, Callback};
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    cb::install(runtime, "__rs2b0t_tile", tile_callback)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -80,6 +81,123 @@ fn tiles_to_callback<'s>(
         Ok(v8::Number::new(scope, js_tile_distance(from, to, true)).into())
     })();
     cb::finish(scope, rv, result);
+}
+
+fn tile_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = run_tile(scope, &args);
+    cb::finish(scope, rv, result);
+}
+
+fn run_tile<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: &v8::FunctionCallbackArguments<'s>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let operation = args.get(0);
+    if !operation.is_int32() {
+        return Err(cb::type_error(scope, "invalid tile operation"));
+    }
+    match operation.int32_value(scope) {
+        Some(0) => copy_tile(scope, args.get(1), args.get(2)),
+        Some(1) => {
+            let source = args.get(2);
+            let x = cb::get(scope, source, "x")?;
+            let x = cb::add(scope, x, args.get(3))?;
+            let z = cb::get(scope, source, "z")?;
+            let z = cb::add(scope, z, args.get(4))?;
+            let level = cb::get(scope, source, "level")?;
+            cb::construct(scope, args.get(1), &[x, z, level], "Tile")
+        }
+        Some(2) => {
+            for field in ["x", "z", "level"] {
+                let left = cb::get(scope, args.get(1), field)?;
+                let right = cb::get(scope, args.get(2), field)?;
+                if !left.strict_equals(right) {
+                    return Ok(v8::Boolean::new(scope, false).into());
+                }
+            }
+            Ok(v8::Boolean::new(scope, true).into())
+        }
+        Some(3) => {
+            // Keep V8's UTF-16 strings and ToString semantics, including
+            // conversion order and Symbol/@@toPrimitive exceptions.
+            let mut text = cb::string(scope, "(");
+            for (field, suffix) in [("x", ", "), ("z", ", "), ("level", ")")] {
+                let value = cb::get(scope, args.get(1), field)?;
+                let value = cb::catching(scope, |s| value.to_string(s))?;
+                text = cb::add(scope, text, value.into())?;
+                let suffix = cb::string(scope, suffix);
+                text = cb::add(scope, text, suffix)?;
+            }
+            Ok(text)
+        }
+        Some(4) => posted_tile(scope, args.get(1), args.get(2)),
+        _ => Err(cb::type_error(scope, "invalid tile operation")),
+    }
+}
+
+fn copy_tile<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Value>,
+    source: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let x = cb::get(scope, source, "x")?;
+    let z = cb::get(scope, source, "z")?;
+    let level = cb::get(scope, source, "level")?;
+    let level = if level.is_null_or_undefined() {
+        cb::num(scope, 0.0)
+    } else {
+        level
+    };
+    cb::construct(scope, constructor, &[x, z, level], "Tile")
+}
+
+fn posted_tile<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Value>,
+    value: v8::Local<'s, v8::Value>,
+) -> cb::JsResult<'s, v8::Local<'s, v8::Value>> {
+    if !value.is_object() || value.is_function() {
+        return Ok(v8::null(scope).into());
+    }
+    for (field, maximum) in [("x", 16_383.0), ("z", 16_383.0), ("level", 3.0)] {
+        // Read each occurrence separately: script getters may change values
+        // or throw between the safe-integer and bound comparisons.
+        if field == "level" && cb::get(scope, value, field)?.is_undefined() {
+            continue;
+        }
+        let coordinate = cb::get(scope, value, field)?;
+        if !is_safe_integer(scope, coordinate) {
+            return Ok(v8::null(scope).into());
+        }
+        let coordinate = cb::get(scope, value, field)?;
+        let zero = cb::num(scope, 0.0);
+        if cb::lt(scope, coordinate, zero)? {
+            return Ok(v8::null(scope).into());
+        }
+        let coordinate = cb::get(scope, value, field)?;
+        let maximum = cb::num(scope, maximum);
+        if cb::gt(scope, coordinate, maximum)? {
+            return Ok(v8::null(scope).into());
+        }
+    }
+    let constructor_object = v8::Local::<v8::Object>::try_from(constructor)
+        .map_err(|_| cb::type_error(scope, "Tile is not a constructor"))?;
+    if cb::catching(scope, |s| value.instance_of(s, constructor_object))? {
+        Ok(value)
+    } else {
+        copy_tile(scope, constructor, value)
+    }
+}
+
+fn is_safe_integer(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> bool {
+    value.is_number()
+        && value.number_value(scope).is_some_and(|number| {
+            number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0
+        })
 }
 
 #[derive(Clone, Copy)]
@@ -162,4 +280,44 @@ fn required_number(
     value
         .number_value(scope)
         .ok_or_else(|| format!("invalid tile distance: {side}.{field} must be a number"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_distance_keeps_planar_level_and_nan_semantics_without_heap_state() {
+        assert_eq!(std::mem::size_of::<JsTile>(), 24);
+        assert!(!std::mem::needs_drop::<JsTile>());
+        let from = JsTile {
+            x: 10.0,
+            z: 20.0,
+            level: 2.0,
+        };
+        let to = JsTile {
+            x: 13.0,
+            z: 16.0,
+            level: 1.0,
+        };
+        assert_eq!(js_tile_distance(from, to, false), 1_000_004.0);
+        assert_eq!(js_tile_distance(from, to, true), 4.0);
+        assert!(js_tile_distance(
+            JsTile {
+                x: f64::NAN,
+                ..from
+            },
+            to,
+            false
+        )
+        .is_nan());
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                std::hint::black_box(js_tile_distance(from, to, false));
+            }
+        });
+        eprintln!("world distance core: JsTile=24B warm_1000={measured:?}");
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(measured.bytes_current, 0);
+    }
 }
