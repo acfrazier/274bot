@@ -27,6 +27,8 @@ mod n1_tests;
 
 #[path = "traveller/door_expire_tests.rs"]
 mod door_expire_tests;
+#[path = "traveller/entrance_exclusion_tests.rs"]
+mod entrance_exclusion_tests;
 
 #[test]
 fn no_route_ticks_idle() {
