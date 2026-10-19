@@ -34,7 +34,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   capacity 28 only while the bank is open. Otherwise, they use posted inventory
   rows and capacity. Unknown or stale views remain unknown, and known-empty
   views stay empty. Existing Inventory methods keep their posted inventory
-  behavior. Both backpack helpers are also exported from the compatibility root.
+  behavior. Both backpack helpers remain on the public Inventory module only.
 - World Tile copying, translation, equality, text conversion and posted-coordinate
   validation now run in Rust. Area sampling returns a real Tile in the same native
   call. Existing geometry bounds, plane rules and caller-visible values stay the
