@@ -702,7 +702,7 @@ retained by a consumer.
 | `shot.rs` | window shot files | shared naming for both runners |
 | `catalog.rs` | scenario catalog | names and lookup |
 | `quester.rs` | Path-backed Quester qualification fixtures | `QuesterStage`, `FIXTURE_PROFILES`, miniquest and role stages; never product gameplay |
-| `quest_fast.rs` | shared world tick-speed send and fresh confirmation | one `::speed` command with its chat sequence; Engine Q only |
+| `quest_fast.rs` | shared world tick-speed request and fresh confirmation | one `::speed` command with its chat sequence, sent only for an explicitly requested change; Engine Q only |
 | `tutorial.rs` | post-relog tutorial reseed for fresh live accounts | fresh same-session `tutorial 1000` confirm before the cell continues |
 | `render_betty_views.rs` | fixed-orbit render captures | station times yaw and pitch |
 | `scenarios/mod.rs` | scenario facade | re-exports families |
