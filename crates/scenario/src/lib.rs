@@ -274,8 +274,10 @@ pub struct ScenarioNav {
     pub client_trail: bool,
     pub component_flood: bool,
     pub camera_follow: bool,
-    /// `speed N` cheat once the seed releases. `None` keeps the engine
-    /// at 600ms (door-troll / timing cards).
+    /// Explicit world-speed request (`::speed N`) once the seed releases.
+    /// `None` — the default — sends nothing and keeps the engine at its
+    /// own tick. A request for the speed the engine's newest confirmation
+    /// already reports is also not sent.
     pub engine_speed_ms: Option<u32>,
 }
 
@@ -557,9 +559,12 @@ pub struct Companion {
     pub per_frame: Box<dyn FnMut(&mut Client) + Send>,
 }
 
-/// Explicit `speed 600` so a leftover nav `speed 300` is not inherited.
+/// Gold script cells run on the engine's documented 600 ms default tick
+/// (`World.TICKRATE`) and request no speed change. `::speed` is world-wide,
+/// so the runner sends it only for a non-default tick a caller explicitly
+/// asks for (`ScenarioNav::with_tick_ms`, `QUESTER_TICK_MS` on Engine Q).
 fn gold_script_nav() -> ScenarioNav {
-    ScenarioNav::default().with_tick_ms(600)
+    ScenarioNav::default()
 }
 
 /// Ordinary post-Start watch budget in **runner dirty-snapshot increments**
