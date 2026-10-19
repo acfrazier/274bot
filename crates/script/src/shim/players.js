@@ -1,6 +1,6 @@
 import Tile from '../../geometry/Tile.js';
 import EntityQuery from '../query/Query.js';
-import { snap, queue, proxy, presentOps, opIndex, notImpl } from '../../shim/_kernel.js';
+import { queue, proxy } from '../../shim/_kernel.js';
 
 export class Player {
     constructor(row) {
@@ -8,20 +8,19 @@ export class Player {
     }
 
     get name() {
-        return this.snap.name ?? null;
+        return globalThis.__rs2b0t_entities_v8(42 /* player.name */, this);
     }
 
     get index() {
-        return this.snap.index;
+        return globalThis.__rs2b0t_entities_v8(43 /* player.index */, this);
     }
 
     get inCombat() {
-        return this.snap.in_combat === true;
+        return globalThis.__rs2b0t_entities_v8(44 /* player.inCombat */, this);
     }
 
     get combatLevel() {
-        const level = this.snap.combat_level;
-        return typeof level === 'number' && Number.isInteger(level) ? level : 0;
+        return globalThis.__rs2b0t_entities_v8(45 /* player.combatLevel */, this);
     }
 
     /**
@@ -29,43 +28,31 @@ export class Player {
      * not merely when `Game.inCombat()` is true.
      */
     targetsMe() {
-        return (
-            this.snap.target_kind === 2 &&
-            this.snap.target_index === (snap().self_slot ?? 0)
-        );
+        return globalThis.__rs2b0t_entities_v8(46 /* player.targetsMe */, this);
     }
 
     tile() {
-        return Tile.from({ x: this.snap.x, z: this.snap.z, level: this.snap.level ?? 0 });
+        return globalThis.__rs2b0t_entities_v8(47 /* player.tile */, this, Tile);
     }
 
     distance() {
-        return typeof this.snap.distance === 'number' ? this.snap.distance : 0;
+        return globalThis.__rs2b0t_entities_v8(48 /* player.distance */, this);
     }
 
     actions() {
-        return presentOps(this.snap.actions);
+        return globalThis.__rs2b0t_entities_v8(49 /* player.actions */, this);
     }
 
     interact(action) {
-        if (opIndex(this.snap.actions, action) === -1) return false;
-        queue({
-            op: 'player',
-            name: this.snap.name ?? '',
-            action: String(action),
-        });
-        return true;
+        return globalThis.__rs2b0t_entities_v8(50 /* player.interact */, this, action, queue);
     }
 }
 
 export const Players = proxy('Players', {
     query() {
-        return EntityQuery.fromSnapshots(
-            () => snap().players || [],
-            (s) => new Player(s),
-        );
+        return globalThis.__rs2b0t_entities_v8(58 /* native query */, 1, EntityQuery, Player);
     },
     all() {
-        return (snap().players || []).map((s) => new Player(s));
+        return globalThis.__rs2b0t_entities_v8(5 /* entities.all */, 1, Player);
     },
 });
