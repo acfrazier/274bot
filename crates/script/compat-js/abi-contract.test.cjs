@@ -52,7 +52,7 @@ test('the generated ABI contract and family graph are complete', () => {
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
     assert.equal(predecessors.families.length, 41);
-    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 40);
+    assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 39);
     for (const [familyId, modules] of [
         ['magic', ['api/magic/Autocast.js']],
         ['prayer', ['api/prayer/Prayer.js']],
@@ -107,18 +107,29 @@ test('typed module classification rejects duplicate and incorrect family rows', 
     assert.throws(() => validateArtifacts(incorrect, predecessors, navFamilies), /Typed module family classification disagrees/);
 });
 
-test('only the complete bank family is activated', () => {
+test('only complete bank and gathering families are activated', () => {
     assert.equal(contract.activation_state, 'partially-activated');
-    assert.deepEqual(contract.active_families, ['bank']);
+    assert.deepEqual(contract.active_families, ['bank', 'gathering']);
     for (const family of predecessors.families) {
         assert.equal(
             family.activation_state,
-            family.family_id === 'bank' ? 'activated' : 'not-activated',
+            contract.active_families.includes(family.family_id) ? 'activated' : 'not-activated',
             family.family_id,
         );
     }
     assert.ok(!contract.not_impl_debt.some(row => row.selector === 'nearestUsableBank'));
     assert.equal(nativeFamilyFamilies.get('bank_wait'), 'bank');
+});
+
+test('an activated family cannot lose its complete-unit graph state', () => {
+    for (const familyId of contract.active_families) {
+        const drift = structuredClone(predecessors);
+        drift.families.find(row => row.family_id === familyId).activation_state = 'not-activated';
+        assert.throws(
+            () => validateArtifacts(contract, drift, navFamilies),
+            new RegExp(`Unexpected activation state for family ${familyId}`),
+        );
+    }
 });
 
 test('a declared-only runtime member roots its implementation for nav scanning', () => {
