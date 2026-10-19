@@ -7,8 +7,9 @@
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -22,7 +23,8 @@ use client_adapter::health::ReactorHealth;
 use client_adapter::park::Park;
 use client_adapter::shared::SharedConnection;
 use client_adapter::tls_handshake::{
-    build_test_client_config_with_roots, GameTlsLane, GameTlsResource,
+    build_test_client_config_with_roots, build_test_client_config_with_verifier, GameTlsLane,
+    GameTlsResource,
 };
 use client_adapter::ws_endpoint::{WssEndpoint, WssStep};
 use mio::{Events, Interest, Poll, Token, Waker};
@@ -30,8 +32,15 @@ use rcgen::{
     BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
     KeyUsagePurpose,
 };
+use rustls::client::danger::{
+    HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
+};
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
-use rustls::{CipherSuite, ClientConfig, ProtocolVersion, ServerConfig, ServerConnection};
+use rustls::{
+    CipherSuite, ClientConfig, DigitallySignedStruct, Error as RustlsError, ProtocolVersion,
+    ServerConfig, ServerConnection, SignatureScheme,
+};
+use rustls_platform_verifier::Verifier;
 use tungstenite::handshake::derive_accept_key;
 use tungstenite::protocol::{Message, Role, WebSocket, WebSocketConfig};
 
@@ -103,6 +112,105 @@ impl LocalPki {
         build_test_client_config_with_roots(std::slice::from_ref(root))
             .expect("build OS-verifying rustls test config with one extra CA root")
     }
+}
+
+#[derive(Debug, Default)]
+struct VerifierAudit {
+    calls: AtomicUsize,
+    worker_names: Mutex<Vec<String>>,
+}
+
+impl VerifierAudit {
+    fn record_call(&self) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let name = thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_owned();
+        self.worker_names
+            .lock()
+            .expect("lock verifier worker audit")
+            .push(name);
+    }
+
+    fn assert_game_worker_calls(&self, expected: usize) {
+        assert_eq!(
+            self.calls.load(Ordering::SeqCst),
+            expected,
+            "certificate-verifier entry count"
+        );
+        let worker_names = self
+            .worker_names
+            .lock()
+            .expect("lock verifier worker audit");
+        assert_eq!(worker_names.len(), expected);
+        assert!(
+            worker_names
+                .iter()
+                .all(|name| name == "net-tls-handshake"),
+            "certificate verification must run on the game TLS worker: {worker_names:?}"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct CountingPlatformVerifier {
+    delegate: Verifier,
+    audit: Arc<VerifierAudit>,
+}
+
+impl ServerCertVerifier for CountingPlatformVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<ServerCertVerified, RustlsError> {
+        self.audit.record_call();
+        self.delegate
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        self.delegate.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        self.delegate.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.delegate.supported_verify_schemes()
+    }
+}
+
+fn config_with_counting_platform_verifier(
+    roots: &[CertificateDer<'static>],
+) -> (Arc<ClientConfig>, Arc<VerifierAudit>) {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let delegate = Verifier::new_with_extra_roots(roots.iter().cloned(), provider)
+        .expect("construct real platform verifier with test-only extra roots");
+    let audit = Arc::new(VerifierAudit::default());
+    let counting_verifier = Arc::new(CountingPlatformVerifier {
+        delegate,
+        audit: Arc::clone(&audit),
+    });
+    let verifier: Arc<dyn ServerCertVerifier> = counting_verifier;
+    let config = build_test_client_config_with_verifier(verifier)
+        .expect("build test-support client config with counted platform verifier");
+    (config, audit)
 }
 
 fn server_config(
@@ -731,19 +839,23 @@ fn vendor_rsa_identity_and_root() -> (ServerIdentity, CertificateDer<'static>) {
 }
 
 #[test]
-fn g2_m1_m3_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records() {
+fn g2_m1_m3_m4_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records() {
+    let (rsa_identity, rsa_root) = vendor_rsa_identity_and_root();
+    let pki = LocalPki::new();
+    let (counted_config, verifier_audit) =
+        config_with_counting_platform_verifier(&[rsa_root, pki.trusted_root.clone()]);
+
     // G2-M7 TLS 1.2 path: the server is restricted to the gate's exact
     // ECDHE-RSA/AES-128-GCM suite and uses the checked-in test RSA identity.
-    let (rsa_identity, rsa_root) = vendor_rsa_identity_and_root();
-    let rsa_config = LocalPki::config_with_root(&rsa_root);
     let tls12_server = LocalServer::spawn(server_config(
         rsa_identity,
         ProtocolVersion::TLSv1_2,
         CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
     ));
     let mut tls12_attempt =
-        LaneAttempt::start(tls12_server.address, "localhost", Arc::clone(&rsa_config));
+        LaneAttempt::start(tls12_server.address, "localhost", Arc::clone(&counted_config));
     let tls12_accepted = tls12_attempt.wait_for_return();
+    verifier_audit.assert_game_worker_calls(1);
     let tls12_info = tls12_server.handshake();
     assert!(tls12_info.failure.is_none(), "TLS 1.2 trust must succeed");
     assert_eq!(tls12_info.server_name.as_deref(), Some("localhost"));
@@ -765,14 +877,15 @@ fn g2_m1_m3_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records()
         b"tls12-server-game-record-01",
         false,
     );
+    verifier_audit.assert_game_worker_calls(1);
     tls12_server.stop();
     drop(tls12_endpoint);
 
-    // G2-M1/G2-M3/G2-M7 TLS 1.3 path: ordinary post-Finished tickets are
-    // enabled, then rustls refreshes server traffic keys after a bidirectional
-    // game-data exchange. The adapter endpoint must retain ordered payloads.
-    let pki = LocalPki::new();
-    let tls13_config = LocalPki::config_with_root(&pki.trusted_root);
+    // G2-M1/M3/M4/M7 TLS 1.3 path: this is a second, same-host full
+    // handshake using the same non-resuming test config. The rustls server
+    // sends ordinary post-Finished tickets, then refreshes traffic keys
+    // between WSS game records. Verification must remain on the worker and
+    // must not re-enter after handoff.
     let tls13_server = LocalServer::spawn(server_config(
         ServerIdentity {
             certificate: pki.valid_identity.certificate,
@@ -782,8 +895,9 @@ fn g2_m1_m3_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records()
         CipherSuite::TLS13_AES_128_GCM_SHA256,
     ));
     let mut tls13_attempt =
-        LaneAttempt::start(tls13_server.address, "localhost", Arc::clone(&tls13_config));
+        LaneAttempt::start(tls13_server.address, "localhost", Arc::clone(&counted_config));
     let tls13_accepted = tls13_attempt.wait_for_return();
+    verifier_audit.assert_game_worker_calls(2);
     let tls13_info = tls13_server.handshake();
     assert!(tls13_info.failure.is_none(), "TLS 1.3 trust must succeed");
     assert_eq!(tls13_info.server_name.as_deref(), Some("localhost"));
@@ -805,6 +919,7 @@ fn g2_m1_m3_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records()
         b"tls13-server-game-record-01",
         false,
     );
+    verifier_audit.assert_game_worker_calls(2);
     exchange_one_local_wss_payload(
         &tls13_server,
         &mut tls13_attempt,
@@ -813,6 +928,7 @@ fn g2_m1_m3_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_records()
         b"tls13-after-key-update-record-02",
         true,
     );
+    verifier_audit.assert_game_worker_calls(2);
     tls13_server.stop();
     drop(tls13_endpoint);
 }
