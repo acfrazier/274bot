@@ -63,7 +63,8 @@ pub(crate) struct BankPickState {
     last_id: u64,
     current: Option<ActivePick>,
     pending_cancel: Option<(WorkCancellation<BankPickSpec>, Cancellation)>,
-    pending_inline: Option<PendingInlinePick>,
+    // Owner-result pressure retains one payload only while publication waits.
+    pending_inline: Option<Box<PendingInlinePick>>,
     owner_result: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
     retired_owner: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
     pub(crate) posted: BankSelectionInput,
@@ -2024,7 +2025,7 @@ fn queue_bank(
             kind: PickKind::NoCandidate as u8,
             ..Default::default()
         });
-        pick.pending_inline = Some(PendingInlinePick {
+        pick.pending_inline = Some(Box::new(PendingInlinePick {
             generation,
             request_id,
             scope,
@@ -2033,7 +2034,7 @@ fn queue_bank(
             result: PickResult::plain(None, None, PickKind::NoCandidate),
             posted,
             native_receipt,
-        });
+        }));
         drop(all);
         poll_bank_pick(navs, name, queued_at);
         return false;
@@ -2119,8 +2120,9 @@ fn queue_bank(
             PickKind::NearShortcut => near_index,
             _ => first,
         };
-        bot.bank_pick.pending_inline =
-            Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+        bot.bank_pick.pending_inline = Some(Box::new(
+            job.pending_inline(scope, PickResult::plain(index, None, kind)),
+        ));
         drop(all);
         poll_bank_pick(navs, name, queued_at);
         return first.is_some();
@@ -2135,8 +2137,9 @@ fn queue_bank(
             slot = name,
             "bank pick request exceeds the bounded work charge"
         );
-        bot.bank_pick.pending_inline =
-            Some(job.pending_inline(scope, PickResult::plain(None, None, PickKind::NoCandidate)));
+        bot.bank_pick.pending_inline = Some(Box::new(
+            job.pending_inline(scope, PickResult::plain(None, None, PickKind::NoCandidate)),
+        ));
         drop(all);
         poll_bank_pick(navs, name, queued_at);
         return false;
@@ -2308,10 +2311,10 @@ fn submit_pending_bank_pick_with_service(
                         } else {
                             let job = active.job.clone();
                             pick.current = None;
-                            pick.pending_inline = Some(job.pending_inline(
+                            pick.pending_inline = Some(Box::new(job.pending_inline(
                                 scope,
                                 PickResult::plain(None, None, PickKind::NoCandidate),
-                            ));
+                            )));
                             api::host_log!(
                                 api::hostlog::Category::NavEvent,
                                 api::hostlog::Level::Warn,
@@ -2325,10 +2328,10 @@ fn submit_pending_bank_pick_with_service(
                     if let Some(active) = current {
                         let job = active.job.clone();
                         pick.current = None;
-                        pick.pending_inline = Some(job.pending_inline(
+                        pick.pending_inline = Some(Box::new(job.pending_inline(
                             scope,
                             PickResult::plain(None, None, PickKind::NoCandidate),
-                        ));
+                        )));
                         api::host_log!(
                             api::hostlog::Category::NavEvent,
                             api::hostlog::Level::Warn,
@@ -2374,7 +2377,7 @@ fn active_ticket_matches(
 fn restore_pending_inline(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
-    pending: PendingInlinePick,
+    pending: Box<PendingInlinePick>,
 ) {
     let mut pending = Some(pending);
     {
@@ -2494,7 +2497,7 @@ fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, nam
     };
     match nav::producer::OwnerResultLedger::shared().try_reserve_bytes(bytes) {
         Ok(reservation) => {
-            let (commit, owner) = pending_owner_result(pending, reservation);
+            let (commit, owner) = pending_owner_result(*pending, reservation);
             apply_bank_pick_result(navs, name, commit, owner);
         }
         Err(nav::producer::OwnerResultRefusal::Full { .. })
@@ -2539,8 +2542,9 @@ fn expire_bank_pick_deadline(
                 PickKind::AirFallback
             };
             pick.cancel_active(Cancellation::Superseded);
-            pick.pending_inline =
-                Some(job.pending_inline(scope, PickResult::plain(index, None, kind)));
+            pick.pending_inline = Some(Box::new(
+                job.pending_inline(scope, PickResult::plain(index, None, kind)),
+            ));
         }
     }
 }
