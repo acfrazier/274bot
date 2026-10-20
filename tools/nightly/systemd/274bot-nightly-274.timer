@@ -1,0 +1,16 @@
+# 274 nightly guest (zinfandel): start the revision-274 run at 22:30
+# operator-local time. Malbec starts its 289 night at 02:00, and its
+# builds run near 02:00 and 06:20. This lane builds at 22:30 and is
+# done before malbec starts. It also ends long before the guest's
+# 08:30-11:30 UTC unattended-upgrade window.
+# Install: /etc/systemd/system/274bot-nightly-274.timer
+[Unit]
+Description=274bot revision-274 nightly run at 22:30 America/New_York
+
+[Timer]
+OnCalendar=*-*-* 22:30:00 America/New_York
+Persistent=false
+Unit=274bot-nightly.service
+
+[Install]
+WantedBy=timers.target
