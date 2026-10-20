@@ -7359,7 +7359,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     )];
     let handle = play.script_start_handle();
     match fire_compiled_until_settled(&mut pending, &handle) {
-        live_start::StartScriptPump::CompiledFailed(error) => {
+        live_start::StartScriptPump::Failed(error) => {
             assert!(
                 error.contains("start rejected:"),
                 "rejection must name the outcome: {error}"
@@ -7369,7 +7369,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
                 "{error}"
             );
         }
-        other => panic!("expected CompiledFailed, got {other:?}"),
+        other => panic!("expected Failed, got {other:?}"),
     }
     assert_eq!(handle.run_state("alice"), script::RunState::Idle);
     assert!(handle.last_error("alice").is_some());

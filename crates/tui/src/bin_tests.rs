@@ -1078,6 +1078,62 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
 }
 
 #[test]
+fn live_prepare_script_trade_loads_the_file_fixture_without_a_catalog_card() {
+    // TradeBot is a checked-in file fixture, not a catalog card: prepare
+    // must load it as File (the panel branch), never fail with
+    // `no card (Catalog, TradeBot)`.
+    let _iso = IsolatedStores::enter("tui-trade-live");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .live_prepare_script(
+            frontend_core::live::Scenario::get("script_trade").expect("registered"),
+        )
+        .expect("prepare");
+    assert_eq!(
+        session.script_sel,
+        Some(ScriptChoice::loaded(CardSource::File, "trade_bot")),
+        "script_trade loads the in-tree TradeBot fixture as File"
+    );
+    assert_eq!(
+        session.names.len(),
+        2,
+        "script_trade is a two-profile fleet"
+    );
+    let pending = session.core.live_runner().pending_starts_for_test();
+    assert_eq!(
+        pending
+            .iter()
+            .map(|pending| pending.slot.as_str())
+            .collect::<Vec<_>>(),
+        [session.names[0].as_str(), session.names[1].as_str()],
+        "StartScript loads TradeBot on both fleet slots"
+    );
+    assert_eq!(
+        pending[0]
+            .bag
+            .as_ref()
+            .expect("driven partner inject")
+            .get("partner"),
+        Some(&serde_json::json!(frontend_core::live::screen_name(
+            &session.names[1]
+        ))),
+        "driven partner is the companion as the game shows it"
+    );
+    assert_eq!(
+        pending[1]
+            .bag
+            .as_ref()
+            .expect("companion partner inject")
+            .get("partner"),
+        Some(&serde_json::json!(frontend_core::live::screen_name(
+            &session.names[0]
+        ))),
+        "companion partner is the driven player as the game shows it"
+    );
+}
+
+#[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     let iso = IsolatedStores::enter("tui-jive-kq-fleet");
     let root = fake_rs2b0t_tree(iso.dir(), true);

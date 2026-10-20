@@ -52,6 +52,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   transport NPC and seed only their required quest. They no longer start
   transport checks while unrelated quest rewards still run.
 
+### Scripts
+
+- Starting a script now stops at once with a clear message when the saved
+  loadout list it needs is empty, or when a script file it depends on is
+  missing. Other start problems are still retried.
+
 ### Fixed during development
 
 #### Startup and saved state

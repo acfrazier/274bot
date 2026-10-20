@@ -100,11 +100,9 @@ pub(crate) enum StartRequest<'a> {
 fn validate_script_loadout_setting(
     rows: &[api::loadout::Loadout],
     bag: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> Result<(), String> {
+) -> Result<(), script::loadouts_store::LoadoutResolutionError> {
     let wanted = bag.and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
-    script::loadouts_store::resolve_script_loadout_setting(rows, wanted)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    script::loadouts_store::resolve_script_loadout_setting(rows, wanted).map(|_| ())
 }
 
 impl ScriptStartHandle {
@@ -194,7 +192,7 @@ impl ScriptStartHandle {
         request: impl FnOnce() -> StartRequest<'a>,
         before_start: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), script::StartLoadError> {
-        use script::StartLoadError::{Refused, Waiting};
+        use script::StartLoadError::{NoLoadouts, Refused, Waiting};
         let hold = self
             .hold
             .lock()
@@ -228,7 +226,16 @@ impl ScriptStartHandle {
                 // read is logged and the card's own lease reports it.
                 let refreshed = self.operator_loadouts(name);
                 let validated = if bag.contains_key("loadout") {
-                    refreshed.and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
+                    refreshed.map_err(Refused).and_then(|rows| {
+                        validate_script_loadout_setting(&rows, Some(&bag)).map_err(|error| {
+                            match error {
+                                error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
+                                    ..
+                                } => NoLoadouts(error.to_string()),
+                                other => Refused(other.to_string()),
+                            }
+                        })
+                    })
                 } else {
                     if let Err(error) = &refreshed {
                         host_log!(
@@ -241,7 +248,7 @@ impl ScriptStartHandle {
                     Ok(())
                 };
                 if let Err(error) = validated {
-                    Err(Refused(error))
+                    Err(error)
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
                 } else if let Some(selected) = self.game_data.clone() {
