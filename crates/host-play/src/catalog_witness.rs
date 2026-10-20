@@ -824,7 +824,6 @@ impl CoreWitness {
             | CoreCase::HillGiantBankPrepared
             | CoreCase::ChaosDruidBank
             | CoreCase::ArdyFighterBank
-            | CoreCase::RockCrabBank
             | CoreCase::GreenDragonBank
             | CoreCase::GreenDragonBankPrepared
             | CoreCase::GreenDragonBankDefaultPrepared

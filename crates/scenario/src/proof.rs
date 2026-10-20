@@ -3,7 +3,7 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, ChatLineView, GameSnapshot, LocView, WorldTile};
+use api::snapshot::{ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WorldTile};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -193,6 +193,16 @@ pub enum Proof {
     /// Requires an in-game player tile and therefore fails closed while
     /// loading or disconnected.
     NpcIdsAbsentNear { ids: &'static [usize], radius: i32 },
+    /// No listed public ground item remains in this bounded field.
+    /// Requires the player inside the loaded field. Its runner budget counts
+    /// observed PLAYER_INFO ticks, not other dirty snapshot families.
+    GroundItemIdsAbsentNear {
+        ids: &'static [i32],
+        x: i32,
+        z: i32,
+        level: i32,
+        radius: i32,
+    },
     /// An NPC with exact `name` stands within a bounded world area.
     NpcNameNear {
         name: &'static str,
@@ -386,6 +396,15 @@ impl Proof {
                         .collect::<Vec<_>>()
                         .join(",")
                 )
+            }
+            Proof::GroundItemIdsAbsentNear {
+                ids,
+                x,
+                z,
+                level,
+                radius,
+            } => {
+                format!("ground_item_ids_absent_near({ids:?},{x},{z},{level},r{radius})")
             }
             Proof::NpcNameNear {
                 name,
@@ -739,6 +758,23 @@ impl Proof {
                         ) <= *radius
                 })
             }),
+            Proof::GroundItemIdsAbsentNear {
+                x,
+                z,
+                level,
+                radius,
+                ..
+            } => {
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && snap.tile().is_some_and(|(px, pz, pl)| {
+                        pl == *level && (px - x).abs().max((pz - z).abs()) <= *radius
+                    })
+                    && !snap
+                        .ground_items()
+                        .iter()
+                        .any(|item| self.ground_guard_contains(item))
+            }
             Proof::NpcNameNear {
                 name,
                 x,
@@ -963,6 +999,26 @@ fn stat_value(snap: &GameSnapshot, id: i32) -> Option<i32> {
             .iter()
             .find(|s| s.index == id)
             .map(|s| s.effective),
+    }
+}
+
+impl Proof {
+    pub(crate) fn ground_guard_contains(&self, item: &GroundItemView) -> bool {
+        match self {
+            Self::GroundItemIdsAbsentNear {
+                ids,
+                x,
+                z,
+                level,
+                radius,
+            } => {
+                item.count > 0
+                    && ids.contains(&item.def.id)
+                    && item.tile.level == *level
+                    && (item.tile.x - x).abs().max((item.tile.z - z).abs()) <= *radius
+            }
+            _ => false,
+        }
     }
 }
 

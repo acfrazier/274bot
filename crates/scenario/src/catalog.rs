@@ -408,7 +408,6 @@ const REGISTRY: &[Entry] = &[
         "ardy_fighter_bank_seeded",
         scenarios::ardy_fighter_bank_seeded_scenario,
     ),
-    Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
     Entry::new(
         "rock_crab_bank_seeded",
         scenarios::rock_crab_bank_seeded_scenario,
