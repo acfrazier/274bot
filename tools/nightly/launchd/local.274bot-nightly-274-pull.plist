@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Revision-274 nightly pull (hourly), NIGHTLY-274. Install: copy to
+     ~/Library/LaunchAgents/ and run:
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+     The script is tools/nightly/pull-274.sh, installed at
+     ~/.local/lib/274bot-nightly/pull-274.sh. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.274bot-nightly-274-pull</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/acfrazier/.local/lib/274bot-nightly/pull-274.sh</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict><key>Minute</key><integer>41</integer></dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>NIGHTLY274_HOST</key>
+		<string>zinfandel.lan</string>
+		<key>NIGHTLY274_KEY</key>
+		<string>/Users/acfrazier/.ssh/274bot_nightly274_pull_ed25519</string>
+		<key>NIGHTLY274_KNOWN_HOSTS</key>
+		<string>/Users/acfrazier/.config/274bot-nightly/zinfandel_known_hosts</string>
+		<key>NIGHTLY274_DEST</key>
+		<string>/Volumes/dev-scratch/274bot-evidence/NIGHTLY</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/acfrazier</string>
+	<key>StandardOutPath</key>
+	<string>/Users/acfrazier/.local/state/274bot-nightly-274/pull.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/acfrazier/.local/state/274bot-nightly-274/pull.log</string>
+</dict>
+</plist>
