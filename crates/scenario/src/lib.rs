@@ -706,15 +706,13 @@ const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 /// This model puts the 0c4e035a7 run (fill ~245 game ticks + walk, 24
 /// refusals) at about the 90th percentile of arrival time.
 ///
-/// **Old dirty-counter calibration:** the failed live step used 156 dirty
-/// snapshots in 89.2s, about 1.05 dirty snapshots per 600ms game tick. The
-/// 305-game-tick estimate therefore became 320 old dirty increments. The
-/// current constant allows 320 observed game ticks (192s at 600ms per game tick).
-/// Other ArdyCakes waits remain 150 game ticks. The further cake after return
-/// needs one stall success: P(≤143 game ticks) = 0.96 under the same model.
-/// The whole-run deadline remains 300s and can end the run first. Its earlier
-/// estimate used about 182s for the old 320-dirty fill/bank watch, plus setup
-/// and the remaining steps.
+/// **Budget:** A 20k-run content model estimates a 95th-percentile first
+/// cake fill and bank arrival at 305 game ticks (p99 395). The watch allows
+/// 320 game ticks, 15 ticks above the p95 estimate (192 seconds at 600 ms
+/// per game tick). Other ArdyCakes waits remain 150 game ticks. The further
+/// cake after return needs one stall success: P(≤143 game ticks) = 0.96
+/// under the same model. The 300-second whole-run deadline can pre-empt this
+/// watch.
 const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(300);
 /// ArdyThiever Fight whole-run cap. After Start the cell runs an opening
 /// Baker stall session until a Guard catches, the FightBack kill (27 game
