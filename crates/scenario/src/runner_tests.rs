@@ -3481,6 +3481,70 @@ const GREEN_ORACLE: OracleCell = OracleCell {
     xp_step: "watch fresh Strength XP after the bank return",
 };
 
+const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
+    name: "rock_crab_bank_seeded",
+    field: WorldTile {
+        x: 2710,
+        z: 3717,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 2725,
+        z: 3491,
+        level: 0,
+    },
+    carried: &[(379, 8), (1623, 1)],
+    supplied: &[(379, 8), (1623, 1)],
+    bank_rows: &[(1623, 1)],
+    restocked: &[(379, 8)],
+    deposited: Some((1623, 1)),
+    supply_step: "watch seeded Sapphire leave the backpack after PeriodicBank deposit",
+    visit_step: "watch seeded Sapphire enter a fresh Seers bank",
+    return_step: "watch return toward the nearest RockCrab spot after seeded banking",
+    xp_step: "watch fresh Strength XP after the seeded bank return",
+};
+
+#[test]
+fn rock_crab_seeded_bank_oracle_passes_deposit_return_and_fresh_combat() {
+    oracle_assert_passes(&ROCK_SEEDED_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn rock_crab_seeded_bank_oracle_rejects_cargo_kept_in_the_pack() {
+    oracle_assert_fails_at(
+        &ROCK_SEEDED_ORACLE,
+        Flaw::NotDeposited,
+        ROCK_SEEDED_ORACLE.supply_step,
+    );
+}
+
+#[test]
+fn rock_crab_seeded_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(
+        &ROCK_SEEDED_ORACLE,
+        Flaw::OutboundStall,
+        ROCK_SEEDED_ORACLE.supply_step,
+    );
+}
+
+#[test]
+fn rock_crab_seeded_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(
+        &ROCK_SEEDED_ORACLE,
+        Flaw::ReturnStall,
+        ROCK_SEEDED_ORACLE.return_step,
+    );
+}
+
+#[test]
+fn rock_crab_seeded_bank_oracle_rejects_xp_only_before_the_return() {
+    oracle_assert_fails_at(
+        &ROCK_SEEDED_ORACLE,
+        Flaw::StaleXp,
+        ROCK_SEEDED_ORACLE.xp_step,
+    );
+}
+
 fn oracle_settle(runner: &mut ScenarioRunner, c: &mut Client, ticks: usize) {
     for _ in 0..ticks {
         tick_dirty(runner, c, false);
@@ -3762,4 +3826,212 @@ fn green_dragon_bank_oracle_rejects_death_then_full_recovery() {
 #[test]
 fn green_dragon_bank_oracle_ignores_a_death_line_from_before_start() {
     oracle_assert_passes(&GREEN_ORACLE, Flaw::DeathLineBeforeStart);
+}
+
+fn guard_ground_item(id: i32, count: i32, tile: WorldTile) -> api::snapshot::GroundItemView {
+    api::snapshot::GroundItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: None,
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        count,
+        actions: vec![],
+        tile,
+        distance: 0,
+    }
+}
+
+fn auto_fighter_floor_guard() -> (ScenarioRunner, Client) {
+    let mut scenario = crate::get("auto_fighter_bank").unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    scenario.steps.truncate(start + 1);
+    scenario.steps.retain(|step| {
+        step.name == "wait for the Guard field's public Bones to clear before Start"
+            || matches!(step.kind, StepKind::StartScript)
+    });
+    scenario.seed.mainland = false;
+    scenario.settings.require_mainland_base = false;
+    scenario.proof = Proof::Stat { id: 16, min: 0 };
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut c = seeded_client();
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    );
+    runner.snapshot.rebuild(&c);
+    (runner, c)
+}
+
+#[test]
+fn auto_fighter_bank_does_not_start_over_public_bones() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.snapshot.seed_ground_items(vec![guard_ground_item(
+        526,
+        1,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    )]);
+    for _ in 0..4 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+        assert!(
+            !runner.on_start_script() && !runner.script_started,
+            "public Bones must not trigger a bank trip before this account's first kill"
+        );
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "{:?}",
+        runner.status()
+    );
+}
+
+#[test]
+fn auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.tick(&mut c);
+    assert!(runner.on_start_script());
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let guard = runner.evidence().unwrap().ground_guard.as_ref().unwrap();
+    assert_eq!(guard.ticks_waited, 0);
+    assert_eq!(guard.budget_game_ticks, 202);
+    assert!(guard.items_seen.is_empty());
+}
+
+#[test]
+fn auto_fighter_bank_floor_guard_records_loot_then_starts_after_removal() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.snapshot.seed_ground_items(vec![guard_ground_item(
+        526,
+        2,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    )]);
+    runner.tick(&mut c);
+    assert!(!runner.script_started);
+    for _ in 0..3 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+    }
+    runner.snapshot.seed_ground_items(vec![]);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut c);
+    assert!(runner.on_start_script());
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().unwrap();
+    let guard = evidence.ground_guard.as_ref().unwrap();
+    assert_eq!(guard.ticks_waited, 4);
+    assert_eq!(guard.items_seen.len(), 1);
+    assert_eq!(guard.items_seen[0].id, 526);
+    assert_eq!(guard.items_seen[0].count, 2);
+    assert_eq!(guard.items_seen[0].tile, [2661, 3306, 0]);
+    let json: serde_json::Value = serde_json::from_str(&evidence.to_json()).unwrap();
+    assert_eq!(json["ground_guard"]["ticks_waited"], 4);
+    assert_eq!(json["ground_guard"]["items_seen"][0]["id"], 526);
+}
+
+#[test]
+fn auto_fighter_bank_floor_guard_counts_game_ticks_and_fails_at_content_cap() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.snapshot.seed_ground_items(vec![guard_ground_item(
+        526,
+        1,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    )]);
+    runner.tick(&mut c);
+    for _ in 0..250 {
+        c.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut c);
+    }
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, .. }
+    ));
+    assert_eq!(runner.ground_guard.as_ref().unwrap().ticks_waited, 0);
+    for _ in 0..201 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+    }
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, .. }
+    ));
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut c);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("unclean field must fail at the content cap");
+    };
+    assert!(message.contains("fixture interference"));
+    assert!(message.contains("202 observed game ticks"));
+    let guard = runner.evidence().unwrap().ground_guard.as_ref().unwrap();
+    assert_eq!(guard.ticks_waited, 202);
+    assert_eq!(guard.items_seen.len(), 1);
+    assert!(!runner.script_started);
+}
+
+#[test]
+fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    let proof = runner.scenario.steps[0].wait.arm;
+    assert!(proof.check(&runner.snapshot, None));
+    for (id, count, x, z, level, clean) in [
+        (526, 1, 2661, 3306, 0, false),
+        (526, 1, 2673, 3318, 0, false),
+        (526, 1, 2674, 3306, 0, true),
+        (526, 1, 2661, 3306, 1, true),
+        (995, 1, 2661, 3306, 0, true),
+        (526, 0, 2661, 3306, 0, true),
+    ] {
+        runner.snapshot.seed_ground_items(vec![guard_ground_item(
+            id,
+            count,
+            WorldTile { x, z, level },
+        )]);
+        assert_eq!(proof.check(&runner.snapshot, None), clean);
+    }
+    runner.snapshot.seed_ground_items(vec![]);
+    c.scene_state = 1;
+    runner.snapshot.rebuild(&c);
+    assert!(!proof.check(&runner.snapshot, None));
+    c.scene_state = 2;
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 2690,
+            z: 3306,
+            level: 0,
+        },
+    );
+    runner.snapshot.rebuild(&c);
+    assert!(!proof.check(&runner.snapshot, None));
+    c.ingame = false;
+    runner.snapshot.rebuild(&c);
+    assert!(!proof.check(&runner.snapshot, None));
 }

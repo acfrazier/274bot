@@ -936,7 +936,16 @@ impl CooperativeJob for CooperativeBankPickJob {
                                         self.first_access = 0;
                                         self.stage = BankPickStage::ResolveFirst;
                                     }
-                                    Err(_) => {
+                                    Err(error) => {
+                                        api::host_log!(
+                                            api::hostlog::Category::NavEvent,
+                                            api::hostlog::Level::Warn,
+                                            "bank selection search refused: reason=first-access-route error={error:?} from={:?} candidates={} targets={} settled={forward_settled} budget={}",
+                                            self.job.request.from,
+                                            self.job.request.order.len(),
+                                            self.job.request.target_count,
+                                            self.job.request.target_budget(),
+                                        );
                                         self.result = Some(self.record_result(
                                             None,
                                             None,
