@@ -358,7 +358,7 @@ impl Provisioner {
                 let recipe = plan
                     .items
                     .iter()
-                    .find(|item| item.id == need.id)
+                    .find(|item| item.id == need.id && item.acquire.is_some())
                     .and_then(|item| item.acquire.as_ref())
                     .ok_or_else(|| {
                         ActionError::Unavailable(Arc::from("compiled acquisition recipe missing"))
@@ -2003,6 +2003,49 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_item_without_recipe_does_not_hide_a_later_acquisition_recipe() {
+        let mut plan = provisioning(
+            vec![
+                compiled_item(42, "Quest token", 1, CompiledItemKind::Acquirable, None),
+                compiled_item(
+                    42,
+                    "Quest token",
+                    1,
+                    CompiledItemKind::Acquirable,
+                    Some("acquire:token"),
+                ),
+            ],
+            None,
+        );
+        plan.recipes.insert(
+            Arc::from("acquire:token"),
+            CompiledAcquireRecipe {
+                steps: Arc::from([]),
+                peak_items: Arc::from([]),
+                consumed_ids: Arc::from([]),
+            },
+        );
+        let snapshot = ready_snapshot(Vec::new());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &known_empty(42),
+                &Arc::new(NamedBankFacts::empty()),
+                &quest_catalog(),
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Acquired))
+        ));
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Acquiring);
+    }
+
+    #[test]
     fn float_latches_survive_consumption_and_reset_clears_them() {
         let coin = crate::native_bank::BankItem {
             id: 10,
@@ -2443,6 +2486,86 @@ mod tests {
             "bank trip did not finish: phase {:?}",
             provisioner.status().phase
         );
+    }
+
+    #[test]
+    fn authored_provisioning_returns_the_first_open_error_without_retrying() {
+        for has_booth in [false, true] {
+            let (mut snapshot, bank, banks) = openable_bank_fixture();
+            if !has_booth {
+                snapshot.seed_locs(Vec::new());
+            }
+            let plan = provisioning(
+                vec![compiled_item(
+                    42,
+                    "Quest token",
+                    1,
+                    CompiledItemKind::MustHave,
+                    None,
+                )],
+                Some(bank),
+            );
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let memory = BankMemory::default();
+            let quests = quest_catalog();
+            assert!(poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            complete_bank_pick(&mut ledger, bank, bank.tile, 1);
+            assert!(poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                2,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            if has_booth {
+                assert!(matches!(
+                    &ledger.as_ref().unwrap().outbox[0].effect,
+                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                ));
+                complete_open_stand(&mut ledger, 2);
+            } else {
+                assert!(ledger.as_ref().unwrap().outbox.is_empty());
+            }
+            let expected = if has_booth {
+                "bank item table unavailable"
+            } else {
+                "bank did not open"
+            };
+            let result = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                10,
+                &plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            assert!(
+                matches!(&result, Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == expected),
+                "expected first open failure {expected:?}, got {result:?}"
+            );
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+            assert_eq!(provisioner.bank_starts(), 1);
+        }
     }
 
     #[test]

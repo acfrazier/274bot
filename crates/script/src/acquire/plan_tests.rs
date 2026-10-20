@@ -649,15 +649,47 @@ fn bank_only_coverage_still_uses_the_actual_pack_for_the_withdrawal_target() {
     );
 }
 
-#[cfg(any(unix, windows))]
 #[test]
-fn bank_observation_clock_formats_local_hours_and_rejects_an_unrepresentable_time() {
-    let clock = local_clock(1_700_000_000);
-    assert_eq!(clock.len(), 5);
-    assert_eq!(&clock[2..3], ":");
-    assert!(clock[..2].parse::<u8>().expect("hours") < 24);
-    assert!(clock[3..].parse::<u8>().expect("minutes") < 60);
-    assert_eq!(local_clock(u64::MAX), "unknown");
+fn bank_observation_text_uses_relative_age_and_keeps_the_unix_time() {
+    let observed_at_unix = 1_700_000_000;
+    let looked = Looked {
+        bank: Some(BankSeen {
+            origin: Origin::Session,
+            observed_at_unix,
+            rows: 12,
+            count: 0,
+        }),
+        ..Looked::default()
+    };
+    for (elapsed, age) in [
+        (0, "less than a minute ago"),
+        (59, "less than a minute ago"),
+        (60, "1 minute ago"),
+        (12 * 60, "12 minutes ago"),
+    ] {
+        let now =
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(observed_at_unix + elapsed);
+        assert_eq!(
+            supply_message("Harpoon", &looked, now).as_ref(),
+            format!("no Harpoon in the pack, worn, or in the bank as seen {age} this session (12 rows); nobody sells it; waiting: put a Harpoon in the pack")
+        );
+    }
+    assert_eq!(looked.bank.unwrap().observed_at_unix, observed_at_unix);
+
+    for observed_at_unix in [observed_at_unix + 1, u64::MAX] {
+        let looked = Looked {
+            bank: Some(BankSeen {
+                observed_at_unix,
+                ..looked.bank.unwrap()
+            }),
+            ..Looked::default()
+        };
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        assert_eq!(
+            supply_message("Harpoon", &looked, now).as_ref(),
+            "no Harpoon in the pack, worn, or in the bank as seen this session (12 rows); nobody sells it; waiting: put a Harpoon in the pack"
+        );
+    }
 }
 
 #[test]

@@ -206,7 +206,11 @@ impl<'a> Planner<'a> {
     pub fn verdict(self, deposit: Option<&DepositSpec>) -> AcquireVerdict {
         if !self.plan.scan {
             if let Some(detail) = self.blocked {
-                let message = supply_message(&detail.item, &self.plan.looked);
+                let message = supply_message(
+                    &detail.item,
+                    &self.plan.looked,
+                    std::time::SystemTime::now(),
+                );
                 return AcquireVerdict::Blocked(AcquireBlock {
                     item: detail.item,
                     need: detail.index,
@@ -378,69 +382,23 @@ fn looked(counts: &dyn Counts, need: &Need, id: i32) -> Looked {
     }
 }
 
-fn supply_message(item: &str, looked: &Looked) -> Arc<str> {
+fn supply_message(item: &str, looked: &Looked, now: std::time::SystemTime) -> Arc<str> {
     let bank = match looked.bank {
-        Some(bank) => format!(
-            "in the bank as seen at {} this session ({} rows)",
-            local_clock(bank.observed_at_unix),
-            bank.rows
-        ),
+        Some(bank) => {
+            let age = std::time::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_secs(bank.observed_at_unix))
+                .and_then(|seen| now.duration_since(seen).ok());
+            let seen = match age.map(|age| age.as_secs() / 60) {
+                Some(0) => "less than a minute ago this session".to_string(),
+                Some(1) => "1 minute ago this session".to_string(),
+                Some(minutes) => format!("{minutes} minutes ago this session"),
+                None => "this session".to_string(),
+            };
+            format!("in the bank as seen {seen} ({} rows)", bank.rows)
+        }
         None => "in the observed bank".to_string(),
     };
     Arc::from(format!("no {item} in the pack, worn, or {bank}; nobody sells it; waiting: put a {item} in the pack"))
-}
-
-#[cfg(unix)]
-fn local_clock(seconds: u64) -> String {
-    let Ok(seconds) = libc::time_t::try_from(seconds) else {
-        return "unknown".to_string();
-    };
-    let mut calendar = std::mem::MaybeUninit::<libc::tm>::uninit();
-    // SAFETY: localtime_r reads the valid time value and initializes the owned
-    // output when it returns a non-null pointer. No borrowed output escapes.
-    let result = unsafe { libc::localtime_r(&seconds, calendar.as_mut_ptr()) };
-    if result.is_null() {
-        return "unknown".to_string();
-    }
-    // SAFETY: the successful localtime_r call initialized calendar above.
-    let calendar = unsafe { calendar.assume_init() };
-    format!("{:02}:{:02}", calendar.tm_hour, calendar.tm_min)
-}
-
-#[cfg(windows)]
-fn local_clock(seconds: u64) -> String {
-    #[repr(C)]
-    struct Calendar {
-        second: i32,
-        minute: i32,
-        hour: i32,
-        day: i32,
-        month: i32,
-        year: i32,
-        weekday: i32,
-        yearday: i32,
-        daylight: i32,
-    }
-    extern "C" {
-        fn _localtime64_s(result: *mut Calendar, seconds: *const i64) -> i32;
-    }
-    let Ok(seconds) = i64::try_from(seconds) else {
-        return "unknown".to_string();
-    };
-    let mut calendar = std::mem::MaybeUninit::<Calendar>::uninit();
-    // SAFETY: the CRT writes its documented nine-int tm into owned storage.
-    // The time input is valid, and success initializes every field.
-    if unsafe { _localtime64_s(calendar.as_mut_ptr(), &seconds) } != 0 {
-        return "unknown".to_string();
-    }
-    // SAFETY: the successful CRT call initialized calendar above.
-    let calendar = unsafe { calendar.assume_init() };
-    format!("{:02}:{:02}", calendar.hour, calendar.minute)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn local_clock(_seconds: u64) -> String {
-    "unknown".to_string()
 }
 
 /// Preserve the authored refusal text and partial-withdraw rule exactly.
