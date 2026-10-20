@@ -1,5 +1,6 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
+use crate::native::{WalkGoals, WalkGoalsError};
 use api::gather_methods::{
     known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     SceneRegionInput, TargetClass,
@@ -78,7 +79,7 @@ impl FishingSurvey {
 /// Partition the content rectangle into view-sized cells. Each cell's stand
 /// is the nearest point in its radius-one-safe observation rectangle, rather
 /// than an NPC origin (which may be water or outside the required view).
-fn observation_cells(bounds: SceneRegionInput) -> impl Iterator<Item = SceneRegionInput> {
+fn observation_cells(bounds: SceneRegionInput) -> impl Iterator<Item = SceneRegionInput> + Clone {
     let columns = (bounds.max_x - bounds.min_x + OBSERVATION_WIDTH) / OBSERVATION_WIDTH;
     let rows = (bounds.max_z - bounds.min_z + OBSERVATION_WIDTH) / OBSERVATION_WIDTH;
     (0..rows).flat_map(move |row| {
@@ -108,6 +109,53 @@ fn observation_stand(cell: SceneRegionInput, here: WorldTile) -> WorldTile {
         ),
         level: cell.level,
     }
+}
+
+/// All exact, standable positions that can observe a whole selected cell.
+/// Build this bounded set once, after placement ranking; collision legality
+/// alone does not say which component the player can reach.
+fn observation_goals(
+    cells: impl Iterator<Item = SceneRegionInput> + Clone,
+    collision: Option<nav::contract::CollisionView<'_>>,
+) -> Result<WalkGoals, WalkGoalsError> {
+    let capacity = cells
+        .clone()
+        .map(|cell| {
+            let width = (2 * NPC_VIEW_RADIUS as i32 + cell.min_x - cell.max_x + 1) as usize;
+            let height = (2 * NPC_VIEW_RADIUS as i32 + cell.min_z - cell.max_z + 1) as usize;
+            width * height
+        })
+        .fold(0usize, usize::saturating_add)
+        .min(WalkGoals::MAX + 1);
+    let mut goals = Vec::with_capacity(capacity);
+    for cell in cells {
+        let radius = NPC_VIEW_RADIUS as i32;
+        for x in cell.max_x - radius..=cell.min_x + radius {
+            for z in cell.max_z - radius..=cell.min_z + radius {
+                let tile = WorldTile {
+                    x,
+                    z,
+                    level: cell.level,
+                };
+                if collision.is_some_and(|view| !view.standable(tile)) {
+                    continue;
+                }
+                let key = (tile.level, tile.x, tile.z);
+                if let Err(index) = goals
+                    .binary_search_by_key(&key, |goal: &WorldTile| (goal.level, goal.x, goal.z))
+                {
+                    goals.insert(index, tile);
+                    if goals.len() > WalkGoals::MAX {
+                        return Err(WalkGoalsError::TooMany {
+                            count: goals.len(),
+                            limit: WalkGoals::MAX,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    WalkGoals::new(goals)
 }
 
 fn region_visible(bounds: SceneRegionInput, here: WorldTile) -> bool {
@@ -165,7 +213,7 @@ impl FishingPlacementSurvey {
     fn unobserved_cells(
         &self,
         bounds: SceneRegionInput,
-    ) -> impl Iterator<Item = SceneRegionInput> + '_ {
+    ) -> impl Iterator<Item = SceneRegionInput> + Clone + '_ {
         observation_cells(bounds)
             .enumerate()
             .filter(|(index, _)| self.unobserved(*index))
@@ -220,6 +268,7 @@ pub enum Selection {
     Absent {
         absent: u16,
     },
+    InvalidGoals(WalkGoalsError),
     /// Unobserved fishing cells remain, but none have a radius-one Area goal.
     NoStand,
 }
@@ -228,6 +277,8 @@ pub enum Selection {
 pub struct SelectedTarget {
     pub plan: TargetPlan,
     pub class: PlacementClass,
+    /// Shared only by the one selected observation request.
+    pub observation_goals: Option<WalkGoals>,
 }
 
 impl SelectedTarget {
@@ -266,9 +317,13 @@ impl SelectedTarget {
         };
         needs_walk.then(|| crate::native::WalkRequest {
             target: self.plan.tile,
-            candidate_goals: None,
+            candidate_goals: self.observation_goals.clone(),
             loc_id,
-            radius: RESOURCE_APPROACH_RADIUS,
+            radius: if self.observation_goals.is_some() {
+                0
+            } else {
+                RESOURCE_APPROACH_RADIUS
+            },
             arrival: if observation_approach {
                 nav::contract::ArrivalKind::Area
             } else {
@@ -331,17 +386,18 @@ pub struct ReturnObservation<'a> {
 /// blocking the run.
 #[derive(Debug, Clone)]
 pub enum ResourceReturn {
-    Ready(TargetPlan),
+    Ready(SelectedTarget),
     ExcludedUntil { until: u64 },
     Unavailable { reason: &'static str },
+    InvalidGoals(WalkGoalsError),
 }
 
 impl ResourceReturn {
     #[cfg(test)]
     pub fn plan(self) -> Option<TargetPlan> {
         match self {
-            Self::Ready(plan) => Some(plan),
-            Self::ExcludedUntil { .. } | Self::Unavailable { .. } => None,
+            Self::Ready(selected) => Some(selected.plan),
+            Self::ExcludedUntil { .. } | Self::Unavailable { .. } | Self::InvalidGoals(_) => None,
         }
     }
 }
@@ -692,6 +748,7 @@ fn select_with_access(
                     skill_stat,
                 ),
                 class,
+                observation_goals: None,
             }),
             outcome: Selection::Target(class),
             zone_gated,
@@ -867,22 +924,40 @@ fn select_with_access(
     }
 
     if let Some((method_index, method, spot, class, tile, npc_index, _)) = best_unloaded {
+        let plan = make_plan(
+            catalog,
+            method_index,
+            method,
+            spot,
+            tile,
+            npc_index,
+            skill_stat,
+        );
+        let mut goals = None;
         if method.skill == GatherSkill::Fishing {
             let survey = fishing.placement(method_index, spot.id.0);
+            let bounds = movement_bounds(spot).expect("eligible fishing movement");
+            match observation_goals(survey.unobserved_cells(bounds), collision) {
+                Ok(candidates) => goals = Some(candidates),
+                Err(error) => {
+                    return SelectionResult {
+                        target: None,
+                        outcome: if error == WalkGoalsError::Empty {
+                            Selection::NoStand
+                        } else {
+                            Selection::InvalidGoals(error)
+                        },
+                        zone_gated,
+                    };
+                }
+            }
             survey.approaches = survey.approaches.saturating_add(1);
         }
         return SelectionResult {
             target: Some(SelectedTarget {
-                plan: make_plan(
-                    catalog,
-                    method_index,
-                    method,
-                    spot,
-                    tile,
-                    npc_index,
-                    skill_stat,
-                ),
+                plan,
                 class,
+                observation_goals: goals,
             }),
             outcome: Selection::Target(class),
             zone_gated,
@@ -1020,7 +1095,7 @@ pub fn resource_return_target(
         }
     }
     if let Some((method_index, method, spot, _, tile, npc_index, _)) = best {
-        ResourceReturn::Ready(make_plan(
+        let plan = make_plan(
             catalog,
             method_index,
             method,
@@ -1028,7 +1103,25 @@ pub fn resource_return_target(
             tile,
             npc_index,
             observation.skill_stat,
-        ))
+        );
+        let mut goals = None;
+        if method.skill == GatherSkill::Fishing {
+            let bounds = movement_bounds(spot).expect("eligible fishing movement");
+            match observation_goals(observation_cells(bounds), observation.collision) {
+                Ok(candidates) => goals = Some(candidates),
+                Err(WalkGoalsError::Empty) => {
+                    return ResourceReturn::Unavailable {
+                        reason: RETURN_UNAVAILABLE_COLLISION,
+                    };
+                }
+                Err(error) => return ResourceReturn::InvalidGoals(error),
+            }
+        }
+        ResourceReturn::Ready(SelectedTarget {
+            plan,
+            class: PlacementClass::Unloaded,
+            observation_goals: goals,
+        })
     } else if let Some(until) = excluded_until {
         ResourceReturn::ExcludedUntil { until }
     } else {
@@ -1401,11 +1494,7 @@ pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWo
         std::sync::LazyLock::new(|| {
             let pack = std::env::var_os("NAV_PACK")
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::path::PathBuf::from(
-                        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-                    )
-                });
+                .expect("NAV_PACK must name the reviewed real 289 nav pack");
             std::sync::Arc::new(
                 nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
                     panic!(
@@ -1549,6 +1638,7 @@ pub(crate) mod tests {
         snapshot.seed_locs(vec![loc(1, tile)]);
         let selected = SelectedTarget {
             class: PlacementClass::Live,
+            observation_goals: None,
             plan: TargetPlan {
                 entity: EntityId::Loc(1),
                 tile,
@@ -3363,11 +3453,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();
@@ -3459,11 +3547,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();
@@ -3613,11 +3699,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         use api::obj_names::ItemDefView;
@@ -3789,11 +3873,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();
@@ -4239,9 +4321,10 @@ pub(crate) mod tests {
             ResourceReturn::ExcludedUntil { until } => assert_eq!(until, 167),
             other => panic!("temporary exclusion must wait, got {other:?}"),
         }
-        let ResourceReturn::Ready(plan) = observation(167, &avoided) else {
+        let ResourceReturn::Ready(selected) = observation(167, &avoided) else {
             panic!("the shared exclusion must lift at its deadline");
         };
+        let plan = selected.plan;
         assert_ne!(plan.tile, bank);
         assert!(
             spots
@@ -4249,5 +4332,182 @@ pub(crate) mod tests {
                 .any(|spot| distance(plan.tile, spot.origin) <= i64::from(NPC_VIEW_RADIUS)),
             "after the deadline the return stand must observe a small-net placement"
         );
+    }
+
+    #[test]
+    fn observation_candidates_deduplicate_before_the_typed_limit() {
+        let bounds = SceneRegionInput {
+            min_x: 0,
+            max_x: 29,
+            min_z: 0,
+            max_z: 0,
+            level: 0,
+        };
+        let goals = observation_goals(observation_cells(bounds), None).unwrap();
+        assert_eq!(goals.as_slice().len(), 992);
+        assert!(goals.as_slice().windows(2).all(|pair| pair[0] != pair[1]));
+        assert_eq!(
+            observation_goals(std::iter::empty(), None).unwrap_err(),
+            WalkGoalsError::Empty
+        );
+        let too_large = SceneRegionInput {
+            max_x: OBSERVATION_WIDTH * 12 - 1,
+            ..bounds
+        };
+        assert_eq!(
+            observation_goals(observation_cells(too_large), None).unwrap_err(),
+            WalkGoalsError::TooMany {
+                count: WalkGoals::MAX + 1,
+                limit: WalkGoals::MAX,
+            }
+        );
+    }
+
+    #[test]
+    fn generated_fishing_movement_candidates_fit_the_reviewed_bound() {
+        for revision in [
+            client::io::ClientRevision::R274,
+            client::io::ClientRevision::R289,
+        ] {
+            let data = api::game_data::for_revision(revision).unwrap();
+            let catalog =
+                api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
+                    .unwrap()
+                    .join()
+                    .unwrap()
+                    .unwrap();
+            let mut maximum = 0;
+            let mut checked = 0;
+            for method in catalog
+                .methods()
+                .iter()
+                .filter(|method| method.skill == GatherSkill::Fishing)
+            {
+                for spot in complete_spots(method).unwrap_or(&[]) {
+                    let Some(bounds) = movement_bounds(spot) else {
+                        continue;
+                    };
+                    let goals = observation_goals(observation_cells(bounds), None).unwrap();
+                    maximum = maximum.max(goals.as_slice().len());
+                    checked += 1;
+                    assert!(goals.as_slice().iter().all(|goal| {
+                        observation_cells(bounds).any(|cell| region_visible(cell, *goal))
+                    }));
+                }
+            }
+            assert!(checked > 0);
+            assert!(maximum <= 961, "reviewed movement census grew to {maximum}");
+            assert!(WalkGoals::MAX >= maximum + 63);
+            eprintln!("{revision:?}: {checked} movement rows, maximum {maximum} exact goals");
+        }
+    }
+
+    #[test]
+    fn catherby_candidates_route_from_the_guild_and_keep_the_island_start() {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
+            return;
+        };
+        let world = real_nav_world();
+        let lease = test_real_nav_lease();
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.rarefish.op3").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile {
+            x: 2611,
+            z: 3399,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Site,
+            anchor: WorldTile {
+                x: 2840,
+                z: 3436,
+                level: 0,
+            },
+            radius: 32,
+        };
+        let selected =
+            select_unloaded_fishing(&catalog, method, index, area, here, Some(lease.collision()))
+                .target
+                .expect("Catherby must provide an unloaded observation request");
+        let goals = selected.observation_goals.as_ref().unwrap().as_slice();
+        let old_goals = area_goals(&world.collision, selected.plan.tile);
+        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        state.stats = (0..=20).map(|skill| (skill, 99)).collect();
+        let old = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            here,
+            &old_goals,
+            nav::router::FindOptions::default(),
+            &state,
+        );
+        assert!(
+            old.route().is_err(),
+            "the old locally legal clamp must reproduce the disconnected-island failure"
+        );
+        let routed = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            here,
+            goals,
+            nav::router::FindOptions::default(),
+            &state,
+        );
+        let route = routed
+            .route()
+            .expect("one source-reachable observation goal is enough");
+        assert!(goals.contains(&route.dest));
+        assert!(route.ticks > 0.0);
+        let island = *old_goals.first().expect("old clamp has legal island goals");
+        assert!(
+            goals.contains(&island),
+            "never discard non-mainland components"
+        );
+        let from_island = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            island,
+            goals,
+            nav::router::FindOptions::default(),
+            &state,
+        );
+        let island_route = from_island
+            .route()
+            .expect("the player's island is a valid start");
+        assert_eq!(island_route.dest, island);
+        assert_eq!(island_route.ticks, 0.0);
+        eprintln!(
+            "Catherby: advisory={:?}, old_goals={}, candidates={}, guild_goal={:?}, guild_ticks={}, island={island:?}",
+            selected.plan.tile, old_goals.len(), goals.len(), route.dest, route.ticks
+        );
+
+        let ResourceReturn::Ready(returned) = resource_return_target(
+            &catalog,
+            &[index],
+            &guild_fishing_settings(method, area),
+            area,
+            ReturnObservation {
+                here,
+                now: 1,
+                skill_stat: 68,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(lease.collision()),
+            },
+        ) else {
+            panic!("bank return must retain the same multi-goal policy");
+        };
+        let return_goals = returned.observation_goals.as_ref().unwrap().as_slice();
+        let return_route = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            here,
+            return_goals,
+            nav::router::FindOptions::default(),
+            &state,
+        );
+        assert!(return_route.route().is_ok());
     }
 }

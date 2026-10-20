@@ -255,6 +255,8 @@ struct GatherScratch {
     kept_unbankable: bool,
     /// A non-empty supply withdrawal completed during this trip.
     withdrew_supplies: bool,
+    /// Only the in-flight observation request needs its selected-goal receipt.
+    observation_walk: bool,
 }
 
 pub struct Gatherer {
@@ -452,11 +454,13 @@ impl Gatherer {
         target: WorldTile,
         radius: u16,
         arrival: ArrivalKind,
+        candidate_goals: Option<crate::native::WalkGoals>,
         tick: &mut NativeTick<'_>,
     ) -> bool {
+        let observation_walk = candidate_goals.is_some();
         let request = WalkRequest {
             target,
-            candidate_goals: None,
+            candidate_goals,
             loc_id: None,
             radius,
             arrival,
@@ -470,6 +474,7 @@ impl Gatherer {
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
+                self.scratch.observation_walk = observation_walk;
                 self.active = Active::Walk(handle);
                 true
             }
@@ -520,14 +525,19 @@ impl Gatherer {
                 },
             },
         ) {
-            ResourceReturn::Ready(target) => {
+            ResourceReturn::Ready(selected) => {
                 self.wait_until = None;
-                let stand = target.tile;
-                self.method = Arc::clone(&target.alias);
-                self.target = Some(target);
+                let stand = selected.plan.tile;
+                let goals = selected.observation_goals;
+                let radius = if goals.is_some() {
+                    0
+                } else {
+                    RESOURCE_APPROACH_RADIUS
+                };
+                self.method = Arc::clone(&selected.plan.alias);
+                self.target = Some(selected.plan);
                 let recovery = self.scratch.return_recovery_pending;
-                let submitted =
-                    self.trip_walk(stand, RESOURCE_APPROACH_RADIUS, ArrivalKind::Area, tick);
+                let submitted = self.trip_walk(stand, radius, ArrivalKind::Area, goals, tick);
                 if recovery && submitted {
                     self.scratch.return_recovery_actions =
                         self.scratch.return_recovery_actions.saturating_add(1);
@@ -550,6 +560,9 @@ impl Gatherer {
                     "return-failed",
                     self.block_context(Some(here.value), reason),
                 );
+            }
+            ResourceReturn::InvalidGoals(error) => {
+                self.fail("return-failed", format!("observation goals: {error:?}"));
             }
         }
     }
@@ -603,7 +616,7 @@ impl Gatherer {
             }
             TripStep::Access => {
                 if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, tick);
+                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
                 }
             }
             TripStep::Open => {
@@ -1290,6 +1303,7 @@ impl Gatherer {
         if let Some(request) = selected.approach(tick.cx.snapshot(), tick.cx.evidence()) {
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
+                    self.scratch.observation_walk = selected.observation_goals.is_some();
                     self.active = Active::Walk(handle);
                     self.set_event("approaching target");
                 }
@@ -1464,6 +1478,22 @@ impl Gatherer {
     }
 
     fn handle_walk(&mut self, result: WalkReceipt, tick: &mut NativeTick<'_>) {
+        if result.end == WalkEnd::Arrived && std::mem::take(&mut self.scratch.observation_walk) {
+            let Some(goal) = result.goal else {
+                self.fail(
+                    if self.trip == TripStep::Return {
+                        "return-failed"
+                    } else {
+                        "walk-failed"
+                    },
+                    "observation walk returned no selected goal",
+                );
+                return;
+            };
+            if let Some(target) = self.target.as_mut() {
+                target.tile = goal;
+            }
+        }
         if api::hostlog::debug_enabled() {
             let server = tick
                 .cx
@@ -1932,6 +1962,7 @@ impl Gatherer {
             let selected = SelectedTarget {
                 plan,
                 class: PlacementClass::Live,
+                observation_goals: None,
             };
             if enabled
                 && observation == Some(TargetObservation::Active)
@@ -2029,6 +2060,12 @@ impl Gatherer {
                             Some(here.value),
                             &format!("no usable observation stand at {place}"),
                         ),
+                    );
+                }
+                Selection::InvalidGoals(error) => {
+                    self.fail(
+                        "resource-unavailable",
+                        format!("observation goals: {error:?}"),
                     );
                 }
                 Selection::Absent { absent } => {
@@ -2631,13 +2668,18 @@ mod tests {
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
-            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={}",
+            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
             size_of::<Active>(),
             size_of::<GatherRun>(),
             size_of::<DropBatch>(),
             size_of::<OneOp>(),
-            size_of::<GatherRetained>()
+            size_of::<GatherRetained>(),
+            size_of::<GatherScratch>(),
+            size_of::<TargetPlan>(),
+            size_of::<crate::native::WalkGoals>(),
+            size_of::<crate::native::WalkRequest>(),
+            size_of::<crate::native::WalkReceipt>()
         );
     }
     #[test]
@@ -2711,10 +2753,11 @@ mod tests {
         };
         assert_ne!(request.target, gatherer.area.unwrap().anchor);
         assert_eq!(
-            request.radius, 1,
-            "r40 bounds gathering, not resource observation"
+            request.radius, 0,
+            "r40 bounds gathering; the router selects an exact observation goal"
         );
         assert_eq!(request.arrival, ArrivalKind::Area);
+        let chosen_goal = request.candidate_goals.as_ref().unwrap().as_slice()[0];
         assert!(gatherer
             .status_data(None)
             .target
@@ -2722,7 +2765,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             gatherer.handle_walk(
                 WalkReceipt {
-                    goal: None,
+                    goal: Some(chosen_goal),
                     request_id: 1,
                     evidence: tick.cx.evidence(),
                     end: WalkEnd::Arrived,
@@ -3580,7 +3623,7 @@ mod tests {
             panic!("expiry must arm the resource return walk");
         };
         assert_ne!(request.target, bank);
-        assert_eq!(request.radius, 1);
+        assert_eq!(request.radius, 0);
         assert_eq!(request.arrival, ArrivalKind::Area);
     }
 
@@ -3917,11 +3960,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         use crate::quester::families::tests::with_tick;

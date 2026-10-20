@@ -313,6 +313,7 @@ impl Cell {
             LiveCase::BankCostNoCandidate => "GATHERER_BANK_NO_CANDIDATE_TILE",
             LiveCase::FishBait => "GATHERER_FISH_BAIT_TILE",
             LiveCase::FishHarpoonBank => "GATHERER_FISH_HARPOON_TILE",
+            LiveCase::Site if matches!(self, Self::Fishing) => "GATHERER_FISH_SITE_START_TILE",
             LiveCase::CoinRunes | LiveCase::CoinRunesEmpty => "GATHERER_COIN_RUNES_TILE",
             LiveCase::PowerToBank => "GATHERER_POWER_TO_BANK_TILE",
             LiveCase::PauseResumeOtherPlane => "GATHERER_RETURN_PAUSE_TILE",
@@ -1782,7 +1783,7 @@ struct Witness {
     bank_return_step_seen: bool,
     site_anchor_selected: bool,
     site_initial_walk: bool,
-    site_return_area_r1: bool,
+    site_return_area: bool,
     site_walks: Vec<Value>,
     bank_return_after_pause: bool,
     bank_return_after_reconnect: bool,
@@ -5775,7 +5776,7 @@ fn fixture_plan(
         LiveCase::FishBankSoak => CATHERBY_HARPOON_START,
         LiveCase::FishGuildApproach => ARDOUGNE_GUILD_START,
         LiveCase::Site => match cell {
-            Cell::Fishing => world_tile(2809, 3441),
+            Cell::Fishing => fixture_tile(cell.tile_env(case), world_tile(2809, 3441))?,
             Cell::Woodcutting => world_tile(3120, 3267),
             Cell::Mining => world_tile(3253, 3420),
         },
@@ -6840,19 +6841,26 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
                     slot.witness.site_initial_walk |= !returning
                         && slot.witness.status_trips == 0
                         && slot.witness.last_status_yielded == 0
-                        && text_field(&status, "phase") == Some("walking")
-                        && text_field(&status, "target").is_some_and(|target| target != "—")
-                        && anchor.is_some_and(|tile| site_nav_targets_area(nav, tile));
+                        && anchor.is_some_and(|tile| {
+                            site_initial_nav_matches(
+                                cell,
+                                nav,
+                                tile,
+                                text_field(&status, "phase").unwrap_or_default(),
+                                text_field(&status, "target").unwrap_or_default(),
+                            )
+                        });
                     if returning
                         && anchor.is_some_and(|tile| {
                             site_return_nav_matches(
+                                cell,
                                 nav,
                                 tile,
                                 text_field(&status, "target").unwrap_or_default(),
                             )
                         })
                     {
-                        slot.witness.site_return_area_r1 = true;
+                        slot.witness.site_return_area = true;
                     }
                     if slot
                         .witness
@@ -7447,7 +7455,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "expected_bank": cell.site_bank(),
             "selected_resource_anchor": witness.site_anchor_selected,
             "initial_site_walk": witness.site_initial_walk,
-            "return_area_r1": witness.site_return_area_r1,
+            "return_area": witness.site_return_area,
             "walks": witness.site_walks,
             "area": witness.last_area,
             "scene_seeds": fixture_plan.seed_locs.len(),
@@ -8967,26 +8975,47 @@ fn site_nav_targets_area(nav: &Value, anchor: WorldTile) -> bool {
     })
 }
 
-fn site_return_nav_matches(nav: &Value, anchor: WorldTile, target: &str) -> bool {
+fn site_observation_nav_matches(cell: Cell, nav: &Value, anchor: WorldTile) -> bool {
+    nav["armed"] == true
+        && nav["requested"] == true
+        && nav["request_id"].as_u64().is_some_and(|id| id > 0)
+        && nav["arrival"] == "Area"
+        && nav["requested_radius"] == if cell == Cell::Fishing { 0 } else { 1 }
+        && site_nav_targets_area(nav, anchor)
+}
+
+fn site_initial_nav_matches(
+    cell: Cell,
+    nav: &Value,
+    anchor: WorldTile,
+    phase: &str,
+    target: &str,
+) -> bool {
+    site_observation_nav_matches(cell, nav, anchor)
+        && phase
+            == if cell == Cell::Fishing {
+                "surveying"
+            } else {
+                "walking"
+            }
+        && !target.is_empty()
+        && target != "—"
+}
+
+fn site_return_nav_matches(cell: Cell, nav: &Value, anchor: WorldTile, target: &str) -> bool {
     let Some(stand) = target
         .split_once("; observation stand:")
         .and_then(|(_, coords)| parse_tile("Site Return stand", coords).ok())
     else {
         return false;
     };
-    nav["armed"] == true
-        && nav["requested"] == true
-        && nav["request_id"].as_u64().is_some_and(|id| id > 0)
-        && nav["arrival"] == "Area"
-        && nav["requested_radius"] == 1
-        && site_nav_destination(nav) == Some(stand)
-        && site_nav_targets_area(nav, anchor)
+    site_observation_nav_matches(cell, nav, anchor) && site_nav_destination(nav) == Some(stand)
 }
 
 fn site_bank_complete(cell: Cell, witness: &Witness, plan: &FixturePlan, baseline_xp: i32) -> bool {
     witness.site_anchor_selected
         && witness.site_initial_walk
-        && witness.site_return_area_r1
+        && witness.site_return_area
         && witness.bank_return_step_seen
         && witness.bank_arrivals >= 1
         && witness.bank_trips.iter().any(BankTripReceipt::complete)
@@ -9654,7 +9683,7 @@ mod named_site_fixture_tests {
             let mut witness = Witness {
                 site_anchor_selected: true,
                 site_initial_walk: true,
-                site_return_area_r1: true,
+                site_return_area: true,
                 bank_return_step_seen: true,
                 bank_arrivals: 1,
                 bank_trips: vec![trip],
@@ -9673,9 +9702,9 @@ mod named_site_fixture_tests {
             witness.site_initial_walk = false;
             assert!(!site_bank_complete(cell, &witness, &plan, 0));
             witness.site_initial_walk = true;
-            witness.site_return_area_r1 = false;
+            witness.site_return_area = false;
             assert!(!site_bank_complete(cell, &witness, &plan, 0));
-            witness.site_return_area_r1 = true;
+            witness.site_return_area = true;
             witness.post_bank_yields = 0;
             assert!(!site_bank_complete(cell, &witness, &plan, 0));
             witness.post_bank_yields = 1;
@@ -9718,6 +9747,78 @@ mod named_site_fixture_tests {
     }
 
     #[test]
+    fn initial_observation_proof_requires_current_skill_specific_walk() {
+        let anchor = world_tile(2844, 3429);
+        for cell in [Cell::Fishing, Cell::Woodcutting, Cell::Mining] {
+            let phase = if cell == Cell::Fishing {
+                "surveying"
+            } else {
+                "walking"
+            };
+            let radius = if cell == Cell::Fishing { 0 } else { 1 };
+            let nav = json!({
+                "armed": true,
+                "requested": true,
+                "request_id": 2,
+                "arrival": "Area",
+                "requested_radius": radius,
+                "requested_destination": [2846, 3417, 0],
+            });
+            assert!(site_initial_nav_matches(
+                cell, &nav, anchor, phase, "resource"
+            ));
+            for bad_phase in ["gathering", "waiting", "banking"] {
+                assert!(!site_initial_nav_matches(
+                    cell, &nav, anchor, bad_phase, "resource"
+                ));
+            }
+            for bad_target in ["", "—"] {
+                assert!(!site_initial_nav_matches(
+                    cell, &nav, anchor, phase, bad_target
+                ));
+            }
+            for (field, value) in [
+                ("armed", json!(false)),
+                ("requested", json!(false)),
+                ("request_id", json!(0)),
+                ("arrival", json!("Reach")),
+                ("requested_radius", json!(1 - radius)),
+                ("requested_destination", json!([2846, 3417, 1])),
+                ("requested_destination", json!([2860, 3417, 0])),
+            ] {
+                let mut bad = nav.clone();
+                bad[field] = value;
+                assert!(
+                    !site_initial_nav_matches(cell, &bad, anchor, phase, "resource"),
+                    "{field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fishing_return_proof_requires_exact_area_observation_arrival() {
+        let anchor = world_tile(2844, 3429);
+        let target = "0_44_53_rarefish; observation stand:2846,3429,0";
+        let mut nav = json!({
+            "armed": true,
+            "requested": true,
+            "request_id": 23,
+            "arrival": "Area",
+            "requested_radius": 0,
+            "requested_destination": [2846, 3429, 0],
+        });
+        assert!(site_return_nav_matches(Cell::Fishing, &nav, anchor, target));
+        nav["requested_radius"] = json!(1);
+        assert!(!site_return_nav_matches(
+            Cell::Fishing,
+            &nav,
+            anchor,
+            target
+        ));
+    }
+
+    #[test]
     fn return_proof_binds_current_area_request_to_its_resource_observation_stand() {
         let anchor = world_tile(3083, 3237);
         let target = "willowtree; observation stand:3084,3237,0";
@@ -9730,14 +9831,26 @@ mod named_site_fixture_tests {
             "requested_destination": [3084, 3237, 0],
             "outcome_radius": 1,
         });
-        assert!(site_return_nav_matches(&nav, anchor, target));
-        assert!(!site_return_nav_matches(&nav, anchor, "willowtree"));
+        assert!(site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
         assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            "willowtree"
+        ));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
             &nav,
             anchor,
             "willowtree; observation stand:3084,3237,1"
         ));
         assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
             &json!({
                 "armed": true,
                 "requested": true,
@@ -9750,24 +9863,49 @@ mod named_site_fixture_tests {
             "willowtree; observation stand:3096,3237,0"
         ));
         nav["requested_destination"] = json!([anchor.x, anchor.z, anchor.level]);
-        assert!(!site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
         nav["requested_destination"] = json!([3084, 3237, 0]);
         nav["requested_radius"] = json!(12);
         assert!(
-            !site_return_nav_matches(&nav, anchor, target),
+            !site_return_nav_matches(Cell::Woodcutting, &nav, anchor, target),
             "a stale r1 outcome is not a current Return"
         );
         nav["requested_radius"] = json!(1);
         nav["arrival"] = json!("Reach");
-        assert!(!site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
         nav["arrival"] = json!("Area");
         nav["requested"] = json!(false);
-        assert!(!site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
         nav["requested"] = json!(true);
         nav["request_id"] = json!(0);
-        assert!(!site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
         nav["request_id"] = json!(1);
         nav["armed"] = json!(false);
-        assert!(!site_return_nav_matches(&nav, anchor, target));
+        assert!(!site_return_nav_matches(
+            Cell::Woodcutting,
+            &nav,
+            anchor,
+            target
+        ));
     }
 }
