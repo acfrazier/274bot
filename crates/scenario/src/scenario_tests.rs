@@ -10232,14 +10232,10 @@ fn every_nav_scenario_uses_the_paint_preset() {
             !n.nsew_labels && !n.component_flood,
             "{name} must not force NSEW / flood"
         );
-        if matches!(name, "nav_door" | "nav_shantay" | "nav_mage_arena_bank") {
-            assert!(
-                n.engine_speed_ms.is_none(),
-                "{name} keeps Engine A at 600ms without sending ::speed"
-            );
-        } else {
-            assert_eq!(n.engine_speed_ms, Some(300), "{name} halves the tickrate");
-        }
+        assert!(
+            n.engine_speed_ms.is_none(),
+            "{name} must use the engine's default tick without sending ::speed"
+        );
     }
 }
 
@@ -10506,8 +10502,8 @@ fn nav_paint_path_is_a_short_courtyard_walk_with_live_paint_layers() {
     assert!(s.settings.full_rate);
     assert_eq!(
         s.settings.nav,
-        nav_test_paints().with_tick_ms(300),
-        "nav tests use the paint preset and speed 300"
+        nav_test_paints(),
+        "nav tests use the paint preset and keep the default tick"
     );
     assert!(
         names().contains(&"nav_paint_path"),
@@ -10604,9 +10600,9 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
         s.settings.nav,
         ScenarioNav {
             allow_danger_zones: true,
-            ..nav_test_paints().with_tick_ms(300)
+            ..nav_test_paints()
         },
-        "seam run uses the paint preset, speed 300 and Danger routing Always"
+        "seam run uses the paint preset and Danger routing Always"
     );
     assert_eq!(s.settings.deadline, Duration::from_secs(3600));
     assert_eq!(s.settings.sustains, nav_energy_sustains());

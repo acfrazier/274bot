@@ -1561,6 +1561,51 @@ mod tests {
         assert_eq!(scenario.settings.sustains, crate::nav_energy_sustains());
     }
 
+    #[test]
+    fn registered_scenarios_request_no_world_speed_by_default() {
+        fn default_quester_path() -> Scenario {
+            let path = raw_cook();
+            let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            let start = quester_path_start_anchor(&path).unwrap();
+            let mut scenario = build_quester_path_fixture(QuesterPathFixture {
+                name: "quester_path",
+                quest_display: "Cook's Assistant",
+                path: &path,
+                selected: &selected,
+                stage: None,
+                loadout: None,
+                extra_items: &[],
+                seed_vars: &[],
+                stand: start,
+                before_relog: Vec::new(),
+            })
+            .unwrap()
+            .scenario;
+            apply_quester_fast_settings(
+                &mut scenario,
+                QuesterFastSettings::parse(None, None).unwrap(),
+            );
+            scenario
+        }
+
+        for &name in crate::catalog::registered_name_refs() {
+            // The runtime-selected factory needs an id, so use its default fixture.
+            let scenario = if name == "quester_path" {
+                default_quester_path()
+            } else {
+                crate::get(name).unwrap_or_else(|| panic!("{name} is registered"))
+            };
+            assert!(
+                scenario.settings.nav.engine_speed_ms.is_none(),
+                "{name} must not request a world-speed change by default"
+            );
+            assert!(
+                scenario.settings.teardown_world_speed_ms.is_none(),
+                "{name} must not request a world-speed reset by default"
+            );
+        }
+    }
+
     fn document() -> PathDocument {
         let mut path: PathDocument =
             serde_json::from_str(include_str!("../../script/paths/289/cook.json")).unwrap();

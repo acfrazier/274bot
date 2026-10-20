@@ -69,6 +69,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Scenario wait budgets and the receipt `ticks` count now use observed game
   ticks, not dirty snapshots. Repeated steps send at most once per game
   tick.
+- Game-tick counts now advance only for applied `PLAYER_INFO` packets;
+  unrelated player-family invalidations no longer inflate scenario receipts.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
