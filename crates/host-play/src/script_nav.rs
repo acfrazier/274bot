@@ -7152,6 +7152,43 @@ mod diagnostic_tests {
     }
 
     #[test]
+    fn single_candidate_keeps_the_ordinary_exact_area_route() {
+        let world = tiny_stage_request().world;
+        let tile = |x, z| WorldTile { x, z, level: 0 };
+        for (from, to) in [
+            (tile(0, 0), tile(3, 3)),
+            (tile(3, 0), tile(0, 3)),
+            (tile(1, 1), tile(2, 1)),
+            (tile(2, 2), tile(2, 2)),
+        ] {
+            let request = |candidate_goals| {
+                let mut request = stage_request(Arc::clone(&world));
+                request.from = from;
+                request.to = to;
+                request.arrival = ArrivalKind::Area;
+                request.candidate_goals = candidate_goals;
+                request
+            };
+            let ordinary = completed_search_stage(request(None));
+            assert!(matches!(ordinary.search_mode, RouteSearchMode::InOrder));
+            let candidate = completed_search_stage(request(Some(
+                script::native::WalkGoals::new(vec![to]).unwrap(),
+            )));
+            assert!(matches!(candidate.search_mode, RouteSearchMode::First));
+            let Some(RouteJobOutcome::Route(ordinary)) = ordinary.outcome else {
+                panic!("ordinary exact-Area route must be reachable");
+            };
+            let Some(RouteJobOutcome::Route(candidate)) = candidate.outcome else {
+                panic!("the equivalent single candidate must be reachable");
+            };
+            assert_eq!(
+                candidate.to_route(&world.graph),
+                ordinary.to_route(&world.graph),
+            );
+        }
+    }
+
+    #[test]
     fn cooperative_route_targets_preserve_compat_center_priority() {
         for compat_tile_intent in [false, true] {
             let mut request = tiny_stage_request();
@@ -7315,6 +7352,298 @@ mod diagnostic_tests {
             assert!(!bot.walk_outcome_failed, "stale kind {stale}");
             assert_eq!(ledger.used_bytes(), 0, "stale kind {stale}");
         }
+    }
+
+    #[test]
+    #[ignore = "requires BOT_ROUTE_PARITY_NAVPACK and BOT_ROUTE_PARITY_OUT; real 17-case per-goal corpus"]
+    fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
+        use std::collections::{HashMap, HashSet};
+
+        let pack = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PARITY_NAVPACK").expect("set the real 289 navpack"),
+        );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PARITY_OUT").expect("set the parity evidence output"),
+        );
+        assert!(pack.is_absolute() && output.is_absolute());
+        let stride: usize = std::env::var("BOT_ROUTE_PARITY_STRIDE")
+            .map_or(1, |value| value.parse().expect("positive parity stride"));
+        assert!(stride > 0);
+        let tile = |x, z, level| WorldTile { x, z, level };
+        let mut loaded = NavWorld::load_pack(&pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let mut zones = loaded.graph.zones.take();
+        let mut world = Arc::new(loaded);
+        let empty = WorldState::empty();
+        let rich = WorldState {
+            map_members: true,
+            combat_level: Some(126),
+            quests: HashSet::from([
+                "Prince Ali Rescue".into(),
+                "Rune Mysteries".into(),
+                "Lost City".into(),
+                "Shilo Village".into(),
+                "Tree Gnome Village".into(),
+                "The Grand Tree".into(),
+            ]),
+            inv: HashMap::from([
+                (995, 10_000),
+                (554, 1_000),
+                (555, 1_000),
+                (556, 1_000),
+                (557, 1_000),
+                (558, 1_000),
+                (561, 1_000),
+                (563, 1_000),
+            ]),
+            stats: (0..21).map(|skill| (skill, 99)).collect(),
+            ..WorldState::empty()
+        };
+        let low = WorldState {
+            combat_level: Some(3),
+            ..rich.clone()
+        };
+        let live = WorldState {
+            map_members: true,
+            combat_level: Some(50),
+            inv: HashMap::from([(995, 60)]),
+            ..WorldState::empty()
+        };
+        let legacy = FindOptions {
+            zones: nav::zones::ZoneExempt::all(),
+            ..FindOptions::default()
+        };
+        let teleports = FindOptions {
+            allow_teleports: true,
+            ..legacy
+        };
+        let default = FindOptions::default();
+        let bank_targets: Vec<_> = world
+            .named_bank_facts()
+            .unwrap()
+            .banks()
+            .iter()
+            .filter(|bank| bank.routable)
+            .map(|bank| bank.tile)
+            .collect();
+        let mut radius_targets = Vec::new();
+        for x in 2543..=2563 {
+            for z in 3396..=3416 {
+                let goal = tile(x, z, 0);
+                if world.collision.standable(goal) {
+                    radius_targets.push(goal);
+                }
+            }
+        }
+        let lumbridge = tile(3222, 3218, 0);
+        let falador = tile(2965, 3379, 0);
+        let dungeon = tile(3016, 9840, 0);
+        let radius_from = tile(2615, 3332, 0);
+        // Per-goal projections of all 17 rows in nav/examples/perf_corpus.rs.
+        // Many/First rows expand to their full goal lists, not a proxy center.
+        let cases = [
+            (
+                "reachable_lumbridge_falador",
+                lumbridge,
+                vec![falador],
+                legacy,
+                empty.clone(),
+            ),
+            (
+                "bank_pick_all_stands",
+                dungeon,
+                bank_targets.clone(),
+                legacy,
+                rich.clone(),
+            ),
+            (
+                "radius_walk_candidates",
+                radius_from,
+                radius_targets.clone(),
+                legacy,
+                rich.clone(),
+            ),
+            (
+                "teleports_on_real_state",
+                lumbridge,
+                vec![tile(2817, 3443, 0)],
+                teleports,
+                rich.clone(),
+            ),
+            (
+                "unreachable_fail_closed",
+                lumbridge,
+                vec![tile(2817, 3443, 0)],
+                legacy,
+                empty.clone(),
+            ),
+            (
+                "reachable_lumbridge_falador_zones_l126",
+                lumbridge,
+                vec![falador],
+                default,
+                rich.clone(),
+            ),
+            (
+                "reachable_lumbridge_falador_zones_l3",
+                lumbridge,
+                vec![falador],
+                default,
+                low.clone(),
+            ),
+            (
+                "bank_pick_all_stands_zones_l3",
+                dungeon,
+                bank_targets,
+                default,
+                low.clone(),
+            ),
+            (
+                "radius_walk_candidates_zones_l3",
+                radius_from,
+                radius_targets,
+                default,
+                low.clone(),
+            ),
+            (
+                "lumbridge_rellekka_refused_zones_l126",
+                lumbridge,
+                vec![tile(2664, 3664, 0)],
+                default,
+                rich.clone(),
+            ),
+            (
+                "taverley_catherby_zones_l126",
+                tile(2895, 3450, 0),
+                vec![tile(2809, 3440, 0)],
+                default,
+                rich,
+            ),
+            (
+                "danger_live_off",
+                tile(2809, 3441, 0),
+                vec![tile(3103, 3163, 2)],
+                default,
+                live.clone(),
+            ),
+            (
+                "danger_live_grant",
+                tile(2809, 3441, 0),
+                vec![tile(3103, 3163, 2)],
+                legacy,
+                live,
+            ),
+            (
+                "falador_lumbridge_zones_l3",
+                falador,
+                vec![lumbridge],
+                default,
+                low.clone(),
+            ),
+            (
+                "deep_zone_goal_teles_off",
+                tile(2895, 3450, 0),
+                vec![tile(2852, 3493, 0)],
+                default,
+                low.clone(),
+            ),
+            (
+                "deep_zone_goal_teles_on",
+                tile(2895, 3450, 0),
+                vec![tile(2852, 3493, 0)],
+                FindOptions {
+                    allow_teleports: true,
+                    ..default
+                },
+                low,
+            ),
+            ("all_off_control", lumbridge, vec![falador], default, empty),
+        ];
+        let mut records = Vec::new();
+        let started = Instant::now();
+        for (index, (name, from, goals, opts, state)) in cases.into_iter().enumerate() {
+            if index == 5 {
+                Arc::get_mut(&mut world).unwrap().graph.zones = zones.take();
+            }
+            let all_goals = goals.len();
+            let mut selected = if name.starts_with("radius_walk") && stride > 1 {
+                let mut selected: Vec<_> = goals.iter().step_by(stride).copied().collect();
+                let first = nav::router::find_first_with(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    &goals,
+                    opts,
+                    &state,
+                );
+                if let Ok(route) = first.route() {
+                    if !selected.contains(&route.dest) {
+                        selected.push(route.dest);
+                    }
+                }
+                selected
+            } else {
+                goals
+            };
+            let pair_count = selected.len();
+            let mut routed = 0;
+            for goal in selected.drain(..) {
+                let request = |candidate_goals| {
+                    let mut request = stage_request(Arc::clone(&world));
+                    request.from = from;
+                    request.to = goal;
+                    request.arrival = ArrivalKind::Area;
+                    request.opts = opts;
+                    request.admission = crate::admission::Admission::manual(
+                        opts,
+                        Default::default(),
+                        1,
+                        crate::WalkGlobals::default(),
+                    );
+                    request.state = Some(state.clone());
+                    request.candidate_goals = candidate_goals;
+                    request
+                };
+                let (ordinary, _) = request(None).drive_route_job_for_test();
+                let (candidate, _) =
+                    request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
+                        .drive_route_job_for_test();
+                match (ordinary, candidate) {
+                    (RouteOutcome::Routed(ordinary), RouteOutcome::Routed(candidate)) => {
+                        assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                        routed += 1;
+                    }
+                    (RouteOutcome::NoPath, RouteOutcome::NoPath) => {}
+                    _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
+                }
+            }
+            let record = serde_json::json!({
+                "case": name, "from": [from.x, from.z, from.level],
+                "corpus_goals": all_goals, "pairs": pair_count,
+                "arrival": "Area", "radius": 0,
+                "stride": if name.starts_with("radius_walk") { stride } else { 1 },
+                "routed_pairs": routed, "no_path_pairs": pair_count - routed,
+                "exact_path_and_cost_equal": true,
+            });
+            println!("{record}");
+            records.push(record);
+            std::fs::write(
+                &output,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "schema": "274bot-host-per-goal-parity-v1",
+                    "complete": records.len() == 17,
+                    "elapsed_ms": started.elapsed().as_millis(),
+                    "rows": records,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(records.len(), 17);
     }
 
     #[test]

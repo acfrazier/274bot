@@ -43,6 +43,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Gatherer
+
+- A Catherby fishing card started from the Fishing Guild now chooses a
+  reachable place to observe the fishing spots, instead of stopping because
+  its nearest candidate is on the Water Obelisk island. Fishing bank returns
+  use the same route choice. A bot already on the island can still use a
+  valid place there.
+
 #### Navigation checks
 
 - The built-in Elkoy and rune-essence navigation checks start beside the

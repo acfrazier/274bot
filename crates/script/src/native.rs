@@ -576,8 +576,8 @@ pub enum WalkGoalsError {
 }
 
 impl WalkGoals {
-    /// The generated 274/289 movement census needs at most 810 observation
-    /// candidates before collision filtering. This leaves 214 goals of headroom.
+    /// The generated 274/289 movement rectangles need at most 810 goals;
+    /// stationary NPCs need 961. This leaves 63 goals of headroom.
     pub const MAX: usize = 1024;
 
     pub fn new(goals: Vec<WorldTile>) -> Result<Self, WalkGoalsError> {
