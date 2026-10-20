@@ -3,6 +3,13 @@ use super::scenarios::{
 };
 use super::*;
 
+const WATERFALL_COMPLETION_ACK: Proof = Proof::FreshQuestCompletion {
+    chat_needle: "Congratulations! Quest complete!",
+    main_root_component_id: 297,
+    component_id: 301,
+    text: "You have completed the Waterfall Quest!",
+};
+
 #[test]
 fn budget_s_from_parses_rs2b0t_style_seconds() {
     assert_eq!(budget_s_from(None), None);
@@ -1760,6 +1767,10 @@ fn maze_owned_is_registered_and_uses_one_authentic_macro_trigger() {
         .expect("passive catalog Start");
     assert_eq!(scenario.settings.start_script, Some("TradeBot"));
     assert!(
+        scenario.settings.nav.engine_speed_ms.is_none(),
+        "Maze must not send a world-wide ::speed cheat"
+    );
+    assert!(
         start > 0,
         "mainland hop must stand on an unblocked courtyard tile before Start"
     );
@@ -2849,12 +2860,10 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
 
     let approach = get("fire_giant_approach").expect("fire_giant_approach registered");
     assert_eq!(approach.settings.start_script, Some("FireGiant"));
-    assert!(approach.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(approach
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = approach
         .steps
         .iter()
@@ -5552,7 +5561,23 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
     assert!(brim.steps[..start].iter().any(|step| step.name
-        == "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+        == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+    let seed_step = brim.steps[..start]
+        .iter()
+        .find(|step| {
+            step.name
+                == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"
+        })
+        .expect("Brimhaven seeds level 75");
+    let StepKind::Perform { send } = &seed_step.kind else {
+        panic!("Brimhaven seed is a one-shot Perform");
+    };
+    let mut seed_client = native_seed_client();
+    let mut seed_snapshot = GameSnapshot::new();
+    seed_snapshot.rebuild(&seed_client);
+    assert!(send(&mut seed_client, &seed_snapshot));
+    assert!(emitted_has(&seed_client, "advancestat agility 75"));
+    assert!(!emitted_has(&seed_client, "advancestat agility 84"));
     assert!(seed.contains(&Proof::ChatClosed));
     assert!(seed.contains(&Proof::ItemId {
         id: 995,
@@ -5582,11 +5607,12 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 count: 800,
             },
             Proof::Varp { id: 309, min: 2 },
-            Proof::ArrivedNear {
-                x: 2805,
-                z: 9590,
+            Proof::VisitedWithin {
+                min_x: 2752,
+                max_x: 2815,
+                min_z: 9536,
+                max_z: 9599,
                 level: 3,
-                radius: 2,
             },
             Proof::StatXpGain {
                 id: AGILITY_STAT,
@@ -8689,12 +8715,10 @@ fn remaining_fighter_core_cases_register_melee_cycles() {
         Some(&Value::String("Barrel (free)".into()))
     );
     assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
-    assert!(giant.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(giant
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = giant
         .steps
         .iter()
@@ -8983,9 +9007,7 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(fire_arms.contains(&Proof::QuestDone {
-        name: "Waterfall Quest",
-    }));
+    assert!(fire_arms.contains(&WATERFALL_COMPLETION_ACK));
     for id in [GLARIALS_AMULET_ID, ROPE_ID] {
         assert!(fire_arms.contains(&Proof::ItemId { id, count: 1 }));
     }
@@ -11647,11 +11669,14 @@ fn reference_close_bytes(main_modal: i32) -> Vec<u8> {
 
 #[test]
 fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
-    for (name, journal) in [
-        ("fire_giant", "Waterfall Quest"),
-        ("fire_giant_approach", "Waterfall Quest"),
-        ("fire_giant_bank", "Waterfall Quest"),
-        ("green_dragon_special", "Lost City"),
+    for (name, expected_ack) in [
+        ("fire_giant", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_approach", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_bank", WATERFALL_COMPLETION_ACK),
+        (
+            "green_dragon_special",
+            Proof::QuestDone { name: "Lost City" },
+        ),
     ] {
         let scenario = get(name).expect("the combat fixture is registered");
         let index = |prefix: &str| {
@@ -11677,9 +11702,9 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
             matches!(scenario.steps[ack].kind, StepKind::Repeat { .. }),
             "{name}: the dialog machine re-sends at most once per game tick"
         );
-        assert!(
-            matches!(scenario.steps[ack].wait.arm, Proof::QuestDone { name: row } if row == journal),
-            "{name}: the boundary is the required quest's journal acknowledgement"
+        assert_eq!(
+            scenario.steps[ack].wait.arm, expected_ack,
+            "{name}: the boundary uses its configured quest completion signal"
         );
         assert!(
             scenario.steps[ack].wait.budget_ticks > 0,
@@ -11691,18 +11716,50 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         );
         assert!(prepare < start, "{name}: the reset precedes Start");
         // The kickoff sends the native individual-quest command, never
-        // the complete-all debugproc whose queued completions leak.
+        // the complete-all debugproc whose queued completions leak. It
+        // re-sends every tick: `@debug_quests` exits silently while the
+        // player cannot be accessed right after the relog.
+        assert!(
+            matches!(scenario.steps[load].kind, StepKind::Repeat { .. }),
+            "{name}: the kickoff re-sends until the dialog opens"
+        );
         let mut client = native_seed_client();
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         match &scenario.steps[load].kind {
-            StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
-            _ => panic!("{name}: the kickoff step is a Perform"),
+            StepKind::Repeat { send } => assert!(send(&mut client, &snapshot)),
+            _ => panic!("{name}: the kickoff step is a Repeat"),
         }
         assert!(emitted_has(&client, "~quest"), "{name}: native command");
         assert!(
             !emitted_has(&client, "~completequests"),
             "{name}: the complete-all debugproc is not used"
+        );
+    }
+}
+
+#[test]
+fn waterfall_cells_use_the_fresh_named_completion_scroll() {
+    for name in [
+        "fire_giant",
+        "fire_giant_prepared",
+        "fire_giant_approach",
+        "fire_giant_bank",
+        "fire_giant_bank_prepared",
+        "fire_giant_camelot_prepared",
+    ] {
+        let scenario = get(name).expect("the Waterfall FireGiant fixture is registered");
+        let acknowledgement = scenario
+            .steps
+            .iter()
+            .find(|step| {
+                step.name
+                    .starts_with("answer the quest-journal dialogs until the required quest")
+            })
+            .unwrap_or_else(|| panic!("{name}: no native quest acknowledgement step"));
+        assert_eq!(
+            acknowledgement.wait.arm, WATERFALL_COMPLETION_ACK,
+            "{name}: Waterfall requires fresh completion chat and named scroll"
         );
     }
 }
@@ -11758,6 +11815,118 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
             panic!("the run never failed the preparation step ({step}/{total})")
         }
         RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+    }
+}
+
+#[test]
+fn quest_kickoff_resends_until_a_choice_opens_and_never_into_an_open_choice() {
+    // A dropped first send (the player cannot be accessed yet) must not
+    // spend the cell: the kickoff sends again on the next tick. Once a
+    // choice is open the send stays quiet, because `@debug_quests`
+    // begins with `if_close` and would close that choice.
+    let scenario = get("fire_giant").expect("fire_giant is registered");
+    let load = scenario
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("open the native quest-journal"))
+        .expect("the fixture carries the native quest prerequisite");
+    let StepKind::Repeat { send } = &scenario.steps[load].kind else {
+        panic!("the kickoff step is a Repeat");
+    };
+    let count = |client: &Client| {
+        let bytes = &client.out.data()[..client.out.pos];
+        bytes
+            .windows("~quest".len())
+            .filter(|window| *window == b"~quest")
+            .count()
+    };
+    let mut client = native_seed_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(send(&mut client, &snapshot));
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 2, "no dialog yet: every tick re-sends");
+    let (mut client, snapshot) = chat_options_client(&[
+        "Complete All Quests.",
+        "Reset All Quests.",
+        "Select Individual Quest.",
+        "Cancel.",
+    ]);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 0, "an open choice is never re-sent into");
+}
+
+#[test]
+fn loadout_cards_post_the_fixture_row_their_start_selects() {
+    // Start refuses a card whose `loadout` setting cannot select a row
+    // (an empty saved loadout under a fresh HOME). Each of these cells
+    // posts the food it already seeds as a fixture loadout, and a pinned
+    // `loadout` inject names a posted row.
+    for (name, card, row_name, food, qty) in [
+        (
+            "auto_fighter_mage",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "auto_fighter_range",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "wildy_agility",
+            "WildyAgility",
+            "Scenario Wildy Agility food",
+            "Lobster",
+            5,
+        ),
+        (
+            "brimhaven_agility",
+            "BrimhavenAgility",
+            "Scenario Brimhaven Agility food",
+            "Lobster",
+            10,
+        ),
+        (
+            "herblore_secondaries_newt",
+            "HerbloreSecondaries",
+            "Scenario Herblore food",
+            "Lobster",
+            HERBLORE_EGG_FOOD_CARRY as u32,
+        ),
+        (
+            "clue_duel_3554",
+            "ClueSolver",
+            "Scenario Clue food",
+            "Shark",
+            15,
+        ),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        assert_eq!(scenario.settings.start_script, Some(card), "{name}");
+        let rows = scenario
+            .settings
+            .fixture_loadouts
+            .unwrap_or_else(|| panic!("{name} posts fixture loadouts at Start"));
+        let row = rows
+            .iter()
+            .find(|row| row.name == row_name)
+            .unwrap_or_else(|| panic!("{name} posts the {row_name:?} row"));
+        assert_eq!(row.carry, &[(food, qty)], "{name}");
+        if let Some(inject) = scenario.settings.script_settings_inject {
+            let inject = settings_inject_map(Some(inject)).unwrap();
+            if let Some(pinned) = inject.get("loadout") {
+                assert_eq!(
+                    pinned,
+                    &Value::String(row_name.into()),
+                    "{name}: the pinned loadout is a posted row"
+                );
+            }
+        }
     }
 }
 

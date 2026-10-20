@@ -53,10 +53,19 @@ const HERBLORE_EGGS_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Herblore food",
     carry: &[("Lobster", HERBLORE_EGG_FOOD_CARRY as u32)],
 }];
-const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
-    id: "secondary",
-    value: ScriptInjectValue::Str("Eye of newt"),
-}];
+// The same card as the eggs cell: Start refuses when its `loadout`
+// setting cannot select a row, so the newt cell pins and posts the same
+// fixture food row as the eggs cell.
+const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "secondary",
+        value: ScriptInjectValue::Str("Eye of newt"),
+    },
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Herblore food"),
+    },
+];
 fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
     herblore_open_seed_bank_at(name, arm, EDGEVILLE_BANK_BOOTH, EDGEVILLE_BANK_BOOTH_ID)
 }
@@ -581,6 +590,7 @@ pub(crate) fn herblore_secondaries_newt_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("HerbloreSecondaries"),
             script_settings_inject: Some(HERBLORE_NEWT_INJECT),
+            fixture_loadouts: Some(HERBLORE_EGGS_FIXTURE_LOADOUTS),
             terminal_shot: Some("herblore_secondaries_newt"),
             nav: gold_script_nav(),
             ..Default::default()

@@ -74,12 +74,6 @@ const BRIMHAVEN_ENTRANCE: WorldTile = WorldTile {
     z: 3194,
     level: 0,
 };
-/// Selected ladder 3617 Climb-Down destination, also arena platform 24.
-const BRIMHAVEN_LADDER_LANDING: WorldTile = WorldTile {
-    x: 2805,
-    z: 9590,
-    level: 3,
-};
 const AGILITY_TICKET_ID: i32 = 2996;
 const AGILITY_ARENA_VARP: i32 = 309;
 /// Search radius the radius cell injects, in tiles.
@@ -145,7 +139,20 @@ pub(crate) const GNOME_RADIUS_WITNESS_GAME_TICKS: u32 = 12;
 pub(crate) const GNOME_RADIUS_WITNESS_EVIDENCE: &str =
     "gnome_course_log_balance_left_alone_beyond_the_search_radius";
 
+/// Both agility cards read their food from the selected loadout
+/// (`scriptFood`); Start refuses a card whose `loadout` setting cannot
+/// select a row, so each cell posts the Lobsters it already seeds in the
+/// pack (five for Wildy, ten for Brimhaven) as its fixture loadout and
+/// pins that row by name.
+const WILDY_AGILITY_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Wildy Agility food",
+    carry: &[("Lobster", 5)],
+}];
 const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Wildy Agility food"),
+    },
     ScriptSettingInject {
         id: "acquireFoodAtStart",
         value: ScriptInjectValue::Bool(false),
@@ -156,7 +163,15 @@ const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const BRIMHAVEN_AGILITY_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Brimhaven Agility food",
+    carry: &[("Lobster", 10)],
+}];
 const BRIMHAVEN_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Brimhaven Agility food"),
+    },
     ScriptSettingInject {
         id: "stealRestock",
         value: ScriptInjectValue::Bool(false),
@@ -351,6 +366,7 @@ pub(crate) fn wildy_agility_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("WildyAgility"),
             script_settings_inject: Some(WILDY_AGILITY_INJECT),
+            fixture_loadouts: Some(WILDY_AGILITY_FIXTURE_LOADOUTS),
             terminal_shot: Some("wildy_agility"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -372,10 +388,10 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance",
+        name: "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
-                cheat(c, "advancestat agility 52");
+                cheat(c, "advancestat agility 75");
                 cheat(c, "give coins 1000");
                 cheat(c, "give lobster 10");
                 cheat(
@@ -442,12 +458,14 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
             },
         ),
         (
-            "watch Climb-Down reach the arena ladder platform",
-            Proof::ArrivedNear {
-                x: BRIMHAVEN_LADDER_LANDING.x,
-                z: BRIMHAVEN_LADDER_LANDING.z,
-                level: BRIMHAVEN_LADDER_LANDING.level,
-                radius: 2,
+            "watch entry to the Brimhaven arena after the paid Climb-Down",
+            // The engine lands in map square 43_149; the script can move before the next observation.
+            Proof::VisitedWithin {
+                min_x: 2752,
+                max_x: 2815,
+                min_z: 9536,
+                max_z: 9599,
+                level: 3,
             },
         ),
         (
@@ -503,6 +521,7 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BrimhavenAgility"),
             script_settings_inject: Some(BRIMHAVEN_AGILITY_INJECT),
+            fixture_loadouts: Some(BRIMHAVEN_AGILITY_FIXTURE_LOADOUTS),
             terminal_shot: Some("brimhaven_agility"),
             nav: gold_script_nav(),
             ..Default::default()
