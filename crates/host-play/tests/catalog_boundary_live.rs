@@ -10207,7 +10207,6 @@ export default class NativeStop extends LoopingBot {{
             CoreCase::GreenDragonPotions,
             CoreCase::FireGiant,
             CoreCase::ArdyFighter,
-            CoreCase::RockCrabBank,
             CoreCase::GreenDragonBank,
             CoreCase::GreenDragonTele,
             CoreCase::FireGiantApproach,
@@ -11003,15 +11002,34 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
 
-        let thiever_base = ardy_fight_obs(ARDY_THIEVER_STAND, &[], &[], 0, 0, 40, &[], false, None);
+        let thiever_base = ardy_fight_obs(
+            ARDY_THIEVER_STAND,
+            &[(r289_item_id("cake"), 8)],
+            &[],
+            0,
+            0,
+            99,
+            &[],
+            false,
+            None,
+        );
         validate_case_baseline(CoreCase::ArdyThieverFight, &thiever_base).unwrap();
+        let mut low_thieving = thiever_base.clone();
+        low_thieving.levels.insert("thieving".into(), 98);
+        assert!(validate_case_baseline(CoreCase::ArdyThieverFight, &low_thieving).is_err());
+        let mut unprepared = thiever_base.clone();
+        unprepared.item_ids.remove(&r289_item_id("cake"));
+        assert!(validate_case_baseline(CoreCase::ArdyThieverFight, &unprepared).is_err());
+        let mut seeded_coins = thiever_base.clone();
+        seeded_coins.item_ids.insert(r289_item_id("coins"), 30);
+        assert!(validate_case_baseline(CoreCase::ArdyThieverFight, &seeded_coins).is_err());
         let pickpocketed = ardy_fight_obs(
             ARDY_THIEVER_STAND,
             &[(r289_item_id("coins"), 30), (r289_item_id("cake"), 1)],
             &[],
             484,
             0,
-            40,
+            99,
             &[],
             false,
             None,
@@ -11022,7 +11040,7 @@ export default class NativeStop extends LoopingBot {{
             &[],
             484,
             20,
-            40,
+            99,
             &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
             true,
             Some(5),
@@ -11033,7 +11051,7 @@ export default class NativeStop extends LoopingBot {{
             &[],
             484,
             48,
-            40,
+            99,
             &[combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND)],
             false,
             None,
@@ -11044,7 +11062,7 @@ export default class NativeStop extends LoopingBot {{
             &[(r289_item_id("coins"), 30)],
             484,
             48,
-            40,
+            99,
             &[],
             false,
             None,
@@ -11058,7 +11076,7 @@ export default class NativeStop extends LoopingBot {{
             &[],
             484,
             48,
-            40,
+            99,
             &[],
             false,
             None,
@@ -11070,7 +11088,7 @@ export default class NativeStop extends LoopingBot {{
             &[],
             952,
             48,
-            40,
+            99,
             &[],
             false,
             None,
@@ -11116,15 +11134,15 @@ export default class NativeStop extends LoopingBot {{
         .qualify()
         .is_err());
 
-        // On 289 the catch comes from the opening stall restock, before any
-        // coins: the kill counts from Start.
+        // The prepared Guard fight can finish before the first pickpocket:
+        // the kill counts from Start.
         let stall_fight = ardy_fight_obs(
             ARDY_CAKES_STAND,
             &[(r289_item_id("cake"), 1)],
             &[],
             16,
             20,
-            40,
+            99,
             &[combat_npc(6, "Guard", 22, true, ARDY_CAKES_STAND)],
             true,
             Some(6),
@@ -11135,7 +11153,7 @@ export default class NativeStop extends LoopingBot {{
             &[],
             16,
             48,
-            40,
+            99,
             &[combat_npc(6, "Guard", 0, false, ARDY_CAKES_STAND)],
             false,
             None,
@@ -12509,11 +12527,6 @@ export default class NativeStop extends LoopingBot {{
                 "src/bot/scripts/ArdyFighter/ArdyFighter.ts",
             ),
             (
-                "rock_crab_bank",
-                "RockCrab",
-                "src/bot/scripts/RockCrab/RockCrab.ts",
-            ),
-            (
                 "green_dragon_bank",
                 "GreenDragon",
                 "src/bot/scripts/GreenDragon/GreenDragon.ts",
@@ -12592,105 +12605,6 @@ export default class NativeStop extends LoopingBot {{
             ("strength", COMBAT_ATTACK_LEVEL),
             ("hitpoints", COMBAT_ATTACK_LEVEL),
         ];
-
-        // --- rock_crab_bank: PeriodicBank Loot-count at Seers, no food restock.
-        let case = CoreCase::parse("rock_crab_bank").expect("rock crab bank registered");
-        assert_eq!(case.card_name(), "RockCrab");
-        let mut baseline = bank_obs(
-            case,
-            ROCK_CRAB_SAFE_STAND,
-            &[(r289_item_id("lobster"), ROCK_CRAB_FOOD)],
-            &[(r289_item_id("lobster"), 20)],
-            &[("strength", 0)],
-            &[],
-            false,
-            None,
-            0,
-            false,
-        );
-        baseline.dormant_rocks_seen = true;
-        validate_case_baseline(case, &baseline).unwrap();
-        let mut seeded = baseline.clone();
-        seeded.item_ids.insert(r289_item_id("uncut_sapphire"), 1);
-        assert!(validate_case_baseline(case, &seeded).is_err());
-        let mut awake = baseline.clone();
-        awake.dormant_rocks_seen = false;
-        assert!(validate_case_baseline(case, &awake).is_err());
-
-        let rocks = {
-            let mut o = baseline.clone();
-            o.tile = Some(ROCK_CRAB_SPOT);
-            o.npc_facts = vec![combat_npc(3, "Rocks", 50, false, ROCK_CRAB_SPOT)];
-            o.dormant_rocks_seen = true;
-            o
-        };
-        let woke = {
-            let mut o = rocks.clone();
-            o.npc_facts = vec![combat_npc(3, "Rock Crab", 50, true, ROCK_CRAB_SPOT)];
-            o.local_in_combat = true;
-            o.local_target_npc = Some(3);
-            o.xp.insert("strength".into(), 12);
-            o
-        };
-        let defeat = {
-            let mut o = woke.clone();
-            o.npc_facts = vec![
-                combat_npc(3, "Rock Crab", 0, false, ROCK_CRAB_SPOT),
-                combat_npc(6, "Rock Crab", 40, true, ROCK_CRAB_SPOT),
-            ];
-            o.local_target_npc = Some(6);
-            o.xp.insert("strength".into(), 40);
-            o
-        };
-        let looted = {
-            let mut o = defeat.clone();
-            o.item_ids.insert(r289_item_id("uncut_sapphire"), 1);
-            o.local_in_combat = false;
-            o.local_target_npc = None;
-            o.npc_facts.clear();
-            o
-        };
-        let deposited = {
-            let mut o = looted.clone();
-            o.tile = Some(SEERS_BANK);
-            o.item_ids.remove(&r289_item_id("uncut_sapphire"));
-            o.bank_ids.insert(r289_item_id("uncut_sapphire"), 1);
-            o.bank_open = true;
-            o.bank_loaded = true;
-            o.bank_generation = 5;
-            o
-        };
-        let closed = {
-            let mut o = deposited.clone();
-            o.bank_open = false;
-            o.bank_loaded = false;
-            o.bank_generation = 6;
-            o
-        };
-        let returned = {
-            let mut o = closed.clone();
-            o.tile = Some(ROCK_CRAB_BANK_RET);
-            o
-        };
-        let further = {
-            let mut o = returned.clone();
-            o.xp.insert("strength".into(), 52);
-            o
-        };
-        assert!(witness(
-            case,
-            &baseline,
-            [&rocks, &woke, &defeat, &defeat, &looted, &deposited, &closed, &returned, &further]
-        )
-        .qualify()
-        .is_ok());
-        assert!(witness(
-            case,
-            &baseline,
-            [&rocks, &woke, &defeat, &looted, &deposited, &closed, &returned]
-        )
-        .qualify()
-        .is_err());
 
         // --- green_dragon_tele (the prepared fixture): Varrock Magic XP +
         // land, then Edgeville restock. A south-walk booth without the

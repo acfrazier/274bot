@@ -412,7 +412,6 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::HillGiantBankPrepared
         | CoreCase::ChaosDruidBank
         | CoreCase::ArdyFighterBank
-        | CoreCase::RockCrabBank
         | CoreCase::GreenDragonBank
         | CoreCase::GreenDragonBankPrepared
         | CoreCase::GreenDragonBankDefaultPrepared
@@ -452,10 +451,6 @@ pub fn validate_case_baseline_with_preparation(
                         baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
                             && baseline.item_id(catalog_item_id("cake")) == 0
                             && baseline.item_id(catalog_item_id("chocolate_cake")) == 0
-                    }
-                    CoreCase::RockCrabBank => {
-                        baseline.equipment_id(catalog_item_id("adamant_scimitar")) == 1
-                            && baseline.dormant_rocks_seen
                     }
                     // The melee RockCrab core fights with the scoped weapon:
                     // the frozen card's own GearEquip refuses the carried
@@ -753,7 +748,7 @@ pub fn validate_case_baseline_with_preparation(
             "Ardougne Guard stand (2661,3306,0), Thieving 40, and empty pack of 995/1891"
         }
         CoreCase::ArdyThieverFight => {
-            "Ardougne Guard stand (2661,3306,0), Thieving 40, Attack/Strength/Hitpoints 40, scimitar 1331, and empty pack of 995/1891"
+            "Ardougne Guard stand (2661,3306,0), Thieving 99, Attack/Strength/Hitpoints 40, scimitar 1331, cake 1891x8, no coins 995, real Guard Attack before Start"
         }
         CoreCase::ArdyThieverKnight => {
             "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
@@ -883,9 +878,6 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::ArdyFighterBank => {
             "Ardougne Guard (2661,3306,0) r12, Attack/Strength/Hitpoints 40, Thieving 5, worn scimitar 1331, empty cake pack, empty Guard-drop class 440/886/1446/565/562/561, bankStrategy Loot count"
-        }
-        CoreCase::RockCrabBank => {
-            "safe stand (2712,3707,0), dormant Rocks, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8, empty 1623/405, bankStrategy Loot count"
         }
         CoreCase::GreenDragonBank => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn rune scimitar 1333 and shield 1540, lobster 12, empty 536/1753, escape Flee to bank"

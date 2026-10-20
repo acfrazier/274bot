@@ -548,8 +548,7 @@
     "paths": []
    },
    "variants": [
-    "rock_crab_range",
-    "rock_crab_bank"
+    "rock_crab_range"
    ],
    "reference_cases": [
     {
@@ -574,32 +573,6 @@
    "live": "script_rock_crab_range",
    "scenario": "rock_crab_range",
    "core_case": "rock_crab_range",
-   "pair_case": null,
-   "options": [],
-   "unsupported": [],
-   "covers": {
-    "scripts": [
-     "RockCrab"
-    ],
-    "subsystems": [],
-    "paths": []
-   },
-   "variants": [],
-   "reference_cases": []
-  },
-  {
-   "id": "rock_crab_bank",
-   "kind": "native",
-   "script": "RockCrab",
-   "script_key": "RockCrab",
-   "primary": false,
-   "status": "unvetted",
-   "manual": false,
-   "budget_min": 12,
-   "runner": "core",
-   "live": "script_rock_crab_bank",
-   "scenario": "rock_crab_bank",
-   "core_case": "rock_crab_bank",
    "pair_case": null,
    "options": [],
    "unsupported": [],
