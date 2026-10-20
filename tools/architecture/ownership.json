@@ -5683,6 +5683,14 @@
       "owner": "T1"
     },
     {
+      "path": "tools/known-issues/known_issues.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/known-issues/test_known_issues.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/lint-ratchet/lint_ratchet.py",
       "owner": "T1"
     },

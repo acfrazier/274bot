@@ -2,9 +2,12 @@
 """Single source of truth for open release notes: known issues and gaps.
 
 The ledger lives in ``docs/known-issues.toml`` (one ``[[item]]`` table per
-open item). Fixed items leave the file in the commit that fixes them. Never
-edit the ``### Known issues`` / ``### Not in this release`` blocks in
-``CHANGELOG.md`` by hand; regenerate them instead:
+item). An item is open at release X when its ``first`` release is not newer
+than X and its ``fixed`` release (when set) is newer than X. The commit that
+fixes an item sets ``fixed`` to the release carrying the fix; items are never
+deleted, so checks of already published releases keep passing. Never edit the
+``### Known issues`` / ``### Not in this release`` blocks in ``CHANGELOG.md``
+by hand; regenerate them instead:
 
     python3 tools/known-issues/known_issues.py render --release 0.2.5
     python3 tools/known-issues/known_issues.py check --release 0.2.5
@@ -14,6 +17,12 @@ edit the ``### Known issues`` / ``### Not in this release`` blocks in
 ``- **Area:** text`` bullets for known issues). ``check`` diffs those blocks
 against ``CHANGELOG.md`` and fails when they differ. ``carried`` lists every
 open item with its carry count and flags items that need a release ruling.
+
+The ``## Unreleased`` section stages no ledger blocks during development:
+they are rendered with ``render --release <next>`` and pasted in when the
+release section is cut, then verified with ``check --release <next>``. There
+is no ``--unreleased`` flag: it used to fail whenever the blocks were not
+staged yet, which is the normal state all through development.
 """
 
 import argparse
@@ -42,7 +51,6 @@ WIDTH = 80
 
 SECTION_RE = re.compile(r"^## \[([^\]]+)\]")
 SUBSECTION_RE = re.compile(r"^###\s+(.*?)\s*$")
-UNRELEASED_HEADING = "## Unreleased"
 NOT_IN_RELEASE_HEADING = "### Not in this release"
 KNOWN_ISSUES_HEADING = "### Known issues"
 
@@ -62,8 +70,14 @@ def version_key(version):
     return tuple(parts)
 
 
-def load_ledger(path):
-    """Read and validate the ledger; return items in file order."""
+def load_ledger(path, order):
+    """Read and validate the ledger; return items in file order.
+
+    ``order`` is the CHANGELOG release order (oldest first, from
+    :func:`changelog_releases`). The optional ``fixed`` release must name a
+    known release or the next release, and must be later than ``first``, so
+    a typo cannot silently keep an item open or close it too early. Unknown
+    fields are rejected for the same reason."""
     import tomllib
 
     with open(path, "rb") as handle:
@@ -71,6 +85,10 @@ def load_ledger(path):
     raw = data.get("item", [])
     if not isinstance(raw, list):
         raise ValueError(f"{path}: expected a list of [[item]] tables")
+    names = list(order)
+    following = next_release(names) if names else None
+    if following is not None and following not in names:
+        names.append(following)
     items = []
     seen = set()
     required = ("id", "kind", "area", "text", "first", "target",
@@ -79,6 +97,11 @@ def load_ledger(path):
         for key in required:
             if key not in entry or str(entry[key]).strip() == "":
                 raise ValueError(f"{path}: item is missing {key!r}: {entry!r}")
+        unknown = sorted(set(entry) - set(required) - {"fixed"})
+        if unknown:
+            raise ValueError(
+                f"{path}: item {entry.get('id')!r} has unknown "
+                f"field(s): {', '.join(unknown)}")
         if entry["kind"] not in KINDS:
             raise ValueError(f"{path}: bad kind {entry['kind']!r}")
         if entry["severity"] not in SEVERITIES:
@@ -86,18 +109,39 @@ def load_ledger(path):
         if entry["id"] in seen:
             raise ValueError(f"{path}: duplicate id {entry['id']!r}")
         seen.add(entry["id"])
-        version_key(entry["first"])
+        first = str(entry["first"])
+        version_key(first)
         if entry["target"] != "none":
             version_key(entry["target"])
+        fixed = None
+        if entry.get("fixed") is not None:
+            fixed = str(entry["fixed"]).strip()
+            if fixed == "":
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} has an empty 'fixed' release")
+            version_key(fixed)
+            if fixed not in names:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} names an unknown "
+                    f"'fixed' release {fixed!r}")
+            if first in names:
+                later = names.index(fixed) > names.index(first)
+            else:
+                later = version_key(fixed) > version_key(first)
+            if not later:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'fixed' release {fixed!r} "
+                    f"is not later than 'first' {first!r}")
         items.append({
             "id": str(entry["id"]),
             "kind": str(entry["kind"]),
             "area": " ".join(str(entry["area"]).split()),
             "text": " ".join(str(entry["text"]).split()),
-            "first": str(entry["first"]),
+            "first": first,
             "target": str(entry["target"]),
             "severity": str(entry["severity"]),
             "owner": str(entry["owner"]),
+            "fixed": fixed,
         })
     return items
 
@@ -114,6 +158,22 @@ def changelog_releases(changelog_path):
     return order
 
 
+def next_release(order):
+    """The release after the newest CHANGELOG heading (patch bump).
+
+    ``["0.2.3", "0.2.4"]`` gives ``"0.2.5"``. Only the trailing numeric
+    component moves; any suffix stays."""
+    if not order:
+        raise ValueError("CHANGELOG has no release headings")
+    newest = str(order[-1])
+    chunks = newest.split(".")
+    match = re.fullmatch(r"(\d+)(.*)", chunks[-1])
+    if not match:
+        raise ValueError(f"cannot name the release after {newest!r}")
+    chunks[-1] = f"{int(match.group(1)) + 1}{match.group(2)}"
+    return ".".join(chunks)
+
+
 def with_release(order, release):
     """Order plus ``release``; a release newer than every heading goes last."""
     names = list(order)
@@ -122,16 +182,40 @@ def with_release(order, release):
     return names
 
 
-def applies(item, release, order):
-    """Whether the item affects ``release`` (its ``first`` is not newer).
+def extended_order(order, release, items=()):
+    """Release order plus the next release (when needed) plus ``release``.
 
-    A release with no CHANGELOG heading yet (the next release) counts as
-    newer than every heading."""
+    The next release sorts right after the newest heading and before any
+    unknown queried release, so a ``fixed`` release (a known release or the
+    next one) always has a defined position next to the queried release."""
+    names = list(order)
+    following = next_release(order) if order else None
+    if (following is not None and following not in names
+            and (release == following
+                 or any(item.get("fixed") == following for item in items))):
+        names.append(following)
+    for extra in [item.get("fixed") for item in items] + [release]:
+        if extra is not None and extra not in names:
+            names.append(extra)
+    return names
+
+
+def applies(item, release, order):
+    """Whether the item is open at ``release``.
+
+    Open means its ``first`` is not newer than ``release`` and its ``fixed``
+    release (when set) is newer than ``release``. A release with no
+    CHANGELOG heading yet (the next release) counts as newer than every
+    heading. Fixed items stay in the ledger as history; ``render`` and
+    ``check`` simply skip them where they are closed."""
     if item["first"] not in order:
         raise ValueError(
             f"ledger item {item['id']!r} names an unknown release {item['first']!r}")
-    names = with_release(order, release)
-    return names.index(item["first"]) <= names.index(release)
+    names = extended_order(order, release, (item,))
+    if names.index(item["first"]) > names.index(release):
+        return False
+    fixed = item.get("fixed")
+    return fixed is None or names.index(release) < names.index(fixed)
 
 
 def carried_releases(first, release, order):
@@ -191,7 +275,7 @@ def render_release(items, order, release):
     return "\n".join(blocks)
 
 
-def section_lines(changelog_path, release=None, unreleased=False):
+def section_lines(changelog_path, release=None):
     """Raw lines of one ``##`` section (heading line excluded).
 
     Release headings carry a date suffix (``## [0.2.4] — ...``), so match the
@@ -201,15 +285,10 @@ def section_lines(changelog_path, release=None, unreleased=False):
     start = None
     for index, line in enumerate(lines):
         stripped = line.strip()
-        if unreleased:
-            if stripped == UNRELEASED_HEADING:
-                start = index + 1
-                break
-        else:
-            match = SECTION_RE.match(stripped)
-            if match and match.group(1) == release:
-                start = index + 1
-                break
+        match = SECTION_RE.match(stripped)
+        if match and match.group(1) == release:
+            start = index + 1
+            break
     if start is None:
         return None
     body = []
@@ -278,9 +357,15 @@ def needs_ruling(item, release, order):
 
 
 def carried_rows(items, order, release):
-    """One row per item: id, first, carry count, target, owner, ruling flag."""
+    """One row per open item: id, first, carry count, target, owner, ruling flag.
+
+    Items closed at ``release`` (already fixed) and items not yet open
+    (``first`` is newer) have no row: the table describes the queried
+    release only."""
     rows = []
     for item in items:
+        if not applies(item, release, order):
+            continue
         rows.append({
             "id": item["id"],
             "first": item["first"],
@@ -329,21 +414,17 @@ def default_paths(args):
 
 def cmd_render(args):
     ledger_path, changelog_path = default_paths(args)
-    items = load_ledger(ledger_path)
     order = changelog_releases(changelog_path)
+    items = load_ledger(ledger_path, order)
     sys.stdout.write(render_release(items, order, args.release))
 
 
 def cmd_check(args):
     ledger_path, changelog_path = default_paths(args)
-    items = load_ledger(ledger_path)
     order = changelog_releases(changelog_path)
-    if args.unreleased:
-        label = UNRELEASED_HEADING
-        section = section_lines(changelog_path, unreleased=True)
-    else:
-        label = f"## [{args.release}]"
-        section = section_lines(changelog_path, release=args.release)
+    items = load_ledger(ledger_path, order)
+    label = f"## [{args.release}]"
+    section = section_lines(changelog_path, release=args.release)
     diff = check_release(items, order, args.release, section)
     if diff:
         sys.stdout.write("\n".join(diff) + "\n")
@@ -354,8 +435,8 @@ def cmd_check(args):
 
 def cmd_carried(args):
     ledger_path, changelog_path = default_paths(args)
-    items = load_ledger(ledger_path)
     order = changelog_releases(changelog_path)
+    items = load_ledger(ledger_path, order)
     sys.stdout.write(format_carried(carried_rows(items, order, args.release)))
 
 
@@ -370,10 +451,7 @@ def parser():
     render.add_argument("--release", required=True)
     render.set_defaults(func=cmd_render)
     check = commands.add_parser("check", help="diff the CHANGELOG blocks against render")
-    target = check.add_mutually_exclusive_group(required=True)
-    target.add_argument("--release")
-    target.add_argument("--unreleased", action="store_true",
-                        help="check the ## Unreleased section against the next release")
+    check.add_argument("--release", required=True)
     check.set_defaults(func=cmd_check)
     carried = commands.add_parser("carried", help="table open items and their carry count")
     carried.add_argument("--release", required=True)
@@ -383,13 +461,6 @@ def parser():
 
 def main(argv=None):
     arguments = parser().parse_args(argv)
-    if getattr(arguments, "unreleased", False):
-        # --unreleased checks the staged next-release blocks. That release has
-        # no heading yet, so name it after the newest heading. The name never
-        # appears in output: carried sentences only name releases before it.
-        _, changelog_path = default_paths(arguments)
-        order = changelog_releases(changelog_path)
-        arguments.release = f"{order[-1]}+unreleased" if order else "unreleased"
     try:
         outcome = arguments.func(arguments)
     except (OSError, ValueError) as error:
@@ -399,8 +470,8 @@ def main(argv=None):
 
 def check_release_by_paths(ledger_path, changelog_path, release):
     """Entry point for release.py preflight: diff lines, empty means pass."""
-    items = load_ledger(ledger_path)
     order = changelog_releases(changelog_path)
+    items = load_ledger(ledger_path, order)
     section = section_lines(changelog_path, release=release)
     return check_release(items, order, release, section)
 

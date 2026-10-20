@@ -602,14 +602,11 @@ fn first_surface(
 fn adapter_and_device(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface<'static>,
-    power_preference: wgpu::PowerPreference,
+    override_preference: Option<wgpu::PowerPreference>,
 ) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), PanelError> {
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference,
-        compatible_surface: Some(surface),
-        force_fallback_adapter: false,
-    }))
-    .map_err(PanelError::AdapterUnavailable)?;
+    let request_options = panel_adapter_request_options(Some(surface), override_preference);
+    let adapter = block_on(instance.request_adapter(&request_options))
+        .map_err(PanelError::AdapterUnavailable)?;
     let device_desc = wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),
@@ -622,25 +619,47 @@ fn adapter_and_device(
     Ok((adapter, device, queue))
 }
 
+fn panel_power_preference(
+    override_preference: Option<wgpu::PowerPreference>,
+) -> wgpu::PowerPreference {
+    override_preference.unwrap_or(if cfg!(target_os = "linux") {
+        // Keep the display system's adapter order. A low-power sort can
+        // put an integrated GPU ahead of the compositor's discrete GPU,
+        // even when Vulkan advertises surface support for both.
+        wgpu::PowerPreference::None
+    } else {
+        wgpu::PowerPreference::LowPower
+    })
+}
+
+fn panel_adapter_request_options<'a>(
+    compatible_surface: Option<&'a wgpu::Surface<'a>>,
+    override_preference: Option<wgpu::PowerPreference>,
+) -> wgpu::RequestAdapterOptions<'a, 'a> {
+    wgpu::RequestAdapterOptions {
+        power_preference: panel_power_preference(override_preference),
+        compatible_surface,
+        force_fallback_adapter: false,
+    }
+}
+
 /// Adapter and device for `surface`, off the UI thread. When the current
 /// backend yields no usable adapter or device, the next attempt gets a
 /// fresh instance and surface here (only Windows has a next attempt, and a
-/// Win32 window accepts a surface from any thread). Low power by default:
-/// on a hybrid laptop that is the integrated GPU driving the display, which
-/// skips the discrete GPU's cold start; single-GPU machines get their only
-/// adapter either way. `WGPU_POWER_PREF=high` overrides.
+/// Win32 window accepts a surface from any thread). Linux keeps the system's
+/// adapter order. Other platforms prefer low power to avoid the discrete
+/// GPU's cold start on hybrid laptops. `WGPU_POWER_PREF` overrides both.
 fn request_gpu(
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
     fallbacks: Vec<wgpu::Backends>,
 ) -> Result<GpuParts, PanelError> {
-    let power_preference =
-        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let override_preference = wgpu::PowerPreference::from_env();
     let mut fallbacks = fallbacks.into_iter();
     let mut attempt = (instance, surface);
     loop {
-        let error = match adapter_and_device(&attempt.0, &attempt.1, power_preference) {
+        let error = match adapter_and_device(&attempt.0, &attempt.1, override_preference) {
             Ok((adapter, device, queue)) => {
                 let (instance, surface) = attempt;
                 return Ok(GpuParts {

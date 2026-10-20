@@ -12023,7 +12023,7 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
         let expected_deadline = match name {
             "shop_buyout_betty" | "shop_buyout_bob" => SHOP_BUYOUT_BETTY_DEADLINE,
             "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
-            "shop_buyout_nurmof" => Duration::from_secs(450),
+            "shop_buyout_nurmof" => SHOP_BUYOUT_NURMOF_DEADLINE,
             _ => SCRIPT_GOLD_DEADLINE,
         };
         assert_eq!(
@@ -12445,6 +12445,105 @@ fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
         WorldTile {
             x: 3092,
             z: 3243,
+            level: 0
+        }
+    );
+}
+
+/// Nurmof Dwarven Mine route: sm25wxbm3d_0 measured 260 walked tiles per
+/// leg and run-energy depletion about 276 run tiles after Start, so the
+/// first purchase needs about 440 engine ticks (550 dirties at 1.25).
+/// Betty's 320/280/280 expired on the return surface leg with the
+/// withdraw complete and no stationary ticks. Only the three travel
+/// arms and the wall deadline widen; proof order is unchanged.
+#[test]
+fn shop_buyout_nurmof_timing_covers_mine_bank_travel_legs() {
+    let nurmof = get("shop_buyout_nurmof").expect("shop_buyout_nurmof");
+    assert_eq!(
+        nurmof.settings.deadline,
+        Duration::from_secs(720),
+        "720s wall covers about 1116 expected engine ticks at 600ms"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_DEADLINE,
+        Duration::from_secs(720),
+        "named deadline matches the measured sizing"
+    );
+    let watch = |name: &str| {
+        nurmof
+            .steps
+            .iter()
+            .find(|step| step.name == name)
+            .unwrap_or_else(|| panic!("nurmof has {name}"))
+    };
+    assert_eq!(
+        watch("watch unseeded purchased product in pack after Start")
+            .wait
+            .budget_ticks,
+        560,
+        "first purchase covers both 260-tile legs, the ladder, withdraw and buy"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS, 560,
+        "named first-purchase budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch purchased product enter a fresh bank")
+            .wait
+            .budget_ticks,
+        360,
+        "deposit covers one walked mine→bank leg"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS, 360,
+        "named deposit budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch the pack empty of product after deposit")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "empty-pack arm is not loosened"
+    );
+    assert_eq!(
+        watch("watch the buyout bank close after deposit")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "close arm is not loosened"
+    );
+    assert_eq!(
+        watch("watch return to the named shop after banking")
+            .wait
+            .budget_ticks,
+        360,
+        "return covers one walked bank→mine leg"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS, 360,
+        "named return budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch further purchased product after return")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "further-purchase arm is not loosened"
+    );
+    // Mine shop and Falador East bank geometry preserved.
+    assert_eq!(
+        NURMOF_STAND,
+        WorldTile {
+            x: 2997,
+            z: 9844,
+            level: 0
+        }
+    );
+    assert_eq!(
+        FALADOR_EAST_BANK,
+        WorldTile {
+            x: 3013,
+            z: 3355,
             level: 0
         }
     );

@@ -4134,6 +4134,15 @@ fn combat_prayer_off_clears_two_prayers_serially_in_table_order() {
 }
 
 #[test]
+fn idle_nav_bot_does_not_allocate_request_payloads() {
+    let measured = allocation_counter::measure(|| {
+        std::hint::black_box(NavBot::default());
+    });
+    assert_eq!(measured.count_total, 0, "{measured:?}");
+    assert_eq!(measured.bytes_current, 0, "{measured:?}");
+}
+
+#[test]
 fn s2b_admission_per_bot_layouts() {
     eprintln!(
         "S2b admission layout NavBot={} SlotScript={} Combat={} WalkGuard={}",
@@ -4142,26 +4151,25 @@ fn s2b_admission_per_bot_layouts() {
         std::mem::size_of::<script::combat::Combat>(),
         std::mem::size_of::<script::combat::WalkGuard>()
     );
-    // Admission's optional state belongs to NavBot; the ordinary script and
-    // combat owners retain their measured compact layouts. Pin the measured
-    // default-feature macOS layout; other targets retain the portable bounds.
-    // Integration-7 composition over the S2b pin (2920, 4024, 512, 256):
-    // NavBot +24 B and WalkGuard +8 B, the same growth CORE-INTEGRATOR-6
-    // attributed on dev (S2b branched before it): `walk_guard` +8 (combat S3b
-    // grew the shared Schedule to nine slots and u16 masks, WalkGuard 256 ->
-    // 264) and `traveller` +16 (nav-door-expire's per-hop `DoorRetry` re-Open
-    // pacing state). Field probe: CORE-INTEGRATOR-6 probe-b656.log /
-    // probe-head.log.
-    // BANK-SNAPSHOT-S5 adds nothing: the queued `pending_route` and the
-    // inspect `pending` capture each keep the bank memory's origin beside
-    // its rows (design-bank-snapshot §4 F6) as their own field, so the byte
-    // packs into each holder's existing padding. Carrying a padded
-    // `BankRows` there instead measured 3488 (S5 round 1).
-    // COMBAT-SESSION: SlotScript +48 B, all in the snapshot fingerprint's
-    // `api_combat` page identity (32) and retained terminal token (16), the
-    // same pair Gather keeps; the live seat itself stays boxed and absent.
-    // TICK-INTEGRATION: SceneFence packs its scene key, Seen state and entry
-    // bit into existing spare bits; SlotScript has no scene-latch growth.
+    let bot = NavBot::default();
+    eprintln!(
+        "NavBot fields Traveller={} InspectNav={} BankPickState={} BankFetch={} CompactRoute={}",
+        std::mem::size_of_val(&bot.traveller),
+        std::mem::size_of_val(&bot.inspect),
+        std::mem::size_of_val(&bot.bank_pick),
+        std::mem::size_of_val(&bot.bank_fetch),
+        std::mem::size_of_val(&bot.compact_route),
+    );
+    // FIX-025: request-only inspection work and unpublished bank results are
+    // boxed, not reserved inline in every idle bot. Their owners do not change.
+    // The remaining growth since the S2b pin is intentional: admitted-work
+    // identities/cancellation, compact route leases, and the shared script
+    // seat's bounded delivery/hold queues. See FIX-025/mac-layout/report.md
+    // for the field/commit measurements. Exact pins have zero growth headroom.
+    // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
+    // layouts: test-only inspection budgets and bank fixtures are included.
+    // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
+    // fifteen inline LoadIsolate mutexes, so SlotScript is 120 B smaller.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -4174,7 +4182,22 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (2944, 4072, 512, 264)
+        (3704, 4544, 512, 264)
+    );
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        target_env = "gnu",
+        not(feature = "memory-profile")
+    ))]
+    assert_eq!(
+        (
+            std::mem::size_of::<NavBot>(),
+            std::mem::size_of::<script::SlotScript>(),
+            std::mem::size_of::<script::combat::Combat>(),
+            std::mem::size_of::<script::combat::WalkGuard>()
+        ),
+        (3704, 4424, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
