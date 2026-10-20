@@ -31,7 +31,7 @@ if [ -z "$expected_command" ] || [ -z "$expected_cwd" ] || [ -z "$expected_start
 case "$expected_command" in *"node --import tsx src/app.ts"*) ;; *) printf '%s\n' '274 engine: unexpected command identity' >&2; exit 1 ;; esac
 if [ "$expected_cwd" != "$ENGINE" ]; then printf '%s\n' '274 engine: unexpected cwd identity' >&2; exit 1; fi
 command=$(ps -p "$pid" -o command= | tr -s ' ' | tr -d '\n')
-cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
+cwd=$(/usr/bin/sudo -n /usr/bin/lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
 start_time=$(ps -p "$pid" -o lstart= | tr -s ' ' | tr -d '\n')
 if [ "$command" != "$expected_command" ] || [ "$cwd" != "$expected_cwd" ] || [ "$start_time" != "$expected_start" ]; then
     printf '%s\n' "274 engine: refusing foreign/reused pid $pid (identity mismatch)" >&2
@@ -39,7 +39,7 @@ if [ "$command" != "$expected_command" ] || [ "$cwd" != "$expected_cwd" ] || [ "
 fi
 printf '%s\n' "274 engine: running pid=$pid"
 ps -p "$pid" -o pid=,ppid=,command=
-listeners=$(lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null || true)
+listeners=$(/usr/bin/sudo -n /usr/bin/lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN 2>/dev/null || true)
 printf '%s\n' "$listeners"
 unexpected=$(printf '%s\n' "$listeners" | grep 'TCP ' | grep -vE '127\.0\.0\.1:(80|43594|8898)[[:space:]]' || true)
 if [ -n "$unexpected" ]; then
