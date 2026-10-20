@@ -612,10 +612,11 @@ impl AcquireRun {
                 Poll::Pending => self.active = Active::Open(handle),
                 Poll::Ready(Ok(())) => self.phase = Phase::Deposit,
                 Poll::Ready(Err(ActionError::Failed(message)))
-                    if matches!(
-                        message.as_ref(),
-                        "bank did not open" | "bank item table unavailable"
-                    ) =>
+                    if matches!(self.request.stage, BankStage::Planned)
+                        && matches!(
+                            message.as_ref(),
+                            "bank did not open" | "bank item table unavailable"
+                        ) =>
                 {
                     self.phase = Phase::Open
                 }

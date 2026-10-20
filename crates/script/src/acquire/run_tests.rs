@@ -901,7 +901,23 @@ fn open_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
-        authored_request(Some(bank), true, Vec::new()),
+        request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Tool",
+                1,
+                1,
+                Presence::Held,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::BANK,
+            )],
+            None,
+            Some(bank),
+            true,
+            false,
+            CloseBank::LeaveOpen,
+        ),
         &snapshot,
         None,
         &mut ledger,
