@@ -66,6 +66,8 @@ def env_flag(name: str, default: bool) -> bool:
 HERE = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("NIGHTLY_ROOT", r"C:\274bot-nightly" if IS_WINDOWS else "/srv/nightly"))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
+RUNNER_REPO = HERE.parent.parent
+NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
 
 
 def revision_defaults(revision: str, windows: bool) -> dict:
@@ -833,7 +835,29 @@ def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: 
     log(f"nav snapshot ready: {[path.name for path in decoded]}")
 
 
+def apply_274_inventory_overlay(tree: Path) -> None:
+    """Use the pinned-content inventory for the revision-274 nav bake.
+
+    The tested branch's manifest includes a test-only script absent from the
+    pinned 274 content commit. Keep the lane-specific correction in the runner
+    checkout and overlay it only on revision-274 build trees.
+    """
+    if REVISION != "274":
+        return
+    target = tree / "crates" / "nav" / "src" / "required-content-274.tsv"
+    if not NAV_274_REQUIRED_CONTENT.is_file():
+        raise RuntimeError(f"revision-274 nav inventory missing: {NAV_274_REQUIRED_CONTENT}")
+    if not target.is_file():
+        raise RuntimeError(f"tested tree's revision-274 nav inventory missing: {target}")
+    if NAV_274_REQUIRED_CONTENT.read_bytes() != target.read_bytes():
+        shutil.copyfile(NAV_274_REQUIRED_CONTENT, target)
+        log("274: applied pinned-content nav inventory overlay")
+    else:
+        log("274: pinned-content nav inventory overlay already current")
+
+
 def build(tree: Path, target: Path, run_dir: Path, build_log: Path) -> dict[str, Path]:
+    apply_274_inventory_overlay(tree)
     deadline = step_deadline("build", time.monotonic())
     remaining = lambda: max(60.0, deadline - time.monotonic())  # noqa: E731
     bins = frontend_bins()
@@ -1782,7 +1806,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                     source=(f"engine-pristine ({REVISION} engine copy, fresh DB)" if ENGINE_MODE == "local"
                             else f"{ENGINE_LABEL} (running, shared; never started or stopped), "
                                  f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from engine-pristine")),
-        catalog_commit=git_head(CATALOG), runner_commit=git_head(HERE.parent.parent),
+        catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
         tree=str(tree) if tree else None,
     )
     write_summary(run_dir, meta, lanes, panel, results)

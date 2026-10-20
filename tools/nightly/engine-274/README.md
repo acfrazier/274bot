@@ -41,3 +41,7 @@ ln -s ../../raw/wordenc data/pack/client/wordenc
 The resolved `config` and `wordenc` hashes must match the revision-274 row in
 `crates/host-play/src/known-cache-identities.json`; this exposes the original
 bytes without copying or rebuilding them.
+
+The pinned content tree at `000c19997` does not contain the test-only
+`scripts/_test/scripts/cheats/cheat_item.rs2`; the 274 nav input inventory
+matches this commit and deliberately does not require that absent file.

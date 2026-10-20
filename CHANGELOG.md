@@ -13,6 +13,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   to check process identity and loopback listeners.
 - The 274 engine setup links the verified client `config` and raw `wordenc`
   archives at the revision-bound nav builder's expected cache paths.
+- The 274 nav input inventory matches the pinned content commit and excludes
+  a test-only script that is absent from that source tree.
 
 ### Panel
 
