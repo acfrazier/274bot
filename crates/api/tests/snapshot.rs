@@ -4227,8 +4227,8 @@ fn iface_families_rebuild_on_iface_and_inv_gens() {
 // bank_component_id/varps) + ReadContext ----
 
 /// The player family reads the local player's slot (`self_slot`, -1 before
-/// any player rebuild) and counts each `PLAYER_INFO` (the game-tick edge,
-/// the host's `should_emit_tick` rule) as one snapshot tick.
+/// any player rebuild) and counts each `PLAYER_INFO` generation as a tick.
+/// A `REBUILD_NORMAL` invalidation rebuilds the view but does not count.
 #[test]
 fn player_rebuild_reads_self_slot_and_bumps_tick() {
     let mut c = client_with_npc();
@@ -4248,6 +4248,29 @@ fn player_rebuild_reads_self_slot_and_bumps_tick() {
 
     assert!(!snap.rebuild_family(&c, Family::Player));
     assert_eq!(snap.tick(), 2, "no player gen move: no tick");
+
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild_family(&c, Family::Player));
+    assert_eq!(snap.tick(), 2, "REBUILD_NORMAL is not a game tick");
+}
+
+#[test]
+fn full_snapshot_counts_player_info_not_player_invalidations() {
+    let mut c = client_with_npc();
+    let mut snap = GameSnapshot::new();
+
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild(&c));
+    assert_eq!(snap.tick(), 1);
+
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    assert!(snap.rebuild(&c));
+    assert_eq!(snap.tick(), 1, "family rebuilds do not add game ticks");
+
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    assert!(snap.rebuild(&c));
+    assert_eq!(snap.tick(), 3, "count every PLAYER_INFO between rebuilds");
 }
 
 /// The scene family reads `attached` from the socket (the §3.1 "socket
@@ -5122,8 +5145,8 @@ fn read_context_round_trips_every_family() {
     assert!(snap.rebuild(&c));
     let ctx = ReadContext::new(&snap);
 
-    // scalars + player family
-    assert_eq!(ctx.tick(), 1, "one player-info in this run");
+    // This fixture invalidates all families but does not send PLAYER_INFO.
+    assert_eq!(ctx.tick(), 0, "REBUILD_NORMAL is not a game tick");
     assert!(!ctx.attached(), "no socket in this fixture");
     assert!(ctx.ingame());
     assert_eq!(ctx.scene_state(), 2);

@@ -109,7 +109,7 @@ pub fn nav_full_scenario() -> Scenario {
         settings: ScenarioSettings {
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_full terminal"),
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             ..Default::default()
         },
     }
@@ -240,7 +240,7 @@ pub(crate) fn nav_diagonal_door_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             terminal_shot: Some("nav_diagonal_door terminal"),
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             ..Default::default()
         },
     }
@@ -326,7 +326,7 @@ pub(crate) fn nav_quest_door_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_quest_door terminal"),
             ..Default::default()
@@ -576,7 +576,7 @@ pub(crate) fn nav_cart_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_cart terminal"),
             ..Default::default()
@@ -698,7 +698,7 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_essence terminal"),
             ..Default::default()
@@ -810,7 +810,7 @@ pub(crate) fn nav_elkoy_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_elkoy terminal"),
             ..Default::default()
@@ -910,7 +910,7 @@ pub(crate) fn nav_tele_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_tele terminal"),
             ..Default::default()
@@ -1314,7 +1314,7 @@ pub(crate) fn nav_brass_hut_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(420),
             terminal_shot: Some("nav_brass_hut"),
             ..Default::default()
@@ -1502,7 +1502,7 @@ pub(crate) fn nav_routes_scenario() -> Scenario {
             full_rate: true,
             nav: ScenarioNav {
                 allow_danger_zones: true,
-                ..nav_test_paints().with_tick_ms(300)
+                ..nav_test_paints()
             },
             require_mainland_base: true,
             deadline: Duration::from_secs(3600),
@@ -1550,7 +1550,7 @@ pub(crate) fn nav_paint_path_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             require_mainland_base: true,
             terminal_shot: Some("nav_paint_path terminal"),
             ..Default::default()
