@@ -4775,6 +4775,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/entity_row_shape.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/equipment_items_id.rs",
       "owner": "T2"
     },
