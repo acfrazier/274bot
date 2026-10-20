@@ -31,9 +31,8 @@ libwayland-client0 libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
 
 On Linux, the panel follows the system's choice of graphics chip.
 `WGPU_POWER_PREF=low`, `high` or `none` overrides this default.
-If the panel closes with "importing the supplied dmabufs failed", try
-`WGPU_POWER_PREF=high ./panel-play`. The dual-GPU issue still needs a
-hardware check.
+If the panel closes with "importing the supplied dmabufs failed",
+start it with `WGPU_POWER_PREF=high ./panel-play`.
 
 On macOS, `panel-play` and `tui-play` need Apple Silicon running macOS 11.0 or later.
 
