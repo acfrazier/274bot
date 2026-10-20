@@ -40,8 +40,8 @@
 //!
 //! Measured largest: 72 bytes encoded for the stepping-to-counter log with a
 //! real 4-digit stand. Recommendation: `2 * 72 = 144`, next power of two
-//! `256` (well under 1024). See
-//! `/srv/dev/scratch/274bot-evidence/TRACK-T2/T2.3/prompt-census.txt`.
+//! `256` (well under 1024). See the recorded evidence file
+//! `TRACK-T2/T2.3/prompt-census.txt`.
 //!
 //! Producer-formatting note: `deposit`/`match` arg construction
 //! (`seat_transfer.rs:452-456`), the `VIEW_NOT_READY` const

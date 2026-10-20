@@ -6589,28 +6589,35 @@ fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
 }
 
 #[test]
-#[ignore = "loads the two reviewed real nav packs"]
+#[ignore = "loads WORLD_NAV_PACK (289) and NAV_REVIEWED_274_PACK"]
 fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
-    for (path, expected_carry, expected_worn) in [
+    let packs = [
         (
-            "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+            std::env::var_os("WORLD_NAV_PACK")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .expect("set WORLD_NAV_PACK to the reviewed 289 navpack"),
             221,
             3_603,
         ),
         (
-            "/srv/dev/scratch/274bot-evidence/TRACK-T5/T5W/membership/nav/274/membership.navpack",
+            std::env::var_os("NAV_REVIEWED_274_PACK")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .expect("set NAV_REVIEWED_274_PACK to the reviewed 274 navpack"),
             152,
             3_483,
         ),
-    ] {
-        let world = crate::world::NavWorld::load_pack(&PathBuf::from(path))
+    ];
+    for (path, expected_carry, expected_worn) in packs {
+        let world = crate::world::NavWorld::load_pack(&path)
             .expect("load the reviewed pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
         assert!(envelope.is_representable());
         assert_eq!(
             (envelope.carry_rows, envelope.worn_rows),
             (expected_carry, expected_worn),
-            "{path}"
+            "{path:?}"
         );
     }
 }
