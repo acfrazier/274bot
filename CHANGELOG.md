@@ -583,6 +583,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
   random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
   unavailable. The host does not recreate the foreign router or random pacing.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back
+  Dragon bones reliably. In testing it ran out of food at the dragon and went
+  to the bank without the bones. A fix is planned for 0.2.5.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
