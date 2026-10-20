@@ -23,6 +23,17 @@ import sys
 import textwrap
 from pathlib import Path
 
+# Shared floor with tools/release/release.py: the ledger is TOML and is read
+# with tomllib, which exists only on Python 3.11 and newer. Keep the two minima in sync.
+REQUIRED_PYTHON = (3, 11)
+
+if sys.version_info < REQUIRED_PYTHON:
+    _running = ".".join(str(part) for part in sys.version_info[:3])
+    sys.exit(
+        f"known_issues.py requires Python 3.11 or newer "
+        f"(running Python {_running} at {sys.executable})"
+    )
+
 KNOWN_ISSUE = "known-issue"
 NOT_IN_RELEASE = "not-in-release"
 KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE)

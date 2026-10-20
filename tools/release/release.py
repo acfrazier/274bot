@@ -26,6 +26,18 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
+# Shared floor with tools/known-issues/known_issues.py: preflight checks the
+# TOML ledger with tomllib, which exists only on Python 3.11 and newer.
+# Keep the two minima in sync.
+REQUIRED_PYTHON = (3, 11)
+
+if sys.version_info < REQUIRED_PYTHON:
+    _running = ".".join(str(part) for part in sys.version_info[:3])
+    sys.exit(
+        f"release.py requires Python 3.11 or newer "
+        f"(running Python {_running} at {sys.executable})"
+    )
+
 PLATFORMS = ("macos", "linux", "windows")
 ARCHIVE_SUFFIX = {"macos": ".zip", "linux": ".tar.gz", "windows": ".zip"}
 ARCH_NAME = {"macos": "macos-arm64", "linux": "linux-x64", "windows": "windows-x64"}
