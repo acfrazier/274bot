@@ -1,0 +1,913 @@
+use super::*;
+use crate::native::{ActionContext, ActionError, HostEffect, InteractionReceipt};
+use crate::quester::families::tests::with_tick;
+use api::interact::{Interactions, SendResult, SCENE_READY};
+use api::quest_progress::EvidenceStamp;
+use api::snapshot::{
+    ChatLineView, Family, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, NpcView,
+    SceneView, WorldTile,
+};
+use client::client::{Client, ClientConfig};
+use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+use client::io::{ClientStream, Packet, ServerProt};
+use std::net::TcpListener;
+use std::task::Poll;
+
+fn client_with_shop(open: bool) -> Client {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp/274bot-buy-ordering-cache".into(),
+        members: true,
+        lowmem: false,
+    });
+    let cache = std::sync::Arc::get_mut(&mut client.cache).unwrap();
+    cache.objs.resize(5, client::config::ObjType::default());
+    cache.objs[4] = client::config::ObjType {
+        id: 4,
+        name: "Pot".into(),
+        ..Default::default()
+    };
+    client.set_iface(
+        3824,
+        IfType {
+            id: 3824,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        3900,
+        IfType {
+            id: 3900,
+            layer_id: 3824,
+            r#type: ComponentType::TYPE_INV,
+            iop: [
+                Some("Value".into()),
+                Some("Buy 1".into()),
+                Some("Buy 5".into()),
+                Some("Buy 10".into()),
+                None,
+            ],
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![5, 0]),
+            link_obj_number: Some(vec![10, 0]),
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        3822,
+        IfType {
+            id: 3822,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_LAYER,
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        3823,
+        IfType {
+            id: 3823,
+            layer_id: 3822,
+            r#type: ComponentType::TYPE_INV,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        3823,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+    client.main_modal_id = if open { 3824 } else { -1 };
+    client.side_modal_id = if open { 3822 } else { -1 };
+    client.ingame = true;
+    client.scene_state = SCENE_READY;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3200;
+    client.bump_gens(ServerProt::IF_OPENMAIN);
+    client
+}
+
+fn attached_client_with_shop(open: bool) -> (TcpListener, Client) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    let addr = listener.local_addr().expect("listener address");
+    let mut client = client_with_shop(open);
+    client.stream = Some(
+        ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("loopback client stream"),
+    );
+    client.bump_gens(ServerProt::REBUILD_NORMAL);
+    (listener, client)
+}
+
+fn open_shop(client: &mut Client) {
+    let mut packet = Packet::new(vec![0x0e, 0xf0, 0x0e, 0xee]);
+    client.apply_if_openmain_side(&mut packet);
+    client.bump_gens(ServerProt::IF_OPENMAIN);
+}
+
+fn snapshot(client: &Client, inventory: Vec<ItemView>, npcs: Vec<NpcView>) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(SCENE_READY);
+    snapshot.rebuild_family(client, Family::Shop);
+    snapshot.rebuild_family(client, Family::Modals);
+    snapshot.seed_inventory(inventory, 28);
+    snapshot.seed_npcs(npcs);
+    snapshot
+}
+
+fn attached_snapshot(
+    client: &Client,
+    inventory: Vec<ItemView>,
+    npcs: Vec<NpcView>,
+) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(client);
+    snapshot.seed_ingame(SCENE_READY);
+    snapshot.seed_scene(SceneView { available: true, ..Default::default() });
+    snapshot.seed_inventory(inventory, 28);
+    snapshot.seed_npcs(npcs);
+    snapshot
+}
+
+fn apply_local_close(client: &mut Client) {
+    let snapshot = attached_snapshot(client, Vec::new(), Vec::new());
+    let closes_before = client.main_modal_packet_state().close_packets;
+    let output_before = client.out.pos;
+    let result = Interactions::new(&snapshot, client).close_modal();
+    assert!(matches!(result, SendResult::Sent { .. }));
+    assert_eq!(client.main_modal_id, -1, "Client::CloseModal clears the main page");
+    assert_eq!(client.side_modal_id, -1, "Client::CloseModal clears the side page");
+    assert_eq!(client.chat_modal_id, -1, "Client::CloseModal clears the chat page");
+    assert_eq!(
+        client.main_modal_packet_state().close_packets,
+        closes_before,
+        "a local API close is not a server IF_CLOSE observation"
+    );
+    assert!(client.out.pos > output_before, "the Client API wrote CLOSE_MODAL");
+}
+
+fn item(id: i32, name: &str, count: i32) -> ItemView {
+    ItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: Some(name.to_owned()),
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot: 0,
+        count,
+        actions: Vec::new(),
+        component_id: 3823,
+    }
+}
+
+fn npc_row(index: usize, npc_type: usize, distance: i32) -> NpcView {
+    let tile = WorldTile {
+        x: 3200 + distance,
+        z: 3200,
+        level: 0,
+    };
+    NpcView {
+        index,
+        r#type: Some(npc_type),
+        name: Some("Shopkeeper".to_owned()),
+        actions: vec![Some("Trade".to_owned())],
+        tile,
+        distance,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: tile,
+        x: tile.x,
+        z: tile.z,
+        yaw: 0,
+    }
+}
+
+fn request(qty: i32) -> BuyRequest {
+    BuyRequest {
+        npc_id: 123,
+        npc_name: std::sync::Arc::from("Shopkeeper"),
+        item_id: 4,
+        item_name: std::sync::Arc::from("Pot"),
+        qty,
+    }
+}
+
+fn start_machine(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    qty: i32,
+) -> crate::native::ActionHandle<BuyMachine> {
+    with_tick(snapshot, ledger, 1, |tick| {
+        tick.actions.begin::<BuyMachine>(request(qty), &mut tick.cx).unwrap()
+    })
+}
+
+fn poll_machine(
+    snapshot: &GameSnapshot,
+    handle: &crate::native::ActionHandle<BuyMachine>,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    tick: u64,
+) -> Poll<Result<BuyReceipt, ActionError>> {
+    with_tick(snapshot, ledger, tick, |native| {
+        native.actions.poll(handle, &mut native.cx)
+    })
+}
+
+#[derive(Default)]
+struct ActionLog {
+    trades: Vec<i32>,
+    buttons: Vec<i32>,
+    closes: usize,
+}
+
+fn last_request(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> &InteractReq {
+    match &ledger.as_ref().unwrap().outbox.last().expect("queued native action").effect {
+        HostEffect::Interaction(request) => request,
+        other => panic!("expected an interaction, got {other:?}"),
+    }
+}
+
+fn drain_interaction(
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    log: &mut ActionLog,
+    tick: u64,
+) {
+    let action = ledger.as_mut().unwrap().outbox.pop().expect("queued native action");
+    let authority = action.authority();
+    match &action.effect {
+        HostEffect::Interaction(InteractReq::Npc {
+            action,
+            index: Some(index),
+            ..
+        }) if action == "Trade" => log.trades.push(*index),
+        HostEffect::Interaction(InteractReq::ShopButton { chunk, .. }) => log.buttons.push(*chunk),
+        HostEffect::Interaction(InteractReq::CloseModal) => log.closes += 1,
+        HostEffect::Interaction(request) => panic!("unexpected native interaction {request:?}"),
+        other => panic!("expected an interaction, got {other:?}"),
+    }
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+}
+
+fn drain_trade(
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    log: &mut ActionLog,
+    tick: u64,
+    index: i32,
+) {
+    assert!(matches!(
+        last_request(ledger),
+        InteractReq::Npc { name, action, index: Some(got) }
+            if name == "Shopkeeper" && action == "Trade" && *got == index
+    ));
+    drain_interaction(ledger, log, tick);
+}
+
+fn drain_button(
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    log: &mut ActionLog,
+    tick: u64,
+    chunk: i32,
+) {
+    assert!(matches!(
+        last_request(ledger),
+        InteractReq::ShopButton { kind, name, id, chunk: got, .. }
+            if kind == "buy" && name == "Pot" && *id == 4 && *got == chunk
+    ));
+    drain_interaction(ledger, log, tick);
+}
+
+fn close_with_api(
+    client: &mut Client,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    log: &mut ActionLog,
+    tick: u64,
+) {
+    assert!(matches!(last_request(ledger), InteractReq::CloseModal));
+    apply_local_close(client);
+    drain_interaction(ledger, log, tick);
+}
+
+fn assert_no_queued_action(ledger: &Option<Box<crate::native::ledger::Ledger>>) {
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+fn spend_interaction(cx: &mut ActionContext<'_>) {
+    cx.action_id = cx.ledger.as_ref().unwrap().owner.as_ref().unwrap().id.get();
+    let request_id = cx
+        .emit(InteractReq::ContinueDialog { component_id: None })
+        .unwrap();
+    let evidence = cx.evidence();
+    let ledger = cx.ledger.as_mut().unwrap();
+    let action = ledger.outbox.pop().expect("budget-filling interaction");
+    assert_eq!(action.request_id.get(), request_id);
+    ledger.complete_interaction(
+        &action.authority(),
+        InteractionReceipt {
+            request_id,
+            evidence,
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+}
+
+fn coins_refusal() -> ChatLineView {
+    ChatLineView {
+        type_: 0,
+        username: None,
+        text: "You don't have enough coins.".to_owned(),
+        sequence: 1,
+    }
+}
+
+#[test]
+fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recovery() {
+    let mut client = client_with_shop(false);
+    let first_npcs = vec![npc_row(3, 124, 1), npc_row(7, 123, 6)];
+    let closed = snapshot(&client, Vec::new(), first_npcs);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 5);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    assert_eq!(log.trades, [7], "the nearer same-name NPC has the wrong type");
+
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 5);
+
+    client.apply_if_close();
+    let recovery_npcs = vec![npc_row(8, 123, 1), npc_row(7, 123, 8), npc_row(3, 124, 0)];
+    let closed = snapshot(&client, Vec::new(), recovery_npcs);
+    assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+    assert_eq!(log.trades, [7, 7], "recovery retains the selected type and index");
+    assert_eq!(log.buttons, [5]);
+    drop(handle);
+}
+
+#[test]
+fn initially_open_wrong_shop_requires_real_local_clear_and_server_close_count() {
+    let (_listener, mut client) = attached_client_with_shop(true);
+    let before_close = client.main_modal_packet_state().close_packets;
+    let npc = vec![npc_row(7, 123, 2)];
+    let initial = snapshot(&client, Vec::new(), npc.clone());
+    let mut ledger = None;
+    let handle = start_machine(&initial, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&initial, &handle, &mut ledger, 2).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 2);
+    assert_eq!(log.closes, 1);
+    assert!(log.trades.is_empty());
+    assert!(log.buttons.is_empty());
+
+    let mut local_clear = snapshot(&client, Vec::new(), npc.clone());
+    assert!(!local_clear.shop().unwrap().value.open);
+    assert_eq!(local_clear.shop().unwrap().value.server_closes, before_close);
+    // An unrelated family rebuild must not turn local absence into a close receipt.
+    local_clear.rebuild_family(&client, Family::Inventory);
+    assert!(poll_machine(&local_clear, &handle, &mut ledger, 3).is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(log.trades.is_empty());
+    assert!(log.buttons.is_empty());
+
+    let still_local = snapshot(&client, Vec::new(), npc.clone());
+    assert!(poll_machine(&still_local, &handle, &mut ledger, 4).is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(log.trades.is_empty());
+
+    client.apply_if_close();
+    let server_closed = snapshot(&client, Vec::new(), npc);
+    assert_eq!(
+        server_closed.shop().unwrap().value.server_closes,
+        before_close + 1
+    );
+    assert!(poll_machine(&server_closed, &handle, &mut ledger, 5).is_pending());
+    drain_trade(&mut ledger, &mut log, 5, 7);
+    assert_eq!(log.trades, [7]);
+    assert!(log.buttons.is_empty(), "the old page never receives a buy");
+    drop(handle);
+}
+
+#[test]
+fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
+    let mut client = client_with_shop(false);
+    let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 2).is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(log.buttons.is_empty(), "a page on the Trade send tick is too early");
+
+    let spent = with_tick(&page, &mut ledger, 3, |native| {
+        spend_interaction(&mut native.cx);
+        native.actions.poll(&handle, &mut native.cx)
+    });
+    assert!(spent.is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(log.buttons.is_empty(), "another interaction spent this tick");
+
+    assert!(poll_machine(&page, &handle, &mut ledger, 4).is_pending());
+    drain_button(&mut ledger, &mut log, 4, 1);
+    assert_eq!(log.trades, [7]);
+    assert_eq!(log.buttons, [1]);
+    drop(handle);
+}
+
+#[test]
+fn late_trade_page_is_closed_and_counted_before_retry_trade() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 15);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let first_page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&first_page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 10);
+
+    client.apply_if_close();
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+    let first_recovery_trade = 4;
+    let deadline = first_recovery_trade + shop_open::OPEN_CAP_TICKS;
+
+    for tick in 5..=deadline + 1 {
+        assert!(poll_machine(&closed, &handle, &mut ledger, tick).is_pending());
+        assert_no_queued_action(&ledger);
+        assert_eq!(log.trades, [7, 7], "no overlapping Trade at tick {tick}");
+    }
+
+    // A later raw close still cannot end the first recovery Trade.
+    client.apply_if_close();
+    let closed_again = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed_again, &handle, &mut ledger, deadline + 2).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(log.trades, [7, 7]);
+
+    open_shop(&mut client);
+    let late_page = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
+    assert!(poll_machine(&late_page, &handle, &mut ledger, deadline + 3).is_pending());
+    assert_eq!(handle.inspect(|machine| machine.bought), Some(10));
+    assert_eq!(handle.inspect(|machine| machine.pending.is_none()), Some(true));
+    close_with_api(&mut client, &mut ledger, &mut log, deadline + 3);
+    assert_eq!(log.buttons, [10], "the late page is reconciled before another buy");
+
+    let locally_closed = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
+    assert!(poll_machine(&locally_closed, &handle, &mut ledger, deadline + 4).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(log.trades, [7, 7]);
+
+    client.apply_if_close();
+    let counted_close = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
+    assert!(poll_machine(&counted_close, &handle, &mut ledger, deadline + 5).is_pending());
+    drain_trade(&mut ledger, &mut log, deadline + 5, 7);
+    assert_eq!(log.trades, [7, 7, 7]);
+
+    open_shop(&mut client);
+    let same_tick_page = snapshot(&client, vec![item(4, "Pot", 10)], Vec::new());
+    assert!(poll_machine(&same_tick_page, &handle, &mut ledger, deadline + 5).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(log.buttons, [10]);
+
+    let replacement_page = snapshot(&client, vec![item(4, "Pot", 10)], Vec::new());
+    assert!(poll_machine(&replacement_page, &handle, &mut ledger, deadline + 6).is_pending());
+    drain_button(&mut ledger, &mut log, deadline + 6, 5);
+    assert_eq!(log.buttons, [10, 5]);
+
+    let full_pack = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
+    assert!(poll_machine(&full_pack, &handle, &mut ledger, deadline + 7).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, deadline + 7);
+    let no_server_close = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
+    assert!(poll_machine(&no_server_close, &handle, &mut ledger, deadline + 8).is_pending());
+    client.apply_if_close();
+    let final_close = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&final_close, &handle, &mut ledger, deadline + 9)
+    else {
+        panic!("the final close barrier should produce a receipt");
+    };
+    assert_eq!(receipt.held, 15);
+    assert_eq!(receipt.bought, 15);
+    assert_eq!(receipt.refusal, None);
+    assert_eq!(log.buttons, [10, 5]);
+    assert_eq!(log.trades, [7, 7, 7]);
+}
+
+#[derive(Clone, Copy)]
+enum RemainingModal {
+    Chat,
+    Side,
+}
+
+fn foreign_close_case(remaining: Option<RemainingModal>) {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 1);
+
+    client.apply_if_close();
+    match remaining {
+        Some(RemainingModal::Chat) => client.chat_modal_id = 4800,
+        Some(RemainingModal::Side) => client.side_modal_id = 4800,
+        None => {}
+    }
+    if remaining.is_some() {
+        client.bump_gens(ServerProt::IF_OPENMAIN);
+    }
+    let foreign_close = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(!foreign_close.shop().unwrap().value.open);
+    assert_eq!(foreign_close.shop().unwrap().value.server_closes, 1);
+    match remaining {
+        Some(RemainingModal::Chat) => assert_eq!(foreign_close.modals().chat, 4800),
+        Some(RemainingModal::Side) => assert_eq!(foreign_close.modals().side, 4800),
+        None => assert_eq!(foreign_close.modals().main, -1),
+    }
+    assert!(poll_machine(&foreign_close, &handle, &mut ledger, 4).is_pending());
+
+    let fresh_tick = if remaining.is_some() {
+        close_with_api(&mut client, &mut ledger, &mut log, 4);
+        assert_eq!(log.trades, [7]);
+        assert_eq!(log.closes, 1, "a remaining local modal must close before Trade");
+
+        let no_modal = snapshot(&client, Vec::new(), npcs.clone());
+        assert_eq!(no_modal.modals().main, -1);
+        assert_eq!(no_modal.modals().side, -1);
+        assert_eq!(no_modal.modals().chat, -1);
+        assert!(poll_machine(&no_modal, &handle, &mut ledger, 5).is_pending());
+        drain_trade(&mut ledger, &mut log, 5, 7);
+        6
+    } else {
+        drain_trade(&mut ledger, &mut log, 4, 7);
+        assert_eq!(log.closes, 0, "no local modal means Trade directly");
+        5
+    };
+    assert_eq!(log.trades, [7, 7]);
+
+    open_shop(&mut client);
+    let fresh_page = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&fresh_page, &handle, &mut ledger, fresh_tick).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, fresh_tick);
+    assert_eq!(log.buttons, [1], "the old dispatch is reconciled before any next button");
+
+    let no_close_yet = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&no_close_yet, &handle, &mut ledger, fresh_tick + 1).is_pending());
+    client.apply_if_close();
+    let closed = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    let Poll::Ready(Ok(receipt)) =
+        poll_machine(&closed, &handle, &mut ledger, fresh_tick + 2)
+    else {
+        panic!("the server close should release the final receipt");
+    };
+    assert_eq!(receipt.held, 1);
+    assert_eq!(receipt.bought, 1);
+    assert_eq!(receipt.refusal, None);
+}
+
+#[test]
+fn foreign_chat_modal_after_shop_close_is_closed_before_recovery_trade() {
+    foreign_close_case(Some(RemainingModal::Chat));
+}
+
+#[test]
+fn foreign_side_modal_after_shop_close_is_closed_before_recovery_trade() {
+    foreign_close_case(Some(RemainingModal::Side));
+}
+
+#[test]
+fn foreign_close_without_a_remaining_modal_trades_directly() {
+    foreign_close_case(None);
+}
+
+#[test]
+fn close_and_open_in_one_observation_cannot_bypass_a_new_trade_page() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let first_page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&first_page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 1);
+
+    // Both server packets are visible in one snapshot. This page predates recovery Trade.
+    client.apply_if_close();
+    open_shop(&mut client);
+    let close_and_open = snapshot(&client, Vec::new(), npcs.clone());
+    assert_eq!(close_and_open.shop().unwrap().value.server_closes, 1);
+    assert!(close_and_open.shop().unwrap().value.open);
+    assert!(poll_machine(&close_and_open, &handle, &mut ledger, 4).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 4);
+    assert_eq!(log.trades, [7]);
+    assert_eq!(log.buttons, [1]);
+
+    let absent_page = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&absent_page, &handle, &mut ledger, 5).is_pending());
+    drain_trade(&mut ledger, &mut log, 5, 7);
+    assert_eq!(log.trades, [7, 7]);
+
+    open_shop(&mut client);
+    let fresh_page = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&fresh_page, &handle, &mut ledger, 6).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 6);
+    assert_eq!(log.buttons, [1]);
+
+    let locally_closed = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&locally_closed, &handle, &mut ledger, 7).is_pending());
+    client.apply_if_close();
+    let counted_close = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&counted_close, &handle, &mut ledger, 8) else {
+        panic!("the final close count should release the receipt");
+    };
+    assert_eq!(receipt.bought, 1);
+    assert_eq!(receipt.held, 1);
+}
+
+fn partial_refusal_case(refusal_first: bool) {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 5);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 5);
+
+    if refusal_first {
+        let mut refusal = snapshot(&client, Vec::new(), Vec::new());
+        refusal.seed_chat_lines(vec![coins_refusal()]);
+        assert!(poll_machine(&refusal, &handle, &mut ledger, 4).is_pending());
+        assert_no_queued_action(&ledger);
+
+        client.apply_if_close();
+        let mut closed = snapshot(&client, Vec::new(), npcs.clone());
+        closed.seed_chat_lines(vec![coins_refusal()]);
+        assert!(poll_machine(&closed, &handle, &mut ledger, 5).is_pending());
+        drain_trade(&mut ledger, &mut log, 5, 7);
+    } else {
+        let partial_pack = snapshot(&client, vec![item(4, "Pot", 3)], Vec::new());
+        assert!(poll_machine(&partial_pack, &handle, &mut ledger, 4).is_pending());
+        assert_no_queued_action(&ledger);
+
+        client.apply_if_close();
+        let mut closed = snapshot(&client, vec![item(4, "Pot", 3)], npcs.clone());
+        closed.seed_chat_lines(vec![coins_refusal()]);
+        assert!(poll_machine(&closed, &handle, &mut ledger, 5).is_pending());
+        drain_trade(&mut ledger, &mut log, 5, 7);
+    }
+
+    open_shop(&mut client);
+    let mut fresh_page = snapshot(&client, vec![item(4, "Pot", 3)], Vec::new());
+    fresh_page.seed_chat_lines(vec![coins_refusal()]);
+    assert!(poll_machine(&fresh_page, &handle, &mut ledger, 6).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 6);
+    assert_eq!(log.buttons, [5], "neither ordering admits another button");
+
+    let locally_closed = snapshot(&client, vec![item(4, "Pot", 3)], Vec::new());
+    assert!(poll_machine(&locally_closed, &handle, &mut ledger, 7).is_pending());
+    client.apply_if_close();
+    let final_close = snapshot(&client, vec![item(4, "Pot", 3)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&final_close, &handle, &mut ledger, 8) else {
+        panic!("the final close should return the refusal receipt");
+    };
+    assert_eq!(receipt.held, 3);
+    assert_eq!(receipt.bought, 3);
+    assert_eq!(receipt.refusal, Some(PurchaseRefusal::Coins));
+}
+
+#[test]
+fn partial_three_of_five_and_coins_refusal_survive_recovery_chat_first() {
+    partial_refusal_case(true);
+}
+
+#[test]
+fn partial_three_of_five_and_coins_refusal_survive_recovery_pack_first() {
+    partial_refusal_case(false);
+}
+
+#[test]
+fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 1);
+
+    // Observe IF_CLOSE first. The recovery Trade follows while no page is open.
+    client.apply_if_close();
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+
+    // The full inventory update arrives before the replacement page.
+    let early_pack = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&early_pack, &handle, &mut ledger, 5).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(handle.inspect(|machine| machine.bought), Some(1));
+    assert_eq!(handle.inspect(|machine| machine.pending.is_none()), Some(true));
+    assert_eq!(log.buttons, [1]);
+
+    assert!(poll_machine(&early_pack, &handle, &mut ledger, 5).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(handle.inspect(|machine| machine.bought), Some(1));
+
+    open_shop(&mut client);
+    let fresh_page = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&fresh_page, &handle, &mut ledger, 6).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 6);
+    assert_eq!(log.buttons, [1], "the late page does not count the chunk twice");
+
+    let locally_closed = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&locally_closed, &handle, &mut ledger, 7).is_pending());
+    client.apply_if_close();
+    let final_close = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&final_close, &handle, &mut ledger, 8) else {
+        panic!("the final close should release the receipt");
+    };
+    assert_eq!(receipt.held, 1);
+    assert_eq!(receipt.bought, 1);
+}
+
+#[test]
+fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let first_page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&first_page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 1);
+
+    for _ in 0..4 {
+        assert!(poll_machine(&first_page, &handle, &mut ledger, 3).is_pending());
+        assert_no_queued_action(&ledger);
+    }
+    assert_eq!(log.buttons, [1], "repeated polls at one tick do not expire a dispatch");
+
+    client.apply_if_close();
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed, &handle, &mut ledger, 5).is_pending());
+    drain_trade(&mut ledger, &mut log, 5, 7);
+    assert_eq!(log.closes, 0, "the absent page needs no forced CloseModal");
+
+    open_shop(&mut client);
+    let first_recovery_page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&first_recovery_page, &handle, &mut ledger, 6).is_pending());
+    drain_button(&mut ledger, &mut log, 6, 1);
+    assert_eq!(log.buttons, [1, 1], "the first fresh page permits one retry");
+
+    for _ in 0..4 {
+        assert!(poll_machine(&first_recovery_page, &handle, &mut ledger, 6).is_pending());
+        assert_no_queued_action(&ledger);
+    }
+    assert_eq!(log.buttons, [1, 1], "the retry does not expire without tick advance");
+
+    client.apply_if_close();
+    let closed = snapshot(&client, Vec::new(), npcs.clone());
+    assert!(poll_machine(&closed, &handle, &mut ledger, 8).is_pending());
+    drain_trade(&mut ledger, &mut log, 8, 7);
+
+    open_shop(&mut client);
+    let second_recovery_page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&second_recovery_page, &handle, &mut ledger, 9).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 9);
+    assert_eq!(log.buttons, [1, 1]);
+    assert_eq!(log.trades, [7, 7, 7]);
+
+    let local_close_only = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&local_close_only, &handle, &mut ledger, 10).is_pending());
+    assert_no_queued_action(&ledger);
+    assert_eq!(log.closes, 1, "local clearing alone is not the final barrier");
+
+    client.apply_if_close();
+    let final_close = snapshot(&client, Vec::new(), Vec::new());
+    let Poll::Ready(Err(ActionError::Failed(reason))) =
+        poll_machine(&final_close, &handle, &mut ledger, 11)
+    else {
+        panic!("two unanswered fresh pages should fail after the final close barrier");
+    };
+    assert_eq!(&*reason, "shop purchase did not settle");
+    assert_eq!(log.buttons, [1, 1]);
+    assert_eq!(log.trades, [7, 7, 7]);
+}
+
+#[test]
+fn changed_run_returns_stale_and_drops_the_unresolved_dispatch() {
+    let mut client = client_with_shop(false);
+    let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 5);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 5);
+    assert_eq!(handle.inspect(|machine| machine.pending.is_some()), Some(true));
+
+    let later_pack = snapshot(&client, vec![item(4, "Pot", 5)], Vec::new());
+    let stale = with_tick(&later_pack, &mut ledger, 4, |native| {
+        native.cx.evidence.run.session += 1;
+        native.actions.poll(&handle, &mut native.cx)
+    });
+    assert!(matches!(stale, Poll::Ready(Err(ActionError::Stale))));
+    assert_eq!(log.buttons, [5]);
+
+    // The caller retires a stale run's handle. Its pending batch cannot emit or settle later.
+    drop(handle);
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    assert_eq!(log.buttons, [5]);
+    assert_eq!(log.trades, [7]);
+}
