@@ -1197,7 +1197,7 @@ const GREEN_DRAGON_LOOT_EMPTY: &[i32] = &[
 /// `content/scripts/levelrequire/scripts/levelrequire.rs2`).
 pub(crate) const LOST_CITY_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Lost City",
-    journal: "Lost City",
+    acknowledgement: Proof::QuestDone { name: "Lost City" },
 };
 const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {

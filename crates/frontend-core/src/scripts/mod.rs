@@ -388,6 +388,8 @@ pub struct ScriptStartError {
 pub enum ScriptStartErrorKind {
     /// The Start was refused (no assignment, already active, missing card).
     Refused,
+    /// The saved loadout selection is required, but no loadouts exist.
+    NoLoadouts,
     /// The Start waits on another decision (uncommitted settings, a
     /// blocked sync).
     Waiting,
@@ -413,6 +415,9 @@ impl From<script::StartLoadError> for ScriptStartError {
     fn from(error: script::StartLoadError) -> Self {
         let (kind, message) = match error {
             script::StartLoadError::Refused(reason) => (ScriptStartErrorKind::Refused, reason),
+            script::StartLoadError::NoLoadouts(reason) => {
+                (ScriptStartErrorKind::NoLoadouts, reason)
+            }
             script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
             script::StartLoadError::RuntimeLoad(reason) => {
                 (ScriptStartErrorKind::RuntimeLoad, reason)

@@ -387,10 +387,10 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed Agility 84, 1000 Coins and ten Lobsters, then tele to the arena entrance",
+        name: "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
-                cheat(c, "advancestat agility 84");
+                cheat(c, "advancestat agility 75");
                 cheat(c, "give coins 1000");
                 cheat(c, "give lobster 10");
                 cheat(

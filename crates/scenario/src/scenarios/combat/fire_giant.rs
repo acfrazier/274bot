@@ -629,5 +629,10 @@ const FIRE_GIANT_LOOT_EMPTY: &[i32] = &[BIG_BONES_ID, NOTED_BIG_BONES_ID];
 /// FireGiant dungeon entry's requirement.
 pub(crate) const WATERFALL_QUEST_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Waterfall Quest",
-    journal: "Waterfall Quest",
+    acknowledgement: Proof::FreshQuestCompletion {
+        chat_needle: "Congratulations! Quest complete!",
+        main_root_component_id: 297,
+        component_id: 301,
+        text: "You have completed the Waterfall Quest!",
+    },
 };

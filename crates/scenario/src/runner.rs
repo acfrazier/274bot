@@ -422,11 +422,9 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] or
-    /// [`Proof::FreshChat`] step only. Latched when the step begins (the
-    /// post-relog snapshot, before the reseed or getvar send goes out) and
-    /// cleared at every step and session boundary, so a chat line latched
-    /// before the relog cannot satisfy the post-relog wait.
+    /// Chat-sequence baseline for the current FreshTutorial, FreshChat, or
+    /// FreshQuestCompletion wait. Latched when the step begins and cleared at
+    /// every step and session boundary, so a stale line cannot satisfy it.
     fresh_chat_baseline: Option<i32>,
     /// Latched per step for [`Proof::VisitedWithin`]: set once the player
     /// stands inside the proof's rectangle on an observed tick of the current
@@ -1308,6 +1306,22 @@ impl ScenarioRunner {
                 }
                 None => false,
             },
+            Proof::FreshQuestCompletion {
+                chat_needle,
+                main_root_component_id,
+                component_id,
+                text,
+            } => self.fresh_chat_baseline.is_some_and(|baseline| {
+                crate::proof::fresh_quest_completion_contains(
+                    self.snapshot.chat_lines(),
+                    self.snapshot.widgets(),
+                    baseline,
+                    chat_needle,
+                    main_root_component_id,
+                    component_id,
+                    text,
+                )
+            }),
             Proof::VisitedWithin { .. } => self.visited_within,
             other => other.check_with_xp_context(
                 &self.snapshot,
@@ -1571,12 +1585,14 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`] or
-    /// [`Proof::FreshChat`] step: the newest chat `sequence` in the step-start
-    /// snapshot, before the reseed or getvar send goes out. A stale line at or
-    /// below this sequence cannot satisfy the wait.
+    /// Latch the step-start chat baseline for FreshTutorial, FreshChat and
+    /// FreshQuestCompletion. A stale line at or below this sequence cannot
+    /// satisfy the wait.
     fn capture_chat_baseline(&mut self, proof: Proof) {
-        if !matches!(proof, Proof::FreshTutorial | Proof::FreshChat { .. }) {
+        if !matches!(
+            proof,
+            Proof::FreshTutorial | Proof::FreshChat { .. } | Proof::FreshQuestCompletion { .. }
+        ) {
             return;
         }
         if self.fresh_chat_baseline.is_some() {
