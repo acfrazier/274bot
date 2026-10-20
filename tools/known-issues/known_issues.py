@@ -2,8 +2,10 @@
 """Single source of truth for open release notes: known issues and gaps.
 
 The ledger lives in ``docs/known-issues.toml`` (one ``[[item]]`` table per
-item). An item is open at release X when its ``first`` release is not newer
-than X and its ``fixed`` release (when set) is newer than X. The commit that
+item). An item is open at release X when its ``listed`` release (default
+``first``) is not newer than X and its ``fixed`` release (when set) is newer
+than X. ``first`` is the first affected release; ``listed`` differs only when
+the item was found after ``first`` had shipped. The commit that
 fixes an item sets ``fixed`` to the release carrying the fix; items are never
 deleted, so checks of already published releases keep passing. Never edit the
 ``### Known issues`` / ``### Not in this release`` blocks in ``CHANGELOG.md``
@@ -70,14 +72,24 @@ def version_key(version):
     return tuple(parts)
 
 
+def newer_than(names, later, earlier):
+    """True when release ``later`` comes after ``earlier``: by position in
+    ``names`` when both are listed there, else by numeric release key."""
+    if later in names and earlier in names:
+        return names.index(later) > names.index(earlier)
+    return version_key(later) > version_key(earlier)
+
+
 def load_ledger(path, order):
     """Read and validate the ledger; return items in file order.
 
     ``order`` is the CHANGELOG release order (oldest first, from
-    :func:`changelog_releases`). The optional ``fixed`` release must name a
-    known release or the next release, and must be later than ``first``, so
-    a typo cannot silently keep an item open or close it too early. Unknown
-    fields are rejected for the same reason."""
+    :func:`changelog_releases`). The optional ``listed`` (default ``first``)
+    and ``fixed`` releases must name a known release or the next release.
+    ``listed`` is not earlier than ``first`` and is earlier than ``fixed``;
+    ``fixed`` is later than ``first``. So a typo cannot silently keep an item
+    open or close it too early. Unknown fields are rejected for the same
+    reason."""
     import tomllib
 
     with open(path, "rb") as handle:
@@ -97,7 +109,7 @@ def load_ledger(path, order):
         for key in required:
             if key not in entry or str(entry[key]).strip() == "":
                 raise ValueError(f"{path}: item is missing {key!r}: {entry!r}")
-        unknown = sorted(set(entry) - set(required) - {"fixed"})
+        unknown = sorted(set(entry) - set(required) - {"fixed", "listed"})
         if unknown:
             raise ValueError(
                 f"{path}: item {entry.get('id')!r} has unknown "
@@ -124,20 +136,36 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
                     f"'fixed' release {fixed!r}")
-            if first in names:
-                later = names.index(fixed) > names.index(first)
-            else:
-                later = version_key(fixed) > version_key(first)
-            if not later:
+            if not newer_than(names, fixed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'fixed' release {fixed!r} "
                     f"is not later than 'first' {first!r}")
+        listed = first
+        if entry.get("listed") is not None:
+            listed = str(entry["listed"]).strip()
+            if listed == "":
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} has an empty 'listed' release")
+            version_key(listed)
+            if listed not in names:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} names an unknown "
+                    f"'listed' release {listed!r}")
+            if newer_than(names, first, listed):
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
+                    f"is earlier than 'first' {first!r}")
+            if fixed is not None and not newer_than(names, fixed, listed):
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
+                    f"is not earlier than 'fixed' {fixed!r}")
         items.append({
             "id": str(entry["id"]),
             "kind": str(entry["kind"]),
             "area": " ".join(str(entry["area"]).split()),
             "text": " ".join(str(entry["text"]).split()),
             "first": first,
+            "listed": listed,
             "target": str(entry["target"]),
             "severity": str(entry["severity"]),
             "owner": str(entry["owner"]),
@@ -186,13 +214,15 @@ def extended_order(order, release, items=()):
     """Release order plus the next release (when needed) plus ``release``.
 
     The next release sorts right after the newest heading and before any
-    unknown queried release, so a ``fixed`` release (a known release or the
-    next one) always has a defined position next to the queried release."""
+    unknown queried release, so a ``listed`` or ``fixed`` release (a known
+    release or the next one) always has a defined position next to the
+    queried release."""
     names = list(order)
     following = next_release(order) if order else None
     if (following is not None and following not in names
             and (release == following
-                 or any(item.get("fixed") == following for item in items))):
+                 or any(following in (item.get("listed"), item.get("fixed"))
+                        for item in items))):
         names.append(following)
     for extra in [item.get("fixed") for item in items] + [release]:
         if extra is not None and extra not in names:
@@ -203,16 +233,16 @@ def extended_order(order, release, items=()):
 def applies(item, release, order):
     """Whether the item is open at ``release``.
 
-    Open means its ``first`` is not newer than ``release`` and its ``fixed``
-    release (when set) is newer than ``release``. A release with no
-    CHANGELOG heading yet (the next release) counts as newer than every
-    heading. Fixed items stay in the ledger as history; ``render`` and
-    ``check`` simply skip them where they are closed."""
+    Open means its ``listed`` release (``first`` when unset) is not newer
+    than ``release`` and its ``fixed`` release (when set) is newer than
+    ``release``. A release with no CHANGELOG heading yet (the next release)
+    counts as newer than every heading. Fixed items stay in the ledger as
+    history; ``render`` and ``check`` simply skip them where they are closed."""
     if item["first"] not in order:
         raise ValueError(
             f"ledger item {item['id']!r} names an unknown release {item['first']!r}")
     names = extended_order(order, release, (item,))
-    if names.index(item["first"]) > names.index(release):
+    if names.index(item["listed"]) > names.index(release):
         return False
     fixed = item.get("fixed")
     return fixed is None or names.index(release) < names.index(fixed)
@@ -357,10 +387,12 @@ def needs_ruling(item, release, order):
 
 
 def carried_rows(items, order, release):
-    """One row per open item: id, first, carry count, target, owner, ruling flag.
+    """One row per open item: id, first, listed, carry count, target, owner,
+    ruling flag. The carry count and the ruling flag count from ``first``,
+    the true age of the problem, whatever release first listed it in.
 
-    Items closed at ``release`` (already fixed) and items not yet open
-    (``first`` is newer) have no row: the table describes the queried
+    Items closed at ``release`` (already fixed) and items not yet listed
+    (``listed`` is newer) have no row: the table describes the queried
     release only."""
     rows = []
     for item in items:
@@ -369,6 +401,7 @@ def carried_rows(items, order, release):
         rows.append({
             "id": item["id"],
             "first": item["first"],
+            "listed": item["listed"],
             "carried": len(carried_releases(item["first"], release, order)),
             "target": item["target"],
             "owner": item["owner"],
@@ -385,11 +418,13 @@ def format_carried(rows):
     widths = {
         "id": max([len("id")] + [len(row["id"]) for row in rows]),
         "first": max([len("first")] + [len(row["first"]) for row in rows]),
+        "listed": max([len("listed")] + [len(row["listed"]) for row in rows]),
         "target": max([len("target")] + [len(row["target"]) for row in rows]),
         "owner": max([len("owner")] + [len(row["owner"]) for row in rows]),
     }
     header = (
         f"{'id':<{widths['id']}}  {'first':<{widths['first']}}  "
+        f"{'listed':<{widths['listed']}}  "
         f"{'carried':>7}  {'target':<{widths['target']}}  "
         f"{'owner':<{widths['owner']}}  ruling"
     )
@@ -397,6 +432,7 @@ def format_carried(rows):
     for row in rows:
         lines.append(
             f"{row['id']:<{widths['id']}}  {row['first']:<{widths['first']}}  "
+            f"{row['listed']:<{widths['listed']}}  "
             f"{row['carried']:>7}  "
             f"{row['target']:<{widths['target']}}  "
             f"{row['owner']:<{widths['owner']}}  "
