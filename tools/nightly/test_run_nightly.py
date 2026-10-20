@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for the disk guard and the stable tree path in `run_nightly.py`.
+"""Tests for `run_nightly.py`: the disk guard, the stable tree path, receipts,
+the revision defaults and the cells file.
 
 The guard stops the Windows nightly from filling its disk: a Cargo target
 folder over `NIGHTLY_TARGET_CAP_GB` is removed before the lanes and before
@@ -731,6 +732,154 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(result.first_failure)
         self.assertEqual(result.ticks, 58)
         self.assertEqual(result.receipt, receipt)
+
+
+class RevisionDefaultsTests(unittest.TestCase):
+    def test_289_defaults_are_the_values_the_script_always_used(self):
+        linux = rn.revision_defaults("289", False)
+        self.assertEqual(linux["profile"], "local-289")
+        self.assertEqual(linux["unpack_dir"], "unpack-289")
+        self.assertEqual(linux["run_suffix"], "")
+        self.assertEqual(
+            linux["engine_crc_sha256"],
+            "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623")
+        self.assertEqual(rn.revision_defaults("289", True)["run_suffix"], "-windows")
+
+    def test_274_defaults_select_the_274_lane(self):
+        linux = rn.revision_defaults("274", False)
+        self.assertEqual(linux["profile"], "local-274")
+        self.assertEqual(linux["unpack_dir"], "unpack")
+        self.assertEqual(linux["run_suffix"], "-274")
+        self.assertEqual(linux["engine_crc_sha256"], "")
+        self.assertEqual(rn.revision_defaults("274", True)["run_suffix"], "-274-windows")
+
+    def test_an_unknown_revision_is_refused(self):
+        with self.assertRaises(ValueError):
+            rn.revision_defaults("377", False)
+
+
+class RevisionBuildOverlayTests(unittest.TestCase):
+    def test_274_uses_the_runner_inventory_for_its_build_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "runner" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            source.parent.mkdir(parents=True)
+            target.parent.mkdir(parents=True)
+            source.write_text("pinned content inventory\n", encoding="utf-8")
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "274"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", source), \
+                    mock.patch.object(rn, "log"):
+                rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "pinned content inventory\n")
+
+    def test_289_does_not_require_or_apply_the_274_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target.parent.mkdir(parents=True)
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", root / "missing"), \
+                    mock.patch.object(rn, "log"):
+                rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "dev inventory\n")
+
+    def test_274_fails_closed_when_its_inventory_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target.parent.mkdir(parents=True)
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "274"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", root / "missing"), \
+                    mock.patch.object(rn, "log"):
+                with self.assertRaisesRegex(RuntimeError, "revision-274 nav inventory missing"):
+                    rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "dev inventory\n")
+
+
+class RevisionImportTests(unittest.TestCase):
+    def import_constants(self, extra_env: dict) -> subprocess.CompletedProcess:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("NIGHTLY_")}
+        env.update(extra_env)
+        return subprocess.run(
+            [sys.executable, "-c",
+             "import run_nightly as r; print(r.REVISION, r.PROFILE, r.UNPACK_DIR, "
+             "r.RUN_SUFFIX or '-', r.ENGINE_CRC_SHA256[:8] or '-')"],
+            cwd=HERE, env=env, capture_output=True, text=True)
+
+    @unittest.skipIf(os.name == "nt", "the 274 lane is a Linux guest")
+    def test_the_default_revision_is_289(self):
+        out = self.import_constants({})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["289", "local-289", "unpack-289", "-", "687190c8"])
+
+    @unittest.skipIf(os.name == "nt", "the 274 lane is a Linux guest")
+    def test_revision_274_selects_the_lane(self):
+        out = self.import_constants({"NIGHTLY_REVISION": "274"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["274", "local-274", "unpack", "-274", "-"])
+
+    def test_an_unknown_revision_stops_the_runner(self):
+        out = self.import_constants({"NIGHTLY_REVISION": "377"})
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("NIGHTLY_REVISION", out.stderr)
+
+
+class CellsFileTests(unittest.TestCase):
+    def test_a_relative_cells_file_is_read_beside_the_script(self):
+        self.assertEqual(rn.cells_file_path(None, "cells-274.conf"), rn.HERE / "cells-274.conf")
+        self.assertEqual(rn.cells_file_path(Path("mine.conf"), "cells-274.conf"),
+                         rn.HERE / "mine.conf")
+        absolute = Path("/tmp/cells.conf") if os.name != "nt" else Path(r"C:\cells.conf")
+        self.assertEqual(rn.cells_file_path(absolute, None), absolute)
+        self.assertIsNone(rn.cells_file_path(None, None))
+        self.assertIsNone(rn.cells_file_path(None, ""))
+
+    def run_with_cells(self, only, only_exact):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+
+        def fake_update_tree(_branch, tree, _build_log):
+            catalog = tree / rn.CATALOG_RS
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(
+                'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n'
+                '    Entry::new("cook_bot"),\n];\n', encoding="utf-8")
+            return "b" * 40, "b" * 9
+
+        patches = [
+            mock.patch.object(rn, "ROOT", root),
+            mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "update_tree", fake_update_tree),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            run_dir = rn.run_branch("dev", 1, only, None, unavailable="test night off",
+                                    only_exact=only_exact,
+                                    cells_file="cells-274.conf" if only_exact else None)
+        finally:
+            for patch in patches:
+                patch.stop()
+        return json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    def test_a_cells_file_name_outside_the_catalog_fails_the_run(self):
+        summary = self.run_with_cells(["walk", "nope"], only_exact=True)
+        self.assertIn("names not in the catalog: nope", summary["build"]["error"])
+        self.assertEqual([row["cell"] for row in summary["cells"]], ["walk"])
+        self.assertEqual(summary["revision"], 289)
+        self.assertEqual(summary["cells_file"], "cells-274.conf")
+
+    def test_a_hand_cell_list_still_drops_unknown_names_quietly(self):
+        summary = self.run_with_cells(["walk", "nope"], only_exact=False)
+        self.assertIsNone(summary["build"]["error"])
+        self.assertEqual([row["cell"] for row in summary["cells"]], ["walk"])
+        self.assertIsNone(summary["cells_file"])
 
 
 if __name__ == "__main__":

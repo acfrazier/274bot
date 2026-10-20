@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Revision-274 nightly pull (hourly), NIGHTLY-274. Install: copy to
+     ~/Library/LaunchAgents/ and run:
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+     The script is tools/nightly/pull-274.sh, installed at
+     ~/.local/lib/274bot-nightly/pull-274.sh. Host, key, pinned host key
+     and destination come from ~/.config/274bot-nightly/pull-274.env
+     (see tools/nightly/README.md). This plist carries no machine-specific
+     path; launchd expands $HOME in the command below. Output goes to
+     ~/.local/state/274bot-nightly-274/pull.log. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.274bot-nightly-274-pull</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>mkdir -p "$HOME/.local/state/274bot-nightly-274" &amp;&amp; exec "$HOME/.local/lib/274bot-nightly/pull-274.sh" &gt;&gt;"$HOME/.local/state/274bot-nightly-274/pull.log" 2&gt;&amp;1</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict><key>Minute</key><integer>41</integer></dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>
