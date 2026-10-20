@@ -1139,3 +1139,530 @@ fn entity_op_calls_expect_synchronously_but_awaits_the_click() {
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
     iso.join();
 }
+
+const LOC_OP: &str = r#"
+import { Reach } from '../../api/walking/Reach.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__logs = [];
+        globalThis.__fed = 0;
+        Sustain.set(() => { globalThis.__fed += 1; });
+        try {
+            globalThis.__ok = await Reach.locOp({
+                name: 'Barrel of flour',
+                id: 7000,
+                op: 'Take From',
+                near: globalThis.__near || { x: 5, z: 5, level: 0 },
+                within: 6,
+                expectMs: '__expectMs' in globalThis ? globalThis.__expectMs : 1200,
+                expect: () => globalThis.__ready === true,
+                refused: /guards' permission|something to put the flour in/i,
+                log: (m) => globalThis.__logs.push(String(m)),
+            });
+        } catch (e) {
+            globalThis.__ok = String(e.message || e);
+        }
+    }
+}
+"#;
+
+/// The posted `Loc` clicks in `ops`.
+fn loc_clicks(ops: &[InteractReq]) -> usize {
+    ops.iter()
+        .filter(|op| matches!(op, InteractReq::Loc { .. }))
+        .count()
+}
+
+/// Tick from `from` with `pause` between ticks until `__ok` settles or
+/// `ticks` ran out. Returns every op the ticks emitted and the next tick.
+fn tick_until_settled(
+    iso: &LoadIsolate,
+    from: u64,
+    ticks: u64,
+    pause: std::time::Duration,
+) -> (Vec<InteractReq>, u64) {
+    let mut ops = Vec::new();
+    let mut n = from;
+    // `__ok` exists only once the script's first loop has run.
+    while n < from + ticks && iso.probe("globalThis.__ok ?? null").unwrap() == Value::Null {
+        std::thread::sleep(pause);
+        tick(iso, n);
+        ops.extend(iso.drain_interacts());
+        n += 1;
+    }
+    (ops, n)
+}
+
+fn barrel<'a>(actions: &'a [String], x: i32, z: i32, distance: i32) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 0,
+        id: 7000,
+        name: Some("Barrel of flour"),
+        x,
+        z,
+        level: 0,
+        distance,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 0,
+        angle: 0,
+    }
+}
+
+#[test]
+fn loc_op_clicks_the_named_loc_then_settles_done_on_expect() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string(), "Examine".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    // The first doors round runs on a later pump than the begin.
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![loc_op(6, 5, "Take From", 7000)],
+        "one click on the exact loc row"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null, "waiting on expect");
+    iso.probe("globalThis.__ready = true").unwrap();
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert!(iso.drain_interacts().is_empty(), "no re-click");
+    iso.join();
+}
+
+#[test]
+fn loc_op_refused_message_is_retry_without_a_second_click() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Take From", 7000)]);
+    let lines = [ChatLineInput {
+        seq: 4,
+        text: "You need the Guards' permission to do that.",
+        type_: 0,
+        username: None,
+    }];
+    snap.tick = 3;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    for n in 3..=7 {
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused op is not re-clicked"
+    );
+    let logs = iso.probe("__logs.join('|')").unwrap();
+    assert_eq!(
+        logs,
+        "reach: 'Barrel of flour' refused the op \u{2014} not retrying"
+    );
+    iso.join();
+}
+
+#[test]
+fn loc_op_missing_loc_far_from_the_stand_closes_in_instead_of_clicking() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__near = { x: 20, z: 20, level: 0 }")
+        .unwrap();
+    let mut snap = base(TileInput {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 20,
+            z: 20,
+            level: 0,
+            radius: 2,
+            ..
+        }] => {}
+        other => panic!("expected the close-in walk-near at radius 2, got {other:?}"),
+    }
+    snap.tick = 2;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "the close-in ladder is still walking"
+    );
+    iso.join();
+}
+
+#[test]
+fn loc_op_ignores_a_same_name_loc_without_the_op() {
+    let iso = spawn(LOC_OP);
+    // Present in scene, so no close-in; but it has no 'Take From', so the
+    // find the click rounds use never matches and nothing is clicked.
+    let actions = ["Examine".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    for n in 1..=6 {
+        tick(&iso, n);
+    }
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a loc without the op is never clicked"
+    );
+    // Frozen `sceneSettled` gives up after 3 s, then `closeIn` from the
+    // stand itself has nothing to walk: `'retry'` (`Reach.ts:61-82`).
+    std::thread::sleep(std::time::Duration::from_millis(3_100));
+    tick(&iso, 7);
+    tick(&iso, 8);
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "nothing clicked or walked"
+    );
+    iso.join();
+}
+
+/// The `GameMessages` history counts its own sequence from 1, so a refusal
+/// mark taken from the host chat `seq` (50 here) would never see the
+/// refusal at host seq 51 (FIX-024-COMPAT-MISC review MAJ-1).
+#[test]
+fn loc_op_refused_after_an_earlier_message_is_retry_without_a_second_click() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    let before = [ChatLineInput {
+        seq: 50,
+        text: "Welcome to RuneScape.",
+        type_: 0,
+        username: None,
+    }];
+    snap.chat_lines = &before;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Take From", 7000)]);
+    let lines = [
+        ChatLineInput {
+            seq: 51,
+            text: "You need the Guards' permission to do that.",
+            type_: 0,
+            username: None,
+        },
+        ChatLineInput {
+            seq: 50,
+            text: "Welcome to RuneScape.",
+            type_: 0,
+            username: None,
+        },
+    ];
+    snap.tick = 3;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    for n in 3..=7 {
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    let clicks = iso.drain_interacts();
+    // Past `expectMs: 1200`: a missed refusal would click again here.
+    std::thread::sleep(std::time::Duration::from_millis(1_500));
+    for n in 8..=12 {
+        snap.tick = n;
+        post(&iso, &snap);
+        tick(&iso, n);
+    }
+    let later = iso.drain_interacts();
+    assert!(
+        clicks.is_empty() && later.is_empty(),
+        "a refused op is not re-clicked"
+    );
+    assert_eq!(
+        iso.probe("__logs.join('|')").unwrap(),
+        "reach: 'Barrel of flour' refused the op \u{2014} not retrying"
+    );
+    iso.join();
+}
+
+/// Frozen `locOp` passes `retryAfterTimeout: true` (`Reach.ts:257-265`): an
+/// unanswered click waits one tick and clicks again, it does not settle.
+#[test]
+fn loc_op_times_out_then_clicks_again_on_the_next_round() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__expectMs = 50").unwrap();
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Take From", 7000)]);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let mut clicks = Vec::new();
+    for n in 3..=6 {
+        tick(&iso, n);
+        clicks.extend(iso.drain_interacts());
+    }
+    assert_eq!(clicks, vec![loc_op(6, 5, "Take From", 7000)]);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null, "still reaching");
+    iso.join();
+}
+
+/// Frozen `REACH_DOOR_ATTEMPTS` (`Reach.ts:84,167`): eight timed-out rounds,
+/// one click each, then `'retry'`.
+#[test]
+fn loc_op_gives_up_retry_after_eight_timed_out_rounds() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__expectMs = 1").unwrap();
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    let (ops, _) = tick_until_settled(&iso, 1, 60, std::time::Duration::from_millis(3));
+    assert_eq!(loc_clicks(&ops), 8, "{ops:?}");
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    iso.join();
+}
+
+/// Frozen `reachThroughDoors` (`Reach.ts:193-207`): "I can't reach that!"
+/// opens the door toward the loc, then the next round clicks again.
+#[test]
+fn loc_op_cant_reach_opens_the_door_toward_the_loc_then_clicks_again() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__near = { x: 6, z: 5, level: 0 }")
+        .unwrap();
+    let open = ["Open".to_string()];
+    let take = ["Take From".to_string()];
+    let beside = grid((6, 5), &[], &[(7, 5)]);
+    let locs = [
+        barrel(&take, 8, 5, 2),
+        barrier("Door", &open, 1530, 7, 5, 1),
+    ];
+    let mut snap = base(TileInput {
+        x: 6,
+        z: 5,
+        level: 0,
+    });
+    snap.reach = view(&beside);
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(8, 5, "Take From", 7000)]);
+
+    let lines = cant_reach(3);
+    snap.tick = 3;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
+
+    let open_now = [barrel(&take, 8, 5, 2)];
+    snap.tick = 5;
+    snap.locs = &open_now;
+    post(&iso, &snap);
+    let mut clicks = Vec::new();
+    for n in 5..=7 {
+        tick(&iso, n);
+        clicks.extend(iso.drain_interacts());
+    }
+    assert_eq!(
+        clicks,
+        vec![loc_op(8, 5, "Take From", 7000)],
+        "the next round clicks the loc again"
+    );
+    iso.probe("globalThis.__ready = true").unwrap();
+    snap.tick = 8;
+    post(&iso, &snap);
+    tick(&iso, 8);
+    tick(&iso, 9);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert_eq!(logs(&iso), vec!["reach: opening blocking 'Door' at (7,5)"]);
+    iso.join();
+}
+
+/// Frozen `reachThroughDoors` (`Reach.ts:193-198`): "I can't reach that!"
+/// with no door to clear is `'unreachable'`.
+#[test]
+fn loc_op_cant_reach_without_a_door_is_unreachable() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(6, 5, "Take From", 7000)]);
+    let lines = cant_reach(3);
+    snap.tick = 3;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    let (ops, _) = tick_until_settled(&iso, 3, 6, std::time::Duration::ZERO);
+    assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
+    assert_eq!(loc_clicks(&ops), 0, "no second click: {ops:?}");
+    assert_eq!(
+        logs(&iso),
+        vec![
+            "reach: 'Barrel of flour' at (6,5): server can't reach it and no door in front \
+             to open or walk through (unreachable)"
+        ]
+    );
+    iso.join();
+}
+
+/// Frozen `sceneSettled` (`Reach.ts:76-82, 244`): standing at the stand
+/// with the loc not posted yet, the reach waits for the scene instead of
+/// walking, then clicks the loc once it is posted.
+#[test]
+fn loc_op_at_the_stand_waits_for_the_scene_then_clicks() {
+    let iso = spawn(LOC_OP);
+    let mut snap = base(stand());
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert!(iso.drain_interacts().is_empty(), "no walk, no click");
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    snap.tick = 3;
+    snap.locs = &locs;
+    post(&iso, &snap);
+    let mut ops = Vec::new();
+    for n in 3..=5 {
+        tick(&iso, n);
+        ops.extend(iso.drain_interacts());
+    }
+    assert_eq!(ops, vec![loc_op(6, 5, "Take From", 7000)]);
+    iso.join();
+}
+
+/// Frozen `find()` keeps only the given `id` (`Reach.ts:242`): the nearer
+/// same-name loc with another id is not clicked.
+#[test]
+fn loc_op_clicks_only_the_loc_with_the_given_id() {
+    let iso = spawn(LOC_OP);
+    let actions = ["Take From".to_string()];
+    let mut other = barrel(&actions, 6, 5, 1);
+    other.id = 7001;
+    let locs = [other, barrel(&actions, 5, 8, 3)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(5, 8, "Take From", 7000)]);
+    iso.join();
+}
+
+/// Frozen `walkResilient` awaits `Sustain.run()` on each ladder pass
+/// (`Traversal.ts:130`): the stand walk pumps the script's sustain hook.
+#[test]
+fn loc_op_pumps_sustain_while_it_walks_to_the_stand() {
+    let iso = spawn(LOC_OP);
+    iso.probe("globalThis.__near = { x: 9, z: 5, level: 0 }")
+        .unwrap();
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 10, 5, 5)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 9,
+            z: 5,
+            radius: 1,
+            ..
+        }] => {}
+        other => panic!("expected the stand walk-near at radius 1, got {other:?}"),
+    }
+    for n in 2..=4 {
+        snap.tick = n;
+        post(&iso, &snap);
+        tick(&iso, n);
+    }
+    let fed = iso.probe("__fed").unwrap().as_u64().unwrap();
+    assert!(fed >= 3, "one sustain per walking tick, got {fed}");
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null, "still walking");
+    iso.join();
+}
+
+/// One locOp with `expectMs` set to the JS literal `expect_ms`: asserts the
+/// first click and an unsettled reach, and returns the clicks in the four
+/// ticks after a 60 ms wait.
+fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
+    let iso = spawn(LOC_OP);
+    iso.probe(&format!("globalThis.__expectMs = {expect_ms}"))
+        .unwrap();
+    let actions = ["Take From".to_string()];
+    let locs = [barrel(&actions, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    let first = iso.drain_interacts();
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let mut later = Vec::new();
+    for n in 3..=6 {
+        tick(&iso, n);
+        later.extend(iso.drain_interacts());
+    }
+    let ok = iso.probe("__ok").unwrap();
+    iso.join();
+    assert_eq!(first, vec![loc_op(6, 5, "Take From", 7000)], "{expect_ms}");
+    assert_eq!(ok, Value::Null, "{expect_ms}: still reaching, not {ok}");
+    loc_clicks(&later)
+}
+
+/// Frozen `delayUntil(cond, expectMs)` arms a bound for any `expectMs > 0`
+/// (`Execution.ts:19-21`): a fractional window is a window, not "not impl"
+/// (review MIN-1). It times out and the next round clicks again.
+#[test]
+fn loc_op_fractional_expect_ms_times_out_then_clicks_again() {
+    assert_eq!(loc_op_clicks_after_a_wait("0.5"), 1);
+}
+
+/// Frozen `delayUntil(cond, expectMs)` arms no bound for `expectMs <= 0`
+/// or a non-number (`Execution.ts:19-21`), and an infinite bound never
+/// ends: none of them times out at once or is "not impl" (review MIN-1).
+#[test]
+fn loc_op_zero_negative_or_non_finite_expect_ms_waits_without_a_bound() {
+    for no_bound in ["0", "-1", "-0.5", "NaN", "Infinity"] {
+        assert_eq!(loc_op_clicks_after_a_wait(no_bound), 0, "{no_bound}");
+    }
+}

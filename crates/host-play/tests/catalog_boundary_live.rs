@@ -3508,8 +3508,11 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gnome_course_requires_complete_lap_and_second_lap_progress() {
-        for case in [CoreCase::GnomeCourse, CoreCase::GnomeCourseRadius] {
-            let baseline = gnome_obs(GNOME_START, 0);
+        for (case, start) in [
+            (CoreCase::GnomeCourse, GNOME_START),
+            (CoreCase::GnomeCourseRadius, GNOME_RADIUS_START),
+        ] {
+            let baseline = gnome_obs(start, 0);
             validate_case_baseline(case, &baseline).unwrap();
 
             let log = gnome_obs(GNOME_AFTER_LOG, 7);
@@ -3533,6 +3536,29 @@ export default class NativeStop extends LoopingBot {{
                     .is_err());
             }
         }
+    }
+
+    /// The radius cell's Start baseline is the scenario's own off-course
+    /// tele, exactly, and the course start is no longer a radius baseline.
+    #[test]
+    fn gnome_course_radius_baseline_is_the_scenario_witness_tile() {
+        let radius = scenario::get("gnome_course_radius").expect("gnome_course_radius");
+        let start = radius
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
+            .expect("StartScript");
+        let (x, z, level) = GNOME_RADIUS_START;
+        assert_eq!(
+            radius.steps[start - 1].wait.arm,
+            scenario::Proof::Arrived { x, z, level }
+        );
+        let at_course_start = gnome_obs(GNOME_START, 0);
+        assert!(validate_case_baseline(CoreCase::GnomeCourseRadius, &at_course_start).is_err());
+        assert!(
+            validate_case_baseline(CoreCase::GnomeCourse, &gnome_obs(GNOME_RADIUS_START, 0))
+                .is_err()
+        );
     }
 
     #[test]

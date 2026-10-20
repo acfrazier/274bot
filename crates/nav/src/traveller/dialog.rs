@@ -188,9 +188,10 @@ pub(super) fn hop_dialog_choice(
     Some(dest_dialog_choice(leg, teleports, packed))
 }
 
-/// Content-driven Door chat: the Al Kharid border-guard pay option and the
-/// Shantay first-crossing disclaimer. Unknown or duplicate labels fail
-/// closed — choice 1 on the toll page is "walk around", not pay.
+/// Content-driven Door chat: the Al Kharid border-guard pay option, the
+/// Shantay first-crossing disclaimer and the Ardougne lever's Wilderness
+/// warning. Unknown or duplicate labels fail closed — choice 1 on the toll
+/// page is "walk around", not pay.
 pub(super) fn door_hop_dialog_choice(
     loc_id: i32,
     chat_options: &[api::snapshot::ChatOptionView],
@@ -199,6 +200,8 @@ pub(super) fn door_hop_dialog_choice(
         &[is_shantay_disclaimer_choice]
     } else if loc_id == AL_KHARID_TOLL_LEFT_LOC_ID || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID {
         &[is_alkharid_pay_choice]
+    } else if loc_id == ARDOUGNE_WILDERNESS_LEVER_LOC_ID {
+        &[is_wilderness_lever_warning_choice]
     } else {
         return None;
     };
@@ -358,6 +361,15 @@ fn is_alkharid_pay_choice(text: &str) -> bool {
 /// `shantay_pass.rs2` first-crossing `~p_choice2_header(..., "Go into Desert?")`.
 fn is_shantay_disclaimer_choice(text: &str) -> bool {
     option_eq(text, "Yeah, that poster doesn't scare me!")
+}
+
+/// `wilderness_lever.rs2` `[oploc1,wildinlever]` warning
+/// `~p_choice3_header("Yes I'm brave.", 1, ..., "Yes please, don't show this
+/// message again.", 3, ...)`. Both 1 and 3 pull the lever; 3 also sets the
+/// permanent `%warning_wilderness_teleport_lever`, an account setting a walk
+/// must not change, so the walk answers 1.
+fn is_wilderness_lever_warning_choice(text: &str) -> bool {
+    option_eq(text, "Yes I'm brave")
 }
 
 /// Check the live inventory before an affirmative fare answer. Routing

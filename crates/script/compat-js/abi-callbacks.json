@@ -341,6 +341,7 @@
         "hunt-acquire",
         "walk-resilient",
         "reach-npc-dialog",
+        "reach-loc-op",
         "walk-to",
         "return-to-anchor",
         "walk-hops"
@@ -431,6 +432,12 @@
           "cadence": "Non-Hunt movement drivers invoke sustain at reached pump call sites; no Hunt tick cadence applies."
         },
         {
+          "family": "reach-loc-op",
+          "order": "awaited-poll-before-step",
+          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "Non-Hunt movement drivers invoke sustain at reached pump call sites; no Hunt tick cadence applies."
+        },
+        {
           "family": "walk-to",
           "order": "awaited-poll-before-step",
           "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
@@ -458,7 +465,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "families": [
@@ -759,6 +766,52 @@
     },
     {
       "families": [
+        "reach-loc-op"
+      ],
+      "family_semantics": [
+        {
+          "family": "reach-loc-op",
+          "order": "synchronous-at-call-site",
+          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+        }
+      ],
+      "member": "expect",
+      "call_site": "Reach loc expected-state predicate; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/walking/Reach.ts:182-187,252-265; $S/reach_entity.rs:1029-1046"
+    },
+    {
+      "families": [
+        "reach-loc-op"
+      ],
+      "family_semantics": [
+        {
+          "family": "reach-loc-op",
+          "order": "synchronous-at-call-site",
+          "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly."
+        }
+      ],
+      "member": "refused",
+      "call_site": "Reach loc refusal predicate over the caller's game-message pattern; `{}` is truthy, so the op reads as refused",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/walking/Reach.ts:183-192,264; $S/reach_entity.rs:1034-1075"
+    },
+    {
+      "families": [
         "partner-trade"
       ],
       "family_semantics": [
@@ -998,6 +1051,7 @@
         "dialog",
         "reach-npc-dialog",
         "reach-entity-op",
+        "reach-loc-op",
         "walk-resilient",
         "walk-opening",
         "walk-to",
@@ -1060,6 +1114,12 @@
           "cadence": "Once per queued notification; delivery precedes the next decision."
         },
         {
+          "family": "reach-loc-op",
+          "order": "queued-notifications-before-next-decision",
+          "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+          "cadence": "Once per queued notification; delivery precedes the next decision."
+        },
+        {
           "family": "walk-resilient",
           "order": "queued-notifications-before-next-decision",
           "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
@@ -1099,7 +1159,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "families": [
