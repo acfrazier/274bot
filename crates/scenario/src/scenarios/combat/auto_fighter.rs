@@ -372,6 +372,7 @@ pub(crate) fn auto_fighter_mage_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("AutoFighter"),
             script_settings_inject: Some(AUTO_FIGHTER_MAGE_INJECT),
+            fixture_loadouts: combat_fixture_loadouts("AutoFighter"),
             terminal_shot: Some("auto_fighter_mage"),
             nav: gold_script_nav(),
             ..Default::default()
