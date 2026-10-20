@@ -400,6 +400,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   "renderer refused: render head cap of 128 is full" in its own tile.
 - Clients without a drawn view retain less render scratch memory. Hiding a view
   releases that scratch, and showing it again keeps the same game connection.
+- On Windows, the instance-lock warning names the live panel or TUI that
+  already holds the lock, even when this Windows account cannot open that
+  process. It no longer calls that live copy an unknown process.
 
 ### TUI
 
@@ -534,12 +537,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - Windows now promptly cancels blocked login transport I/O when a login attempt
   ends.
-
-#### Windows
-
-- On Windows, the instance-lock warning names the live panel or TUI that
-  already holds the lock, even when this Windows account cannot open that
-  process. It no longer calls that live copy an unknown process.
 
 ### Release engineering
 
