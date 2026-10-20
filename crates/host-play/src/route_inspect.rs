@@ -2147,8 +2147,19 @@ fn add_bytes(total: &mut usize, bytes: usize) -> Option<()> {
 }
 
 struct PendingInspect {
-    job: InspectJob,
+    // Taken only during submission, then restored on refusal. Keeping the
+    // allocation across Full retries avoids allocating on every slot turn.
+    job: Option<InspectJob>,
     submission: InspectSubmission,
+}
+
+impl PendingInspect {
+    fn capture_ref(&self) -> &InspectCapture {
+        self.job
+            .as_ref()
+            .expect("pending inspection retains its unsubmitted job")
+            .capture_ref()
+    }
 }
 
 #[derive(Default)]
@@ -2161,7 +2172,8 @@ pub(crate) struct InspectNav {
     pub polling: bool,
     pub submitting: bool,
     pub submitting_id: u64,
-    pending: Option<PendingInspect>,
+    // The phase union and preflights belong to a request, not every idle bot.
+    pending: Option<Box<PendingInspect>>,
     pub running_id: u64,
     pub pending_id: u64,
     pub accepted_id: u64,
@@ -2271,7 +2283,7 @@ impl InspectNav {
                 || self
                     .pending
                     .as_ref()
-                    .is_some_and(|pending| pending.job.capture_ref().request_id == request_id))
+                    .is_some_and(|pending| pending.capture_ref().request_id == request_id))
     }
 
     fn note_refused(&mut self, id: u64) {
@@ -2525,10 +2537,10 @@ pub(super) fn queue_inspect(
             return;
         }
     };
-    let pending = PendingInspect {
-        job: InspectJob::new(name, capture, preflights),
+    let pending = Box::new(PendingInspect {
+        job: Some(InspectJob::new(name, capture, preflights)),
         submission,
-    };
+    });
     let replaced = {
         let mut all = navs
             .lock()
@@ -2543,7 +2555,7 @@ pub(super) fn queue_inspect(
         }
         let replaced = bot.inspect.pending.take();
         if let Some(old) = replaced.as_ref() {
-            let old_capture = old.job.capture_ref();
+            let old_capture = old.capture_ref();
             bot.inspect.note_replaced(old_capture.request_id);
             bot.inspect.publish(InspectTerminal::refusal(
                 old_capture.request_id,
@@ -2554,7 +2566,7 @@ pub(super) fn queue_inspect(
         if req.request_id != 0 {
             bot.inspect.accepted_id = req.request_id;
         }
-        bot.inspect.live_world = Some(Arc::clone(&pending.job.capture_ref().world));
+        bot.inspect.live_world = Some(Arc::clone(&pending.capture_ref().world));
         bot.inspect.pending_id = req.request_id;
         bot.inspect.pending = Some(pending);
         replaced
@@ -2568,8 +2580,8 @@ enum SubmitAttempt {
         ticket: WorkTicket<InspectWorkFamily>,
         cancellation: Option<WorkCancellation<InspectWorkFamily>>,
     },
-    Full(PendingInspect),
-    Failed(PendingInspect),
+    Full(Box<PendingInspect>),
+    Failed(Box<PendingInspect>),
 }
 
 fn refuse_current(
@@ -2596,7 +2608,7 @@ fn refuse_current(
 }
 
 fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
-    let (pending, generation, request_id, world) = {
+    let (mut pending, generation, request_id, world) = {
         let mut all = navs
             .lock()
             .expect("inspection navigation state mutex poisoned");
@@ -2609,7 +2621,7 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
         let Some(pending) = bot.inspect.pending.take() else {
             return;
         };
-        let capture = pending.job.capture_ref();
+        let capture = pending.capture_ref();
         let request_id = capture.request_id;
         let generation = capture.generation;
         let world = Arc::downgrade(&capture.world);
@@ -2626,7 +2638,11 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
             match admitted.mint_identity(Scope::Process, None) {
                 Ok(identity) => {
                     let conditions = ProcessConditions::new(admitted.incarnation());
-                    let PendingInspect { job, submission } = pending;
+                    let submission = pending.submission;
+                    let job = pending
+                        .job
+                        .take()
+                        .expect("pending inspection submits its job once");
                     match admitted.try_submit::<InspectWorkFamily, _>(
                         identity,
                         &submission,
@@ -2645,7 +2661,7 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
                         }
                         Err(refused) => {
                             let (refusal, job) = refused.into_parts();
-                            let pending = PendingInspect { job, submission };
+                            pending.job = Some(job);
                             if refusal == SubmissionRefusal::Full {
                                 SubmitAttempt::Full(pending)
                             } else {
@@ -2698,10 +2714,10 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
                     }
                     SubmitAttempt::Full(pending) => {
                         if bot.inspect.pending.is_none() {
-                            bot.inspect.pending_id = pending.job.capture_ref().request_id;
+                            bot.inspect.pending_id = pending.capture_ref().request_id;
                             bot.inspect.pending = Some(pending);
                         } else {
-                            let old = pending.job.capture_ref();
+                            let old = pending.capture_ref();
                             bot.inspect.note_replaced(old.request_id);
                             bot.inspect.publish(InspectTerminal::refusal(
                                 old.request_id,
@@ -2714,7 +2730,7 @@ fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
                         None
                     }
                     SubmitAttempt::Failed(pending) => {
-                        let old = pending.job.capture_ref();
+                        let old = pending.capture_ref();
                         if bot.inspect.pending.is_some() {
                             bot.inspect.note_replaced(old.request_id);
                             bot.inspect.publish(InspectTerminal::refusal(

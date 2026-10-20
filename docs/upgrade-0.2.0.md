@@ -45,7 +45,9 @@ with a message saying how to set it. Public (rs2b2t) profiles need nothing.
 
 ## Graphics
 
-On Windows the panel tries Vulkan first and falls back to Direct3D 12. On
-every platform the window now prefers the power-saving GPU. `WGPU_BACKEND` and
-`WGPU_POWER_PREF` override this (see `FIRST-START.md`); `WGPU_POWER_PREF=high`
-can make startup stall for minutes on some laptops.
+On Windows the panel tries Vulkan first and falls back to Direct3D 12.
+Windows and macOS prefer the power-saving GPU. From 0.2.5, the Linux
+panel follows the system's choice of graphics chip instead.
+`WGPU_BACKEND` and `WGPU_POWER_PREF` override these defaults (see
+`FIRST-START.md`). `WGPU_POWER_PREF=high` can make startup stall for
+minutes on some laptops.

@@ -7,6 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ### Panel
 
+- On Linux, the panel now follows the system's choice of graphics chip
+  instead of preferring built-in graphics. This can help on desktops with
+  two graphics chips. If "importing the supplied dmabufs failed" still
+  appears, start it with `WGPU_POWER_PREF=high ./panel-play`.
 - Panel and TUI now share `frontend-core` live scenario preparation, runner
   state and proof gates; screenshot capture and TUI proof output remain
   surface-specific.

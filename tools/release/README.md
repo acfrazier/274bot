@@ -230,8 +230,18 @@ Apple's 3.9.
 
 `docs/known-issues.toml` is the single source of truth for the
 `### Known issues` and `### Not in this release` blocks in `CHANGELOG.md`.
-Edit the ledger, never the CHANGELOG blocks. When a release section is cut,
-render the blocks, paste them over the old ones, then check:
+Edit the ledger, never the CHANGELOG blocks. Item lifecycle: add the item
+with `first` (the first affected release); the commit that fixes it sets
+`fixed` to the release carrying the fix; never delete an item. An item is
+open at release X when `first` is not newer than X and `fixed` (when set)
+is newer than X, so a fix recorded for 0.2.5 leaves the published 0.2.4
+section untouched and its check passing. `fixed` must name a known release
+or the next one and must be later than `first`; unknown fields are rejected,
+so a typo cannot silently keep an item open.
+
+The `## Unreleased` section stages no ledger blocks during development.
+When a release section is cut, render the blocks for the next release,
+paste them over the old ones, then check:
 
 ```sh
 python3 tools/known-issues/known_issues.py render --release 0.2.5
@@ -240,11 +250,13 @@ python3 tools/known-issues/known_issues.py carried --release 0.2.5
 ```
 
 `check` fails when the CHANGELOG blocks differ from the render. `carried`
-lists every open item with its carry count and flags `needs ruling` when the
-release reaches the item's target or the item has been carried through two or
-more releases; it informs the release approval and never blocks it. Fixed
-items leave the ledger in the commit that fixes them. `preflight` runs the
-same check against a commit's own tree before packaging:
+lists every item open at the release with its carry count and flags
+`needs ruling` when the release reaches the item's target or the item has
+been carried through two or more releases; it informs the release approval
+and never blocks it. There is no `check --unreleased`: it used to fail
+whenever the blocks were not staged yet, which is the normal state all
+through development. `preflight` runs the same check against a commit's own
+tree before packaging:
 
 ```sh
 python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.5
