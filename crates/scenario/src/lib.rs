@@ -2,7 +2,7 @@
 //!
 //! A scenario is a seed (which profiles to log in, mainland hop), a
 //! sequence of run steps (each an action send plus the evidence it must
-//! produce within a tick budget), and a proof predicate over the terminal
+//! produce within an observed game-tick budget), and a proof predicate over the
 //! `GameSnapshot` — the same observable state scripts and the host read.
 //! The headed runners (`panel-play` and `tui-play --live script_<name>`) and
 //! the headless runner (`crates/e2e` under `LIVE=1`) drive the same
@@ -11,10 +11,11 @@
 //! scenario proves real game state, not that a poll loop ran.
 //!
 //! Waiting names evidence, not sleeps (the 377 harness pattern): a step
-//! sends once, then waits `budget_ticks` game ticks for a named predicate
-//! on the evolving snapshot. Each runner pumps the machine from its own
-//! per-frame hook (the panel slot thread headed, the `run_with_io` hook
-//! headless), so no thread sleeps inside the shared layer.
+//! sends once, then waits `budget_ticks` observed game ticks (one per
+//! `PLAYER_INFO`) for a named predicate on the evolving snapshot. Each runner
+//! pumps the machine from its own client-cycle hook (the panel slot thread
+//! headed, the `run_with_io` hook headless), so no thread sleeps inside the
+//! shared layer.
 
 mod catalog;
 pub mod evidence;
@@ -286,8 +287,8 @@ pub struct ScenarioNav {
     pub camera_follow: bool,
     /// Explicit world-speed request (`::speed N`) once the seed releases.
     /// `None` — the default — sends nothing and keeps the engine at its
-    /// own tick. A request is always sent; the runner confirms it with a
-    /// system-chat line newer than that send.
+    /// default game-tick duration. A request is always sent; the runner
+    /// confirms it with a system-chat line newer than that send.
     pub engine_speed_ms: Option<u32>,
 }
 
@@ -311,7 +312,7 @@ impl Default for ScenarioNav {
 }
 
 /// Visual + camera preset for headed nav tests. Routing flags stay off;
-/// tickrate is opt-in via [`ScenarioNav::with_tick_ms`].
+/// a non-default game-tick duration is opt-in via [`ScenarioNav::with_tick_ms`].
 pub fn nav_test_paints() -> ScenarioNav {
     ScenarioNav {
         show_nav_path: true,
@@ -330,6 +331,8 @@ pub fn nav_test_paints() -> ScenarioNav {
 }
 
 impl ScenarioNav {
+    /// Request the world-wide game-tick duration, in milliseconds. The runner
+    /// sends this request when the seed releases.
     pub fn with_tick_ms(mut self, ms: u32) -> Self {
         self.engine_speed_ms = Some(ms);
         self
@@ -349,7 +352,7 @@ pub struct Sustain {
 pub enum SustainWhen {
     /// Fire once when a nav step begins.
     EachNavStep,
-    /// Fire every running tick while `proof` holds (e.g. energy ≤ 25).
+    /// Fire every running client cycle while `proof` holds (e.g. energy ≤ 25).
     Poll(Proof),
 }
 
@@ -424,21 +427,21 @@ pub struct Step {
 /// What a step sends through the client's driver.
 pub enum StepKind {
     /// 377 `perform(step, { arms, budgetTicks })`: run the closure once,
-    /// then wait for `wait.arm` within `wait.budget_ticks`.
+    /// then wait for `wait.arm` within its observed game-tick budget.
     Perform {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
     /// Nav walk: arm `nav::router::find` over the collision + transport
     /// graph derived from the baked pack and drive `Traveller::follow`
-    /// one step per tick until arrival. Identical to `Follow`; the wait
+    /// one route step per client cycle until arrival. Identical to `Follow`;
     /// arm is `arrived(dest)`, the proof mirrors it, so a walk that ends
     /// anywhere but the destination fails the step with the terminal
     /// outcome's message.
     Walk { dest: WorldTile },
     /// Whole-world nav: arm `nav::router::find` over the collision +
     /// transport graph derived from the baked pack and drive
-    /// `Traveller::follow` one step per tick until the route terminates.
+    /// `Traveller::follow` one route step per client cycle until the route terminates.
     /// The wait arm is `arrived(dest)`; the proof mirrors it, so a follow
     /// that ends anywhere but the destination fails the step with the
     /// terminal outcome's message.
@@ -455,7 +458,7 @@ pub enum StepKind {
     /// snapshot. The shot lands under `~/.274bot/smoke/<runId>/` as
     /// `<stamp>_<safeLabel>.png` + a `.json` sidecar.
     Shot { label: &'static str },
-    /// Dialog janitor: drain the seed's dialogs **every tick** until
+    /// Dialog janitor: drain the seed's dialogs **every client cycle** until
     /// `wait.arm` holds — continue a `BUTTON_CONTINUE` chat IF first
     /// (`advancestat` level-up), else answer the chat modal's `choice`-th
     /// button (1-based) when a `p_choiceN` dialog is up (the
@@ -473,8 +476,9 @@ pub enum StepKind {
     /// An explicit [`Proof::LoggedOut`] arm completes on the observed
     /// off-world frame; every other arm also requires the new online session.
     Relog,
-    /// Like [`StepKind::Perform`], but re-sends every tick until `wait.arm`
-    /// holds (`getvar` polls, sticky `setvar tutorial`).
+    /// Like [`StepKind::Perform`], but re-sends once per observed game
+    /// tick (one `PLAYER_INFO`) until `wait.arm` holds (`getvar` polls,
+    /// sticky `setvar tutorial`). Client cycles do not re-send it.
     Repeat {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
@@ -530,18 +534,20 @@ pub enum StepKind {
     },
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.
-    /// No-op on the client. File cards wait a one-tick arm; compiled
+    /// No-op on the client. File cards wait a one-game-tick arm; compiled
     /// cards wait until Start is Running (or fail with the rejection).
     StartScript,
     /// Host stops the selected script and its walk. No-op on the client.
     StopScript,
 }
 
-/// Evidence wait for a step: a named predicate and a tick budget.
+/// Evidence wait for a step: a named predicate and a game-tick budget.
 pub struct Wait {
     /// The named evidence arm the wait ends on.
     pub arm: Proof,
-    /// Game ticks (delivered server frames) the wait may take.
+    /// Observed game ticks the wait may take: one per `PLAYER_INFO`
+    /// (the server's world cycle, about 600 ms on 289). Client cycles
+    /// (frontend polls) and dirty snapshots do not count.
     pub budget_ticks: u32,
 }
 
@@ -553,86 +559,84 @@ pub struct Scenario {
     /// The terminal proof: asserted on the snapshot once the run steps
     /// complete (replaces the "is the script polling Running" stub).
     pub proof: Proof,
-    /// Extra profile slots with their own per-frame hooks: the scenario
-    /// runs as a fleet. Profile 0 is the driven scenario slot; each
-    /// companion names another `seed.profiles` index (so `>= 1`) the
-    /// runner ticks through [`ScenarioRunner::companion_tick`] exactly
-    /// like the driven slot's `tick`. Empty for single-bot scenarios.
+    /// Extra profile slots in the scenario fleet. Their `per_frame` hooks
+    /// run once per client cycle. Profile 0 drives scenario steps. Each
+    /// companion uses another `seed.profiles` index (`>= 1`). The runner
+    /// invokes [`ScenarioRunner::companion_tick`] once per client cycle, like
+    /// the driven slot's client-cycle hook. Empty for single-bot scenarios.
     pub companions: Vec<Companion>,
     /// Boot settings for the scenario: view knobs for the headed panel and
     /// runner-consumed deadline / terminal shot / mainland-base gate.
     pub settings: ScenarioSettings,
 }
 
-/// One extra profile slot in a scenario fleet: `profile` is an index into
-/// `seed.profiles` (0 is the driven scenario slot, so companions are
-/// `>= 1`) and `per_frame` is the slot's per-frame hook, run once per
-/// delivered frame by the same per-frame machinery that ticks the driven
-/// slot.
+/// One extra profile slot in a scenario fleet. `profile` is an index into
+/// `seed.profiles` (0 is the driven slot, so companions are `>= 1`). The
+/// `per_frame` hook runs once per client cycle, like the driven slot's hook.
 pub struct Companion {
     pub profile: usize,
     pub per_frame: Box<dyn FnMut(&mut Client) + Send>,
 }
 
-/// Gold script cells run on the engine's documented 600 ms default tick
+/// Gold script cells run on the engine's documented 600 ms default game tick
 /// (`World.TICKRATE`) and request no speed change. `::speed` is world-wide,
-/// so the runner sends it only for a non-default tick a caller explicitly
-/// asks for (`ScenarioNav::with_tick_ms`, `QUESTER_TICK_MS` on Engine Q).
+/// so the runner sends it only for a non-default game-tick duration a caller
+/// explicitly asks for (`ScenarioNav::with_tick_ms`, `QUESTER_TICK_MS` on Engine Q).
 fn gold_script_nav() -> ScenarioNav {
     ScenarioNav::default()
 }
 
-/// Ordinary post-Start watch budget in **runner dirty-snapshot increments**
-/// (`runner`: `ticks_waited += 1` when `snapshot.rebuild` reports any family
-/// gen moved). Not engine `World.TICKRATE` (600ms) game ticks and not wall
-/// seconds — do not convert as 150×600ms.
+/// Ordinary post-Start watch budget in **observed game ticks** (one per
+/// `PLAYER_INFO`; see [`Wait`]). The number was sized from live runs
+/// under the old dirty-snapshot counting. The same number now bounds
+/// the wait by game time instead of by snapshot churn.
 const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
-/// whole-scenario cap (independent of dirty-tick budgets).
+/// whole-scenario cap (independent of game-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
-/// **Units:** this constant is a `budget_ticks` / runner dirty-snapshot
-/// count (`runner.rs`: increment only when `snapshot.rebuild` is dirty —
-/// any family gen moved). It is **not** an engine `p_delay` game-tick
-/// count and not wall time. Capture `tick` advances only on PLAYER_INFO;
-/// live fail at cf41 had outcome total_ticks 204 / 102.075s wall with
-/// snapshot `tick` 173 — those figures are not interchangeable proofs.
+/// **Units:** this constant is a `budget_ticks` count of observed game
+/// ticks (one per `PLAYER_INFO`; see [`Wait`]). It is not wall time.
+/// The sizing below was measured under the old dirty-snapshot counting:
+/// live fail at cf41 had outcome total_ticks 204 (dirty counts then) /
+/// 102.075s wall with snapshot `tick` 173 (game ticks). Those figures
+/// remain the sizing history.
 ///
-/// **Engine lower bound (separate unit — selected289 `smithing_anvil`):**
+/// **Content game-tick lower bound (selected289 `smithing_anvil`):**
 /// `p_delay(1)` + work + `p_delay(2)`; `P_DELAY` → `delayedUntil =
-/// currentTick + 1 + n` → 2+3 = **5 engine ticks/bar**. `makeFromPanelMax`
+/// currentTick + 1 + n` → 2+3 = **5 game ticks/bar**. `makeFromPanelMax`
 /// → Make-10 (op 3). Hammer kept → ≤27 bars/trip; deposit arms on first
-/// product → ≤26 remain → 26×5 = **130 engine ticks** pure forge.
+/// product → ≤26 remain → 26×5 = **130 game ticks** pure forge.
 /// Bronze dagger 12.5 xp; RS thresholds 83 / 174 / 276 → level 1→2, 2→3,
 /// and **3→4** all land inside a 27-bar first trip (3→4 still in the
 /// remaining ≤7 bars after measured 20 daggers / 250 xp / level 3). Each
 /// level-up plus a Make-10 residual restart needs ContinueDialog + re-Use
-/// anvil + panel (~15 engine ticks × 4 interrupts ≈ 60). Anvil
-/// (3188,3425) → VW bank Chebyshev 15 + open/deposit ≈ 30 engine ticks.
-/// Engine LB ≈ 130+60+30 = **220 engine ticks** (not assigned raw to this
-/// constant).
+/// anvil + panel (~15 game ticks × 4 interrupts ≈ 60 game ticks). Anvil
+/// (3188,3425) → VW bank Chebyshev 15 + open/deposit ≈ 30 game ticks.
+/// Game-tick lower bound ≈ 130+60+30 = **220 game ticks** (not assigned raw
+/// to this constant).
 ///
-/// **Dirty budget:** measured deposit step exhausted 150 dirties still
-/// mid-craft (20×1205 + 7 bars, anim 898, three MakePanel op3 +
-/// ContinueDialog pairs, no deposit) — progressive craft, not a freeze.
-/// Residual at ~8 dirties/item (interrupted rate) × 7 bars + L3→4 + bank
-/// walk pushes arm-to-deposit past 220 dirties; pad explicitly for
-/// dirty≠engine → **240**. Diagnosis remains **provisional** until root
-/// LIVE confirms
-/// deposit/restock/return/fresh XP inside unchanged 180s deadline.
-/// Global [`SCRIPT_GOLD_DEADLINE`] (180s) and other gold watches stay 150.
+/// **Prior dirty-counter sizing:** the measured deposit step exhausted the
+/// old 150-dirty-count limit mid-craft (20×1205 + 7 bars, anim 898, three
+/// MakePanel op3 + ContinueDialog pairs, no deposit) while the craft progressed.
+/// The old estimate used about 8 dirty snapshots/item for 7 bars, the L3→4
+/// level-up and the bank walk. It assigned 240 to the old dirty counter.
+/// This constant now means 240 observed game ticks (144s at 600ms per game tick).
+/// The unchanged 180s [`SCRIPT_GOLD_DEADLINE`] can end the run first.
+/// Root LIVE must confirm deposit/restock/return/fresh XP within that deadline.
+/// The global deadline and other gold game-tick watches stay unchanged.
 const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// HerbloreSecondaries eggs: first-Take → fresh bank 223, then dungeon return.
 ///
-/// **Units:** `budget_ticks` are runner dirty-snapshot increments
-/// (`runner.rs`: `ticks_waited += 1` only when `snapshot.rebuild` is dirty).
-/// Not engine `World.TICKRATE` (600ms) ticks and not wall seconds. Capture
-/// `tick` advances on PLAYER_INFO. live7wnm9z_0: outcome 170 dirties /
-/// 82.065s wall / snapshot `tick` 141 — those figures are not interchangeable.
+/// **Units:** `budget_ticks` are observed game ticks (one per
+/// `PLAYER_INFO`; see [`Wait`]). They are not wall seconds. The sizing
+/// below was measured under the old dirty-snapshot counting.
+/// live7wnm9z_0: outcome 170 dirties / 82.065s wall / snapshot `tick`
+/// 141 (game ticks). Those figures remain the sizing history.
 ///
-/// **Observed exhaustion of the default 150-dirty watch:** step 29
-/// `fresh_bank_item_id(223)>=1` exhausted 150 dirties still in the field.
+/// **Old dirty-counter observation:** step 29 `fresh_bank_item_id(223)>=1`
+/// exhausted the 150-dirty-count limit while the player remained in the field.
 /// Terminal 3117,9951, inv 6×223 + 6×379, bank closed gen 6, paint
 /// Got 6 / Trips 0 / Food 6, status taking eggs, in combat HP 6/10.
 /// Canonical `needsRestock` is false until packFull or
@@ -641,12 +645,12 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// named Takes plus four Eat, then a respawn Take on the first tile.
 /// This observation does not rule out defects later in the cycle.
 ///
-/// **Respawn (engine ticks — justification only):** `red_spiders_eggs.obj`
+/// **Respawn (game ticks — justification only):** `red_spiders_eggs.obj`
 /// has no `respawnrate` (snape_grass sets 30). `ObjType.respawnrate = 100`
 /// default "1-minute". `OBJ_TAKEITEM` on `EntityLifeCycle.RESPAWN` calls
 /// `World.removeObj(obj, objType.respawnrate)`; `scaleByPlayerCount(100)`
-/// with 1 player is 99 engine ticks. First Take 3117,9951 then the same
-/// tile at FAIL; capture tick 141 matches ~100 engine ticks after first
+/// with 1 player is 99 game ticks. First Take 3117,9951 then the same
+/// tile at FAIL; capture game tick 141 matches ~100 game ticks after first
 /// take. Six distinct in-radius Takes before that respawn. Packed
 /// `o48_155` obj list is not in this checkout; count is the measured 6.
 ///
@@ -655,19 +659,21 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// wait ≈ 15s/eat → ~90s more. Then Edgeville dungeon walk: field
 /// 3120,9952 → ladder 3096,9868 Chebyshev 84 + surface ~25 + booth/deposit
 /// ≈ 80s one-way. Watch already used ~60s. Arm-to-deposit ≈ 60+90+80 =
-/// **~230s wall**. Measured dirty rate on this watch 150/60s ≈ 2.5 dirty/s
-/// → **~575 dirties**. Use **600** for this bounded trial; estimates are not measured limits.
-/// Return reverse dungeon ~80s × 2.5 ≈ 200 → **240** (same magnitude as
-/// bone_burier / smithing bank-item). First-egg / empty / close / further
-/// stay 150. Global gold 180s / 150 stay for every other script including
-/// newt.
+/// **~230s wall**. The old 150-dirty-count observation took about 60s, or
+/// 2.5 dirty snapshots/s; 575 old-counter snapshots informed the existing
+/// 600-game-tick (360s) deposit budget.
+/// The reverse dungeon wait remains 240 game ticks (144s). First-egg,
+/// empty, close and further-egg waits remain 150 game ticks. The newt cell
+/// keeps its 180s deadline and 150-game-tick ordinary watch.
 ///
-/// **Deadline:** seed+Start ~25s + deposit-watch wall ~240s + close ~10s +
-/// return ~80s + further ~30s ≈ 385s. Use the existing **420s** pattern.
-/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged. Diagnosis
-/// remains provisional until root LIVE. No product seed, forced post-Start
-/// bank, debug commands, or engine acceleration. Prior 1755 ladder stall
-/// (empty-pack cell) is not baked into these numbers.
+/// **Deadline:** the estimated run needs about 385s. The fixed deadline is
+/// 420s. The 600- and 240-game-tick waits allow 504s together, so the whole-run
+/// deadline can end the scenario before both waits exhaust. Keep that deadline
+/// unless live evidence shows the expected terminal predicate needs more time.
+/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged; diagnosis remains
+/// provisional. No product seed, forced post-Start bank, debug command or
+/// engine acceleration was used. The prior 1755 ladder stall (empty-pack cell)
+/// is not included.
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
@@ -678,7 +684,7 @@ const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 /// spawns at (2669,3310) (m41_51 local 45,46), which is the stall's
 /// alternate stand. He has the default `wanderrange` 5 (NpcType.ts), and
 /// Npc.ts `wanderMode` re-picks a random tile within ±5 of spawn with 1/8
-/// chance per tick. `stealing_check_for_owner` (stealing.rs2) refuses a
+/// chance per game tick. `stealing_check_for_owner` (stealing.rs2) refuses a
 /// steal silently (overhead text only) when he is within 5 tiles with line
 /// of sight. Both frozen stands lie inside his wander box: with the 2×2
 /// stall as the only blocker, he sees (2668,3312) from 50% of it and
@@ -690,77 +696,78 @@ const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 ///
 /// **Engine model (frozen stealCakes):** after the first cake five more
 /// are needed. A success is followed by the stall's `respawn_ticks` 8
-/// (stealing.dbrow). A refusal costs the 2.4 s resolve (~4 ticks), and
-/// three in a row swap stands (~2 ticks). A guard catch (0.12 per attempt)
-/// costs the Flee kite, the combat bar, the 10-tick lockout and the walk
-/// back (measured 32 ticks, live 290253afd). The bank walk is ~25 ticks. A
-/// 20k-run simulation of the Baker's wander and this loop gives a median
-/// of 9 refusals before the sixth cake (p90 21, p99 35), and P(arrival
-/// ≤209 engine ticks) = 0.78. 95% needs **305** engine ticks (p99 395).
-/// This model puts the 0c4e035a7 run (fill ~245 ticks + walk, 24
+/// (stealing.dbrow). A refusal costs the 2.4 s resolve (~4 game ticks), and
+/// three in a row swap stands (~2 game ticks). A guard catch (0.12 per attempt)
+/// costs the Flee kite, the combat bar, the 10-game-tick lockout and the walk
+/// back (measured 32 game ticks, live 290253afd). The bank walk is ~25 game
+/// ticks. A 20k-run simulation of the Baker's wander and this loop gives a
+/// median of 9 refusals before the sixth cake (p90 21, p99 35), and P(arrival
+/// within 209 game ticks) = 0.78. 95% needs 305 game ticks (p99 395).
+/// This model puts the 0c4e035a7 run (fill ~245 game ticks + walk, 24
 /// refusals) at about the 90th percentile of arrival time.
 ///
-/// **Dirty budget:** the failed live step spent 156 dirties in 89.2 s wall,
-/// about 1.05 dirties per 600 ms engine tick, so 305 × 1.05 ≈ **320**.
-/// Every other ArdyCakes watch stays 150. The further cake after return
-/// needs one stall success: P(≤143 engine ticks) = 0.96 under the same
-/// model.
-const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 320;
-/// ArdyCakes whole-run cap. Seed + Start ~25 s, first cake ~5 s, the
-/// 320-dirty fill/bank watch ~182 s at the 95th percentile (0.57 s/dirty
-/// measured), then deposit, return, close and a further cake ~30 s:
-/// ≈ 242 s. Use **300 s** for the tail.
+/// **Old dirty-counter calibration:** the failed live step used 156 dirty
+/// snapshots in 89.2s, about 1.05 dirty snapshots per 600ms game tick. The
+/// 305-game-tick estimate therefore became 320 old dirty increments. The
+/// current constant allows 320 observed game ticks (192s at 600ms per game tick).
+/// Other ArdyCakes waits remain 150 game ticks. The further cake after return
+/// needs one stall success: P(≤143 game ticks) = 0.96 under the same model.
+/// The whole-run deadline remains 300s and can end the run first. Its earlier
+/// estimate used about 182s for the old 320-dirty fill/bank watch, plus setup
+/// and the remaining steps.
 const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(300);
 /// ArdyThiever Fight whole-run cap. After Start the cell runs an opening
-/// Baker stall session until a Guard catches, the FightBack kill (27 engine
+/// Baker stall session until a Guard catches, the FightBack kill (27 game
 /// ticks measured on `ardy_cakes_fight`, 290253afd), another stall visit if
-/// the catch came before any food (10-tick lockout first), the pickpockets
-/// until coins (126/256 per attempt, ~11 ticks per stunned failure), the bank
-/// deposit and return (~28 + ~25 ticks measured on the live Fight run), and
-/// the pickpockets until further coins. A 200k-run Monte Carlo of that chain,
-/// over the runs whose catch lands inside the Strength watch, gives a 95th
-/// percentile of 240/256/247 engine ticks at the pooled / ArdyCakes-only /
-/// `ardy_cakes_fight` stall rates, and a 99th of 278/291/330. With ~25 s of
-/// seed and Start at 0.6 s per tick, the 95th percentile is 169-179 s, at the
-/// 180 s gold cap, and the 99th is 192-223 s. Use **240 s**.
+/// the catch came before any food (10-game-tick lockout first), then pickpockets
+/// until coins (126/256 per attempt, ~11 game ticks per stunned failure), the
+/// bank deposit and return (~28 + ~25 game ticks measured on the live Fight
+/// run), and the pickpockets until further coins. A 200k-run Monte Carlo of
+/// that chain, over runs whose catch lands inside the Strength watch, gives a
+/// 95th percentile of 240/256/247 game ticks at the pooled / ArdyCakes-only
+/// / `ardy_cakes_fight` stall rates, and a 99th of 278/291/330. With ~25 s
+/// of seed and Start at 0.6 s per game tick, the 95th percentile is 169-179 s,
+/// at the 180 s gold cap, and the 99th is 192-223 s. Use **240 s**.
 const ARDY_THIEVER_FIGHT_DEADLINE: Duration = Duration::from_secs(240);
 
 /// GnomeMagicChopper fletch cells: the first Magic-tree Woodcutting XP arm and
 /// the further Magic logs arm after the deposit return.
 ///
-/// **Units:** `budget_ticks` are runner dirty-snapshot increments, not
-/// engine ticks or wall time. `gnome_fletch_short` at `290253af` failed
-/// step 17 after 150 dirties, about 120 engine ticks, so about 1.25 dirties
-/// per engine tick.
+/// **Units:** `budget_ticks` are observed game ticks (one per
+/// `PLAYER_INFO`; see [`Wait`]). They are not wall time. The sizing
+/// below was measured under the old dirty-snapshot counting:
+/// `gnome_fletch_short` at `290253af` failed step 17 after 150 dirties,
+/// about 120 game ticks, so about 1.25 dirty snapshots per game tick.
 ///
 /// **Engine odds (selected289 `skill_woodcutting`, justification only):**
 /// Magic tree with a Rune axe has `successchance` 7,21. At Woodcutting 75,
 /// `stat_random` gives floor(7*24/98)+floor(21*74/98)+1 = 17, so a roll
 /// succeeds with p = 17/256 (about 6.6%). `%action_delay = clock+3` and the
-/// roll lands on `%action_delay = clock`, so the first roll is 3 engine ticks
-/// after the op, then one roll every 4 ticks. The mean wait for the first
-/// log is about 59 engine ticks. The 99th percentile is 68 rolls, about
-/// 271 engine ticks.
+/// roll lands on `%action_delay = clock`, so the first roll is 3 game ticks
+/// after the op, then one roll every 4 game ticks. The mean wait for the first
+/// log is about 59 game ticks. The 99th percentile is 68 rolls, about
+/// 271 game ticks.
 ///
 /// **Why 150 is wrong for this arm:** the first arm also covers the
-/// card's own gear bank trip (upstairs booth and back), about 50 engine
-/// ticks. That left about 68 engine ticks, or 17 rolls, of steady chopping.
+/// card's own gear bank trip (upstairs booth and back), about 50 game ticks.
+/// That left about 68 game ticks, or 17 rolls, of steady chopping.
 /// There was one click, one swing message, rune-axe animation 867 held and
 /// no re-click. With a correct product the chance of no log in 17 rolls is
 /// (239/256)^17, about 31%.
 ///
-/// **Budget:** 450 dirties is about 360 engine ticks. Take off about 53 for
-/// the gear trip and the first-roll delay. That leaves about 77 rolls, so
-/// P(no log) is about 0.5%. The further-log arm covers the stair walk (or a
-/// walk to another Magic tree after the 1/8 depletion) plus the same roll
-/// tail. Other arms keep 150.
+/// **Budget:** under the old dirty counting, 450 dirties was about 360
+/// game ticks. Take off about 53 game ticks for the gear trip and the
+/// first-roll delay. That leaves about 77 rolls, so P(no log) is about 0.5%.
+/// A 450-game-tick budget keeps at least that margin. The further-log
+/// arm covers the stair walk (or a walk to another Magic tree after the
+/// 1/8 depletion) plus the same roll tail. Other arms keep 150.
 ///
 /// **Deadline:** pre-Start about 12s. Gear trip about 30s. Fletch about 5s.
 /// Deposit trip and return about 35s. Two geometric chops at 2.4s a roll.
 /// 420s leaves about 140 rolls for two logs, so P(fewer than 2) < 0.1%.
 /// The per-arm budgets are the binding limit. Same 420s pattern as
 /// [`HERBLORE_EGG_DEADLINE`].
-const MAGIC_TREE_CHOP_WATCH_TICKS: u32 = 450;
+const MAGIC_TREE_CHOP_WATCH_GAME_TICKS: u32 = 450;
 const MAGIC_TREE_CHOP_DEADLINE: Duration = Duration::from_secs(420);
 
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
@@ -815,7 +822,7 @@ pub(crate) const MAINLAND_LANDING: WorldTile = WorldTile {
 };
 
 /// Catalog Start after the last seed wait: live pumps call `script_start_load`
-/// once, then this one-tick arm (run energy, not XP) succeeds.
+/// once, then this one-game-tick arm (run energy, not XP) succeeds.
 fn start_catalog_step() -> Step {
     Step {
         name: "start the catalog card",
@@ -827,10 +834,10 @@ fn start_catalog_step() -> Step {
     }
 }
 
-/// Dirty-tick budget for a compiled Start to reach Running. Preparation is
-/// off-pump and usually settles in milliseconds; this is a miss detector,
+/// Game-tick budget for a compiled Start to reach Running. Preparation is
+/// off-pump and usually settles in milliseconds. This is a miss detector,
 /// not a soak.
-const COMPILED_START_TICKS: u32 = 50;
+const COMPILED_START_GAME_TICKS: u32 = 50;
 
 /// Compiled registry Start after the last seed wait: live pumps call
 /// `start_compiled` once, then this arm waits until Running. A Rejected
@@ -841,7 +848,7 @@ fn start_compiled_step() -> Step {
         kind: StepKind::StartScript,
         wait: Wait {
             arm: Proof::ScriptRunning,
-            budget_ticks: COMPILED_START_TICKS,
+            budget_ticks: COMPILED_START_GAME_TICKS,
         },
     }
 }

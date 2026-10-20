@@ -68,7 +68,7 @@ pub(crate) fn walk_scenario() -> Scenario {
 /// route is one the client can actually walk — the baked pack's boolean
 /// walk grid can diverge from the live collision) plus the transport
 /// graph derived from the baked whole-world pack, and `Traveller::follow`
-/// drives the route one step per tick until arrival. The destination is a
+/// drives the route one step per game tick until arrival. The destination is a
 /// concrete Lumbridge tile from the pack — (3220, 3264, 0), 44 chebyshev
 /// tiles north of the tele landing — in mapsquare (50,51), which the
 /// pre-bake 2-square pack (m50_50 + m44_53) never covered, so the walk
@@ -120,12 +120,13 @@ pub fn nav_full_scenario() -> Scenario {
 /// cheat-teles to the Catherby range-house `OUTSIDE` stand, then `Follow`s
 /// a whole-world route through the door to `DEST` inside. Profile 1
 /// (`test2`) is the closer companion: it cheat-teles inside, then
-/// `op_loc`s the door shut on every player-info tick the instant the door
-/// reads open, so the walker's follow is stressed against a tick-perfect
-/// closer. The follow's terminal outcome at the door is the diagnostic
-/// target (the closer slams the door shut as the walker approaches, which
-/// surfaces as `Refused Unreachable` in the traveller's settle). The
-/// companion's gating mirrors the old harness: the first `scene_state ==
+/// `op_loc`s the door shut on each game tick observed through `PLAYER_INFO`
+/// as soon as the door reads open, so the walker's follow is stressed against
+/// a game-tick-perfect closer. The walker's terminal outcome at the door is
+/// the diagnostic target (the closer slams the door shut as the walker
+/// approaches, which surfaces as `Refused Unreachable` in the traveller's
+/// settle).
+/// The companion's gating mirrors the old harness: the first `scene_state ==
 /// 2` frame is skipped (host-play queues `mainland_hop` after the hook),
 /// and the Catherby tele waits until `here` is the mainland courtyard.
 pub(crate) fn nav_door_scenario() -> Scenario {
@@ -365,15 +366,15 @@ const CLOSER_TELE: &str = "tele 0,44,53,1,47";
 struct CloserSlot {
     /// First `scene_state == 2` was observed; that frame host-play still
     /// queues `mainland_hop` after `per_frame`, so the Catherby tele
-    /// waits a tick.
+    /// waits one client cycle.
     scene2_seen: bool,
     tele_sent: bool,
     last_gen: u64,
 }
 
 /// The closer companion's per-frame hook: gate the Catherby tele behind
-/// the mainland hop, then on every player-info tick `op_loc` the live
-/// open leaf (id 1531, often a tile off packed `at`) so it slams shut.
+/// the mainland hop, then on each observed game tick (`PLAYER_INFO`) `op_loc`
+/// the live open leaf (id 1531, often a tile off packed `at`) so it slams shut.
 fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
     let Some(lp) = &c.local_player else {
         if debug_enabled() {
@@ -732,7 +733,7 @@ const ELKOY_MAZE_COORD: WorldTile = WorldTile {
 /// dialogs — a `ChatAnswer` janitor answers them as they appear and the
 /// step waits on the journal going green. Then cheat-tele to the maze-side
 /// Elkoy, and `Follow` a whole-world route into the village — across the
-/// hedge maze, whose 1-tick escort hop beats the maze walk in the router,
+/// hedge maze, whose 1-game-tick escort hop beats the maze walk in the router,
 /// so the route executes the packed `TransportKind::Npc` edge. The
 /// traveller talks to Elkoy
 /// (`OpTarget::Npc` + option 1), answers the escort dialog's "Yes please."
@@ -832,8 +833,8 @@ const DUEL_ARENA: WorldTile = WorldTile {
 /// persistent slot's backpack (`~clearinv`) and cheat-give a charged
 /// dueling ring (the packed jewellery rub edge's `item_req`), then
 /// `Follow` with `allow_teleports` on to the Al Kharid Duel Arena —
-/// a destination the 2-tick rub edge always beats (the walk is toll-
-/// gated and over a hundred ticks, so the packed leg only ever routes
+/// a destination the 2-game-tick rub edge always beats (the walk is toll-
+/// gated and over a hundred game ticks, so the packed leg only ever routes
 /// when the layer is on and the item is held). The traveller rubs the
 /// held ring (`OpTarget::Item` + option 4 — never the WalkTo `::tele`
 /// cheat), answers the destination choice the rub opens, and PASSes on
@@ -1624,8 +1625,8 @@ fn wear_given_item_step(name: &'static str, id: i32) -> Step {
 // - upstream's walkResilient policy (useTeleports, lever edges are teleport
 //   kind) becomes the router's allow_teleports, so the lever is a route edge.
 // - upstream's fail gates are `banked` and the Wilderness-lever sighting;
-//   the sighting becomes a per-tick VisitedWithin latch on the walk step
-//   (box = lever +/-8, as upstream), so a route that skips the lever fails.
+//   the sighting becomes a per-step `VisitedWithin` latch over observed dirty
+//   snapshots (box = lever +/-8, as upstream), so a route that skips the lever fails.
 // - upstream's Ardougne-lever, webs, ladder and cellar sightings are log-only
 //   there; the cellar is gated here by ArrivedNear (radius 6, as upstream).
 // - the Gundai choose string is the repo's exact option text (shop_buyout_lundail),

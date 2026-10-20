@@ -1148,9 +1148,9 @@ fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
             .find(|step| step.name == "watch script-smithed product enter a fresh bank")
             .unwrap_or_else(|| panic!("{name} has product deposit watch"));
         assert_eq!(
-                deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
-                "{name}: deposit dirty-budget covers remaining forge (engine 5/bar + L1-4 + Make-10 + bank), not equated to engine ticks"
-            );
+            deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
+            "{name}: deposit game-tick budget retains the bounded forge/bank allowance"
+        );
         assert!(
             matches!(
                 deposit.wait.arm,
@@ -1195,7 +1195,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     let eggs = get("herblore_secondaries").expect("herblore_secondaries");
     assert_eq!(
         eggs.settings.deadline, HERBLORE_EGG_DEADLINE,
-        "eggs wall covers food-exhaust + dungeon bank + return; newt keeps 180s"
+        "420s retains the estimated egg cycle wall; the 600- and 240-game-tick waits can exceed it together"
     );
     let deposit = eggs
         .steps
@@ -1204,7 +1204,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         .expect("deposit watch");
     assert_eq!(
             deposit.wait.budget_ticks, HERBLORE_EGG_DEPOSIT_WATCH_TICKS,
-            "deposit dirty-budget is runner increments sized to 100-tick respawn + remaining food + dungeon, not equated to engine ticks"
+            "deposit game-tick budget allows for the 99-game-tick respawn, remaining food and dungeon route"
         );
     assert!(
         matches!(
@@ -1250,7 +1250,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         .expect("return");
     assert_eq!(
         ret.wait.budget_ticks, HERBLORE_EGG_RETURN_WATCH_TICKS,
-        "return dirty-budget covers reverse dungeon only"
+        "return game-tick budget covers the reverse dungeon route"
     );
     let further = eggs
         .steps
@@ -2999,7 +2999,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             scenario.steps[start + 1..]
                 .iter()
                 .all(|step| step.wait.budget_ticks >= min_watch_ticks),
-            "{name}: post-Start dirty budgets must not pre-empt the named wall"
+            "{name}: post-Start game-tick budgets must not pre-empt the named wall"
         );
     }
 
@@ -5008,15 +5008,15 @@ fn gnome_level0_course_locs() -> Vec<api::snapshot::LocView> {
 }
 
 /// The snapshot of one observed game tick, in game, on a settled scene.
-fn gnome_radius_tick(
-    tick: u32,
+fn gnome_radius_game_tick(
+    game_tick: u32,
     tile: (i32, i32),
     agility_xp: i32,
     locs: Vec<api::snapshot::LocView>,
 ) -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
-    snapshot.seed_tick(tick);
+    snapshot.seed_tick(game_tick);
     snapshot.seed_tile(WorldTile {
         x: tile.0,
         z: tile.1,
@@ -5058,30 +5058,38 @@ fn gnome_witness_tile() -> (i32, i32) {
     (tile.x, tile.z)
 }
 
-/// The first tick at which a fresh witness accepts when the bot stands on the
-/// witness tile and `locs` is listed on every tick, over three windows.
-fn gnome_radius_first_accepted_tick(locs: impl Fn() -> Vec<api::snapshot::LocView>) -> Option<u32> {
+/// The first game tick at which a fresh witness accepts when the bot stands on
+/// the witness tile and `locs` is listed on each game tick, over three windows.
+fn gnome_radius_first_accepted_game_tick(
+    locs: impl Fn() -> Vec<api::snapshot::LocView>,
+) -> Option<u32> {
     let ready = gnome_radius_ready();
-    (1..=3 * GNOME_RADIUS_WITNESS_TICKS)
-        .find(|tick| ready(&gnome_radius_tick(*tick, gnome_witness_tile(), 0, locs())))
+    (1..=3 * GNOME_RADIUS_WITNESS_GAME_TICKS).find(|game_tick| {
+        ready(&gnome_radius_game_tick(
+            *game_tick,
+            gnome_witness_tile(),
+            0,
+            locs(),
+        ))
+    })
 }
 
 #[test]
 fn gnome_radius_witness_accepts_after_the_still_window_with_the_log_beyond_the_radius() {
     let ready = gnome_radius_ready();
-    for tick in 1..GNOME_RADIUS_WITNESS_TICKS {
+    for game_tick in 1..GNOME_RADIUS_WITNESS_GAME_TICKS {
         assert!(
-            !ready(&gnome_radius_tick(
-                tick,
+            !ready(&gnome_radius_game_tick(
+                game_tick,
                 gnome_witness_tile(),
                 0,
                 gnome_level0_course_locs()
             )),
-            "tick {tick} is inside the window"
+            "game tick {game_tick} is inside the window"
         );
     }
-    let last = gnome_radius_tick(
-        GNOME_RADIUS_WITNESS_TICKS,
+    let last = gnome_radius_game_tick(
+        GNOME_RADIUS_WITNESS_GAME_TICKS,
         gnome_witness_tile(),
         0,
         gnome_level0_course_locs(),
@@ -5089,29 +5097,29 @@ fn gnome_radius_witness_accepts_after_the_still_window_with_the_log_beyond_the_r
     assert!(ready(&last));
     assert!(
         ready(&last),
-        "later frames of the same tick keep the verdict"
+        "later frames of the same game tick keep the verdict"
     );
 }
 
 #[test]
 fn gnome_radius_witness_counts_each_game_tick_once() {
     let ready = gnome_radius_ready();
-    // The runner calls `ready` on every frame; frames of one tick are one
-    // observation.
-    let first = gnome_radius_tick(1, gnome_witness_tile(), 0, gnome_level0_course_locs());
+    // The runner calls `ready` on every client frame; frames of the same game
+    // tick are one observation.
+    let first = gnome_radius_game_tick(1, gnome_witness_tile(), 0, gnome_level0_course_locs());
     for _ in 0..200 {
         assert!(!ready(&first));
     }
-    for tick in 2..GNOME_RADIUS_WITNESS_TICKS {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    for game_tick in 2..GNOME_RADIUS_WITNESS_GAME_TICKS {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             gnome_witness_tile(),
             0,
             gnome_level0_course_locs()
         )));
     }
-    assert!(ready(&gnome_radius_tick(
-        GNOME_RADIUS_WITNESS_TICKS,
+    assert!(ready(&gnome_radius_game_tick(
+        GNOME_RADIUS_WITNESS_GAME_TICKS,
         gnome_witness_tile(),
         0,
         gnome_level0_course_locs()
@@ -5122,9 +5130,9 @@ fn gnome_radius_witness_counts_each_game_tick_once() {
 fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
     let (x, z) = gnome_witness_tile();
     let ready = gnome_radius_ready();
-    for tick in 1..=4 {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    for game_tick in 1..=4 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
@@ -5132,8 +5140,8 @@ fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
     }
     // A bot that ignores the radius clicks the Log balance; its first step
     // takes it off the tile.
-    let window = GNOME_RADIUS_WITNESS_TICKS;
-    assert!(!ready(&gnome_radius_tick(
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    assert!(!ready(&gnome_radius_game_tick(
         5,
         (x, z - 1),
         0,
@@ -5141,26 +5149,26 @@ fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
     )));
     // Standing still elsewhere never counts, and walking back onto the tile
     // does not clear the refusal.
-    for tick in 6..=5 + 3 * window {
+    for game_tick in 6..=5 + 3 * window {
         assert!(
-            !ready(&gnome_radius_tick(
-                tick,
+            !ready(&gnome_radius_game_tick(
+                game_tick,
                 (x, z - 6),
                 0,
                 gnome_level0_course_locs()
             )),
-            "tick {tick}, still elsewhere"
+            "game tick {game_tick}, still elsewhere"
         );
     }
-    for tick in 6 + 3 * window..=5 + 6 * window {
+    for game_tick in 6 + 3 * window..=5 + 6 * window {
         assert!(
-            !ready(&gnome_radius_tick(
-                tick,
+            !ready(&gnome_radius_game_tick(
+                game_tick,
                 (x, z),
                 0,
                 gnome_level0_course_locs()
             )),
-            "tick {tick}, back on the tile"
+            "game tick {game_tick}, back on the tile"
         );
     }
 }
@@ -5169,24 +5177,24 @@ fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
 fn gnome_radius_witness_never_accepts_after_agility_xp_rises() {
     let (x, z) = gnome_witness_tile();
     let ready = gnome_radius_ready();
-    for tick in 1..=4 {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    for game_tick in 1..=4 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
         )));
     }
-    let window = GNOME_RADIUS_WITNESS_TICKS;
-    for tick in 5..=4 + 3 * window {
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    for game_tick in 5..=4 + 3 * window {
         assert!(
-            !ready(&gnome_radius_tick(
-                tick,
+            !ready(&gnome_radius_game_tick(
+                game_tick,
                 (x, z),
                 75,
                 gnome_level0_course_locs()
             )),
-            "tick {tick}, after the obstacle paid XP"
+            "game tick {game_tick}, after the obstacle paid XP"
         );
     }
 }
@@ -5197,24 +5205,24 @@ fn gnome_radius_witness_waits_for_the_teleport_to_land() {
     let ready = gnome_radius_ready();
     // Observations a tile short of the witness tile come before the watch
     // began: they are neither counted nor refused.
-    for tick in 1..=5 {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    for game_tick in 1..=5 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z + 1),
             0,
             gnome_level0_course_locs()
         )));
     }
-    let window = GNOME_RADIUS_WITNESS_TICKS;
-    for tick in 6..5 + window {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    for game_tick in 6..5 + window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
         )));
     }
-    assert!(ready(&gnome_radius_tick(
+    assert!(ready(&gnome_radius_game_tick(
         5 + window,
         (x, z),
         0,
@@ -5223,34 +5231,39 @@ fn gnome_radius_witness_waits_for_the_teleport_to_land() {
 }
 
 #[test]
-fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_ticks() {
+fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_game_ticks() {
     let (x, z) = gnome_witness_tile();
-    let window = GNOME_RADIUS_WITNESS_TICKS;
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
     let ready = gnome_radius_ready();
     let without_log = || {
         let mut locs = gnome_level0_course_locs();
         locs.retain(|loc| loc.id != 2295);
         locs
     };
-    // One tick without the Log balance in the scene breaks the run.
-    for tick in 1..window {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    // One game tick without the Log balance in the scene breaks the run.
+    for game_tick in 1..window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
         )));
     }
-    assert!(!ready(&gnome_radius_tick(window, (x, z), 0, without_log())));
-    for tick in window + 1..2 * window {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    assert!(!ready(&gnome_radius_game_tick(
+        window,
+        (x, z),
+        0,
+        without_log()
+    )));
+    for game_tick in window + 1..2 * window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
         )));
     }
-    assert!(ready(&gnome_radius_tick(
+    assert!(ready(&gnome_radius_game_tick(
         2 * window,
         (x, z),
         0,
@@ -5259,18 +5272,18 @@ fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_ticks() {
 
     // A scene that is not ready breaks it as well.
     let ready = gnome_radius_ready();
-    for tick in 1..window {
-        assert!(!ready(&gnome_radius_tick(
-            tick,
+    for game_tick in 1..window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
             (x, z),
             0,
             gnome_level0_course_locs()
         )));
     }
-    let mut loading = gnome_radius_tick(window, (x, z), 0, gnome_level0_course_locs());
+    let mut loading = gnome_radius_game_tick(window, (x, z), 0, gnome_level0_course_locs());
     loading.seed_ingame(1);
     assert!(!ready(&loading));
-    assert!(!ready(&gnome_radius_tick(
+    assert!(!ready(&gnome_radius_game_tick(
         window + 1,
         (x, z),
         0,
@@ -5282,7 +5295,7 @@ fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_ticks() {
 fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_range() {
     // The Log balance is not in the scene at all.
     assert_eq!(
-        gnome_radius_first_accepted_tick(|| {
+        gnome_radius_first_accepted_game_tick(|| {
             let mut locs = gnome_level0_course_locs();
             locs.retain(|loc| loc.id != 2295);
             locs
@@ -5291,7 +5304,7 @@ fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_
     );
     // The Log balance is inside the radius (6 tiles away).
     assert_eq!(
-        gnome_radius_first_accepted_tick(|| {
+        gnome_radius_first_accepted_game_tick(|| {
             let mut locs = gnome_level0_course_locs();
             locs.retain(|loc| loc.id != 2295);
             locs.push(gnome_loc(2295, "Log balance", 2474, 3440, &["Walk-across"]));
@@ -5302,7 +5315,7 @@ fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_
     // The Log balance is 11 away, but another obstacle the bot's search
     // could take is inside the radius.
     assert_eq!(
-        gnome_radius_first_accepted_tick(|| {
+        gnome_radius_first_accepted_game_tick(|| {
             let mut locs = gnome_level0_course_locs();
             locs.push(gnome_loc(2285, "Obstacle net", 2474, 3440, &["Climb-over"]));
             locs
@@ -5313,7 +5326,7 @@ fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_
 
 #[test]
 fn gnome_radius_witness_ignores_locs_the_bots_own_search_ignores() {
-    let window = Some(GNOME_RADIUS_WITNESS_TICKS);
+    let window = Some(GNOME_RADIUS_WITNESS_GAME_TICKS);
     for (label, extra) in [
         (
             "a course-named loc without actions",
@@ -5334,7 +5347,7 @@ fn gnome_radius_witness_ignores_locs_the_bots_own_search_ignores() {
         }),
     ] {
         assert_eq!(
-            gnome_radius_first_accepted_tick(|| {
+            gnome_radius_first_accepted_game_tick(|| {
                 let mut locs = gnome_level0_course_locs();
                 locs.push(extra.clone());
                 locs
@@ -7543,14 +7556,13 @@ fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
 #[test]
 fn gnome_magic_chop_watches_cover_the_roll_tail() {
     // selected289 woodcut.rs2: Rune axe on a Magic tree is successchance
-    // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 engine ticks,
-    // first at +3. The first arm also carries the card's gear bank trip.
+    // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 game ticks,
+    // with the first roll 3 game ticks after the op. The first arm also
+    // carries the card's gear bank trip.
     let p = 17.0_f64 / 256.0;
-    let dirties_per_engine_tick = 1.25;
-    let gear_trip_ticks = 50.0;
-    let chop_ticks =
-        f64::from(MAGIC_TREE_CHOP_WATCH_TICKS) / dirties_per_engine_tick - gear_trip_ticks - 3.0;
-    let rolls = (chop_ticks / 4.0).floor() + 1.0;
+    let gear_trip_game_ticks = 50.0;
+    let chop_game_ticks = f64::from(MAGIC_TREE_CHOP_WATCH_GAME_TICKS) - gear_trip_game_ticks - 3.0;
+    let rolls = (chop_game_ticks / 4.0).floor() + 1.0;
     let miss = (1.0 - p).powf(rolls);
     assert!(
         miss <= 0.01,
@@ -7586,7 +7598,7 @@ fn gnome_magic_chop_watches_cover_the_roll_tail() {
         assert_eq!(further, watch.len() - 1, "{name}: further chop is last");
         for (i, step) in watch.iter().enumerate() {
             let expected = if i == 0 || i == further {
-                MAGIC_TREE_CHOP_WATCH_TICKS
+                MAGIC_TREE_CHOP_WATCH_GAME_TICKS
             } else {
                 SCRIPT_GOLD_WATCH_TICKS
             };
@@ -8841,7 +8853,7 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
             scenario.steps[start + 1..]
                 .iter()
                 .all(|step| step.wait.budget_ticks >= 750),
-            "{name} post-Start dirty budgets must not pre-empt the 300s wall"
+            "{name} post-Start game-tick budgets must not pre-empt the 300s wall"
         );
         let before = &scenario.steps[..start];
         let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
@@ -9227,7 +9239,7 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
                 scenario.steps[start + 1..]
                     .iter()
                     .all(|step| step.wait.budget_ticks >= 750),
-                "rock_crab_range post-Start dirty budgets must not pre-empt the 300s wall"
+                "rock_crab_range post-Start game-tick budgets must not pre-empt the 300s wall"
             );
         } else {
             assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
@@ -11095,6 +11107,144 @@ fn synthetic_client() -> Client {
     client
 }
 
+#[test]
+fn repeat_sends_once_per_game_tick_and_resets_for_the_next_step() {
+    use client::io::ServerProt;
+
+    let repeat = |name, needle| Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(|client, _| {
+                client.send_cheat("setvar tutorial 1000");
+                client.send_cheat("getvar tutorial");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat { needle },
+            budget_ticks: 200,
+        },
+    };
+    let scenario = Scenario {
+        name: "repeat_game_tick_pacing",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            repeat("first tutorial pair", "advance"),
+            repeat("second tutorial pair", "never"),
+        ],
+        proof: Proof::Chat { needle: "never" },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 2);
+    for _ in 0..16 {
+        client.chat_text[0] = "tutorial reply".into();
+        client.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut client);
+    }
+    for _ in 0..16 {
+        runner.tick(&mut client);
+    }
+    assert_eq!(
+        client.cheat_packets_sent(),
+        2,
+        "frontend polls and chat traffic must not repeat the tutorial pair"
+    );
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 4);
+
+    client.chat_text[0] = "advance".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(
+        client.cheat_packets_sent(),
+        6,
+        "a new repeat step can send without another PLAYER_INFO"
+    );
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 6);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 8);
+}
+
+#[test]
+fn step_budget_counts_game_ticks_not_dirty_snapshots() {
+    use client::io::ServerProt;
+
+    let scenario = Scenario {
+        name: "budget_counts_game_ticks",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "wait for a chat line that never comes",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::Chat { needle: "never" },
+                budget_ticks: 3,
+            },
+        }],
+        proof: Proof::Chat { needle: "never" },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut client = native_seed_client();
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    assert_eq!(runner.total_ticks(), 1);
+
+    // A burst of chat-only dirty snapshots inside one game tick runs the
+    // proof checks but must not spend the game-tick budget.
+    for _ in 0..20 {
+        client.chat_text[0] = "noise".into();
+        client.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut client);
+    }
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 1 },
+        "dirty snapshots inside one game tick must not use the budget"
+    );
+    assert_eq!(runner.total_ticks(), 1);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    assert_eq!(runner.total_ticks(), 2);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.total_ticks(), 3);
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(msg.contains("not seen within 3 game ticks"), "msg: {msg}");
+        }
+        other => panic!("three observed game ticks must exhaust the budget, got {other:?}"),
+    }
+}
+
 /// Re-render `client`'s chat modal as `options` — the native
 /// `if_openchat(multiN)`: the same layer id and child component ids as
 /// every other chat dialog, with the new question's texts and the
@@ -11230,8 +11380,8 @@ fn quest_prereq_machine_presses_the_native_individual_quest_path() {
 
 #[test]
 fn quest_prereq_machine_presses_each_native_dialog_once() {
-    // The runner re-sends a `Repeat` step every tick, so the machine sees
-    // the same dialog until the reply lands. `chat.rs2` re-registers the
+    // `Repeat` sends at most once per observed game tick, so the machine
+    // sees the same dialog until the reply lands. `chat.rs2` re-registers the
     // same components as resume buttons for the question that follows
     // (`if_addresumebutton(multi5:com_5)`) and the engine resumes with the
     // clicked component, so a second press into the replaced dialog is not
@@ -11373,10 +11523,11 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
     runner.set_scene_settle(Duration::ZERO);
 
     let mut phase = 0;
-    let (mut rewards_tick, mut close_tick, mut green_tick, mut reset_tick) =
+    let (mut rewards_game_tick, mut close_game_tick, mut green_game_tick, mut reset_game_tick) =
         (None, None, None, None);
     let mut step_at_rewards = None;
-    for tick in 0..400 {
+    for game_tick in 0..400 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
         let from = client.out.pos;
         runner.tick(&mut client);
         let sent = client.out.data()[from..client.out.pos].to_vec();
@@ -11388,10 +11539,10 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
             RunnerStatus::Running { step, .. } => Some(step),
             _ => None,
         };
-        if reset_tick.is_none() && step == Some(prepare_step) && sent_has("~clearinv") {
-            reset_tick = Some(tick);
+        if reset_game_tick.is_none() && step == Some(prepare_step) && sent_has("~clearinv") {
+            reset_game_tick = Some(game_tick);
         }
-        if reset_tick.is_some() && green_tick.is_some() {
+        if reset_game_tick.is_some() && green_game_tick.is_some() {
             break;
         }
         match phase {
@@ -11411,7 +11562,7 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
                 client.main_modal_id = QUEST_SCROLL;
                 client.bump_gens(ServerProt::IF_OPENMAIN);
                 client.bump_gens(ServerProt::MESSAGE_GAME);
-                rewards_tick = Some(tick);
+                rewards_game_tick = Some(game_tick);
                 step_at_rewards = step;
                 phase = 3;
             }
@@ -11426,8 +11577,8 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
                     },
                 );
                 client.bump_gens(ServerProt::IF_SETCOLOUR);
-                close_tick = Some(tick);
-                green_tick = Some(tick);
+                close_game_tick = Some(game_tick);
+                green_game_tick = Some(game_tick);
                 phase = 4;
             }
             _ => {}
@@ -11444,21 +11595,21 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
         Some(kickoff_step + 1),
         "reward traffic and the completion scroll arrive on the prerequisite step"
     );
-    let green_tick = green_tick.expect("the completion painted the row green");
-    let close_tick = close_tick.expect("the machine closed the completion's scroll");
-    let rewards_tick = rewards_tick.expect("the completion's scroll opened");
+    let green_game_tick = green_game_tick.expect("the completion painted the row green");
+    let close_game_tick = close_game_tick.expect("the machine closed the completion's scroll");
+    let rewards_game_tick = rewards_game_tick.expect("the completion's scroll opened");
     assert!(
-            close_tick > rewards_tick,
-            "the scroll the completion opened is closed on the next tick (opened {rewards_tick}, closed {close_tick})"
-        );
+        close_game_tick > rewards_game_tick,
+        "the scroll the completion opened is closed on the next game tick (opened {rewards_game_tick}, closed {close_game_tick})"
+    );
     assert_eq!(
-        green_tick, close_tick,
+        green_game_tick, close_game_tick,
         "the green follows the scroll's close, still on the prerequisite step"
     );
-    let reset_tick = reset_tick.expect("the acknowledged run resets stats and inventory");
+    let reset_game_tick = reset_game_tick.expect("the acknowledged run resets stats and inventory");
     assert!(
-        reset_tick > green_tick,
-        "the reset follows the journal acknowledgement (green {green_tick}, reset {reset_tick})"
+        reset_game_tick > green_game_tick,
+        "the reset follows the journal acknowledgement (green {green_game_tick}, reset {reset_game_tick})"
     );
 }
 
@@ -11507,7 +11658,7 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         );
         assert!(
             matches!(scenario.steps[ack].kind, StepKind::Repeat { .. }),
-            "{name}: the dialog machine re-sends every tick"
+            "{name}: the dialog machine re-sends at most once per game tick"
         );
         assert!(
             matches!(scenario.steps[ack].wait.arm, Proof::QuestDone { name: row } if row == journal),
@@ -11565,9 +11716,10 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
     ]);
     let mut runner = ScenarioRunner::with_world(scenario, None);
     runner.set_scene_settle(Duration::ZERO);
-    for tick in 0..700 {
-        client.chat_text[0] = format!("Congratulations! Quest complete! {tick}");
+    for game_tick in 0..700 {
+        client.chat_text[0] = format!("Congratulations! Quest complete! {game_tick}");
         client.bump_gens(ServerProt::MESSAGE_GAME);
+        client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
         if matches!(runner.status(), RunnerStatus::Failed(_)) {
             break;
@@ -12284,8 +12436,8 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
 
 /// Betty-only long Falador West travel budgets: first purchase covers
 /// initial withdraw round-trip, deposit/return cover post-buy legs;
-/// empty/close/further and all other presets stay ordinary 150/180s.
-/// Predicates and proof order are unchanged (see chain test).
+/// empty/close/further and all other presets stay ordinary 150-game-tick/
+/// 180s limits. Predicates and proof order are unchanged (see chain test).
 #[test]
 fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
     let betty = get("shop_buyout_betty").expect("shop_buyout_betty");
@@ -12305,14 +12457,14 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS,
-        "first purchase allows a bounded trial beyond the observed 150-dirty failure"
+        "first purchase allows a bounded trial beyond the old 150-dirty failure"
     );
     assert_eq!(
         watch("watch purchased product enter a fresh bank")
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS,
-        "deposit dirty-budget covers post-buy shop→bank leg"
+        "deposit game-tick budget covers post-buy shop→bank leg"
     );
     assert_eq!(
         watch("watch the pack empty of product after deposit")
@@ -12333,7 +12485,7 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS,
-        "return dirty-budget covers bank→shop leg only"
+        "return game-tick budget covers bank→shop leg only"
     );
     assert_eq!(
         watch("watch further purchased product after return")
@@ -12393,7 +12545,8 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
 }
 
 /// Gerrant Draynor route: live7zpi0g mid-return + livexjav5j first-purchase
-/// fails bound the four-leg dirty budgets and 390s wall (Betty unchanged).
+/// historical dirty-counter failures bound the four-leg game-tick budgets
+/// and 390s wall (Betty unchanged).
 #[test]
 fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
     let gerrant = get("shop_buyout_gerrant").expect("shop_buyout_gerrant");
@@ -12409,18 +12562,18 @@ fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
             .unwrap_or_else(|| panic!("gerrant has {name}"))
     };
     assert_eq!(
-            watch("watch unseeded purchased product in pack after Start")
-                .wait
-                .budget_ticks,
-            SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
-            "first purchase covers two Draynor legs + withdraw + buy beyond livexjav5j 150-dirty arm fail"
-        );
+        watch("watch unseeded purchased product in pack after Start")
+            .wait
+            .budget_ticks,
+        SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
+        "first purchase retains bounded margin beyond livexjav5j 150-dirty arm failure"
+    );
     assert_eq!(
         watch("watch purchased product enter a fresh bank")
             .wait
             .budget_ticks,
         SCRIPT_GOLD_WATCH_TICKS,
-        "deposit arm: live7zpi0g measured pass at 150 dirty"
+        "deposit arm: live7zpi0g passed with the old 150-dirty counter"
     );
     assert_eq!(
         watch("watch the pack empty of product after deposit")
@@ -12470,9 +12623,9 @@ fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
 
 /// Nurmof Dwarven Mine route: sm25wxbm3d_0 measured 260 walked tiles per
 /// leg and run-energy depletion about 276 run tiles after Start, so the
-/// first purchase needs about 440 engine ticks (550 dirties at 1.25).
+/// first purchase needs about 440 game ticks (550 dirties at 1.25).
 /// Betty's 320/280/280 expired on the return surface leg with the
-/// withdraw complete and no stationary ticks. Only the three travel
+/// withdraw complete and no stationary game-tick waits. Only the three travel
 /// arms and the wall deadline widen; proof order is unchanged.
 #[test]
 fn shop_buyout_nurmof_timing_covers_mine_bank_travel_legs() {
@@ -12480,7 +12633,7 @@ fn shop_buyout_nurmof_timing_covers_mine_bank_travel_legs() {
     assert_eq!(
         nurmof.settings.deadline,
         Duration::from_secs(720),
-        "720s wall covers about 1116 expected engine ticks at 600ms"
+        "720s wall covers about 1116 game ticks at 600ms each"
     );
     assert_eq!(
         SHOP_BUYOUT_NURMOF_DEADLINE,
@@ -13114,6 +13267,7 @@ fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
         &mut client,
         &["Cool, I'd like to access my bank account please."],
     );
+    client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
     let after_choice = client.out.pos;
