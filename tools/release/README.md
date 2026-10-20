@@ -211,14 +211,20 @@ Verification does not publish anything.
 
 ### Python version
 
-Both tools require Python 3.11 or newer: the known-issues ledger is TOML
-and is read with `tomllib`, which exists only on 3.11 and newer, and the
-release preflight checks that ledger. On an older interpreter both tools
-exit with a one-line error naming the running interpreter instead of a
-traceback. Run every command in this document with an interpreter that
-meets the floor. On macOS that is the Homebrew `python3`
+The known-issues ledger is TOML and is read with `tomllib`, which exists
+only on Python 3.11 and newer. `tools/known-issues/known_issues.py` needs
+3.11+ for every command, and `release.py preflight` (run on the
+orchestrator host) needs 3.11+ because it loads that tool. On an older
+interpreter both exit with a one-line error naming the running interpreter
+instead of a traceback. Run those commands with an interpreter that meets
+the floor. On macOS that is the Homebrew `python3`
 (`/opt/homebrew/bin/python3`, 3.11 or newer); Apple's `/usr/bin/python3`
 is 3.9 and fails the check.
+
+The `build`, `finalize`, `verify`, and `clean` steps run with the worker's
+own `python3` (`python` on Windows) and need only what `release.py` already
+needs (3.9 today), including on a macOS worker over SSH where `python3` is
+Apple's 3.9.
 
 ### Known-issues ledger
 
