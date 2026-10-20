@@ -758,6 +758,48 @@ class RevisionDefaultsTests(unittest.TestCase):
             rn.revision_defaults("377", False)
 
 
+class RevisionBuildOverlayTests(unittest.TestCase):
+    def test_274_uses_the_runner_inventory_for_its_build_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "runner" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            source.parent.mkdir(parents=True)
+            target.parent.mkdir(parents=True)
+            source.write_text("pinned content inventory\n", encoding="utf-8")
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "274"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", source), \
+                    mock.patch.object(rn, "log"):
+                rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "pinned content inventory\n")
+
+    def test_289_does_not_require_or_apply_the_274_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target.parent.mkdir(parents=True)
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", root / "missing"), \
+                    mock.patch.object(rn, "log"):
+                rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "dev inventory\n")
+
+    def test_274_fails_closed_when_its_inventory_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target.parent.mkdir(parents=True)
+            target.write_text("dev inventory\n", encoding="utf-8")
+            with mock.patch.object(rn, "REVISION", "274"), \
+                    mock.patch.object(rn, "NAV_274_REQUIRED_CONTENT", root / "missing"), \
+                    mock.patch.object(rn, "log"):
+                with self.assertRaisesRegex(RuntimeError, "revision-274 nav inventory missing"):
+                    rn.apply_274_inventory_overlay(root / "tree")
+            self.assertEqual(target.read_text(encoding="utf-8"), "dev inventory\n")
+
+
 class RevisionImportTests(unittest.TestCase):
     def import_constants(self, extra_env: dict) -> subprocess.CompletedProcess:
         env = {key: value for key, value in os.environ.items() if not key.startswith("NIGHTLY_")}
