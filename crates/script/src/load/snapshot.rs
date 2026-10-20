@@ -31,6 +31,19 @@ pub(super) fn materialize_snapshot(
     let mut scope = runtime.deno_runtime().handle_scope();
     let pages_state = super::entity_pages::state(&scope)
         .expect("entity page mapping installed before snapshot materialization");
+    // Open the cached templates briefly; rows are instantiated from them
+    // while no state borrow is held.
+    let (common_row, npc_network_row) = {
+        let pages = pages_state.borrow();
+        let shapes = pages
+            .shapes
+            .as_ref()
+            .expect("entity row templates installed before snapshot materialization");
+        (
+            v8::Local::new(&mut scope, &shapes.common),
+            v8::Local::new(&mut scope, &shapes.npc_network),
+        )
+    };
     let generation = if snap.has_npcs()
         || snap.has_locs()
         || snap.has_players()
@@ -716,28 +729,42 @@ pub(super) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let (npcs, rows) = scene_entity_array(&mut scope, snap.npcs(), true)?;
+        let (npcs, rows) =
+            scene_entity_array(&mut scope, snap.npcs(), true, common_row, npc_network_row)?;
         staged_entity_pages.npcs = Some(rows);
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let (locs, rows) = scene_entity_array(&mut scope, snap.locs(), false)?;
+        let (locs, rows) =
+            scene_entity_array(&mut scope, snap.locs(), false, common_row, npc_network_row)?;
         staged_entity_pages.locs = Some(rows);
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
         set(&mut scope, obj, "locs", empty_rows)?;
     }
     if snap.has_players() {
-        let (players, rows) = scene_entity_array(&mut scope, snap.players(), false)?;
+        let (players, rows) = scene_entity_array(
+            &mut scope,
+            snap.players(),
+            false,
+            common_row,
+            npc_network_row,
+        )?;
         staged_entity_pages.players = Some(rows);
         set(&mut scope, obj, "players", players)?;
     } else if !had {
         set(&mut scope, obj, "players", empty_rows)?;
     }
     if snap.has_ground() {
-        let (ground, rows) = scene_entity_array(&mut scope, snap.ground(), false)?;
+        let (ground, rows) = scene_entity_array(
+            &mut scope,
+            snap.ground(),
+            false,
+            common_row,
+            npc_network_row,
+        )?;
         staged_entity_pages.ground = Some(rows);
         set(&mut scope, obj, "ground", ground)?;
     } else if !had {
@@ -1548,8 +1575,16 @@ fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::isolate_fb::SceneEntity<'_>,
     npc: bool,
+    common_row: v8::Local<'s, v8::ObjectTemplate>,
+    npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
-    let o = v8::Object::new(scope);
+    // The template creates every field as an ordinary data property, so the
+    // stores below update a fast-property row instead of growing a dictionary.
+    let network = npc && ent.size() >= 1;
+    let template = if network { npc_network_row } else { common_row };
+    let o = template
+        .new_instance(scope)
+        .ok_or_else(|| "v8 entity row instantiate failed".to_string())?;
     let index = num(scope, ent.index() as f64);
     set(scope, o, "index", index)?;
     let id = num(scope, ent.id() as f64);
@@ -1625,7 +1660,7 @@ fn scene_entity_object<'s>(
     set(scope, o, "nx", nx)?;
     let nz = num(scope, ent.nz() as f64);
     set(scope, o, "nz", nz)?;
-    if npc && ent.size() >= 1 {
+    if network {
         // Frozen `ClientAdapter.ts:243,879`: the route-head centre is the
         // posted SW route origin plus half the NPC footprint.
         let offset = ent.size() / 2;
@@ -1641,12 +1676,14 @@ fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     ents: TableVector<'a, crate::isolate_fb::SceneEntity<'a>>,
     npc: bool,
+    common_row: v8::Local<'s, v8::ObjectTemplate>,
+    npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<(v8::Local<'s, v8::Value>, Vec<v8::Global<v8::Object>>), String> {
     let len = ents.as_ref().map_or(0, |ents| ents.len());
     let arr = v8::Array::new(scope, len as i32);
     let mut rows = Vec::with_capacity(len);
     for (i, ent) in ents.into_iter().flat_map(|ents| ents.iter()).enumerate() {
-        let ent = scene_entity_object(scope, &ent, npc)?;
+        let ent = scene_entity_object(scope, &ent, npc, common_row, npc_network_row)?;
         rows.push(v8::Global::new(scope, ent));
         arr.set_index(scope, i as u32, ent.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;

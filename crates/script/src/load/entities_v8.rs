@@ -2111,6 +2111,130 @@ globalThis.checkNativeQuery = () => {
         super::super::snapshot::materialize_snapshot(runtime, snapshot, false).unwrap();
     }
 
+    /// A cold native post with `count` NPC rows (25-field shape) and `count`
+    /// loc rows (23-field shape). No JavaScript query runs at any point.
+    fn entity_growth_post_bytes(tick: u64, count: usize) -> Vec<u8> {
+        use crate::isolate_fb::generated::rs_2b_0t::isolate::{
+            SceneEntity, SceneEntityArgs, Snapshot, SnapshotArgs,
+        };
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let name = builder.create_string("Goblin");
+        let action = builder.create_string("Attack");
+        let actions = builder.create_vector(&[action]);
+        let npcs: Vec<_> = (0..count)
+            .map(|index| {
+                SceneEntity::create(
+                    &mut builder,
+                    &SceneEntityArgs {
+                        index: index as i32,
+                        id: 123,
+                        name: Some(name),
+                        x: 3200,
+                        z: 3200,
+                        level: 0,
+                        distance: 1,
+                        actions: Some(actions),
+                        size: 1,
+                        nx: 3200,
+                        nz: 3200,
+                        ..SceneEntityArgs::default()
+                    },
+                )
+            })
+            .collect();
+        let npcs = builder.create_vector(&npcs);
+        let locs: Vec<_> = (0..count)
+            .map(|index| {
+                SceneEntity::create(
+                    &mut builder,
+                    &SceneEntityArgs {
+                        index: index as i32,
+                        id: 456,
+                        name: Some(name),
+                        x: 3300,
+                        z: 3300,
+                        level: 0,
+                        distance: 1,
+                        actions: Some(actions),
+                        ..SceneEntityArgs::default()
+                    },
+                )
+            })
+            .collect();
+        let locs = builder.create_vector(&locs);
+        let snapshot = Snapshot::create(
+            &mut builder,
+            &SnapshotArgs {
+                tick,
+                ingame: true,
+                self_slot: 1,
+                npcs: Some(npcs),
+                locs: Some(locs),
+                ..SnapshotArgs::default()
+            },
+        );
+        builder.finish(snapshot, None);
+        builder.finished_data().to_vec()
+    }
+
+    /// Collected V8 used heap, not Rust allocator counters: the property
+    /// backing stores this test guards are invisible to `allocation_counter`.
+    fn collected_used_heap(runtime: &mut Runtime) -> usize {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        isolate.get_heap_statistics().used_heap_size()
+    }
+
+    #[test]
+    fn cold_native_entity_rows_bound_collected_v8_heap_growth() {
+        // 512 bytes x 8,064 extra rows + 65,536: 901,152 bytes above the
+        // measured fast reference's 3,293,152-byte growth, and well below
+        // the dictionary path's 14,451,728.
+        const MAX_GROWTH: usize = 4_194_304;
+        let mut runtime = setup();
+        super::super::line_of_sight::install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .unwrap();
+        crate::observed::on_reset();
+
+        let small_bytes = entity_growth_post_bytes(1, 64);
+        let small = crate::isolate_fb::Snapshot::from_bytes(&small_bytes).unwrap();
+        post_entities(&mut runtime, &small);
+        let baseline = collected_used_heap(&mut runtime);
+
+        let large_bytes = entity_growth_post_bytes(2, 4_096);
+        let large = crate::isolate_fb::Snapshot::from_bytes(&large_bytes).unwrap();
+        post_entities(&mut runtime, &large);
+        let after_large = collected_used_heap(&mut runtime);
+        let growth = after_large.saturating_sub(baseline);
+
+        // Replace the large generation again so an uncollected previous
+        // generation cannot be charged as retained live row storage.
+        let replacement_bytes = entity_growth_post_bytes(3, 4_096);
+        let replacement = crate::isolate_fb::Snapshot::from_bytes(&replacement_bytes).unwrap();
+        post_entities(&mut runtime, &replacement);
+        let after_replacement = collected_used_heap(&mut runtime);
+        let repeated_growth = after_replacement.saturating_sub(baseline);
+
+        println!(
+            "Cold entity row collected V8 used heap: baseline={baseline} \
+             large={after_large} growth={growth} replacement={after_replacement} \
+             repeated-growth={repeated_growth}"
+        );
+        assert!(
+            growth <= MAX_GROWTH,
+            "cold entity rows grew the collected V8 used heap by {growth} bytes; \
+             limit {MAX_GROWTH} (baseline {baseline}, large {after_large})"
+        );
+        assert!(
+            repeated_growth <= MAX_GROWTH,
+            "repeated cold entity rows grew the collected V8 used heap by \
+             {repeated_growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, \
+             replacement {after_replacement})"
+        );
+    }
+
     #[test]
     fn production_entity_queries_allocate_no_rust_heap_after_warmup() {
         let mut runtime = setup();

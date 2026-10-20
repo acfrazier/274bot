@@ -444,6 +444,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 #### Scripts
 
+- A bot running a script no longer uses about 14 MiB more memory than in
+  0.2.3. The NPC, object, player and ground-item lists that scripts read are
+  built compactly again. Their values, field order and query results are
+  unchanged.
 - The compatibility family table now includes magic, prayer, and selected-content
   data modules. Generation rejects a typed module without a family row.
   This corrects coverage reporting and does not activate new behavior.
