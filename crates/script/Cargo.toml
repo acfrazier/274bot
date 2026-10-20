@@ -69,6 +69,11 @@ required-features = ["load"]
 harness = false
 
 [[test]]
+name = "entity_row_shape"
+required-features = ["load", "test-hooks"]
+harness = false
+
+[[test]]
 name = "load_isolate"
 required-features = ["load"]
 [[test]]
