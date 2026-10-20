@@ -2381,7 +2381,11 @@ fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
 #[test]
 fn bank_cells_register_their_cards_injects_and_watch_chain() {
     for (name, card, deadline) in [
-        ("auto_fighter_bank", "AutoFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "auto_fighter_bank",
+            "AutoFighter",
+            SCRIPT_GOLD_DEADLINE + Duration::from_millis(202 * 600),
+        ),
         ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
@@ -2650,45 +2654,14 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
 }
 
 #[test]
+fn chance_only_rock_crab_bank_is_retired_without_renaming_the_seeded_cell() {
+    assert!(get("rock_crab_bank").is_none());
+    let seeded = get("rock_crab_bank_seeded").expect("seeded bank proof stays runnable");
+    assert_eq!(seeded.name, "rock_crab_bank_seeded");
+}
+
+#[test]
 fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
-    let rock = get("rock_crab_bank").expect("rock_crab_bank registered");
-    assert_eq!(rock.settings.start_script, Some("RockCrab"));
-    assert_eq!(rock.settings.deadline, SCRIPT_GOLD_DEADLINE);
-    let inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
-    assert_eq!(
-        inject.get("bankStrategy"),
-        Some(&Value::String("Loot count".into()))
-    );
-    assert_eq!(inject.get("bankEveryItems"), Some(&Value::from(1.0)));
-    let start = rock
-        .steps
-        .iter()
-        .position(|step| matches!(step.kind, StepKind::StartScript))
-        .unwrap();
-    assert!(rock.steps[..start]
-        .iter()
-        .any(|step| step.name == "acknowledge dormant Rocks in the supported field before Start"));
-    assert!(rock.steps[..start].iter().any(|step| step.wait.arm
-        == Proof::EquipmentId {
-            id: COMBAT_SCIMITAR_ID
-        }));
-    for &id in &ROCK_CRAB_BANK_DEPOSIT {
-        assert!(
-            rock.steps[..start].iter().any(|step| {
-                matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
-            }),
-            "rock_crab_bank must confirm empty deposit-class id {id} before Start"
-        );
-    }
-    let watch = rock.steps[start + 1..]
-        .iter()
-        .map(|step| step.wait.arm)
-        .collect::<Vec<_>>();
-    assert!(watch.contains(&Proof::BankItemIdAny {
-        ids: &ROCK_CRAB_BANK_DEPOSIT,
-        count: 1,
-    }));
-    assert!(watch.contains(&Proof::BankClosed));
     let seeded = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded registered");
     assert_eq!(seeded.settings.start_script, Some("RockCrab"));
     assert_eq!(seeded.settings.deadline, Duration::from_secs(360));
@@ -3453,12 +3426,9 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     );
 }
 
-/// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
-/// the seed closure is what has to hand it over. A fixture that acked a
-/// weapon it never seeded failed the cell at the ack (rock_crab_bank,
-/// step 12). The loot-count RockCrab cell also draws nothing from the
-/// bank: its PeriodicBank trip deposits and returns, so no bank window is
-/// seeded there while the restocking cells keep theirs.
+/// The bank cells acknowledge the scoped weapon after the seed supplies it.
+/// RockCrab PeriodicBank deposits the seeded cargo and returns without
+/// withdrawing supplies. Only restocking cells need a bank food window.
 
 #[test]
 fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
@@ -3504,7 +3474,6 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
         ("ardy_fighter_bank_seeded", "adamant_scimitar"),
-        ("rock_crab_bank", "adamant_scimitar"),
         ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
@@ -3524,11 +3493,6 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
 
     // The loot-count RockCrab cell seeds no bank stock; the restocking
     // cells keep the window their BankRun withdraws from.
-    let rock = seed("rock_crab_bank");
-    assert!(
-        !rock.contains("givebank"),
-        "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
-    );
     let seeded = seed("rock_crab_bank_seeded");
     assert!(
         seeded.contains("give uncut_sapphire 1"),
@@ -3793,7 +3757,7 @@ fn hostile_fields_follow_safe_pretele_precondition_acknowledgements() {
         "green_dragon",
         "fire_giant",
         "ardy_fighter",
-        "rock_crab_bank",
+        "rock_crab_bank_seeded",
         "green_dragon_bank",
         "fire_giant_approach",
         "fire_giant_bank",
@@ -7039,8 +7003,8 @@ fn alternate_camp_and_fight_option_cases_register() {
         inject.get("thieveTarget"),
         Some(&Value::String("Guard".into()))
     );
-    // One full opening stall session: the 289 Guard catch comes from it.
-    assert_eq!(inject.get("foodTarget"), Some(&Value::from(27.0)));
+    // Prepared food keeps the primary pickpocket cycle independent of a stall catch.
+    assert_eq!(inject.get("foodTarget"), Some(&Value::from(1.0)));
     assert_eq!(inject.get("restockAtFood"), Some(&Value::from(0.0)));
     assert_eq!(inject.get("bankAtLootSlots"), Some(&Value::from(1.0)));
     let start = thiever_fight
@@ -7054,7 +7018,7 @@ fn alternate_camp_and_fight_option_cases_register() {
         .collect::<Vec<_>>();
     assert!(seed.contains(&Proof::Stat {
         id: THIEVING_STAT,
-        min: 40,
+        min: 99,
     }));
     assert!(seed.contains(&Proof::Stat {
         id: 0,
@@ -7067,6 +7031,11 @@ fn alternate_camp_and_fight_option_cases_register() {
     assert!(seed.contains(&Proof::EquipmentId {
         id: COMBAT_SCIMITAR_ID,
     }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: CAKE_ID,
+        count: 8,
+    }));
+    assert!(seed.contains(&Proof::NpcNameTargetingLocal { name: "Guard" }));
     let watch = thiever_fight.steps[start + 1..]
         .iter()
         .map(|step| step.wait.arm)
@@ -7185,9 +7154,54 @@ fn alternate_camp_and_fight_option_cases_register() {
     ] {
         assert!(names().contains(&name));
     }
-    // The opening stall session and Guard fight come before the gold chain.
+    // The prepared real Guard fight comes before the gold chain.
     assert!(names().contains(&"ardy_thiever_fight"));
     assert_eq!(thiever_fight.settings.deadline, ARDY_THIEVER_FIGHT_DEADLINE);
+}
+
+#[test]
+fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
+    use api::snapshot::GameSnapshot;
+    let scenario = get("ardy_thiever_fight").unwrap();
+    let mut client = native_seed_client();
+    let prepare = scenario
+        .steps
+        .iter()
+        .find(|step| step.name.starts_with("seed thieving, combat stats"))
+        .unwrap();
+    let StepKind::Perform { send } = &prepare.kind else {
+        panic!("the account preparation is a Perform");
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(send(&mut client, &snapshot));
+    assert!(emitted_has(&client, "setstat thieving 99"));
+    assert!(emitted_has(&client, "give cake 8"));
+    assert!(!emitted_has(&client, "spawn"));
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let attack = scenario.steps[..start]
+        .iter()
+        .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
+        .expect("a real Guard must target the player before Start");
+    let StepKind::Perform { send } = &attack.kind else {
+        panic!("the fixture sends one ordinary Attack");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(!send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
+    plant_named_banker(&mut client, "Guard", 21, 20);
+    std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
+        vec![Some("Attack".into()), None, None, None, None];
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert!(client.out.pos > 0, "the real Guard receives an NPC Attack");
 }
 
 #[test]
@@ -10969,7 +10983,7 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
             CHAOS_DRUID_FOOD as u32,
         ),
         (
-            "rock_crab_bank",
+            "rock_crab_bank_seeded",
             "RockCrab",
             "Scenario Rock Crab food",
             "Lobster",
@@ -11160,7 +11174,7 @@ fn zero_count_trip_food_is_not_emitted_and_positive_counts_still_are() {
     assert!(emitted_has(&client, "setstat thieving 5"));
 
     // The positive-count cells keep their seeded trip food.
-    let crab = get("rock_crab_bank").expect("rock_crab_bank is registered");
+    let crab = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded is registered");
     let mut client = native_seed_client();
     assert!(run_prepare_step(&crab, &mut client));
     assert!(
