@@ -1234,6 +1234,7 @@ fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
         let result = with_step_context(&snapshot, &mut ledger, 14, |cx| {
             run.on_abort_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 7,
                     evidence: aborted.evidence,
                     end,
@@ -1789,6 +1790,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         .get();
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -1960,6 +1962,7 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         .get();
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id: failed_walk,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -2000,6 +2003,7 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
     let escape_walk = outbox[0].request_id.get();
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id: escape_walk,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -2080,6 +2084,7 @@ fn engaged_abort_hold_after_failed_walk(
         .get();
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id: failed_walk,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -2226,6 +2231,7 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::Arrived,
@@ -2346,6 +2352,7 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
@@ -2381,6 +2388,7 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
         );
         let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
             let receipt = WalkReceipt {
+                goal: None,
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::NeedsEvidence(Arc::clone(&gates)),
@@ -2430,6 +2438,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
     let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         run.on_return_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 1,
                 evidence: cx.tick.cx.evidence(),
                 end: WalkEnd::UserInput,
@@ -2493,6 +2502,7 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
         with_step_context_at_walk_seq(&snapshot, &mut ledger, 13, 41, |cx| {
             run.on_return_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 1,
                     evidence: cx.tick.cx.evidence(),
                     end: WalkEnd::Arrived,
@@ -2868,6 +2878,7 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
     };
     ledger.as_mut().unwrap().outbox.clear();
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run: RunKey {

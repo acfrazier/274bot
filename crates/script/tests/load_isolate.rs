@@ -536,6 +536,7 @@ fn accept_bank_walk(
     slot.slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id: action.request_id.get(),
             evidence: api::quest_progress::EvidenceStamp {
                 run: action.run(),
@@ -11863,6 +11864,7 @@ export default class T extends LoopingBot {
             slot.slot.complete_native_walk(
                 &first_authority,
                 script::native::WalkReceipt {
+                    goal: None,
                     request_id: first.request_id.get(),
                     evidence: api::quest_progress::EvidenceStamp {
                         run: first.run(),

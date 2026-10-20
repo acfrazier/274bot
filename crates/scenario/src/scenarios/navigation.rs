@@ -591,6 +591,13 @@ const AUBURY_ANCHOR: WorldTile = WorldTile {
     z: 3401,
     level: 0,
 };
+/// Shop-side setup beside Aubury's authored home (3253,3402), not the
+/// essence session's separate return anchor.
+const AUBURY_SHOP_STAND: WorldTile = WorldTile {
+    x: 3254,
+    z: 3402,
+    level: 0,
+};
 /// The Rune Essence mine pad (m45_75 local (32,33)): the packed entry
 /// edge's landing anchor (the real landing is randomised in the mine).
 const MINE_PAD: WorldTile = WorldTile {
@@ -600,19 +607,11 @@ const MINE_PAD: WorldTile = WorldTile {
 };
 
 /// The `nav_essence` scenario: the EssenceSession execute twin. Log in
-/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
-/// Rune Mysteries by painting the quest journal green: the
-/// `~completequests` debugproc completes every quest and calls
-/// `~update_questlist` (a bare `setvar runemysteries 6` leaves the
-/// client's journal colours stale, so `WorldState::from_snapshot` would
-/// still gate the packed entry edges closed), but it first opens two
-/// `p_choice` dialogs — a `ChatAnswer` janitor answers them as they
-/// appear and the step waits on the journal going green. Then cheat-tele
-/// to Aubury's shop, `Follow` into the mine (the entry hop latches the
-/// session on any mine landing), and `Follow` back out through the exit
-/// portal — the session-gated return may only land near Aubury, never
-/// another wizard. PASSes when the player stands within the exit landing
-/// radius of Aubury's anchor.
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, seed only
+/// Rune Mysteries, and relog to observe its completed journal state.
+/// Whole-world quest completion queues unrelated rewards and can still
+/// own the player when the transport fixture starts. Enter from beside
+/// Aubury, then follow the session-gated exit back to his return anchor.
 pub(crate) fn nav_essence_scenario() -> Scenario {
     Scenario {
         name: "nav_essence",
@@ -622,21 +621,25 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "complete Rune Mysteries",
-                kind: StepKind::Perform {
+                name: "seed Rune Mysteries without unrelated quest rewards",
+                kind: StepKind::Repeat {
                     send: Box::new(|c, _| {
-                        cheat(c, "~completequests");
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "setvar runemysteries 6");
+                        cheat(c, "getvar runemysteries");
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::ChatChoice,
-                    budget_ticks: 20,
+                    arm: Proof::Chat {
+                        needle: "get runemysteries: 6",
+                    },
+                    budget_ticks: 120,
                 },
             },
             Step {
-                name: "answer the quest-seed dialogs until the journal is green",
-                kind: StepKind::DrainDialogs { choice: 1 },
+                name: "relog so the Rune Mysteries journal refreshes",
+                kind: StepKind::Relog,
                 wait: Wait {
                     arm: Proof::QuestDone {
                         name: "Rune Mysteries Quest",
@@ -650,16 +653,20 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
                     send: Box::new(move |c, _| {
                         cheat(
                             c,
-                            &tele_args(AUBURY_ANCHOR.level, AUBURY_ANCHOR.x, AUBURY_ANCHOR.z),
+                            &tele_args(
+                                AUBURY_SHOP_STAND.level,
+                                AUBURY_SHOP_STAND.x,
+                                AUBURY_SHOP_STAND.z,
+                            ),
                         );
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Arrived {
-                        x: AUBURY_ANCHOR.x,
-                        z: AUBURY_ANCHOR.z,
-                        level: AUBURY_ANCHOR.level,
+                        x: AUBURY_SHOP_STAND.x,
+                        z: AUBURY_SHOP_STAND.z,
+                        level: AUBURY_SHOP_STAND.level,
                     },
                     budget_ticks: 120,
                 },
@@ -705,12 +712,11 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
     }
 }
 
-/// The maze-side Elkoy (npc 473, m39_49 local (8,55)): the `at` of the
-/// packed maze→village escort edge, one tile south of the entrance coord
-/// (2504,3192).
+/// Stand at the authored maze entrance, one tile north of Elkoy's home
+/// (npc 473 at m39_49 local (8,55)). Never set up on the NPC's own tile.
 const ELKOY_MAZE_SIDE: WorldTile = WorldTile {
     x: 2504,
-    z: 3191,
+    z: 3192,
     level: 0,
 };
 /// The village maze coord (`^elkoy_maze_coord = 0_39_49_19_23`): the
@@ -723,21 +729,10 @@ const ELKOY_MAZE_COORD: WorldTile = WorldTile {
 };
 
 /// The `nav_elkoy` scenario: the Elkoy OP_NPC execute twin. Log in
-/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
-/// Tree Gnome Village by painting the quest journal green: the
-/// `~completequests` debugproc completes every quest and calls
-/// `~update_questlist` (a bare `setvar treequest …` leaves the client's
-/// journal colours stale, so `WorldState::from_snapshot` would still gate
-/// the packed escort edges closed), but it first opens two `p_choice`
-/// dialogs — a `ChatAnswer` janitor answers them as they appear and the
-/// step waits on the journal going green. Then cheat-tele to the maze-side
-/// Elkoy, and `Follow` a whole-world route into the village — across the
-/// hedge maze, whose 1-tick escort hop beats the maze walk in the router,
-/// so the route executes the packed `TransportKind::Npc` edge. The
-/// traveller talks to Elkoy
-/// (`OpTarget::Npc` + option 1), answers the escort dialog's "Yes please."
-/// choice (the chat modal's first), and PASSes on `TravelOutcome::Arrived`
-/// at the packed `edge.to` (2515,3159).
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, seed only
+/// Tree Gnome Village and relog to observe its completed journal state.
+/// Follow from beside maze-side Elkoy through the real NPC escort and
+/// its "Yes please." choice to the exact content landing (2515,3159).
 pub(crate) fn nav_elkoy_scenario() -> Scenario {
     let driver = ELKOY_MAZE_SIDE;
     let dest = ELKOY_MAZE_COORD;
@@ -749,21 +744,25 @@ pub(crate) fn nav_elkoy_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "complete Tree Gnome Village",
-                kind: StepKind::Perform {
+                name: "seed Tree Gnome Village without unrelated quest rewards",
+                kind: StepKind::Repeat {
                     send: Box::new(|c, _| {
-                        cheat(c, "~completequests");
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "setvar treequest 9");
+                        cheat(c, "getvar treequest");
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::ChatChoice,
-                    budget_ticks: 20,
+                    arm: Proof::Chat {
+                        needle: "get treequest: 9",
+                    },
+                    budget_ticks: 120,
                 },
             },
             Step {
-                name: "answer the quest-seed dialogs until the journal is green",
-                kind: StepKind::DrainDialogs { choice: 1 },
+                name: "relog so the Tree Gnome Village journal refreshes",
+                kind: StepKind::Relog,
                 wait: Wait {
                     arm: Proof::QuestDone {
                         name: "Tree Gnome Village",

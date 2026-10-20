@@ -91,6 +91,7 @@ impl WalkSpec {
     fn request(&self, required_after: api::quest_progress::EvidenceStamp) -> WalkRequest {
         WalkRequest {
             target: self.target,
+            candidate_goals: None,
             radius: self.radius,
             arrival: nav::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,

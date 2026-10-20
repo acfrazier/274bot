@@ -483,6 +483,7 @@ impl BankRow {
                     }
                     let request = crate::native::WalkRequest {
                         target,
+                        candidate_goals: None,
                         loc_id: None,
                         radius: 6,
                         arrival: nav::contract::ArrivalKind::Reach,

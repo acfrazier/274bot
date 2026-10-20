@@ -2125,6 +2125,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &authority,
         WalkReceipt {
+            goal: None,
             request_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
@@ -2340,6 +2341,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &old_authority,
         WalkReceipt {
+            goal: None,
             request_id: old_request,
             evidence: EvidenceStamp {
                 run: old_authority.run(),
@@ -2375,6 +2377,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &fresh_authority,
         WalkReceipt {
+            goal: None,
             request_id: fresh_request,
             evidence: EvidenceStamp {
                 run: fresh_authority.run(),
@@ -2403,6 +2406,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         slot.complete_native_walk(
             &authority,
             WalkReceipt {
+                goal: None,
                 request_id,
                 evidence: EvidenceStamp {
                     run: authority.run(),
@@ -2542,6 +2546,7 @@ fn complete_lifecycle_walk(
     slot.complete_native_walk(
         authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
@@ -3451,6 +3456,7 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
     slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id: request,
             evidence: EvidenceStamp {
                 run: authority.run(),
