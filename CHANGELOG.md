@@ -1,9 +1,9 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.4` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
 
@@ -433,6 +433,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Performance
 
+- A bot running a script uses about 8 % less memory than in 0.2.3: about
+  49.5 MiB instead of 54.0 MiB per bot with ten Thiever bots, measured on
+  Linux. The lists of NPCs, objects, players and ground items that scripts
+  read are now built in a more compact form.
 - Each running bot copies its route facts (held and worn items, skills,
   settings and quest progress) only when it prepares a walk request, a bank
   selection or a route inspection. Before, its script watchdog also copied them on
