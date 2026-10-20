@@ -674,7 +674,7 @@ fn route_capture_bytes(
         .checked_add(route_vec_bytes(&request.bank)?)?
         .checked_add(arc_slice_heap_bytes::<AvoidRect>(request.avoid().len())?)?;
     if let Some(goals) = &request.candidate_goals {
-        bytes = bytes.checked_add(arc_slice_heap_bytes::<WorldTile>(goals.as_slice().len())?)?;
+        bytes = bytes.checked_add(goals.retained_bytes()?)?;
     }
     if let Some(geometry) = &request.live_geometry {
         bytes = bytes.checked_add(route_vec_bytes(&geometry.flags)?)?;
@@ -810,6 +810,7 @@ fn route_output_detail_bound(
     } else {
         supply_bytes.checked_add(2)?
     })?;
+    let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
 
@@ -972,6 +973,7 @@ enum RouteJobStage {
 enum RouteSearchPurpose {
     Strict,
     StrictFirst,
+    CandidateFallback,
     MissingTarget,
     MissingTargets,
     MissingRoute,
@@ -987,6 +989,7 @@ enum RouteSearchPurpose {
 enum RouteGoalCopy {
     None,
     First,
+    CandidateFallback,
     Missing,
     Fetchable,
     Diagnostics,
@@ -1435,39 +1438,54 @@ impl RouteJob {
         }
     }
 
+    fn goal_copy_sources(&self, kind: RouteGoalCopy) -> (&[WorldTile], &[WorldTile]) {
+        if let Some(goals) = &self.request.candidate_goals {
+            return match kind {
+                // A safe wider goal must not suppress the preferred tier's
+                // own-zone completion. Run candidate tiers separately.
+                RouteGoalCopy::First => (goals.preferred(), &[]),
+                RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => (
+                    goals.preferred(),
+                    if self.strict_fallback.is_none() {
+                        goals.fallback()
+                    } else {
+                        &[]
+                    },
+                ),
+                RouteGoalCopy::CandidateFallback => (goals.fallback(), &[]),
+                RouteGoalCopy::Diagnostics => (&self.targets, &[]),
+                RouteGoalCopy::None => (&[], &[]),
+            };
+        }
+        match kind {
+            RouteGoalCopy::None => (&[], &[]),
+            RouteGoalCopy::CandidateFallback => unreachable!("candidate request required"),
+            RouteGoalCopy::Diagnostics => (&self.targets, &[]),
+            RouteGoalCopy::First | RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => {
+                let primary = if self.first_fallback_enabled {
+                    self.first_preferred.as_slice()
+                } else {
+                    self.targets.as_slice()
+                };
+                let fallback = if self.first_fallback_enabled
+                    && (kind == RouteGoalCopy::First || self.strict_fallback.is_none())
+                {
+                    self.targets.as_slice()
+                } else {
+                    &[]
+                };
+                (primary, fallback)
+            }
+        }
+    }
+
     fn prepare_goal_copy(
         &mut self,
         kind: RouteGoalCopy,
         purpose: RouteSearchPurpose,
     ) -> Result<(), RouteJobError> {
-        let (primary_capacity, fallback_capacity) = match kind {
-            RouteGoalCopy::None => (0, 0),
-            RouteGoalCopy::First => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.len()
-                } else {
-                    self.targets.len()
-                },
-                if self.first_fallback_enabled {
-                    self.targets.len()
-                } else {
-                    0
-                },
-            ),
-            RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.len()
-                } else {
-                    self.targets.len()
-                },
-                if self.first_fallback_enabled && self.strict_fallback.is_none() {
-                    self.targets.len()
-                } else {
-                    0
-                },
-            ),
-            RouteGoalCopy::Diagnostics => (self.targets.len(), 0),
-        };
+        let (primary, fallback) = self.goal_copy_sources(kind);
+        let (primary_capacity, fallback_capacity) = (primary.len(), fallback.len());
         self.goal_copy.clear();
         self.goal_copy
             .try_reserve_exact(primary_capacity)
@@ -1485,52 +1503,33 @@ impl RouteJob {
     }
 
     fn advance_goal_copy(&mut self) -> bool {
-        let (primary, fallback, filter_excluded) = match self.goal_copy_kind {
-            RouteGoalCopy::None => return true,
-            RouteGoalCopy::First => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled,
-                false,
-            ),
-            RouteGoalCopy::Missing => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled && self.strict_fallback.is_none(),
-                false,
-            ),
-            RouteGoalCopy::Fetchable => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled && self.strict_fallback.is_none(),
-                true,
-            ),
-            RouteGoalCopy::Diagnostics => (self.targets.as_slice(), false, false),
+        if self.goal_copy_kind == RouteGoalCopy::None {
+            return true;
+        }
+        let (primary, fallback) = self.goal_copy_sources(self.goal_copy_kind);
+        let primary_target = primary.get(self.goal_copy_index).copied();
+        let fallback_target = fallback.get(self.fallback_copy_index).copied();
+        let filter_excluded = self.goal_copy_kind == RouteGoalCopy::Fetchable;
+        let accepted = |target| {
+            (self.request.candidate_goals.is_none()
+                || self.request.world.collision.standable(target))
+                && (!filter_excluded || !self.excluded_targets.contains(&target))
         };
-        if let Some(&target) = primary.get(self.goal_copy_index) {
+        if let Some(target) = primary_target {
+            let accepted = accepted(target);
             self.goal_copy_index += 1;
-            if !filter_excluded || !self.excluded_targets.contains(&target) {
+            if accepted {
                 self.goal_copy.push(target);
             }
             return false;
         }
-        if fallback {
-            if let Some(&target) = self.targets.get(self.fallback_copy_index) {
-                self.fallback_copy_index += 1;
-                if !filter_excluded || !self.excluded_targets.contains(&target) {
-                    self.fallback_copy.push(target);
-                }
-                return false;
+        if let Some(target) = fallback_target {
+            let accepted = accepted(target);
+            self.fallback_copy_index += 1;
+            if accepted {
+                self.fallback_copy.push(target);
             }
+            return false;
         }
         self.stage = RouteJobStage::Search;
         true
@@ -1577,22 +1576,22 @@ impl RouteJob {
                 )
                 .map_err(|_| RouteJobError::Search)?
             }
-            RouteSearchPurpose::StrictFirst | RouteSearchPurpose::FetchableFirst => {
-                SearchCursor::new_preflighted(
-                    SearchRequest::First {
-                        from: self.request.from,
-                        targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
-                        fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
-                        options,
-                        avoid,
-                        max_settles,
-                    },
-                    self.lease.clone(),
-                    Arc::clone(&self.state),
-                    self.preflights.first,
-                )
-                .map_err(|_| RouteJobError::Search)?
-            }
+            RouteSearchPurpose::StrictFirst
+            | RouteSearchPurpose::CandidateFallback
+            | RouteSearchPurpose::FetchableFirst => SearchCursor::new_preflighted(
+                SearchRequest::First {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.first,
+            )
+            .map_err(|_| RouteJobError::Search)?,
             RouteSearchPurpose::MissingTarget | RouteSearchPurpose::MissingCarry => {
                 let target = if self.search_purpose == RouteSearchPurpose::MissingCarry {
                     self.request.to
@@ -1790,11 +1789,26 @@ impl RouteJob {
                     self.outcome = Some(RouteJobOutcome::Route(route));
                     self.stage = RouteJobStage::Assess;
                 } else {
+                    if self
+                        .request
+                        .candidate_goals
+                        .as_ref()
+                        .is_some_and(|goals| !goals.fallback().is_empty())
+                    {
+                        return self.prepare_goal_copy(
+                            RouteGoalCopy::CandidateFallback,
+                            RouteSearchPurpose::CandidateFallback,
+                        );
+                    }
                     if let Some(CompactFallbackRoute::Routed(route)) = fallback {
                         self.strict_fallback = Some(route);
                     }
                     self.begin_fetchable_first()?;
                 }
+            }
+            (RouteSearchPurpose::CandidateFallback, SearchOutcome::First { search }) => {
+                self.strict_fallback = search.into_routes().0.ok();
+                self.begin_fetchable_first()?;
             }
             (RouteSearchPurpose::MissingTarget, SearchOutcome::MissingItemReqs(missing)) => {
                 if let Some(missing) = missing.filter(|missing| !missing.is_empty()) {
@@ -2143,6 +2157,21 @@ impl RouteJob {
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
         let mut detail = self.detail.take();
+        let final_goal = match &outcome {
+            RouteJobOutcome::Route(route)
+            | RouteJobOutcome::Bank {
+                final_route: route, ..
+            } => Some(route.destination()),
+            RouteJobOutcome::NoPath => None,
+        };
+        if let (Some(goals), Some(goal)) = (&self.request.candidate_goals, final_goal) {
+            let tier = if goals.preferred().contains(&goal) {
+                "preferred"
+            } else {
+                "fallback"
+            };
+            detail = Some(format!("candidate_goal_tier={tier}"));
+        }
         if matches!(&outcome, RouteJobOutcome::NoPath) {
             let mut route_detail = if self.blocked.is_empty() {
                 self.request
@@ -7140,14 +7169,188 @@ mod diagnostic_tests {
             request.from = from;
             request.to = tile(2);
             request.arrival = ArrivalKind::Area;
-            request.candidate_goals =
-                Some(script::native::WalkGoals::new(vec![tile(2), tile(0)]).unwrap());
-            let job = completed_search_stage(request);
-            assert!(matches!(job.search_mode, RouteSearchMode::First));
-            let RouteJobOutcome::Route(route) = job.outcome.as_ref().unwrap() else {
-                panic!("one multi-goal search must find this component");
+            request.candidate_goals = Some(
+                script::native::WalkGoals::with_preferred(vec![tile(2), tile(0)], &[tile(2)])
+                    .unwrap(),
+            );
+            let (output, _, _) = request.drive_route_job_output_for_test();
+            let RouteJobOutcome::Route(route) = &output.outcome else {
+                panic!("the bounded tier searches must find this component");
             };
             assert_eq!(route.to_route(&world.graph).dest, from);
+            assert_eq!(
+                output.detail.as_deref(),
+                Some(if from == tile(2) {
+                    "candidate_goal_tier=preferred"
+                } else {
+                    "candidate_goal_tier=fallback"
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn candidate_search_tries_the_distant_fallback_after_preferred_failure() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let mut blocked = vec![0u64; (1024usize * 4).div_ceil(64)];
+        blocked[1022 >> 6] |= 1 << (1022 & 63);
+        let world = Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: tile(0),
+                width: 1024,
+                height: 1,
+                walk: vec![0; 1024 * 4],
+                blocked,
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ));
+        let mut request = stage_request(world);
+        request.to = tile(1023);
+        request.arrival = ArrivalKind::Area;
+        request.candidate_goals = Some(
+            script::native::WalkGoals::with_preferred(vec![tile(1023), tile(1000)], &[tile(1023)])
+                .unwrap(),
+        );
+        let (output, _, _) = request.drive_route_job_output_for_test();
+        let RouteJobOutcome::Route(route) = &output.outcome else {
+            panic!("fallback-only continuation must reach the distant alternative");
+        };
+        assert_eq!(route.destination(), tile(1000));
+        assert_eq!(
+            output.detail.as_deref(),
+            Some("candidate_goal_tier=fallback")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the reviewed real R289 NAV_PACK"]
+    fn candidate_preference_keeps_own_zone_completion_ahead_of_a_safe_fallback() {
+        let pack = std::env::var_os("NAV_PACK").expect("set the real 289 navpack");
+        let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+        let tile = |x, z| WorldTile { x, z, level: 0 };
+        let bank = tile(3092, 3242);
+        let preferred = [tile(3086, 3230), tile(3086, 3231)];
+        let mut state = WorldState::empty().with_map_members(true);
+        state.stats = (0..=20).map(|skill| (skill, 99)).collect();
+        let shared = nav::router::find_first_with_fallback(
+            &world.collision,
+            &world.graph,
+            bank,
+            &preferred,
+            &[bank],
+            FindOptions::default(),
+            &state,
+        );
+        assert!(
+            shared.route().is_err(),
+            "safe fallback closes before own-zone completion"
+        );
+        assert!(
+            matches!(shared.fallback(), Some(nav::router::FallbackRoute::Routed(route)) if route.dest == bank)
+        );
+        let old = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            bank,
+            &preferred,
+            FindOptions::default(),
+            &state,
+        )
+        .into_route()
+        .unwrap();
+        let mut request = stage_request(Arc::clone(&world));
+        request.from = bank;
+        request.to = tile(3085, 3230);
+        request.arrival = ArrivalKind::Area;
+        request.state = Some(state);
+        request.candidate_goals =
+            Some(script::native::WalkGoals::with_preferred(vec![bank], &preferred).unwrap());
+        let mut job = completed_search_stage(request);
+        let Some(RouteJobOutcome::Route(route)) = job.outcome.as_ref() else {
+            panic!("the preferred-only route must remain reachable");
+        };
+        assert_eq!(route.to_route(&world.graph), old);
+        assert!(preferred.contains(&route.destination()));
+        assert_eq!(
+            job.finish().detail.as_deref(),
+            Some("candidate_goal_tier=preferred")
+        );
+    }
+
+    #[test]
+    #[ignore = "bounded 524288-settle failure-cost measurement"]
+    fn candidate_preferred_failure_cost_stays_within_the_existing_first_goal_budget() {
+        // Both components exceed the backward proof's 262144-tile cap.
+        // The preferred proof must abandon, rather than cheaply close.
+        let (width, height) = (1537usize, 769usize);
+        let cells = width * height * 4;
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for level in 0..4 {
+            for z in 0..height {
+                let index = level * width * height + z * width + 768;
+                blocked[index >> 6] |= 1 << (index & 63);
+            }
+        }
+        let from = WorldTile {
+            x: 384,
+            z: 384,
+            level: 0,
+        };
+        let preferred = WorldTile { x: 1152, ..from };
+        let collision = nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width,
+            height,
+            walk: vec![0; cells],
+            blocked,
+            flags: None,
+        };
+        let graph = nav::transport::TransportGraph::default();
+        let started = std::time::Instant::now();
+        let search = nav::router::find_first_with(
+            &collision,
+            &graph,
+            from,
+            &[preferred],
+            FindOptions::default(),
+            &WorldState::empty(),
+        );
+        let elapsed = started.elapsed();
+        assert_eq!(
+            search.route(),
+            Err(nav::router::RouteError::BudgetExhausted)
+        );
+        assert_eq!(search.proof(), nav::router::ReverseProof::Abandoned);
+        assert!(search.settled() <= nav::router::FIRST_TARGET_BUDGET + 1);
+        let fallback = nav::router::find_first_with(
+            &collision,
+            &graph,
+            from,
+            &[from],
+            FindOptions::default(),
+            &WorldState::empty(),
+        )
+        .into_route()
+        .expect("the separate fallback tier must retain the zero-cost origin");
+        assert_eq!(fallback.dest, from);
+        let record = serde_json::json!({
+            "preferred_failure": "BudgetExhausted",
+            "proof": "Abandoned",
+            "forward_settles": search.settled(),
+            "unproven_settle_budget": nav::router::FIRST_TARGET_BUDGET,
+            "elapsed_ms": elapsed.as_millis(),
+            "fallback": fallback.dest,
+            "fallback_ticks": fallback.ticks,
+        });
+        eprintln!("{record}");
+        if let Some(path) = std::env::var_os("BOT_FISHING_TIER_BUDGET_OUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
         }
     }
 
@@ -7778,6 +7981,7 @@ mod diagnostic_tests {
                 let purpose = match job.search_purpose {
                     RouteSearchPurpose::Strict => "Strict",
                     RouteSearchPurpose::StrictFirst => "StrictFirst",
+                    RouteSearchPurpose::CandidateFallback => "CandidateFallback",
                     RouteSearchPurpose::MissingTarget => "MissingTarget",
                     RouteSearchPurpose::MissingTargets => "MissingTargets",
                     RouteSearchPurpose::MissingRoute => "MissingRoute",
