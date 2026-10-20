@@ -120,6 +120,10 @@ copied into the cell's temp root before use; the run never writes the
 source cache.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
+Scenario PASS/FAIL receipts report a top-level `ticks` count in observed game
+ticks (one per `PLAYER_INFO`; about 600 ms each on 289 while run steps execute).
+It excludes seed waits. Client cycles, frontend polls and dirty snapshots do
+not count; `elapsed_ms` records wall time separately.
 
 ## Live-cell rules
 
@@ -421,7 +425,7 @@ UI/slot threads through a bounded queue: a slow encoder drops a frame
 1280 px-wide `veryfast`/`crf 23` encode stays well under 500 MB per hour.
 The file lands next to the terminal shot in the session's shot dir as
 `record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
-its scenario step and runner tick (`t=<s> frame=<n> step=<i>/<total>
+its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
 The mp4 is finalized on PASS, FAIL and window close, so it is always
 playable. Resizing the window mid-run drops the mismatched frames
@@ -451,7 +455,7 @@ the entire stall watch. A ready Guard can still wander away: the Strength
 watch tolerates one catch-less stall session, observes its bank visit,
 closure and return, then requires renewed Guard readiness at the stall.
 A second unqualified bank visit fails rather than admitting a third try.
-The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+The scenario has a 360-second wall deadline and a 900-game-tick combat
 watch; the Thieving XP and exact Cake watches retain their original bounds.
 All three still require real post-Start evidence; no catch is forced.
 Script kill messages alone are not XP evidence:

@@ -22,6 +22,14 @@ _Avoid_: frozen tables copied from the catalog, invented coordinates or names, u
 Host-owned tiles/names in Rust for a fact selected content cannot supply. Small, and a last resort after **Selected facts**.
 _Avoid_: empty `[]` forever; copying `api/ai/quests/defs`; gathering camp tables that exist only to run GatheringBot
 
+**Game tick**:
+One cycle of the server's world loop, about 600 ms on 289. The bot observes one game tick per PLAYER_INFO, because 289 sends no tick packet. Content-timed waits, step budgets and receipt tick counts use this unit.
+_Avoid_: "tick" for the client's 20 ms loop; counting frames, polls or snapshot changes as ticks
+
+**Client cycle**:
+One pass of the client's 20 ms main loop (Java `loopCycle`). Frames, frontend polls and snapshot rebuilds happen at this rate, or at a slower rate for a parked slot.
+_Avoid_: "tick" for this; using it as a game-time clock
+
 ### Script layers
 
 **Rust-native script**:

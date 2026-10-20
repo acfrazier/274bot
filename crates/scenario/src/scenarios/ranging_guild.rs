@@ -496,9 +496,9 @@ pub(crate) fn ranging_guild_bank_scenario() -> Scenario {
     }
 }
 
-/// Frozen live `--phase full` wall budget (`minutes: 15`). Dirty-snapshot
-/// arm ticks stay the existing family 150/300 constants — not a converted
-/// 15-minute tick soak.
+/// Frozen live `--phase full` wall budget (`minutes: 15`). Per-arm budgets
+/// remain the existing 150/300 game-tick caps; they are not a converted
+/// 15-minute game-tick wait.
 pub(crate) const RANGING_GUILD_FULL_DEADLINE: Duration = Duration::from_secs(15 * 60);
 
 /// Live `--phase full`: Seers kit restock, earned-ticket shop buy, same

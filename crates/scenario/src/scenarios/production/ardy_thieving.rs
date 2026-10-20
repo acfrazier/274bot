@@ -1,11 +1,14 @@
 use super::*;
 pub(crate) const THIEVING_STAT: i32 = 17;
 const ARDY_CAKES_BALLAST_KNIVES: i32 = 22;
+// The content-and-live model in `crate::lib.rs:680-718` gives a 305-game-tick
+// 95th percentile for the first cake fill and bank walk; round up to 320.
+const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 320;
 // Finish back-to-back Guard fights inside the bounded post-Start stall watch.
 const ARDY_CAKES_FIGHT_LEVEL: i32 = 70;
 // Readiness, two stall sessions and one bank round trip remain wall-bounded.
 const ARDY_CAKES_FIGHT_DEADLINE: Duration = Duration::from_secs(360);
-// Dirty snapshots are not engine ticks; 900 leaves the 360s wall in control.
+// The 900-game-tick arm cap is 540s; the 360s wall can pre-empt it.
 const ARDY_CAKES_FIGHT_WATCH_TICKS: u32 = 900;
 const ARDY_CAKES_GUARD_READY: Proof = Proof::NpcNameUnengagedInSight {
     name: "Guard",
@@ -711,14 +714,14 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
 /// Thieving XP, deposits those coins, returns to the stand and pickpockets
 /// again. PeriodicBank Off is not the bank proof. Fight stays pending.
 ///
-/// **Windows under the Baker owner model** (see `ARDY_CAKES_BANK_WATCH_TICKS`:
-/// 0.63 refusals per attempt, guard catch 0.12). Only one stall success is
-/// needed (`foodTarget` 1), so the ordinary 150-dirty (~143 engine ticks)
-/// watches hold. A 20k-run simulation gives P(first Thieving XP ≤143) = 0.962
-/// for the Guard and 0.964 for the Knight (p95 132 / 128). It gives P(coins
-/// ≤143 after that XP) = 0.986 / 0.989 (p95 68 / 60). That counts
-/// pickpockets at 126/256 and 155/256, stun damage 2 / 3, and a stall
-/// revisit when a one-bite food is eaten.
+/// **Windows under the Baker owner model** (see `ARDY_CAKES_BANK_WATCH_TICKS`):
+/// 0.63 refusals per attempt, guard catch 0.12. Only one stall success is
+/// needed (`foodTarget` 1), so the historical 150-dirty counter window
+/// (~143 game ticks) holds. A 20k-run simulation gives P(first Thieving XP
+/// within 143 game ticks) = 0.962 for the Guard and 0.964 for the Knight
+/// (p95 132 / 128). It gives P(coins within 143 game ticks after that XP)
+/// = 0.986 / 0.989 (p95 68 / 60). That counts pickpockets at 126/256 and
+/// 155/256, stun damage 2 / 3, and a stall revisit when a one-bite food is eaten.
 fn ardy_thiever_variant(spec: ArdyThieverSpec) -> Scenario {
     let ArdyThieverSpec {
         name,

@@ -651,7 +651,12 @@ impl GameSnapshot {
         }
         match family {
             Family::Npc => self.rebuild_npcs(client),
-            Family::Player => self.rebuild_player(client, true),
+            Family::Player => {
+                let player_info_ticks = client.gens.player_info.wrapping_sub(self.gens.player_info);
+                let changed = self.rebuild_player(client, player_info_ticks);
+                self.gens.player_info = client.gens.player_info;
+                changed
+            }
             Family::Inv => self.rebuild_inv(client),
             Family::Varp => self.rebuild_varps(client),
             Family::Stat => self.rebuild_stat(client),
@@ -723,21 +728,27 @@ impl GameSnapshot {
         now.wrapping_sub(before) != current.invalidations.wrapping_sub(start.invalidations)
     }
 
-    /// Rebuild every family whose gen moved (the harness "one snapshot
-    /// per tick" read). Returns true iff any family gen moved.
+    /// Rebuild every family whose gen moved and count each newly observed
+    /// `PLAYER_INFO` packet. Returns true iff any family gen moved.
     pub fn rebuild(&mut self, client: &Client) -> bool {
-        self.rebuild_from_drain(client, true)
+        let player_info = client.gens.player_info != self.gens.player_info;
+        self.rebuild_from_drain(client, player_info)
     }
 
     /// Refresh the complete host view, retaining each family's generation
     /// gate and the cheap scalar reads that can change without a packet.
     /// Only a real PLAYER_INFO observation advances the host tick.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+        let player_info_ticks = if player_info {
+            client.gens.player_info.wrapping_sub(self.gens.player_info)
+        } else {
+            0
+        };
         self.refresh_native_facts(client);
         self.loc_bits_prelude = Some(loc_dirty_bits(client));
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
-        dirty |= self.rebuild_player(client, player_info);
+        dirty |= self.rebuild_player(client, player_info_ticks);
         dirty |= self.rebuild_family(client, Family::Inv);
         dirty |= self.rebuild_family(client, Family::Varp);
         dirty |= self.rebuild_family(client, Family::Stat);
@@ -765,6 +776,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Modals);
         dirty |= self.rebuild_family(client, Family::Controls);
         dirty |= self.rebuild_family(client, Family::Menu);
+        self.gens.player_info = client.gens.player_info;
         dirty
     }
 

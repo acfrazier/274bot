@@ -24,7 +24,7 @@ fn cfg() -> ClientConfig {
 
 /// A synthetic client that has already seeded: ingame, scene 2, a
 /// mainland build base, and the family gens bumped so the first
-/// rebuild counts as a tick.
+/// rebuild counts as a game tick.
 fn seeded_client() -> Client {
     let mut c = Client::new(cfg());
     c.ingame = true;
@@ -73,7 +73,7 @@ fn stop_script_requires_a_host_observed_idle_slot() {
     let mut runner = ScenarioRunner::new(scenario);
     runner.set_scene_settle(Duration::ZERO);
     let mut c = seeded_client();
-    assert_running_for(
+    assert_running_for_game_ticks(
         &mut runner,
         &mut c,
         4,
@@ -84,9 +84,9 @@ fn stop_script_requires_a_host_observed_idle_slot() {
         "without a host Stop observation the runner must retain its stop step"
     );
     runner.observe_script_idle(false);
-    assert_running_for(&mut runner, &mut c, 2, "a still-running slot is not Stop");
+    assert_running_for_game_ticks(&mut runner, &mut c, 2, "a still-running slot is not Stop");
     runner.observe_script_idle(true);
-    tick_until_done(&mut runner, &mut c);
+    advance_game_ticks_until_done(&mut runner, &mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -140,7 +140,7 @@ fn jail_watch_waits_for_key(name: &str, key: i32, other_key: i32) {
         );
     }
     set_inv(&mut c, &[(key, 1)]);
-    tick_until_done(&mut runner, &mut c);
+    advance_game_ticks_until_done(&mut runner, &mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
 }
 
@@ -173,8 +173,13 @@ fn from_start(name: &str) -> (ScenarioRunner, Client) {
     (runner, c)
 }
 
-fn assert_running_for(runner: &mut ScenarioRunner, c: &mut Client, ticks: usize, why: &str) {
-    for _ in 0..ticks {
+fn assert_running_for_game_ticks(
+    runner: &mut ScenarioRunner,
+    c: &mut Client,
+    game_ticks: usize,
+    why: &str,
+) {
+    for _ in 0..game_ticks {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(c);
         assert!(
@@ -203,7 +208,7 @@ fn walking_cards_wait_for_their_own_walk_off_the_landing() {
         ("leave_lair_v2_ts", 2, 3),
     ] {
         let (mut runner, mut c) = from_start(name);
-        assert_running_for(
+        assert_running_for_game_ticks(
             &mut runner,
             &mut c,
             40,
@@ -214,14 +219,14 @@ fn walking_cards_wait_for_their_own_walk_off_the_landing() {
             "{name}: a card without a receipt watch never reads paint"
         );
         set_world_tile(&mut c, landing_offset(short));
-        assert_running_for(
+        assert_running_for_game_ticks(
             &mut runner,
             &mut c,
             4,
             &format!("{name}: {short} tiles is short of the card's destination"),
         );
         set_world_tile(&mut c, landing_offset(outcome));
-        tick_until_done(&mut runner, &mut c);
+        advance_game_ticks_until_done(&mut runner, &mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
     }
 }
@@ -247,10 +252,10 @@ fn bank_card_waits_for_its_walk_to_the_falador_bank() {
         (bank(3373), "Chebyshev 4 is outside the bank's radius"),
     ] {
         set_world_tile(&mut c, tile);
-        assert_running_for(&mut runner, &mut c, 20, why);
+        assert_running_for_game_ticks(&mut runner, &mut c, 20, why);
     }
     set_world_tile(&mut c, bank(3372));
-    tick_until_done(&mut runner, &mut c);
+    advance_game_ticks_until_done(&mut runner, &mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -269,7 +274,7 @@ fn prayer_cards_wait_for_protect_from_melee_on() {
         c.stat_base_level[5] = 43;
         c.bump_gens(ServerProt::VARP_SYNC);
         c.bump_gens(ServerProt::UPDATE_STAT);
-        assert_running_for(
+        assert_running_for_game_ticks(
             &mut runner,
             &mut c,
             40,
@@ -277,7 +282,7 @@ fn prayer_cards_wait_for_protect_from_melee_on() {
         );
         c.var[96] = 1;
         c.bump_gens(ServerProt::VARP_SYNC);
-        assert_running_for(
+        assert_running_for_game_ticks(
             &mut runner,
             &mut c,
             4,
@@ -286,7 +291,7 @@ fn prayer_cards_wait_for_protect_from_melee_on() {
         c.var[96] = 0;
         c.var[97] = 1;
         c.bump_gens(ServerProt::VARP_SYNC);
-        tick_until_done(&mut runner, &mut c);
+        advance_game_ticks_until_done(&mut runner, &mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
     }
 }
@@ -302,10 +307,10 @@ fn observing_cards_pass_only_on_their_own_painted_receipt() {
         let receipt = format!("{prefix}{{\"ok\":true}}");
         // Paint published before StartScript belongs to no card of this run.
         runner.observe_script_paint([receipt.as_str()]);
-        assert_running_for(&mut runner, &mut c, 1, &format!("{name}: StartScript"));
+        assert_running_for_game_ticks(&mut runner, &mut c, 1, &format!("{name}: StartScript"));
         assert!(runner.wants_script_paint(), "{name}");
         runner.observe_script_paint(["watching", "result pending"]);
-        assert_running_for(
+        assert_running_for_game_ticks(
             &mut runner,
             &mut c,
             40,
@@ -313,7 +318,7 @@ fn observing_cards_pass_only_on_their_own_painted_receipt() {
         );
         runner.observe_script_paint(["line of sight v2", receipt.as_str()]);
         assert!(!runner.wants_script_paint(), "{name}: latched");
-        tick_until_done(&mut runner, &mut c);
+        advance_game_ticks_until_done(&mut runner, &mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
         let evidence = runner.evidence().expect("evidence");
         assert_eq!(evidence.receipt.as_deref(), Some(receipt.as_str()));
@@ -623,7 +628,7 @@ fn terminal_snapshot_is_released_after_shot_and_evidence() {
 }
 
 #[test]
-fn follow_failure_keeps_snapshot_for_existing_same_tick_budget_failure() {
+fn follow_failure_keeps_snapshot_for_existing_same_client_cycle_budget_failure() {
     let mut client = seeded_client();
     let mut runner = ScenarioRunner::with_world(stat_scenario(999, 1), None);
     runner.set_scene_settle(Duration::ZERO);
@@ -667,7 +672,7 @@ fn follow_failure_keeps_snapshot_for_existing_same_tick_budget_failure() {
         .message
         .as_ref()
         .unwrap()
-        .contains("not seen within 1 ticks"));
+        .contains("not seen within 1 game tick"));
 }
 
 #[test]
@@ -761,12 +766,12 @@ fn perform_send_then_arm_fires_and_proof_passes() {
     let mut runner = ScenarioRunner::new(stat_scenario(1, 10));
     runner.set_scene_settle(Duration::ZERO);
     assert_eq!(runner.status(), RunnerStatus::Seeding);
-    // Tick 1: seed completes, send runs (runenergy 99 lands on the
-    // client), the stale snapshot still shows 0.
+    // Client cycle 1: seed completes, send runs (runenergy 99 lands on the
+    // client), and the stale snapshot still shows 0.
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
-    // Tick 2: the stat bump refreshes the snapshot; the arm fires and
-    // the proof passes on the same tick.
+    // Client cycle 2: the stat bump refreshes the snapshot; the arm fires and
+    // the proof passes on the same poll.
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
@@ -784,12 +789,13 @@ fn perform_budget_fails_when_the_arm_never_fires() {
     runner.set_scene_settle(Duration::ZERO);
     for _ in 0..5 {
         c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+        c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
     }
     match runner.status() {
         RunnerStatus::Failed(msg) => {
             assert!(
-                msg.contains("not seen within 3 ticks"),
+                msg.contains("not seen within 3 game ticks"),
                 "fail message names the arm and budget: {msg}"
             );
             assert!(msg.contains("stat(16)>=999"), "names the arm: {msg}");
@@ -903,7 +909,7 @@ fn world_speed_resets_after_failed_run() {
     runner.tick(&mut client);
     match runner.status() {
         RunnerStatus::Failed(message) => {
-            assert!(message.contains("not seen within 1 ticks"), "{message}");
+            assert!(message.contains("not seen within 1 game tick"), "{message}");
         }
         other => panic!("expected failed run after speed reset, got {other:?}"),
     }
@@ -937,7 +943,7 @@ fn explicit_non_default_tick_sends_exactly_one_world_speed_command() {
     assert_eq!(
         outgoing_ascii_count(&client, "speed 300"),
         1,
-        "the initial request is sent once, not once per tick"
+        "the initial request is sent once, not once per client cycle"
     );
     assert_eq!(outgoing_ascii_count(&client, "speed 600"), 0);
 }
@@ -1133,7 +1139,7 @@ fn walk_step_arms_find_and_proofs_arrival() {
         "the headed paint reads this route as the red baked path"
     );
 
-    // Advance the player north one tile per tick; the follow polls its
+    // Advance the player north one tile per client cycle; the follow polls its
     // settle on every delivered frame and the arm fires on the exact
     // destination tile.
     let mut steps = 0;
@@ -1268,7 +1274,7 @@ fn follow_step_arms_find_and_proofs_arrival() {
         "send armed the whole-world route"
     );
 
-    // Advance the player north one tile per tick; the follow polls its
+    // Advance the player north one tile per client cycle; the follow polls its
     // settle on every delivered frame and the arm fires on the exact
     // destination tile.
     let mut steps = 0;
@@ -1314,10 +1320,10 @@ fn follow_step_fails_without_a_nav_world() {
 
 /// A `DrainDialogs` step whose arm never holds: the fixture has no
 /// chat modal, so every re-send is a harmless refusal. The step must
-/// keep re-sending each tick (never count as "already sent") and fail
-/// on the tick budget, not on the first send.
+/// keep re-sending each client cycle (never count as "already sent")
+/// and fail when its observed game-tick budget expires, not on the first send.
 #[test]
-fn drain_dialogs_resends_every_tick_and_fails_on_the_budget() {
+fn drain_dialogs_resends_every_client_cycle_and_fails_on_game_tick_budget() {
     let scenario = Scenario {
         name: "drain",
         seed: Seed {
@@ -1336,8 +1342,8 @@ fn drain_dialogs_resends_every_tick_and_fails_on_the_budget() {
     let mut c = follow_client();
     let mut runner = ScenarioRunner::new(scenario);
     runner.set_scene_settle(Duration::ZERO);
-    // Tick 1-4: the janitor re-sends each tick (no chat choice on the
-    // fixture -> refused, which is fine) and the budget lapses.
+    // Client cycles 1-4: the janitor re-sends each cycle (no chat choice
+    // on the fixture -> refused, which is fine) while game ticks advance.
     for _ in 0..4 {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
@@ -1345,8 +1351,8 @@ fn drain_dialogs_resends_every_tick_and_fails_on_the_budget() {
     match runner.status() {
         RunnerStatus::Failed(msg) => {
             assert!(
-                msg.contains("not seen within 3 ticks"),
-                "the drain step fails on its tick budget: {msg}"
+                msg.contains("not seen within 3 game ticks"),
+                "the drain step fails on its game-tick budget: {msg}"
             );
         }
         other => panic!("expected Failed after the budget, got {other:?}"),
@@ -1411,7 +1417,7 @@ fn scene_settle_zero_holds_while_scene_state_is_not_2() {
         "holds while scene_state != 2 even when the arm holds"
     );
     // Scene returns to 2: with a zero settle the gate releases and
-    // the arm fires on the same tick.
+    // the arm fires on the same game tick.
     c.scene_state = 2;
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     runner.tick(&mut c);
@@ -1778,7 +1784,7 @@ fn compiled_start_script_waits_until_running() {
         runner.on_start_script(),
         "StartScript is current before the compiled Start settles"
     );
-    assert_running_for(
+    assert_running_for_game_ticks(
         &mut runner,
         &mut c,
         8,
@@ -2094,7 +2100,7 @@ fn rc_baseline(runner: &ScenarioRunner) -> Option<i32> {
         .map(|(_, xp)| *xp)
 }
 
-fn tick_until_done(runner: &mut ScenarioRunner, c: &mut Client) {
+fn advance_game_ticks_until_done(runner: &mut ScenarioRunner, c: &mut Client) {
     for _ in 0..8 {
         if matches!(
             runner.status(),
@@ -2102,7 +2108,10 @@ fn tick_until_done(runner: &mut ScenarioRunner, c: &mut Client) {
         ) {
             return;
         }
+        // Advance synthetic game time by posting `PLAYER_INFO`; the
+        // `runner.tick` call below is one client-cycle poll.
         c.bump_gens(ServerProt::UPDATE_STAT);
+        c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(c);
     }
 }
@@ -2141,7 +2150,7 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
         Some(CRAFT_XP),
         "item-then-XP captures the already-applied craft XP as its baseline"
     );
-    tick_until_done(&mut late, &mut late_client);
+    advance_game_ticks_until_done(&mut late, &mut late_client);
     match late.status() {
         RunnerStatus::Failed(msg) => {
             assert!(
@@ -2174,7 +2183,7 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
         Some(0),
         "XP armed at ruins keeps the pre-craft baseline"
     );
-    tick_until_done(&mut corrected, &mut corrected_client);
+    advance_game_ticks_until_done(&mut corrected, &mut corrected_client);
     assert_eq!(corrected.status(), RunnerStatus::Passed);
 
     let mut seed_client = ruins_client();
@@ -2182,7 +2191,7 @@ fn runecraft_xp_watch_before_product_catches_simultaneous_craft() {
         ScenarioRunner::with_world(rune_watch_scenario(&[ruins, xp, crafted]), None);
     seed_only.set_scene_settle(Duration::ZERO);
     seed_only.tick(&mut seed_client);
-    tick_until_done(&mut seed_only, &mut seed_client);
+    advance_game_ticks_until_done(&mut seed_only, &mut seed_client);
     match seed_only.status() {
         RunnerStatus::Failed(msg) => {
             assert!(
@@ -2245,7 +2254,7 @@ fn ardy_cakes_fight_observes_both_skills_regardless_of_gain_order() {
             c.bump_gens(ServerProt::UPDATE_STAT);
             runner.tick(&mut c);
         }
-        tick_until_done(&mut runner, &mut c);
+        advance_game_ticks_until_done(&mut runner, &mut c);
 
         if combat_before_start || !thieving_gain || !stall_food {
             assert!(
@@ -2344,7 +2353,7 @@ fn ardy_fight_bank_visit(runner: &mut ScenarioRunner, c: &mut Client) {
     set_world_tile(c, ARDY_FIGHT_BANK);
     c.main_modal_id = 600;
     c.bump_gens(ServerProt::IF_OPENMAIN);
-    tick_dirty(runner, c, false);
+    advance_one_game_tick(runner, c, false);
 }
 
 fn ardy_fight_catchless_first_session(runner: &mut ScenarioRunner, c: &mut Client) {
@@ -2352,16 +2361,16 @@ fn ardy_fight_catchless_first_session(runner: &mut ScenarioRunner, c: &mut Clien
     c.bump_gens(ServerProt::UPDATE_STAT);
     set_inv(c, &[(1891, 6)]);
     for _ in 0..80 {
-        tick_dirty(runner, c, false);
+        advance_one_game_tick(runner, c, false);
     }
     ardy_fight_bank_visit(runner, c);
     set_inv(c, &[]);
     c.main_modal_id = -1;
     c.bump_gens(ServerProt::IF_CLOSE);
-    tick_dirty(runner, c, false);
+    advance_one_game_tick(runner, c, false);
     // The bank trip can outlast the old 150-dirty Strength watch.
     for _ in 0..75 {
-        tick_dirty(runner, c, false);
+        advance_one_game_tick(runner, c, false);
     }
     set_world_tile(c, ARDY_FIGHT_STAND);
 }
@@ -2377,11 +2386,11 @@ fn ardy_fight_accepts_combat_in_the_second_stall_session() {
     );
     c.npc_count = 1;
     c.bump_gens(ServerProt::NPC_INFO);
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     c.stat_xp[2] += 4;
     c.bump_gens(ServerProt::UPDATE_STAT);
     set_inv(&mut c, &[(1891, 1)]);
-    tick_until_done(&mut runner, &mut c);
+    advance_game_ticks_until_done(&mut runner, &mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -2392,13 +2401,13 @@ fn ardy_fight_rejects_a_second_unqualified_stall_session() {
         ardy_fight_catchless_first_session(&mut runner, &mut c);
         c.npc_count = i32::from(guard_ready);
         c.bump_gens(ServerProt::NPC_INFO);
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
         if combat_xp {
             c.stat_xp[2] += 4;
             c.bump_gens(ServerProt::UPDATE_STAT);
         }
         set_inv(&mut c, &[(1891, 6)]);
-        tick_until_done(&mut runner, &mut c);
+        advance_game_ticks_until_done(&mut runner, &mut c);
         assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
         ardy_fight_bank_visit(&mut runner, &mut c);
         assert!(
@@ -2491,7 +2500,7 @@ const TEST_STRENGTH_STAT: i32 = 2;
 const TEST_PRAYER_STAT: i32 = 5;
 const TEST_LAMP_AWARD: &str = "Your wish has been granted!";
 
-fn lamp_episode_scenario(budget_ticks: u32) -> Scenario {
+fn lamp_episode_scenario(budget_game_ticks: u32) -> Scenario {
     let fresh_prayer = Proof::FreshStatXpGain {
         id: TEST_PRAYER_STAT,
         min: 1,
@@ -2509,7 +2518,7 @@ fn lamp_episode_scenario(budget_ticks: u32) -> Scenario {
                     lamp_id: TEST_LAMP_ID,
                     reward_stat: TEST_STRENGTH_STAT,
                 },
-                wait: wait(Proof::NoActiveContinue, budget_ticks),
+                wait: wait(Proof::NoActiveContinue, budget_game_ticks),
             },
             Step {
                 name: "watch fresh script work after release",
@@ -2751,11 +2760,11 @@ const TEST_MAZE_SHRINE: WorldTile = WorldTile {
     level: 0,
 };
 
-fn maze_episode_scenario(budget_ticks: u32) -> Scenario {
-    maze_episode_scenario_with(budget_ticks, None)
+fn maze_episode_scenario(budget_game_ticks: u32) -> Scenario {
+    maze_episode_scenario_with(budget_game_ticks, None)
 }
 
-fn maze_episode_scenario_with(budget_ticks: u32, trigger: Option<&'static str>) -> Scenario {
+fn maze_episode_scenario_with(budget_game_ticks: u32, trigger: Option<&'static str>) -> Scenario {
     Scenario {
         name: "maze-episode",
         seed: Seed {
@@ -2772,7 +2781,7 @@ fn maze_episode_scenario_with(budget_ticks: u32, trigger: Option<&'static str>) 
                 entry_shot: "maze entered",
                 trigger,
             },
-            wait: wait(Proof::IngameScene2, budget_ticks),
+            wait: wait(Proof::IngameScene2, budget_game_ticks),
         }],
         proof: Proof::IngameScene2,
         companions: vec![],
@@ -2810,7 +2819,7 @@ fn set_world_tile(c: &mut Client, tile: WorldTile) {
     c.bump_gens(ServerProt::PLAYER_INFO);
 }
 
-fn tick_dirty(runner: &mut ScenarioRunner, c: &mut Client, hold: bool) {
+fn advance_one_game_tick(runner: &mut ScenarioRunner, c: &mut Client, hold: bool) {
     c.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick_with_hold(c, hold);
 }
@@ -2882,7 +2891,7 @@ fn maze_episode_refreshes_pre_entry_baseline_to_last_ready_outside_snapshot() {
     );
 
     set_inv(&mut c, &[(995, 106)]);
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -3000,7 +3009,7 @@ fn maze_episode_accepts_immediate_held_entry_without_npc_snapshot() {
         RunnerStatus::Running { step: 0, total: 1 },
         "return and reward cannot pass while native hold remains"
     );
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(maze_out_count(&c, "~macro_event 8"), 1);
 }
@@ -3070,7 +3079,7 @@ fn maze_episode_requires_held_entry_progress_shrine_return_reward_and_release() 
         RunnerStatus::Running { step: 0, total: 1 },
         "server return and reward cannot pass while native hold remains"
     );
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
 
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(
@@ -3105,7 +3114,7 @@ fn maze_episode_rejects_near_shrine_without_canonical_entry() {
     );
     set_inv(&mut c, &[(995, 101)]);
     for _ in 0..5 {
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
     }
 
     let RunnerStatus::Failed(message) = runner.status() else {
@@ -3135,7 +3144,7 @@ fn maze_episode_rejects_return_without_real_progress_and_shrine_order() {
     );
     set_inv(&mut c, &[(995, 101)]);
     for _ in 0..6 {
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
     }
 
     let RunnerStatus::Failed(message) = runner.status() else {
@@ -3174,7 +3183,7 @@ fn maze_episode_exact_return_rejects_whoops_fallback_when_baseline_is_fountain()
     );
     set_inv(&mut c, &[(995, 101)]);
     for _ in 0..9 {
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
     }
 
     let RunnerStatus::Failed(message) = runner.status() else {
@@ -3223,8 +3232,8 @@ fn fresh_tutorial_needs_a_reply_newer_than_the_step_start_baseline() {
         "a stale pre-step line at the baseline must not satisfy FreshTutorial: {:?}",
         runner.status()
     );
-    // Same-tick resend without a new reply still waits.
-    tick_dirty(&mut runner, &mut c, false);
+    // The next game tick's resend without a new reply still waits.
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert!(
         matches!(runner.status(), RunnerStatus::Running { .. }),
         "the reseed send tick must not advance on the stale head: {:?}",
@@ -3233,7 +3242,7 @@ fn fresh_tutorial_needs_a_reply_newer_than_the_step_start_baseline() {
     // A strictly newer `1000` reply in the same session satisfies.
     c.add_chat(0, "get tutorial: 1000", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -3299,7 +3308,7 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
     // One tile short of the box (min_x - 1) must not latch.
     set_world_tile(&mut c, tile(3217, 3220));
     runner.tick(&mut c);
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert!(!runner.visited_within, "min_x - 1 must not latch");
     assert!(
         matches!(runner.status(), RunnerStatus::Running { step: 0, .. }),
@@ -3308,7 +3317,7 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
     );
     // One tile past the box (max_x + 1) must not latch either.
     set_world_tile(&mut c, tile(3223, 3220));
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert!(!runner.visited_within, "max_x + 1 must not latch");
     assert!(
         matches!(runner.status(), RunnerStatus::Running { step: 0, .. }),
@@ -3323,7 +3332,7 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
         if matches!(runner.status(), RunnerStatus::Running { step: 1, .. }) {
             break;
         }
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
     }
     assert!(
         matches!(runner.status(), RunnerStatus::Running { step: 1, .. }),
@@ -3334,7 +3343,7 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
         !runner.visited_within,
         "a later step starts with the visited latch clear"
     );
-    tick_dirty(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
     assert!(
         matches!(runner.status(), RunnerStatus::Running { step: 1, .. }),
         "the first box's latch must not satisfy the second step: {:?}",
@@ -3347,7 +3356,7 @@ fn visited_within_latches_inside_the_box_and_clears_at_the_next_step() {
         if runner.status() == RunnerStatus::Passed {
             break;
         }
-        tick_dirty(&mut runner, &mut c, false);
+        advance_one_game_tick(&mut runner, &mut c, false);
     }
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -3545,9 +3554,9 @@ fn rock_crab_seeded_bank_oracle_rejects_xp_only_before_the_return() {
     );
 }
 
-fn oracle_settle(runner: &mut ScenarioRunner, c: &mut Client, ticks: usize) {
-    for _ in 0..ticks {
-        tick_dirty(runner, c, false);
+fn oracle_settle(runner: &mut ScenarioRunner, c: &mut Client, game_ticks: usize) {
+    for _ in 0..game_ticks {
+        advance_one_game_tick(runner, c, false);
     }
 }
 
@@ -3620,7 +3629,7 @@ fn oracle_finish(runner: &mut ScenarioRunner, c: &mut Client) -> RunnerStatus {
         ) {
             break;
         }
-        tick_dirty(runner, c, false);
+        advance_one_game_tick(runner, c, false);
     }
     runner.status()
 }
@@ -3690,8 +3699,8 @@ fn oracle_assert_fails_at(cell: &OracleCell, flaw: Flaw, step: &str) {
                 cell.name
             );
             assert!(
-                msg.contains(&format!("not seen within {budget} ticks")),
-                "{} {flaw:?} must exhaust the step's own {budget}-tick budget: {msg}",
+                msg.contains(&format!("not seen within {budget} game ticks")),
+                "{} {flaw:?} must exhaust the step's own {budget}-game-tick budget: {msg}",
                 cell.name
             );
         }
