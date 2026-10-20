@@ -10054,24 +10054,23 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
     assert_eq!(
         s.steps.len(),
         5,
-        "quest + dialog janitor + tele + entry follow + exit follow"
+        "quest seed + journal relog + tele + entry follow + exit follow"
     );
-    // Step 1 sends `~completequests`; the wait is the first
-    // `p_choice` dialog it opens (never a dummy stat wait).
-    assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
-    assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
-    // Step 2 is the choice-answering janitor, waiting for the quest
-    // journal to paint Rune Mysteries green.
-    match &s.steps[1].kind {
-        StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
-        _ => panic!("nav_essence step 2 must be DrainDialogs"),
-    }
+    assert!(matches!(s.steps[0].kind, StepKind::Repeat { .. }));
+    assert!(matches!(
+        s.steps[0].wait.arm,
+        Proof::Chat {
+            needle: "get runemysteries: 6"
+        }
+    ));
+    assert!(matches!(s.steps[1].kind, StepKind::Relog));
     assert!(matches!(
         s.steps[1].wait.arm,
         Proof::QuestDone {
             name: "Rune Mysteries Quest"
         }
     ));
+    assert_eq!(s.steps[2].wait.arm.name(), "arrived(3254,3402,0)");
     // Step 4 arms the entry follow to the mine pad and waits for any
     // mine landing (the landing is randomised, never the pad).
     let (dest, arm) = match &s.steps[3].kind {
@@ -10135,28 +10134,25 @@ fn nav_elkoy_follows_into_the_village_through_the_maze_escort() {
     assert_eq!(
         s.steps.len(),
         4,
-        "quest-seed + dialog janitor + tele + escort follow"
+        "quest seed + journal relog + tele + escort follow"
     );
-    // Step 1 sends `~completequests`; the wait is the first `p_choice`
-    // dialog it opens (never a dummy stat wait).
-    assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
-    assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
-    // Step 2 is the choice-answering janitor, waiting for the journal
-    // to paint Tree Gnome Village green.
-    match &s.steps[1].kind {
-        StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
-        _ => panic!("nav_elkoy step 2 must be DrainDialogs"),
-    }
+    assert!(matches!(s.steps[0].kind, StepKind::Repeat { .. }));
+    assert!(matches!(
+        s.steps[0].wait.arm,
+        Proof::Chat {
+            needle: "get treequest: 9"
+        }
+    ));
+    assert!(matches!(s.steps[1].kind, StepKind::Relog));
     assert!(matches!(
         s.steps[1].wait.arm,
         Proof::QuestDone {
             name: "Tree Gnome Village"
         }
     ));
-    // Step 3 cheat-teles onto the maze-side Elkoy's tile (the packed
-    // escort edge's `at`, one tile south of the entrance coord).
+    // Setup is beside the NPC, not on its authored home tile.
     match &s.steps[2].wait.arm {
-        Proof::Arrived { x, z, level } => assert_eq!((*x, *z, *level), (2504, 3191, 0)),
+        Proof::Arrived { x, z, level } => assert_eq!((*x, *z, *level), (2504, 3192, 0)),
         other => panic!("tele arm must be arrived, got {other:?}"),
     }
     // Step 4 follows into the village: the packed escort edge's `to`,
