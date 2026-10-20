@@ -144,6 +144,12 @@ pub use isolate::{
 };
 #[cfg(feature = "load")]
 pub use platform::bootstrap_v8_platform;
+
+#[cfg(all(test, feature = "load"))]
+pub(crate) fn bootstrap_test_v8_platform() {
+    // Reuse the process-wide test V8 platform.
+    platform::bootstrap_test_v8_platform();
+}
 #[cfg(feature = "load")]
 pub(crate) use recovery_hints_v8::{
     post as post_recovery_hints, startup_complete as recovery_startup_complete,
