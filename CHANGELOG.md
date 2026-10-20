@@ -56,8 +56,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
-- Native purchase planning now distinguishes shopkeepers with the same display
-  name and quotes orders at the price of each unit's remaining stock.
 
 #### Scenario checks
 
