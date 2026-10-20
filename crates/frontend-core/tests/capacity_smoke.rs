@@ -11,13 +11,15 @@
 //! ```sh
 //! isohome cargo test -p frontend-core --test capacity_smoke --no-run
 //! isohome env LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=cw BOT_NAV_BUILD=skip \
-//!   WORLD_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack \
-//!   WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
+//!   WORLD_NAV_PACK=/path/to/289.navpack WORLD_ENGINE_DIR=/path/to/289/engine \
 //!   CAPACITY_SMOKE_CPUS=31 CAPACITY_SMOKE_HOGS=64 CAPACITY_SMOKE_HOG_NICE=-11 \
 //!   CAPACITY_SMOKE_BOTS=20 \
 //!   taskset -c 31 target/debug/deps/capacity_smoke-<hash> \
 //!   --ignored --nocapture --test-threads=1
 //! ```
+//!
+//! On macOS, supply the same local pack and engine paths, omit
+//! `CAPACITY_SMOKE_CPUS`, and run the test binary without `taskset`.
 //!
 //! `CAPACITY_SMOKE_BUSY=1` keeps every bot on the 20 ms frame path (as a
 //! running script does); by default the bots are idle in game (one wake per
