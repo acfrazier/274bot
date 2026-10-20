@@ -613,7 +613,9 @@ fn parse_bank_start(
     family: &str,
     value: Value,
 ) -> Result<crate::bank::request::BankSeatArgs, String> {
-    use crate::bank::request::{BankSeatArgs as Args, BankSeatOperation as Op};
+    use crate::bank::request::{
+        BankSeatArgs as Args, BankSeatOperation as Op, WithdrawLoadSelector,
+    };
     let object = bank_object(&value, "bank arguments")?;
     let operation = match family {
         "bank_op" => {
@@ -680,7 +682,11 @@ fn parse_bank_start(
         }
         "bank_withdraw_load" => {
             let mut args = Args::new(Op::WithdrawLoad);
-            args.item_name = Some(bank_required_string(object, "name", None)?);
+            args.withdraw_load_selector = Some(if let Some(id) = object.get("id") {
+                WithdrawLoadSelector::Id(bank_required_id(id, "id")?)
+            } else {
+                WithdrawLoadSelector::Name(bank_required_string(object, "name", None)?)
+            });
             args
         }
         "bank_note_mode" => {
@@ -4350,6 +4356,31 @@ pub(crate) mod tests {
         assert_eq!(args.quantity, Some(1));
         assert_eq!(args.lands_as_id, Some(9));
         args.validate(native::request::NativeKind::BankPlan)
+            .unwrap();
+    }
+
+    #[test]
+    fn bank_withdraw_load_preserves_name_and_numeric_id_selectors() {
+        use crate::bank::request::{BankSeatOperation, WithdrawLoadSelector};
+
+        let named = parse_bank_start("bank_withdraw_load", json!({ "name": "Lobster" })).unwrap();
+        assert_eq!(named.operation, BankSeatOperation::WithdrawLoad);
+        assert_eq!(
+            named.withdraw_load_selector,
+            Some(WithdrawLoadSelector::Name("Lobster".into()))
+        );
+        named
+            .validate(native::request::NativeKind::BankPlan)
+            .unwrap();
+
+        let by_id = parse_bank_start("bank_withdraw_load", json!({ "id": 42 })).unwrap();
+        assert_eq!(by_id.operation, BankSeatOperation::WithdrawLoad);
+        assert_eq!(
+            by_id.withdraw_load_selector,
+            Some(WithdrawLoadSelector::Id(42))
+        );
+        by_id
+            .validate(native::request::NativeKind::BankPlan)
             .unwrap();
     }
 

@@ -6316,18 +6316,19 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
-/// `withdrawLoad` through its Rust family: one exact Withdraw-All press on
-/// the named row (no host-owned load result), true once the posted pack
-/// grew in the same bank session; a reopened session settles it false.
+/// `withdrawLoad` selects a numeric item ID through its Rust family: one exact
+/// Withdraw-All press on the matching row (no host-owned load result), true
+/// once the posted pack grew in the same bank session; a reopened session
+/// settles it false.
 #[test]
-fn isolate_bank_withdraw_load_keeps_item_updates_but_rejects_reopened_sessions() {
+fn isolate_bank_withdraw_load_by_numeric_id_keeps_item_updates_but_rejects_reopened_sessions() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__ok = await Bank.withdrawLoad('Yew logs');
+        globalThis.__ok = await Bank.withdrawLoad(1515);
     }
 }
 "#;

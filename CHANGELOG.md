@@ -5,6 +5,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ## Unreleased
 
+### Scripts
+
+- Scripts may pass an item ID to `Bank.withdrawLoad`.
+
 ### Panel
 
 - On Linux, the panel now follows the system's choice of graphics chip

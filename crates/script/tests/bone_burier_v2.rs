@@ -176,7 +176,7 @@ fn assert_bank_withdraw_load(iso: &LoadIsolate, item: &str) -> RequestId {
         "{args}"
     );
     assert!(
-        args.contains(&format!("item_name: Some({item:?})")),
+        args.contains(&format!("withdraw_load_selector: Some(Name({item:?}))")),
         "{args}"
     );
     assert!(
