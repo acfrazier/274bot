@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, finalize, and verify pinned 274bot release packages.
+"""Preflight, build, finalize, and verify pinned 274bot release packages.
 
 The controller exports an exact host commit and its client gitlink, records
 SHA-256 tree digests for every native build input, and dispatches the same
@@ -1891,6 +1891,74 @@ def clean_controller(args):
             windows_transport(args, "run", script)
 
 
+# Preflight-only floor, shared with tools/known-issues/known_issues.py: only
+# preflight reads the TOML ledger (via tomllib, which exists only on Python
+# 3.11 and newer) through load_known_issues_tool below. Build, finalize,
+# verify, and clean run on the workers' own python3 and need only Python 3.9.
+# Keep the two minima in sync.
+REQUIRED_PYTHON = (3, 11)
+
+
+KNOWN_ISSUES_TOOL = Path(__file__).resolve().parent.parent / "known-issues" / "known_issues.py"
+
+
+def load_known_issues_tool():
+    if sys.version_info < REQUIRED_PYTHON:
+        _running = ".".join(str(part) for part in sys.version_info[:3])
+        sys.exit(
+            f"release.py requires Python 3.11 or newer "
+            f"(running Python {_running} at {sys.executable})"
+        )
+    if not KNOWN_ISSUES_TOOL.is_file():
+        raise ReleaseError(f"known-issues tool is missing: {KNOWN_ISSUES_TOOL}")
+    spec = importlib.util.spec_from_file_location("known_issues", KNOWN_ISSUES_TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def preflight_controller(args):
+    """Fail-closed release readiness checks that need no builder.
+
+    Validates the tag against the commit's package version and checks the
+    commit's CHANGELOG known-issue blocks against the known-issues ledger at
+    that commit. Reads the commit's tree, never the working tree, and refuses
+    to run when this controller or the ledger tool differs from the commit.
+    """
+    repo = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[2]
+    commit = require_commit(args.commit)
+    validate_tag(args.tag, version_at(repo, commit))
+    for relative in ("tools/release/release.py", "tools/known-issues/known_issues.py"):
+        result = subprocess.run(
+            ["git", "-C", str(repo), "show", f"{commit}:{relative}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode:
+            raise ReleaseError(f"{commit} does not contain {relative}")
+        working = Path(repo) / relative
+        if relative == "tools/release/release.py":
+            working = Path(__file__).resolve()
+        if not working.is_file() or working.read_bytes() != result.stdout:
+            raise ReleaseError(
+                f"{relative} differs from {commit}; run preflight from the requested commit"
+            )
+    known_issues = load_known_issues_tool()
+    with tempfile.TemporaryDirectory(prefix="274bot-preflight-") as tmpdir:
+        ledger_path = Path(tmpdir) / "known-issues.toml"
+        changelog_path = Path(tmpdir) / "CHANGELOG.md"
+        ledger_path.write_text(run_git(repo, "show", f"{commit}:docs/known-issues.toml") + "\n")
+        changelog_path.write_text(run_git(repo, "show", f"{commit}:CHANGELOG.md") + "\n")
+        diff = known_issues.check_release_by_paths(ledger_path, changelog_path, args.tag)
+    if diff:
+        raise ReleaseError(
+            f"known-issues check failed for release {args.tag}:\n" + "\n".join(diff)
+        )
+    print(json.dumps({"commit": commit, "tag": args.tag, "known_issues": "match"},
+                     sort_keys=True))
+
+
 def add_transport_arguments(parser):
     parser.add_argument("--linux-host", default=os.environ.get("RELEASE_LINUX_HOST", "274bot-builder"))
     parser.add_argument("--linux-remote-root", default=os.environ.get("RELEASE_LINUX_ROOT", "274bot-release"))
@@ -1955,6 +2023,13 @@ def parser():
     verify.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     add_transport_arguments(verify)
 
+    preflight = commands.add_parser(
+        "preflight", help="fail-closed release readiness checks (no builder needed)"
+    )
+    preflight.add_argument("--commit", required=True)
+    preflight.add_argument("--tag", required=True, help="release tag to check, e.g. 0.2.5")
+    preflight.add_argument("--repo-root", type=Path)
+    preflight.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     clean = commands.add_parser(
         "clean", help="reset retry state or retain only packages and receipts"
     )
@@ -1993,6 +2068,8 @@ def main(argv=None):
             finalize_controller(arguments)
         elif arguments.command == "verify":
             verify_controller(arguments)
+        elif arguments.command == "preflight":
+            preflight_controller(arguments)
         else:
             clean_controller(arguments)
     except (ReleaseError, OSError, ValueError, KeyError, json.JSONDecodeError) as error:
