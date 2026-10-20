@@ -26,18 +26,6 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-# Shared floor with tools/known-issues/known_issues.py: preflight checks the
-# TOML ledger with tomllib, which exists only on Python 3.11 and newer.
-# Keep the two minima in sync.
-REQUIRED_PYTHON = (3, 11)
-
-if sys.version_info < REQUIRED_PYTHON:
-    _running = ".".join(str(part) for part in sys.version_info[:3])
-    sys.exit(
-        f"release.py requires Python 3.11 or newer "
-        f"(running Python {_running} at {sys.executable})"
-    )
-
 PLATFORMS = ("macos", "linux", "windows")
 ARCHIVE_SUFFIX = {"macos": ".zip", "linux": ".tar.gz", "windows": ".zip"}
 ARCH_NAME = {"macos": "macos-arm64", "linux": "linux-x64", "windows": "windows-x64"}
@@ -1903,10 +1891,24 @@ def clean_controller(args):
             windows_transport(args, "run", script)
 
 
+# Preflight-only floor, shared with tools/known-issues/known_issues.py: only
+# preflight reads the TOML ledger (via tomllib, which exists only on Python
+# 3.11 and newer) through load_known_issues_tool below. Build, finalize,
+# verify, and clean run on the workers' own python3 and need only Python 3.9.
+# Keep the two minima in sync.
+REQUIRED_PYTHON = (3, 11)
+
+
 KNOWN_ISSUES_TOOL = Path(__file__).resolve().parent.parent / "known-issues" / "known_issues.py"
 
 
 def load_known_issues_tool():
+    if sys.version_info < REQUIRED_PYTHON:
+        _running = ".".join(str(part) for part in sys.version_info[:3])
+        sys.exit(
+            f"release.py requires Python 3.11 or newer "
+            f"(running Python {_running} at {sys.executable})"
+        )
     if not KNOWN_ISSUES_TOOL.is_file():
         raise ReleaseError(f"known-issues tool is missing: {KNOWN_ISSUES_TOOL}")
     spec = importlib.util.spec_from_file_location("known_issues", KNOWN_ISSUES_TOOL)
