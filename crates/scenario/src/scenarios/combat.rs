@@ -545,6 +545,15 @@ pub(crate) fn answer_quest_journal_dialogs(
 /// after Start. The step's tick budget bounds a preparation that never
 /// acknowledges — the run fails before Start instead of starting without
 /// the prerequisite.
+///
+/// The first step re-sends `~quest` every tick until the dialog appears.
+/// `@debug_quests` opens its dialog only when `p_finduid(uid)` returns
+/// true, and the engine returns false while the player is protected,
+/// delayed or inside a modal (`PlayerOps.ts` `P_FINDUID` →
+/// `Player.canAccess`). Right after the seed relog those states are still
+/// settling, so one send can exit silently with no dialog; the next tick's
+/// send lands once the player is free. The send stays quiet while a
+/// choice dialog is already open, so it cannot close the dialog it opened.
 pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
     // The machine is re-entered once per tick by the runner's `Repeat`
     // arm; its "already answered this dialog" state is behind a mutex so
@@ -553,15 +562,20 @@ pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
     [
         Step {
             name: "open the native quest-journal prerequisite dialog before Start",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    cheat(c, QUEST_JOURNAL_CHEAT);
+            kind: StepKind::Repeat {
+                send: Box::new(|c, snapshot| {
+                    // Never re-send into the dialog the last send opened:
+                    // `@debug_quests` starts with `if_close`, which would
+                    // close the choice the fixture is about to answer.
+                    if snapshot.chat_options().is_empty() {
+                        cheat(c, QUEST_JOURNAL_CHEAT);
+                    }
                     true
                 }),
             },
             wait: Wait {
                 arm: Proof::ChatChoice,
-                budget_ticks: 20,
+                budget_ticks: 200,
             },
         },
         Step {
@@ -781,6 +795,7 @@ fn combat_range_scenario(
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
+            fixture_loadouts: combat_fixture_loadouts(card),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
