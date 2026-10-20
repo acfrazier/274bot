@@ -5550,7 +5550,18 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
     assert!(brim.steps[..start].iter().any(|step| step.name
-        == "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+        == "seed Agility 84, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+    // Engine PlayerOps.ts: value = floor(80*(99-L)/98) +
+    // floor(280*(L-1)/98) + 1 at the worst Brimhaven obstacle.
+    // The failed level-75 run showed two plank attempts in this 150-tick watch.
+    let agility_seed = 84_u64;
+    let success_value = 80 * (99 - agility_seed) / 98 + 280 * (agility_seed - 1) / 98 + 1;
+    assert_eq!(success_value, 250);
+    let fail_numerator = 256 - success_value;
+    assert!(
+        fail_numerator.pow(2) * 1_000 < 256_u64.pow(2),
+        "two failed rolls must be less likely than 1 in 1000 per watch"
+    );
     assert!(seed.contains(&Proof::ChatClosed));
     assert!(seed.contains(&Proof::ItemId {
         id: 995,
@@ -5580,11 +5591,12 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 count: 800,
             },
             Proof::Varp { id: 309, min: 2 },
-            Proof::ArrivedNear {
-                x: 2805,
-                z: 9590,
+            Proof::VisitedWithin {
+                min_x: 2752,
+                max_x: 2815,
+                min_z: 9536,
+                max_z: 9599,
                 level: 3,
-                radius: 2,
             },
             Proof::StatXpGain {
                 id: AGILITY_STAT,
@@ -11509,13 +11521,19 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         );
         assert!(prepare < start, "{name}: the reset precedes Start");
         // The kickoff sends the native individual-quest command, never
-        // the complete-all debugproc whose queued completions leak.
+        // the complete-all debugproc whose queued completions leak. It
+        // re-sends every tick: `@debug_quests` exits silently while the
+        // player cannot be accessed right after the relog.
+        assert!(
+            matches!(scenario.steps[load].kind, StepKind::Repeat { .. }),
+            "{name}: the kickoff re-sends until the dialog opens"
+        );
         let mut client = native_seed_client();
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         match &scenario.steps[load].kind {
-            StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
-            _ => panic!("{name}: the kickoff step is a Perform"),
+            StepKind::Repeat { send } => assert!(send(&mut client, &snapshot)),
+            _ => panic!("{name}: the kickoff step is a Repeat"),
         }
         assert!(emitted_has(&client, "~quest"), "{name}: native command");
         assert!(
@@ -11575,6 +11593,118 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
             panic!("the run never failed the preparation step ({step}/{total})")
         }
         RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+    }
+}
+
+#[test]
+fn quest_kickoff_resends_until_a_choice_opens_and_never_into_an_open_choice() {
+    // A dropped first send (the player cannot be accessed yet) must not
+    // spend the cell: the kickoff sends again on the next tick. Once a
+    // choice is open the send stays quiet, because `@debug_quests`
+    // begins with `if_close` and would close that choice.
+    let scenario = get("fire_giant").expect("fire_giant is registered");
+    let load = scenario
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("open the native quest-journal"))
+        .expect("the fixture carries the native quest prerequisite");
+    let StepKind::Repeat { send } = &scenario.steps[load].kind else {
+        panic!("the kickoff step is a Repeat");
+    };
+    let count = |client: &Client| {
+        let bytes = &client.out.data()[..client.out.pos];
+        bytes
+            .windows("~quest".len())
+            .filter(|window| *window == b"~quest")
+            .count()
+    };
+    let mut client = native_seed_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(send(&mut client, &snapshot));
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 2, "no dialog yet: every tick re-sends");
+    let (mut client, snapshot) = chat_options_client(&[
+        "Complete All Quests.",
+        "Reset All Quests.",
+        "Select Individual Quest.",
+        "Cancel.",
+    ]);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 0, "an open choice is never re-sent into");
+}
+
+#[test]
+fn loadout_cards_post_the_fixture_row_their_start_selects() {
+    // Start refuses a card whose `loadout` setting cannot select a row
+    // (an empty saved loadout under a fresh HOME). Each of these cells
+    // posts the food it already seeds as a fixture loadout, and a pinned
+    // `loadout` inject names a posted row.
+    for (name, card, row_name, food, qty) in [
+        (
+            "auto_fighter_mage",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "auto_fighter_range",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "wildy_agility",
+            "WildyAgility",
+            "Scenario Wildy Agility food",
+            "Lobster",
+            5,
+        ),
+        (
+            "brimhaven_agility",
+            "BrimhavenAgility",
+            "Scenario Brimhaven Agility food",
+            "Lobster",
+            10,
+        ),
+        (
+            "herblore_secondaries_newt",
+            "HerbloreSecondaries",
+            "Scenario Herblore food",
+            "Lobster",
+            HERBLORE_EGG_FOOD_CARRY as u32,
+        ),
+        (
+            "clue_duel_3554",
+            "ClueSolver",
+            "Scenario Clue food",
+            "Shark",
+            15,
+        ),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        assert_eq!(scenario.settings.start_script, Some(card), "{name}");
+        let rows = scenario
+            .settings
+            .fixture_loadouts
+            .unwrap_or_else(|| panic!("{name} posts fixture loadouts at Start"));
+        let row = rows
+            .iter()
+            .find(|row| row.name == row_name)
+            .unwrap_or_else(|| panic!("{name} posts the {row_name:?} row"));
+        assert_eq!(row.carry, &[(food, qty)], "{name}");
+        if let Some(inject) = scenario.settings.script_settings_inject {
+            let inject = settings_inject_map(Some(inject)).unwrap();
+            if let Some(pinned) = inject.get("loadout") {
+                assert_eq!(
+                    pinned,
+                    &Value::String(row_name.into()),
+                    "{name}: the pinned loadout is a posted row"
+                );
+            }
+        }
     }
 }
 
