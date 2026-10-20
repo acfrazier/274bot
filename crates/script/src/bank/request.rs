@@ -58,12 +58,22 @@ pub struct BankSeatDestination {
     pub(crate) npc_access: Option<BankSeatNpcAccess>,
 }
 
+/// Select one bank item for `withdrawLoad`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WithdrawLoadSelector {
+    /// Select the row by its object ID.
+    Id(i32),
+    /// Select the row by its display name.
+    Name(String),
+}
+
 /// Owned arguments for one bank operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BankSeatArgs {
     pub(crate) operation: BankSeatOperation,
     pub(crate) item_id: Option<i32>,
     pub(crate) item_name: Option<String>,
+    pub(crate) withdraw_load_selector: Option<WithdrawLoadSelector>,
     pub(crate) menu_op: Option<String>,
     pub(crate) quantity: Option<i64>,
     pub(crate) lands_as_id: Option<i32>,
@@ -105,6 +115,7 @@ impl BankSeatArgs {
             operation,
             item_id: None,
             item_name: None,
+            withdraw_load_selector: None,
             menu_op: None,
             quantity: None,
             lands_as_id: None,
@@ -206,7 +217,7 @@ impl BankSeatArgs {
             BankSeatOperation::WithdrawDelta => {
                 F_ITEM_ID | F_ITEM_NAME | F_QUANTITY | F_LANDS_AS_ID
             }
-            BankSeatOperation::WithdrawLoad => F_ITEM_NAME,
+            BankSeatOperation::WithdrawLoad => F_WITHDRAW_LOAD_SELECTOR,
             BankSeatOperation::DepositAll => 0,
             BankSeatOperation::DepositKeep => F_KEEP_NAMES,
             BankSeatOperation::DepositMatch => F_HOOKS,
@@ -301,7 +312,10 @@ impl BankSeatArgs {
                 )?;
             }
             BankSeatOperation::WithdrawLoad => {
-                require(self.item_name.is_some(), "WithdrawLoad requires item_name")?;
+                require(
+                    self.withdraw_load_selector.is_some(),
+                    "WithdrawLoad requires an item selector",
+                )?;
             }
             BankSeatOperation::WaitSnapshotAfter => {
                 require(
@@ -335,6 +349,7 @@ impl BankSeatArgs {
         some!(
             item_id => F_ITEM_ID,
             item_name => F_ITEM_NAME,
+            withdraw_load_selector => F_WITHDRAW_LOAD_SELECTOR,
             menu_op => F_MENU_OP,
             quantity => F_QUANTITY,
             lands_as_id => F_LANDS_AS_ID,
@@ -387,6 +402,9 @@ impl BankSeatArgs {
             };
         }
         text!(self.item_name.as_deref());
+        if let Some(WithdrawLoadSelector::Name(name)) = &self.withdraw_load_selector {
+            add_text_bound(&mut bytes, &mut strings, name)?;
+        }
         text!(self.menu_op.as_deref());
         if let Some(access) = &self.object_access {
             add_object_text(&mut bytes, &mut strings, access)?;
@@ -443,6 +461,7 @@ const F_NOTE_MODE: u64 = 1 << 20;
 const F_DEPOSIT_ALL: u64 = 1 << 21;
 const F_COMMON_JUNK: u64 = 1 << 22;
 const F_HOOKS: u64 = 1 << 23;
+const F_WITHDRAW_LOAD_SELECTOR: u64 = 1 << 24;
 
 fn hook_mask(operation: BankSeatOperation) -> u32 {
     match operation {

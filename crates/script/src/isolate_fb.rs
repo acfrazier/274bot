@@ -5407,7 +5407,19 @@ fn bank_args_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     bank: &crate::bank::request::BankSeatArgs,
 ) -> WIPOffset<BankSeatArgs<'b>> {
-    let item_name = bank.item_name.as_deref().map(|name| b.create_string(name));
+    let (item_id, item_name) =
+        if bank.operation == crate::bank::request::BankSeatOperation::WithdrawLoad {
+            match bank.withdraw_load_selector.as_ref() {
+                Some(crate::bank::request::WithdrawLoadSelector::Id(id)) => (Some(*id), None),
+                Some(crate::bank::request::WithdrawLoadSelector::Name(name)) => {
+                    (None, Some(name.as_str()))
+                }
+                None => (None, None),
+            }
+        } else {
+            (bank.item_id, bank.item_name.as_deref())
+        };
+    let item_name = item_name.map(|name| b.create_string(name));
     let menu_op = bank.menu_op.as_deref().map(|op| b.create_string(op));
     let stand = bank.stand.map(|tile| bank_tile_off(b, tile));
     let destination = bank
@@ -5439,7 +5451,7 @@ fn bank_args_off<'b>(
     };
     let mut table = BankSeatArgsBuilder::new(b);
     table.add_operation(bank_operation_wire(bank.operation));
-    if let Some(item_id) = bank.item_id {
+    if let Some(item_id) = item_id {
         table.add_item_id(item_id);
     }
     if let Some(item_name) = item_name {
@@ -6536,10 +6548,23 @@ fn decode_bank_args(
     kind: NativeKind,
 ) -> Result<crate::bank::request::BankSeatArgs, String> {
     validate_bank_wire_text_bounds(row)?;
-    let mut args =
-        crate::bank::request::BankSeatArgs::new(bank_operation_from_wire(row.operation())?);
-    args.item_id = row.item_id();
-    args.item_name = row.item_name().map(str::to_owned);
+    let operation = bank_operation_from_wire(row.operation())?;
+    let mut args = crate::bank::request::BankSeatArgs::new(operation);
+    if operation == crate::bank::request::BankSeatOperation::WithdrawLoad {
+        args.withdraw_load_selector = match (row.item_id(), row.item_name()) {
+            (Some(id), None) => Some(crate::bank::request::WithdrawLoadSelector::Id(id)),
+            (None, Some(name)) => Some(crate::bank::request::WithdrawLoadSelector::Name(
+                name.to_owned(),
+            )),
+            (None, None) => None,
+            (Some(_), Some(_)) => {
+                return Err("WithdrawLoad requires exactly one of item_id and item_name".to_string())
+            }
+        };
+    } else {
+        args.item_id = row.item_id();
+        args.item_name = row.item_name().map(str::to_owned);
+    }
     args.menu_op = row.menu_op().map(str::to_owned);
     args.quantity = row.quantity();
     args.lands_as_id = row.lands_as_id();
@@ -10333,7 +10358,7 @@ pub(crate) mod tests {
     fn bank_start_payload_round_trips_every_declared_field_and_operation() {
         use crate::bank::request::{
             BankSeatArgs, BankSeatDestination, BankSeatNpcAccess, BankSeatObjectAccess,
-            BankSeatOperation as Operation, BANK_NEAREST_HOOK_AFTER_DEPOSIT,
+            BankSeatOperation as Operation, WithdrawLoadSelector, BANK_NEAREST_HOOK_AFTER_DEPOSIT,
             BANK_NEAREST_HOOK_DEPOSIT, BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_LOG,
             DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
         };
@@ -10445,7 +10470,11 @@ pub(crate) mod tests {
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawLoad);
-        args.item_name = Some("Rune essence".into());
+        args.withdraw_load_selector = Some(WithdrawLoadSelector::Name("Rune essence".into()));
+        payloads.push(args);
+
+        let mut args = BankSeatArgs::new(Operation::WithdrawLoad);
+        args.withdraw_load_selector = Some(WithdrawLoadSelector::Id(995));
         payloads.push(args);
         payloads.push(BankSeatArgs::new(Operation::DepositAll));
 
