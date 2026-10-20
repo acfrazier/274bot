@@ -13,7 +13,7 @@ WorkingDirectory=/srv/nightly
 Environment=NIGHTLY_ROOT=/srv/nightly
 Environment=PATH=/home/bot/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-/etc/274bot-nightly.env
-EnvironmentFile=/srv/nightly/cache-manifest-274.env
+EnvironmentFile=-/srv/nightly/cache-manifest-274.env
 ExecStart=/usr/bin/python3 /srv/nightly/runner/tools/nightly/run_nightly.py
 # Two branches with every cell can take hours; the per-cell cap bounds each cell.
 TimeoutStartSec=20h
