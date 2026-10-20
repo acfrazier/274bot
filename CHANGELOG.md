@@ -52,6 +52,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Shops
+
+- Shop snapshots now retain every server close, including closes received
+  after the window closes locally. This prepares reliable purchase checks.
+
 #### Banking
 
 - When bank selection cannot find a route, the session log now gives the
