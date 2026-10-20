@@ -31,7 +31,7 @@ if [ -z "$expected_command" ] || [ -z "$expected_cwd" ] || [ -z "$expected_start
 case "$expected_command" in *"node --import tsx src/app.ts"*) ;; *) printf '%s\n' 'refusing unexpected command identity; no signal sent' >&2; exit 1 ;; esac
 if [ "$expected_cwd" != "$ENGINE" ]; then printf '%s\n' 'refusing unexpected cwd identity; no signal sent' >&2; exit 1; fi
 command=$(ps -p "$pid" -o command= | tr -s ' ' | tr -d '\n')
-cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
+cwd=$(/usr/bin/sudo -n /usr/bin/lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
 start_time=$(ps -p "$pid" -o lstart= | tr -s ' ' | tr -d '\n')
 if [ "$command" != "$expected_command" ] || [ "$cwd" != "$expected_cwd" ] || [ "$start_time" != "$expected_start" ]; then
     printf '%s\n' "refusing pid $pid: start identity mismatch" >&2

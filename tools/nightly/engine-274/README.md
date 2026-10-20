@@ -13,6 +13,10 @@ the NIGHTLY-274 evidence). The runner copies that folder to
   8898. These are the built-in `local-274` launch profile's ports.
   Port 80 needs `cap_net_bind_service` on the node binary (set at
   setup) or an equivalent guest setting.
+  On zinfandel, the scripts use `sudo -n lsof` for process and listener checks.
+  User `bot` must have non-interactive sudo for these read-only checks.
+  Unprivileged `lsof` returned `readlink: Permission denied` for the engine CWD.
+
 - `world.json`: installed as `engine/data/config/world.json`.
   Revision 274, debug on, production off, no live reload, content
   beside the engine (`../content`). The login, friend and logger

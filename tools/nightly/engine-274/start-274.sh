@@ -27,7 +27,7 @@ if [ -f "$PIDFILE" ] || [ -f "$IDENTITY" ]; then
     [ "$expected_cwd" = "$ENGINE" ] || { printf '%s\n' 'refusing unexpected 274 cwd identity' >&2; exit 1; }
     if kill -0 "$pid" 2>/dev/null; then
         command=$(ps -p "$pid" -o command= | tr -s ' ' | tr -d '\n')
-        cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
+        cwd=$(/usr/bin/sudo -n /usr/bin/lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
         start_time=$(ps -p "$pid" -o lstart= | tr -s ' ' | tr -d '\n')
         if [ "$command" != "$expected_command" ] || [ "$cwd" != "$expected_cwd" ] || [ "$start_time" != "$expected_start" ]; then
             printf '%s\n' "274 engine: refusing foreign/reused live pid $pid; inspect runtime/pids/engine.identity" >&2
@@ -39,7 +39,7 @@ if [ -f "$PIDFILE" ] || [ -f "$IDENTITY" ]; then
     rm -f "$PIDFILE" "$IDENTITY"
 fi
 for port in 80 43594 8898 43500 45099 43501; do
-    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    if /usr/bin/sudo -n /usr/bin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
         printf '%s\n' "port $port is already listening; refusing to start" >&2
         exit 1
     fi
@@ -55,7 +55,7 @@ if ! kill -0 "$pid" 2>/dev/null; then
     exit 1
 fi
 command=$(ps -p "$pid" -o command= | tr -s ' ' | tr -d '\n')
-cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
+cwd=$(/usr/bin/sudo -n /usr/bin/lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2- | head -1)
 case "$command" in *"node --import tsx src/app.ts"*) : ;; *) printf '%s\n' "274 engine start identity mismatch: $command; refusing signal" >&2; exit 1;; esac
 case "$cwd" in "$ENGINE") : ;; *) printf '%s\n' "274 engine cwd identity mismatch: $cwd; refusing signal" >&2; exit 1;; esac
 start_time=$(ps -p "$pid" -o lstart= | tr -s ' ' | tr -d '\n')
