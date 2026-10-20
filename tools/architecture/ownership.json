@@ -259,6 +259,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/tests/shop_facts_alloc.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/tests/snapshot.rs",
       "owner": "T1"
     },
