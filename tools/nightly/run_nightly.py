@@ -944,9 +944,19 @@ def find_receipt(text: str, cell: str) -> dict | None:
             value, _ = decoder.raw_decode(text, match.start())
         except json.JSONDecodeError:
             continue
-        if value.get("scenario") == cell and value.get("outcome") in ("PASS", "FAIL"):
+        if value.get("scenario") == cell and value.get("outcome") in ("PASS", "FAIL", "UNAVAILABLE"):
             found = value
     return found
+
+
+def record_receipt(result: CellResult, receipt: dict) -> None:
+    result.receipt = receipt
+    result.result = receipt["outcome"]
+    result.ticks = receipt.get("ticks")
+    if result.result == "FAIL":
+        result.first_failure = (receipt.get("message") or receipt.get("predicate") or "")[:400]
+    elif result.result == "UNAVAILABLE":
+        result.reason = (receipt.get("message") or receipt.get("predicate") or "")[:400]
 
 
 def first_failure_line(text: str) -> str | None:
@@ -1207,12 +1217,8 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     receipt = find_receipt(combined, cell)
     verdict = re.search(rf"\b(PASS|FAIL): live {re.escape(cell)}\b", combined)
     if receipt is not None:
-        result.receipt = receipt
-        result.result = receipt["outcome"]
-        result.ticks = receipt.get("ticks")
+        record_receipt(result, receipt)
         wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
-        if result.result == "FAIL":
-            result.first_failure = (receipt.get("message") or receipt.get("predicate") or "")[:400]
     elif verdict is not None:
         # The verdict line printed but its JSON record did not parse.
         result.result = verdict.group(1)
@@ -1293,18 +1299,19 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
     nav = {"NAV_PACK": str(NAV_FIXTURE)}
     engine = {"ENGINE_DIR": str(ENGINE_RUN / "engine")}
+    nav_engine = {**nav, **engine}
     lanes = [
         ("build", ["build", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES], {}),
         ("build-vendor", ["build", "--locked", *vendor, "--workspace"], {}),
         ("clippy", ["clippy", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES,
                     "--", "-D", "warnings"], {}),
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
-        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], {}),
+        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], nav_engine),
         ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], engine),
         ("test-script-load", ["test", "--locked", "-p", "script", "--features", "load", "--tests",
-                              "--no-fail-fast"], nav),
+                              "--no-fail-fast"], nav_engine),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
-                                    "--no-fail-fast"], nav),
+                                    "--no-fail-fast"], nav_engine),
         ("test-host-play-memory", ["test", "--locked", "-p", "host-play", "--features", "memory-profile",
                                    "--no-fail-fast"], {}),
         ("test-host-play-memory-no-alloc", ["test", "--locked", "-p", "host-play", "--features",
