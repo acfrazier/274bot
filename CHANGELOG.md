@@ -39,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Resuming an interrupted local map bake on Windows now repairs a damaged
   tile instead of failing with "Access is denied".
 
+### Scripts
+
+- Starting a script now stops at once with a clear message when the saved
+  loadout list it needs is empty, or when a script file it depends on is
+  missing. Other start problems are still retried.
+
 ### Fixed during development
 
 #### Startup and saved state
@@ -51,20 +57,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   changes to one of these settings wait for the disk, the later change
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
-
-#### Live scenario fixtures
-
-- Only an empty saved-loadout store and a missing TradeBot fixture fail a live
-  start immediately; other start errors hold and retry. The TUI loads registered
-  file fixtures before Start.
-- Brimhaven keeps the baseline level-75 seed. The course can contain visible
-  broken planks that the frozen script does not avoid; this is a product defect,
-  not a chance-outcome watch.
-- The Fire Giant quest cells repeat their no-option `~quest` command until
-  the engine posts a chat-choice prompt. Waterfall completion now requires a
-  fresh completion message and the exact quest-scroll text.
-- The Maze fixture uses the engine's configured speed and does not issue
-  a world-speed override.
 
 #### Banking
 
