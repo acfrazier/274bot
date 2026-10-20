@@ -1,9 +1,13 @@
 # Known issues and release gaps: single source of truth.
 #
-# One [[item]] table per open item. The `text` holds the end-user wording as
-# it appears in the CHANGELOG (workaround included); `render` appends the
-# "X has the same problem." sentence from `first` and the CHANGELOG release
-# order. Fixed items leave this file in the commit that fixes them.
+# One [[item]] table per item. The `text` holds the end-user wording as it
+# appears in the CHANGELOG (workaround included); `render` appends the "X has
+# the same problem." sentence from `first` and the CHANGELOG release order.
+# An item is open at release X when `first` is not newer than X and `fixed`
+# (when set) is newer than X. Lifecycle: add the item with `first`; the
+# commit that fixes it sets `fixed` to the release carrying the fix; never
+# delete an item, so checks of published releases keep passing. `fixed` must
+# name a known release or the next one and must be later than `first`.
 # Never edit the CHANGELOG blocks by hand; regenerate them with
 # tools/known-issues/known_issues.py.
 
