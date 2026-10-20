@@ -322,16 +322,50 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 /// measures Bob-specific variance.
 const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 
-/// Nurmof livewfnjs8_0 reached the return Trade but hit the 420s deadline
-/// before a fresh purchase. Summed host windows put those Trade sends at
-/// 406.586/410.124/413.621s and termination at 415.941s (approximate process
-/// timing, not an atomic shop-open witness). Native open waits 3s per attempt.
-/// Allow one bounded 30s observation margin for the remaining open/buy work;
-/// this is a trial allowance, not proof that timing is the only defect.
-/// Keep every dirty budget and the fresh post-bank purchase proof unchanged.
+/// Nurmof Dwarven Mine ↔ Falador East travel budgets. Betty's 320/280/280
+/// dirty budgets cannot cover this route: each leg also crosses the mine
+/// ladder, and run energy ends long before the first purchase completes.
+///
+/// **Measured sm25wxbm3d_0 (Engine A, host e9b575be4, BOT_DEBUG nav trace):**
+/// Start at Nurmof stand 2997,9844 (engine tick 48); the shop→bank leg
+/// walks 260 tiles with zero stationary ticks, the ladder transport
+/// (loc 1755) at ticks 89-93, booth Use-quickly at tick 205 and the 500gp
+/// withdraw at tick 213, so Start→withdraw is 165 engine ticks. Pace is
+/// 2 tiles/tick until tick 222 (about 276 run tiles from Start) and
+/// 1 tile/tick after that; run energy is 8 at the failing receipt. The
+/// 320-dirty first-purchase watch expired at 3028,3444 with 500 coins
+/// held: about 10 surface tiles, the ladder down, 86 mine tiles and the
+/// Trade/buy still remained, so the bot progressed correctly and only
+/// the watch was too small.
+///
+/// **First purchase 560:** 165 measured ticks to the withdraw, plus the
+/// return leg (260 tiles: about 275 ticks once energy is gone, ladder
+/// and Trade/open/buy included) is about 440 engine ticks; at the 1.25
+/// dirties-per-engine-tick factor used by
+/// `gnome_magic_chop_watches_cover_the_roll_tail` that is 550 dirties.
+///
+/// **Deposit/return 360 each:** one 260-tile leg walked at 1 tile/tick
+/// plus about 25 ticks of bank or shop actions is 285 engine ticks,
+/// 356 dirties at the same factor.
+///
+/// **Wall 720s:** the whole cycle is about 1116 engine ticks (seed 46
+/// measured as total-minus-watch dirties, first purchase 440, deposit
+/// and return legs 285 each, about 60 for the remaining actions); at
+/// the canonical 600ms tick that is about 670s. The earlier
+/// livewfnjs8_0 run reached the return Trade but hit the then 420s
+/// deadline before a fresh purchase (Trade sends at 406.586/410.124/
+/// 413.621s, termination 415.941s; approximate process timing, not an
+/// atomic shop-open witness).
+pub(crate) const SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS: u32 = 560;
+pub(crate) const SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS: u32 = 360;
+pub(crate) const SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS: u32 = 360;
+pub(crate) const SHOP_BUYOUT_NURMOF_DEADLINE: Duration = Duration::from_secs(720);
+
 const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
-    deadline: Duration::from_secs(450),
-    ..SHOP_BUYOUT_BETTY_TIMING
+    first_purchase_ticks: SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS,
+    deposit_ticks: SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS,
+    return_ticks: SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS,
+    deadline: SHOP_BUYOUT_NURMOF_DEADLINE,
 };
 
 /// Lundail cellar shop 2535,4719 ↔ Gundai stand 2533,4714 is Chebyshev 5
