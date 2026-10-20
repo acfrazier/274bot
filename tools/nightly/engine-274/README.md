@@ -22,8 +22,22 @@ the NIGHTLY-274 evidence). The runner copies that folder to
   beside the engine (`../content`). The login, friend and logger
   workers stay off. Their hosts name loopback anyway.
 
-The engine and content trees are clean clones at the pinned commits
-(engine `4c95f87e`, content `000c19997`, branch `274`) with the
-patches in `tools/engine-patches/274/` applied. No account database
-or player save is copied in. `npm run sqlite:migrate` makes the
-empty account database.
+The engine and content sources are pinned at engine `4c95f87e` and content
+`000c19997` on branch `274`. The engine patches in
+`tools/engine-patches/274/` are applied. No account database or player save is
+copied in. `npm run sqlite:migrate` makes the empty account database.
+
+The Rust revision-274 nav build reads `data/pack/config` beside the client
+cache, and expects `data/pack/client/wordenc`. The pinned engine pack places
+those exact archives at `data/pack/client/config` and `data/raw/wordenc`.
+Create relative links after `npm run build`:
+
+```sh
+cd /srv/nightly/engine-pristine/engine
+ln -s client/config data/pack/config
+ln -s ../../raw/wordenc data/pack/client/wordenc
+```
+
+The resolved `config` and `wordenc` hashes must match the revision-274 row in
+`crates/host-play/src/known-cache-identities.json`; this exposes the original
+bytes without copying or rebuilding them.
