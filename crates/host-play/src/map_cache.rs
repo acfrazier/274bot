@@ -2760,7 +2760,11 @@ impl BakeWriter {
             )));
         }
         if matches!(key, UnitKey::Terrain { .. }) {
-            File::open(self.partial.join(unit_relative_path(key)?))?.sync_all()?;
+            // Windows requires a writable handle to flush file buffers.
+            OpenOptions::new()
+                .write(true)
+                .open(self.partial.join(unit_relative_path(key)?))?
+                .sync_all()?;
         }
         self.complete_unit(key, receipt, next_bytes, index)?;
         Ok(true)
@@ -6740,7 +6744,10 @@ mod tests {
         let mut job = active_fixture_job(&root, descriptor(&root));
         let writer = job.writer.as_mut().unwrap();
         let path = writer.directory().join("checkpoint.json");
-        fs::File::open(&path)
+        // Windows requires write access to update a file's modification time.
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
             .unwrap()
             .set_modified(SystemTime::UNIX_EPOCH)
             .unwrap();

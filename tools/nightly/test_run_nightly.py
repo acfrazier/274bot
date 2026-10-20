@@ -679,5 +679,59 @@ class CatchUpTests(unittest.TestCase):
             self.assertTrue(os.path.lexists(over_cap))
 
 
+class LaneEnvironmentTests(unittest.TestCase):
+    def test_content_test_lanes_receive_nav_and_engine_paths(self):
+        expected = {
+            "NAV_PACK": str(rn.NAV_FIXTURE),
+            "ENGINE_DIR": str(rn.ENGINE_RUN / "engine"),
+        }
+        lanes = {name: extra for name, _args, extra in rn.lane_list(None)}
+        for name in ("test-workspace", "test-script-load", "test-script-no-default"):
+            with self.subTest(lane=name):
+                self.assertEqual(lanes[name], expected)
+
+
+class ReceiptTests(unittest.TestCase):
+    @staticmethod
+    def receipt(outcome: str, scenario: str = "cell") -> dict:
+        return {
+            "scenario": scenario,
+            "outcome": outcome,
+            "ticks": 58,
+            "message": "engine patch missing",
+            "predicate": "ingame_scene_2",
+        }
+
+    def test_find_receipt_accepts_supported_live_outcomes(self):
+        for outcome in ("PASS", "FAIL", "UNAVAILABLE"):
+            with self.subTest(outcome=outcome):
+                receipt = self.receipt(outcome)
+                record = json.dumps(receipt, separators=(",", ":"))
+                self.assertEqual(rn.find_receipt(f"FAIL: live cell {record}", "cell"), receipt)
+
+    def test_find_receipt_ignores_other_cells_and_unknown_outcomes(self):
+        records = (
+            json.dumps(self.receipt("UNAVAILABLE", scenario="other"), separators=(",", ":")),
+            json.dumps(self.receipt("NOT_RUN"), separators=(",", ":")),
+        )
+        self.assertIsNone(rn.find_receipt("\n".join(records), "cell"))
+
+    def test_unavailable_receipt_records_reason_without_failure(self):
+        result = rn.CellResult(
+            cell="cell",
+            result="ERROR",
+            branch="dev",
+            commit="e9b575",
+            platform="windows",
+        )
+        receipt = self.receipt("UNAVAILABLE")
+        rn.record_receipt(result, receipt)
+        self.assertEqual(result.result, "UNAVAILABLE")
+        self.assertEqual(result.reason, "engine patch missing")
+        self.assertIsNone(result.first_failure)
+        self.assertEqual(result.ticks, 58)
+        self.assertEqual(result.receipt, receipt)
+
+
 if __name__ == "__main__":
     unittest.main()
