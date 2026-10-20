@@ -38,6 +38,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - Resuming an interrupted local map bake on Windows now repairs a damaged
   tile instead of failing with "Access is denied".
+### Gatherer
+
+- At every fishing site, the Gatherer keeps its preferred observation stand
+  when that stand is reachable. Otherwise, it chooses a reachable alternative.
+  This applies to the initial approach and the return after banking. It fixes
+  the Catherby failure from the Fishing Guild when the preferred stand is on
+  the Water Obelisk island. A bot already on that island can still use it.
+
+### Navigation checks
+
+- The built-in Elkoy and rune-essence navigation checks start beside the
+  transport NPC and seed only their required quest. They no longer start
+  transport checks while unrelated quest rewards still run.
 
 ### Fixed during development
 

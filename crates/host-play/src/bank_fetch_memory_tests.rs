@@ -698,6 +698,7 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
     let (_, closed) = solid_fixture();
     let state = WorldState::from_snapshot(&closed);
     let request = |bank_origin, rows: &[(i32, i32)]| ScriptRouteRequest {
+        candidate_goals: None,
         admission: test_admission(),
         generation: 1,
         request_id: 1,
