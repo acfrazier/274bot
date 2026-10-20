@@ -9,11 +9,11 @@
 //! The ignored test records per-account latency, observations and code-5 retry
 //! log receipts to `BOT_EVIDENCE_DIR`; failures remain in that receipt.
 //! Example command, from this worktree with the repository's `isohome` wrapper:
-//! `LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=rc5 ENGINE_DIR=/srv/dev/experiments/lostcity-289/engine NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navflags BOT_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/RELOG-CODE5-FIX cargo test --locked -p host-play --features live-harness,test-support --test relog_release_live relog_release_fixed_eight_account_cohort -- --ignored --nocapture --test-threads=1`
+//! `isohome env LIVE=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=rc5 ENGINE_DIR=/path/to/engine-r289 NAV_PACK=/path/to/bake-r2-a.navpack NAV_FLAGS=/path/to/bake-r2-a.navflags BOT_EVIDENCE_DIR=/path/to/evidence-output cargo test --locked -p host-play --features live-harness,test-support --test relog_release_live relog_release_fixed_eight_account_cohort -- --ignored --nocapture --test-threads=1`
 //! A separate ignored two-account proof checks that a primary's clean-exit
 //! release wait does not stall a companion's concurrent login.
 //! Example command, with the repository's `isohome` wrapper:
-//! `LIVE=1 BOT_DEBUG=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=rc5c ENGINE_DIR=/srv/dev/experiments/lostcity-289/engine NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navflags BOT_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/RELOG-CODE5-FIX/concurrent-live isohome cargo test --locked -p host-play --features live-harness,test-support --test relog_release_live relog_release_concurrent_bot_is_not_stalled -- --ignored --nocapture --test-threads=1`
+//! `isohome env LIVE=1 BOT_DEBUG=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=rc5c ENGINE_DIR=/path/to/engine-r289 NAV_PACK=/path/to/bake-r2-a.navpack NAV_FLAGS=/path/to/bake-r2-a.navflags BOT_EVIDENCE_DIR=/path/to/evidence-output/concurrent-live cargo test --locked -p host-play --features live-harness,test-support --test relog_release_live relog_release_concurrent_bot_is_not_stalled -- --ignored --nocapture --test-threads=1`
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -37,9 +37,6 @@ const COMPANION_LOGIN_OFFSET: Duration = Duration::from_millis(250);
 const COMPANION_ATTEMPT_MAX_DELAY: Duration = Duration::from_millis(750);
 const PRIMARY_LOGIN_IMMEDIATE_MAX_DELAY: Duration = Duration::from_millis(250);
 const PRIMARY_RELEASE_MIN_DELAY: Duration = Duration::from_millis(1_100);
-const ENGINE_A_DIR: &str = "/srv/dev/experiments/lostcity-289/engine";
-const ENGINE_A_NAV_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
 
 #[derive(Debug, Clone)]
 struct Observation {
@@ -317,14 +314,16 @@ fn write_evidence(
 fn engine_a_dir() -> PathBuf {
     std::env::var_os("WORLD_ENGINE_DIR")
         .or_else(|| std::env::var_os("ENGINE_DIR"))
+        .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(ENGINE_A_DIR))
+        .expect("set WORLD_ENGINE_DIR or ENGINE_DIR to local Engine A content")
 }
 
 fn engine_a_nav_pack() -> PathBuf {
     std::env::var_os("NAV_PACK")
+        .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(ENGINE_A_NAV_PACK))
+        .expect("set NAV_PACK to the reviewed real 289 nav pack")
 }
 
 #[test]
