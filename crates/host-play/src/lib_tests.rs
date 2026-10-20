@@ -5944,6 +5944,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6037,6 +6038,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
 fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6093,6 +6095,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6154,6 +6157,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
     };
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6208,6 +6212,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: 0,
     };
     let make_request = |avoid| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6307,6 +6312,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6366,6 +6372,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
             world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
         }
         ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -6428,6 +6435,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6492,6 +6500,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6550,6 +6559,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         .expect("actual 289 navpack"),
     );
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -26539,6 +26549,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     z: 0,
                                     level: 0,
                                 },
+                                candidate_goals: None,
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
@@ -28132,6 +28143,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     let candidates = approach_tiles(&world, origin, target, 12, false);
     assert_eq!(candidates.first(), Some(&endpoint));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),

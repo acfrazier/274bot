@@ -27,6 +27,7 @@ struct Walker {
     radius: u16,
     arrival: nav::arrival::ArrivalKind,
     options: script::native::WalkOptions,
+    candidate_goals: Option<script::native::WalkGoals>,
     result: Option<Result<WalkReceipt, ActionError>>,
     results: Vec<Result<WalkReceipt, ActionError>>,
     events: Vec<WalkEvent>,
@@ -80,6 +81,7 @@ impl Script for WalkerScript {
             shared.begun += 1;
             let request = WalkRequest {
                 target,
+                candidate_goals: shared.candidate_goals.clone(),
                 radius: shared.radius,
                 arrival: shared.arrival,
                 loc_id: None,
@@ -264,6 +266,62 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         1,
         "native radius walking still ends on its arrival-side approach tile"
     );
+}
+
+#[test]
+fn candidate_walk_returns_and_settles_the_chosen_goal() {
+    let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
+    // Client scene borders are blocked. Use an actual interior Area stand.
+    let tile = |x| WorldTile { x, z: 4, level: 0 };
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(tile(20));
+        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.candidate_goals =
+            Some(script::native::WalkGoals::new(vec![tile(8), tile(4)]).unwrap());
+    }
+    rig.observe(1);
+    rig.wait_routed();
+    assert_eq!(
+        rig.navs.lock().unwrap()["alice"].route_destination(),
+        Some(tile(4))
+    );
+    rig.step_at(tile(4));
+    rig.observe_at(2, tile(4));
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(receipt.end, WalkEnd::Arrived);
+    assert_eq!(receipt.goal, Some(tile(4)));
+}
+
+#[test]
+fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
+    let mut rig = open_rig(false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.radius = 1;
+        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.candidate_goals = Some(
+            script::native::WalkGoals::new(vec![WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            }])
+            .unwrap(),
+        );
+    }
+    rig.observe(1);
+    assert_eq!(
+        rig.shared
+            .lock()
+            .result
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap_err(),
+        &ActionError::WalkGoals(script::native::WalkGoalsError::IncompatibleArrival),
+    );
+    assert!(!rig.navs.lock().unwrap()["alice"].route_work_pending());
 }
 
 #[test]
@@ -3733,6 +3791,7 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
     assert!(!world.collision.standable(centre));
     assert!(world.collision.standable(shore));
     let request = |arrival, radius| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission {
             enforce: true,
             ..crate::admission::Admission::manual(
@@ -4437,6 +4496,7 @@ mod s2b_admission_contract {
             let required_after = tick.cx.evidence();
             let request = || WalkRequest {
                 target: tile(4),
+                candidate_goals: None,
                 radius: 0,
                 arrival: Default::default(),
                 loc_id: None,

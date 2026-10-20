@@ -18,6 +18,7 @@ pub struct Walk {
     key: WalkKey,
     loc_id: Option<i32>,
     arrival: ArrivalKind,
+    candidate_goals: bool,
     request_id: u64,
     required_after: EvidenceStamp,
     deadline: Duration,
@@ -29,6 +30,8 @@ struct Frame<'a> {
     outcome: HostOutcome,
     loc_id: Option<i32>,
     arrival: ArrivalKind,
+    candidate_goals: bool,
+    goal: Option<api::WorldTile>,
 }
 
 impl Observation for Frame<'_> {
@@ -41,6 +44,18 @@ impl Observation for Frame<'_> {
     }
 
     fn arrived(&self, key: WalkKey) -> bool {
+        let key = if self.candidate_goals {
+            let Some(tile) = self.goal else {
+                return false;
+            };
+            WalkKey {
+                tile,
+                radius: 0,
+                ..key
+            }
+        } else {
+            key
+        };
         let Some(player) = self.snapshot.local_player() else {
             return false;
         };
@@ -81,6 +96,7 @@ impl NativeMachine for Walk {
         let loc_id = request.loc_id;
         let arrival = request.arrival;
         let required_after = request.required_after;
+        let candidate_goals = request.candidate_goals.is_some();
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
         wait.begin(
@@ -92,6 +108,7 @@ impl NativeMachine for Walk {
             key,
             loc_id,
             arrival,
+            candidate_goals,
             request_id,
             required_after,
             deadline: cx.active_now().saturating_add(WALK_DEADLINE),
@@ -109,6 +126,7 @@ impl NativeMachine for Walk {
         if cx.active_now() >= self.deadline {
             cx.cancel_request(self.request_id);
             return Poll::Ready(Ok(WalkReceipt {
+                goal: None,
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Failed,
@@ -141,6 +159,8 @@ impl NativeMachine for Walk {
             outcome,
             loc_id: self.loc_id,
             arrival: self.arrival,
+            candidate_goals: self.candidate_goals,
+            goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(self.request_id, &frame) {
             return Poll::Pending;
@@ -159,6 +179,7 @@ impl NativeMachine for Walk {
 
         if frame.arrived(self.key) {
             return Poll::Ready(Ok(WalkReceipt {
+                goal: frame.goal,
                 request_id: self.request_id,
                 evidence: cx.evidence(),
                 end: WalkEnd::Arrived,
@@ -238,6 +259,8 @@ mod tests {
                 outcome: HostOutcome::empty(),
                 loc_id: None,
                 arrival: ArrivalKind::Reach,
+                candidate_goals: false,
+                goal: None,
             }
             .arrived(key)
         };
@@ -301,6 +324,8 @@ mod tests {
                 snapshot: SnapshotView::new(Some(&snapshot), stamp).with_reach(Some(view)),
                 outcome: HostOutcome::empty(),
                 loc_id,
+                candidate_goals: false,
+                goal: None,
                 arrival,
             }
             .arrived(key)

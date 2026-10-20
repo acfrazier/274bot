@@ -1216,6 +1216,7 @@ mod tests {
         detail: Option<Arc<str>>,
     ) -> crate::native::WalkReceipt {
         crate::native::WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: api::quest_progress::EvidenceStamp {
                 run: api::selected::RunKey {

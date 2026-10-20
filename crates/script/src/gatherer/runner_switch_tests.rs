@@ -209,6 +209,7 @@ fn stalled_return_receipt(
     tries: u32,
 ) -> WalkReceipt {
     WalkReceipt {
+        goal: None,
         request_id: 7,
         evidence,
         end: WalkEnd::Stalled(Arc::new(crate::native::WalkStall {
@@ -851,6 +852,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                 .begin::<Walk>(
                     WalkRequest {
                         target: target.tile,
+                        candidate_goals: None,
                         loc_id: match target.entity {
                             EntityId::Loc(id) => Some(id),
                             _ => None,
@@ -1070,6 +1072,7 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
     with_tick(&snapshot, &mut ledger, 2, |tick| {
         gatherer.handle_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 7,
                 evidence: tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
@@ -1388,6 +1391,7 @@ fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
     with_tick(&snapshot, &mut ledger, 721, |tick| {
         gatherer.handle_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 8,
                 evidence: tick.cx.evidence(),
                 end: WalkEnd::Refused,

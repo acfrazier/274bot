@@ -362,6 +362,7 @@ fn build_walk_request(
 ) -> WalkRequest {
     WalkRequest {
         target,
+        candidate_goals: None,
         loc_id: None,
         radius: u16::try_from(radius).unwrap_or(u16::MAX),
         arrival: ArrivalKind::Reach,

@@ -562,8 +562,47 @@ impl Default for WalkAllow {
     }
 }
 
+/// Bounded exact alternatives for one native Area walk. The router chooses
+/// one reachable goal in a single multi-goal search.
+#[derive(Debug, Clone)]
+pub struct WalkGoals(Arc<[WorldTile]>);
+
+/// A candidate request is rejected, never silently shortened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkGoalsError {
+    Empty,
+    TooMany { count: usize, limit: usize },
+    IncompatibleArrival,
+}
+
+impl WalkGoals {
+    /// The generated 274/289 movement census needs at most 810 observation
+    /// candidates before collision filtering. This leaves 214 goals of headroom.
+    pub const MAX: usize = 1024;
+
+    pub fn new(goals: Vec<WorldTile>) -> Result<Self, WalkGoalsError> {
+        if goals.is_empty() {
+            return Err(WalkGoalsError::Empty);
+        }
+        if goals.len() > Self::MAX {
+            return Err(WalkGoalsError::TooMany {
+                count: goals.len(),
+                limit: Self::MAX,
+            });
+        }
+        Ok(Self(goals.into()))
+    }
+
+    pub fn as_slice(&self) -> &[WorldTile] {
+        &self.0
+    }
+}
+
 pub struct WalkRequest {
     pub target: WorldTile,
+    /// Exact alternatives for a native Area walk with radius zero and no loc.
+    /// `None` preserves the existing single-target route and arrival behavior.
+    pub candidate_goals: Option<WalkGoals>,
     /// Explicit identity for a walk whose destination is a loc origin.
     /// `None` deliberately keeps the destination tile-based.
     pub loc_id: Option<i32>,
@@ -680,6 +719,8 @@ pub enum WalkEnd {
 pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
+    /// Destination selected by the router for a candidate-goal request.
+    pub goal: Option<WorldTile>,
     pub end: WalkEnd,
     pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
@@ -841,6 +882,8 @@ pub enum ActionError {
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
     NeedsEvidence(Arc<[QuestGate]>),
+    /// Invalid bounded candidate-goal request, rejected before host admission.
+    WalkGoals(WalkGoalsError),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
@@ -939,6 +982,27 @@ mod walk_permission_tests {
     }
 
     #[test]
+    fn candidate_goal_limit_refuses_instead_of_truncating() {
+        let tile = WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        };
+        assert!(matches!(
+            WalkGoals::new(Vec::new()),
+            Err(WalkGoalsError::Empty)
+        ));
+        let maximum = WalkGoals::new(vec![tile; WalkGoals::MAX]).unwrap();
+        assert_eq!(maximum.as_slice().len(), WalkGoals::MAX);
+        assert_eq!(maximum.as_slice()[WalkGoals::MAX - 1], tile);
+        assert!(matches!(
+            WalkGoals::new(vec![tile; WalkGoals::MAX + 1]),
+            Err(WalkGoalsError::TooMany { count, limit })
+                if count == WalkGoals::MAX + 1 && limit == WalkGoals::MAX
+        ));
+    }
+
+    #[test]
     fn refusal_variants_preserve_distinct_typed_kinds() {
         let refusals = [
             WalkRefusal::NoRouteWithinBounds {
@@ -964,6 +1028,7 @@ mod walk_permission_tests {
     #[test]
     fn aborted_walk_maps_to_blocked_with_the_escape_detail() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {
@@ -992,6 +1057,7 @@ mod walk_permission_tests {
     #[test]
     fn typed_refusal_supplies_a_reason_when_host_detail_is_absent() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {

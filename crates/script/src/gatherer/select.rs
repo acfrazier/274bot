@@ -266,6 +266,7 @@ impl SelectedTarget {
         };
         needs_walk.then(|| crate::native::WalkRequest {
             target: self.plan.tile,
+            candidate_goals: None,
             loc_id,
             radius: RESOURCE_APPROACH_RADIUS,
             arrival: if observation_approach {

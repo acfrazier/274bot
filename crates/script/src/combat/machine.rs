@@ -2968,6 +2968,7 @@ impl Combat {
     ) -> Result<(), ActionError> {
         let id = cx.walk(WalkRequest {
             target: tile,
+            candidate_goals: None,
             loc_id: None,
             radius: 1,
             arrival: nav::contract::ArrivalKind::Reach,
