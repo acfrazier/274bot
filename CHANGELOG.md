@@ -34,6 +34,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
 
+### Map baking
+
+- Resuming an interrupted local map bake on Windows now repairs a damaged
+  tile instead of failing with "Access is denied".
+
 ### Fixed during development
 
 #### Startup and saved state
@@ -60,10 +65,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   field before script Start. The receipt records the wait and observed loot.
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
-#### Map baking
-
-- Resuming an interrupted local map bake on Windows now repairs a damaged
-  tile instead of failing with "Access is denied".
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 

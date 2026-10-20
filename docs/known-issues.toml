@@ -48,7 +48,7 @@ text = """The JiveKBD hunting script (King Black Dragon) does not yet bring back
 first = "0.2.4"
 target = "0.2.5"
 severity = "medium"
-owner = "scripts-misc"
+owner = "T2.rest hunt"
 
 [[item]]
 id = "windows-map-bake-resume"
@@ -60,6 +60,7 @@ text = """On Windows, resuming a local map bake that stopped part-way (for examp
   affects only self-built copies and local bakes. A fix is planned for 0.2.5."""
 first = "0.2.4"
 target = "0.2.5"
+fixed = "0.2.5"
 severity = "low"
 owner = "windows"
 
