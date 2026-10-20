@@ -10,6 +10,7 @@
 
 use super::card::Prepared;
 use super::settings::{GathererSettings, Skill};
+use crate::acquire::{unbankable_index, UNBANKABLE_ALIASES};
 use crate::bank::ops;
 use crate::native::ConfigError;
 use api::bank_memory::Origin;
@@ -24,28 +25,6 @@ const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
 const MAX_PLAN_ITEMS: usize = 8;
 const MAX_PROTECTED_IDS: usize = 8 + UNBANKABLE_ALIASES.len();
-
-/// Items refused by the engine's `bank_check_allowed` content:
-/// `content/scripts/interface_bank/scripts/bank.rs2:129-149` names the box,
-/// anthems and monkey. Its `unbankable` parameter is true on the lamp in
-/// `content/scripts/general/configs/xplamp.obj:13` and the toad in
-/// `content/scripts/quests/quest_chompybird/configs/quest_chompybird.obj:74`.
-/// The box refusal is silent and calls `try_add_macro_cube` before returning
-/// false, so a missing transfer cannot distinguish it from an ordinary no-op.
-const UNBANKABLE_ALIASES: &[&str] = &[
-    "macro_cube",
-    "misc_awful_anthem",
-    "misc_good_anthem",
-    "mm_monkey_in_backpack",
-    "macro_genilamp",
-    "bloated_toad",
-];
-const _: () = assert!(UNBANKABLE_ALIASES.len() <= u8::BITS as usize);
-
-pub(super) fn unbankable_index(selected: &SelectedGameData, item: &ItemView) -> Option<usize> {
-    let alias = selected.item_by_id(item.def.id)?.alias.as_deref()?;
-    UNBANKABLE_ALIASES.iter().position(|known| *known == alias)
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItemFact {
