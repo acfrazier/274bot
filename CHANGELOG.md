@@ -616,35 +616,33 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ### Not in this release
 
-- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`),
-  pack purging at a bank (`purgePackAtBank`) and coin withdrawal
-  (`withdrawCoins`) are **Planned**, not included here. These calls still
-  report `not impl`; moving existing banking into the native seat does not
-  implement them.
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them.
 - Caller-supplied bank-cost routers (`nearestWalkableBank`,
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
   random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
   unavailable. The host does not recreate the foreign router or random pacing.
-- The JiveKBD hunting script (King Black Dragon) does not yet bring back
-  Dragon bones reliably. In testing it ran out of food at the dragon and went
-  to the bank without the bones. A fix is planned for 0.2.5.
-- On Windows, resuming a local map bake that stopped part-way (for example
-  after a crash) and left a damaged tile can fail with "Access is denied"
-  instead of repairing the tile. Release packages ship the baked map, so this
-  affects only self-built copies and local bakes. A fix is planned for 0.2.5.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In testing it ran out of food at the dragon and went to the
+  bank without the bones. A fix is planned for 0.2.5.
+- On Windows, resuming a local map bake that stopped part-way (for example after
+  a crash) and left a damaged tile can fail with "Access is denied" instead of
+  repairing the tile. Release packages ship the baked map, so this affects only
+  self-built copies and local bakes. A fix is planned for 0.2.5.
 
 ### Known issues
 
-- **Gatherer:** a Catherby fishing card started from the Fishing Guild can
-  pick a spot by the Water Obelisk island, which the bot cannot walk to, and
-  it stops at once with a walk failure. Move the bot to the Catherby fishing
-  beach and start the card again. 0.2.3 has the same problem. A fix is
-  planned for 0.2.5.
-- **Panel (Linux):** on a desktop with two graphics chips (for example a
-  Ryzen with built-in graphics plus a separate graphics card), the panel can
-  close right after it starts with "importing the supplied dmabufs failed".
-  Start it with `WGPU_POWER_PREF=high ./panel-play` until this is fixed.
-  0.2.0.2 to 0.2.3 have the same problem.
+- **Gatherer:** a Catherby fishing card started from the Fishing Guild can pick
+  a spot by the Water Obelisk island, which the bot cannot walk to, and it stops
+  at once with a walk failure. Move the bot to the Catherby fishing beach and
+  start the card again. A fix is planned for 0.2.5. 0.2.3 has the same problem.
+- **Panel (Linux):** on a desktop with two graphics chips (for example a Ryzen
+  with built-in graphics plus a separate graphics card), the panel can close
+  right after it starts with "importing the supplied dmabufs failed". Start it
+  with `WGPU_POWER_PREF=high ./panel-play` until this is fixed. 0.2.0.2 to 0.2.3
+  have the same problem.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
