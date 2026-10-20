@@ -9,8 +9,6 @@ static DEPOSIT_BIG_BONES_LIMPWURT: LazyLock<[i32; 2]> = LazyLock::new(|| {
     ]
 });
 static DEPOSIT_LOBSTER: LazyLock<[i32; 1]> = LazyLock::new(|| [catalog_item_id("lobster")]);
-static DEPOSIT_SAPPHIRE_CASKET: LazyLock<[i32; 2]> =
-    LazyLock::new(|| [catalog_item_id("uncut_sapphire"), catalog_item_id("casket")]);
 static DEPOSIT_DRAGON_BONES_HIDE: LazyLock<[i32; 2]> = LazyLock::new(|| {
     [
         catalog_item_id("dragon_bones"),
@@ -88,8 +86,6 @@ pub enum CombatLoot {
     /// Plain Bones (526) in the pack: the Guard's guaranteed death drop that
     /// AutoFighter bank injects as its only `loot` with burial off.
     Bones,
-    /// RockCrab PeriodicBank listed loot the bank cell can verify by id.
-    SapphireOrCasket,
     None,
 }
 
@@ -450,19 +446,6 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
-        CoreCase::RockCrabBank => Some(CombatSpec {
-            target: "Rock Crab",
-            stand: ROCK_CRAB_SAFE_STAND,
-            radius: 2,
-            food_id: catalog_item_id("lobster"),
-            food_count: ROCK_CRAB_FOOD,
-            weapon_id: catalog_item_id("adamant_scimitar"),
-            style: CombatStyleWitness::Strength,
-            loot: CombatLoot::SapphireOrCasket,
-            extra: CombatExtra::RockActivation,
-            projectile: None,
-            consumable: CombatConsumable::None,
-        }),
         CoreCase::GreenDragonBank => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
@@ -695,23 +678,6 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             require_combat: true,
             forbid_death: false,
         }),
-        // RockCrab PeriodicBank Loot-count at Seers. The task deposits listed
-        // loot and returns to `currentSpot()`; it does not restock food
-        // (`BankRun` is the food-gone restock, a different trip).
-        CoreCase::RockCrabBank => Some(CombatBankSpec {
-            deposit: &DEPOSIT_SAPPHIRE_CASKET[..],
-            stand: SEERS_BANK,
-            stand_radius: 6,
-            restock: None,
-            restock_count: None,
-            ret: ROCK_CRAB_BANK_RET,
-            ret_radius: 6,
-            via: None,
-            via_radius: 0,
-            via_magic: false,
-            require_combat: true,
-            forbid_death: false,
-        }),
         // GreenDragon BankRun to Edgeville: deposit except keep-list, withdraw
         // food to `foodWithdraw` 20, walk back past the ditch.
         CoreCase::GreenDragonBank | CoreCase::GreenDragonBankPrepared => Some(CombatBankSpec {
@@ -863,10 +829,6 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
             .map(|id| observation.item_id(*id))
             .sum(),
         CombatLoot::Bones => observation.item_id(catalog_item_id("bones")),
-        CombatLoot::SapphireOrCasket => {
-            observation.item_id(catalog_item_id("uncut_sapphire"))
-                + observation.item_id(catalog_item_id("casket"))
-        }
         CombatLoot::None => 0,
     }
 }
@@ -1558,9 +1520,6 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
         CombatLoot::Bones => id == catalog_item_id("bones"),
-        CombatLoot::SapphireOrCasket => {
-            id == catalog_item_id("uncut_sapphire") || id == catalog_item_id("casket")
-        }
         CombatLoot::None => false,
     }
 }

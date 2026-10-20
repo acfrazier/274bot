@@ -2997,16 +2997,20 @@ fn native_observation_without_compat_harvests_completed_inspection() {
 }
 
 fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>) {
-    const PACK: &str =
-        "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
-    const CACHE: &str = "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb/37214163f1e6ceca";
+    let pack = std::env::var_os("WORLD_NAV_PACK")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .expect("set WORLD_NAV_PACK to the reviewed real 289 navpack");
+    let snapshot_root = std::env::var_os("BOT_NAV_SNAPSHOT_ROOT")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .expect("set BOT_NAV_SNAPSHOT_ROOT to the decoded 289 cache snapshot root");
     const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
     const CONFIG_SHA256: &str = "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce";
     const FLAGS_SHA256: &str = "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a";
     const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
     use sha2::Digest as _;
 
-    let pack = std::path::PathBuf::from(PACK);
     let pack_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),
     )
@@ -3020,7 +3024,7 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
         );
     }
 
-    let cache_dir = std::path::Path::new(CACHE);
+    let cache_dir = snapshot_root.join(CACHE_VERSION_HASH);
     let versionlist =
         std::fs::read(cache_dir.join("versionlist")).expect("matching decoded versionlist");
     assert_eq!(
@@ -3050,14 +3054,16 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
 }
 
 /// Deterministic old/new inspection handoff over the pinned real revision-289
-/// content. Optionally writes the exact snapshot when
-/// `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
+/// content. Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
+/// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
     let output = std::env::var_os("T5W_INSPECT_CAPTURE_OUT").map(std::path::PathBuf::from);
-    const OLD_CAPTURE: &str =
-        "/srv/dev/scratch/274bot-evidence/TRACK-T5/T5W/inspection-old-capture-r5/inspect.fb";
+    let old_capture = std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .expect("set T5W_INSPECT_CAPTURE_BASELINE to the immutable old capture");
     const REQUEST_ID: u64 = 2_890_001;
     let (world, cache, obj_names) = real_content_inspection_world();
 
@@ -3260,7 +3266,7 @@ fn real_content_inspection_capture_bytes() {
         encode_inspect_bytes(&expected_snapshot, 289_001, false),
         "old/new real-content snapshot bytes include the dynamic route and refusal"
     );
-    let old_bytes = std::fs::read(OLD_CAPTURE).expect("immutable old inspection capture");
+    let old_bytes = std::fs::read(&old_capture).expect("immutable old inspection capture");
     assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
     let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(
