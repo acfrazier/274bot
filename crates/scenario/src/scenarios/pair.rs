@@ -1798,6 +1798,15 @@ pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
     }
 }
 
+/// ClueSolver carries a `loadout` setting and Start refuses when it
+/// cannot select a row. The cell seeds fifteen Sharks in the solver's
+/// pack, so the posted fixture row names that same food; both fleet
+/// slots receive the row at Start.
+const CLUE_DUEL_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Clue food",
+    carry: &[("Shark", 15)],
+}];
+
 /// Two-account clue 3554 gold: the solver and dedicated Duel helper start
 /// together, complete the no-stakes handshake, obtain/open the casket, and
 /// return through a fresh bank before closing it.
@@ -1951,6 +1960,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                     value: ScriptInjectValue::Bool(false),
                 },
             ]),
+            fixture_loadouts: Some(CLUE_DUEL_FIXTURE_LOADOUTS),
             nav: gold_script_nav(),
             ..Default::default()
         },
