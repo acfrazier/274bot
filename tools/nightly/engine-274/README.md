@@ -42,6 +42,20 @@ The resolved `config` and `wordenc` hashes must match the revision-274 row in
 `crates/host-play/src/known-cache-identities.json`; this exposes the original
 bytes without copying or rebuilding them.
 
+The server `versionlist` has SHA-256
+`63c41e59c6852b461328ab460a5cc074ec046a6f54d41a0818ff06ee052d7541`, not the
+checked-in 274 identity's `2faf336eeb0462edc50d2cdbccbdac7a4a2cda1e43087cd9a6ba2dd00aea78dd`;
+the other seven archives match. It is the versionlist used by the prepared
+revision-274 server and decoded nav snapshot. Capture a `CacheManifest` for
+this prepared pairing with the `host-play` `cache_manifest` example using
+`BOT_NAV_BUILD=skip` and a throwaway `HOME`. Store it at
+`/srv/nightly/cache-manifest-274.json` and set
+`BOT_CACHE_MANIFEST=/srv/nightly/cache-manifest-274.json` in
+`/srv/nightly/cache-manifest-274.env`. The systemd unit loads this per-guest
+manifest; the build and runtime both verify it against the actual archive
+bytes. This is deliberately separate from the checked-in public cache
+identities.
+
 The pinned content tree at `000c19997` does not contain the test-only
 `scripts/_test/scripts/cheats/cheat_item.rs2`; the 274 nav input inventory
 matches this commit and deliberately does not require that absent file.
