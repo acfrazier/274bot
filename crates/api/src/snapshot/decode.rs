@@ -89,8 +89,10 @@ impl GameSnapshot {
     /// Player-family rebuild: the scene origin, the local player's world
     /// tile (base + route head), the `LocalPlayerView`, and the remote
     /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
-    /// origin re-arms this too.
-    pub(super) fn rebuild_player(&mut self, client: &Client, advance_tick: bool) -> bool {
+    /// origin re-arms this too. Only `PLAYER_INFO` packet generations
+    /// advance the game tick; other player-family invalidations only refresh
+    /// the view.
+    pub(super) fn rebuild_player(&mut self, client: &Client, player_info_ticks: u64) -> bool {
         if !self.family_observed(client, Family::Player) {
             return false;
         }
@@ -98,9 +100,8 @@ impl GameSnapshot {
             return false;
         }
         self.players_available = true;
-        if advance_tick {
-            // One `PLAYER_INFO` per game tick: the snapshot's tick count.
-            self.tick = self.tick.wrapping_add(1);
+        if player_info_ticks != 0 {
+            self.tick = self.tick.wrapping_add(player_info_ticks as u32);
         }
         if !client.ingame || client.local_player.is_none() {
             self.thieving_stun_tick = None;

@@ -261,18 +261,17 @@ impl Activity {
     }
 }
 
-/// Dirty-snapshot budget for the activity's first XP before the trigger
-/// (the existing Gatherer watch, `gatherer.rs` `GATHERER_WATCH_TICKS`).
+/// Observed game-tick cap for the activity's first XP before the trigger
+/// (one per `PLAYER_INFO`; see the existing Gatherer watch).
 const ACTIVITY_WATCH_TICKS: u32 = 240;
-
-/// Dirty-snapshot budget for the whole episode: event, Guardian handling and
-/// the first fresh activity XP after it. Runner dirties run about 1.25 per
-/// 600 ms engine tick. Evade: the Swarm's bounded 25-tick flee plus the walk
-/// back and a catch (~120 engine ticks). Dialogue: the genie's three
-/// warnings 50 ticks apart before its failure (`macro_event_genie.rs2`).
-/// Maze: the Guardian's own bound is twice the event's limit
-/// (`host/src/random/maze.rs` `SOLVE_TICKS`); the existing `maze_owned`
-/// cell watches 900.
+///
+/// Observed game-tick cap for the whole episode: event, Guardian handling and
+/// first fresh activity XP after it. Client cycles and dirty snapshots do not
+/// count. Event content bounds also use server game ticks: Evade has the
+/// Swarm's bounded 25-game-tick flee plus return and catch (~120 game ticks);
+/// the genie's three warnings are 50 game ticks apart; Maze uses twice the
+/// event limit (`host/src/random/maze.rs` `SOLVE_TICKS`). The `maze_owned`
+/// cell watches 900 game ticks.
 const fn episode_budget(oracle: Oracle) -> u32 {
     match oracle {
         Oracle::Trap(TrapKind::Maze) => 1000,

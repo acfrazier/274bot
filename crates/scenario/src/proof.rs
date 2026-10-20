@@ -39,7 +39,7 @@ pub enum Proof {
     ClueReplaced { seeded: i32 },
     /// Host-fed Sherlock guardian oracle: Protect from Magic acknowledgement,
     /// at most one bounded in-flight hit, held protect until the kill, prayers
-    /// off within three ticks of the kill, and the seeded clue replaced by a
+    /// off within three game ticks of the kill, and the seeded clue replaced by a
     /// casket. Snapshot-only checks fail closed.
     ClueProtectWindow { seeded: i32 },
 
@@ -76,7 +76,7 @@ pub enum Proof {
         radius: i32,
     },
     /// Latched per step by the runner: the player stood on the level inside
-    /// the inclusive rectangle at any observed tick of the current step. For
+    /// the inclusive rectangle at any observed dirty snapshot of the current step. For
     /// a walk whose route passes a landing or lever tile without stopping
     /// there, where [`Proof::ArrivedNear`] would only see the final tile. A
     /// Chebyshev radius `r` around a tile is the box `[x-r, x+r]×[z-r, z+r]`.
@@ -161,7 +161,7 @@ pub enum Proof {
     /// post-relog chat baseline the runner latched when this step began
     /// (or a post-relog chat-modal `tutorial 1000`, which login clears).
     /// A plain [`Proof::Chat`] `contains` can be satisfied by a chat line
-    /// latched before the relog in the same tick the reseed is sent; this
+    /// latched before the relog in the same game tick the reseed is sent; this
     /// arm cannot. The runner captures the baseline at step start and
     /// checks [`crate::tutorial::tutorial_confirmed`]; a bare
     /// [`Proof::check`] without that runner baseline fails closed.
@@ -194,8 +194,9 @@ pub enum Proof {
     /// loading or disconnected.
     NpcIdsAbsentNear { ids: &'static [usize], radius: i32 },
     /// No listed public ground item remains in this bounded field.
-    /// Requires the player inside the loaded field. Its runner budget counts
-    /// observed PLAYER_INFO ticks, not other dirty snapshot families.
+    /// Requires the player inside the loaded field and fails closed otherwise.
+    /// Its budget counts observed game ticks (one per `PLAYER_INFO`), not
+    /// other dirty snapshots.
     GroundItemIdsAbsentNear {
         ids: &'static [i32],
         x: i32,
@@ -291,7 +292,7 @@ pub(crate) fn fresh_chat_contains(snap: &GameSnapshot, baseline: i32, needle: &s
 
 /// Whether the snapshot's player tile stands inside the inclusive
 /// rectangle on `level`. Backs [`Proof::VisitedWithin`]; the runner
-/// latches it per step over observed ticks.
+/// latches it per step over observed dirty snapshots.
 pub(crate) fn visited_within_contains(
     snap: &GameSnapshot,
     min_x: i32,

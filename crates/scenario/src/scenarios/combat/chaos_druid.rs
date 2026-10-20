@@ -147,13 +147,14 @@ pub(crate) fn chaos_druid_yanille_scenario() -> Scenario {
 /// The frozen trip is fixed before any kill: its `observeLifecycle` only runs
 /// inside `bankReason`, so the ladder climb leaves `lastArea` on the dungeon
 /// and the first `bankReason` after the restock reads a missed death and banks
-/// a second time. Both live cells (baseline PASS and 341f0f4e4) reached the
-/// field at engine tick 206/209, ~128s of the old 180s wall (~0.62s a tick,
-/// both walls closing at ticks 249/292). That left ~84 ticks for an engage,
-/// a kill and a HerbLawNature pickup: the PASS took 43 ticks after arrival
-/// (one kill, a Law rune), the FAIL needed two kills (the first druid's herb
-/// waits until the card's own target dies) and ran out at tick 292. The
-/// shared 300s combat qualification wall leaves ~170s after arrival.
+/// second time. Both live cells (baseline PASS and 341f0f4e4) reached the
+/// field at game tick 206/209, ~128s of the old 180s wall (~0.62s per game
+/// tick, both walls closing at game ticks 249/292). That left ~84 game ticks
+/// for an engage, a kill and a HerbLawNature pickup: the PASS took 43 game
+/// ticks after arrival (one kill, a Law rune), the FAIL needed two kills (the
+/// first druid's herb waits until the card's own target dies) and ran out at
+/// game tick 292. The shared 300s combat qualification wall leaves ~170s after
+/// arrival.
 pub(crate) fn chaos_druid_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "chaos_druid_bank",

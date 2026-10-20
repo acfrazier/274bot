@@ -9,18 +9,20 @@ const CHAOS_RUNE_ID: i32 = 562;
 /// trip before the style is set (live `ardyfighter-window-r1`). Frozen rs2b0t at
 /// `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5, Adamant
 /// scimitar, foodTarget 1, empty food) set Strength at 7.5 s and 45.3 s; strong
-/// accounts at 44.6 s and 76.6 s. Worst style time 76.6 s = 128 engine ticks at
-/// 600 ms, + 30 for the first Strength hit, + 60 for one market↔East Ardougne
-/// booth round trip (~20 tiles each way at one tile per tick, plus open and
-/// deposit) = 218 ticks; at 1.25 runner dirties per engine tick (`moss_giant.rs`)
-/// that is 273, rounded up to 320.
+/// accounts at 44.6 s and 76.6 s. Worst style time 76.6 s = 128 game ticks at
+/// 600 ms, + 30 game ticks for the first Strength hit, + 60 game ticks for one
+/// market↔East Ardougne booth round trip (~20 tiles each way at one tile per
+/// game tick, plus open and deposit) = 218 game ticks. The old 1.25 dirty
+/// snapshots per game tick estimate gave 273 old dirty increments; the
+/// retained numeric cap is now 320 game ticks (192s), not 320 dirties.
 const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 320;
 /// Seeded bank trip arithmetic uses the frozen Fight's possible pre-bank
-/// combat hold: `90 s / 0.6 s = 150` engine ticks, plus the measured
-/// market→East Ardougne approach (~23 tiles) and the existing 20-tick
-/// open/waitBankReady component. Thus `(150 + 23 + 20) * 1.25 = 241.25`
-/// runner dirties, rounded to 320 for the first deposit arm. Return is the
-/// measured 20-tile path: `20 * 1.25 = 25`, rounded to 40.
+/// combat hold: `90 s / 0.6 s = 150` game ticks, plus the measured
+/// market→East Ardougne approach (~23 tiles) and the existing 20-game-tick
+/// open/waitBankReady component. At the old 1.25 dirty snapshots per game
+/// tick, `(150 + 23 + 20) * 1.25 = 241.25` old dirty increments; the former
+/// 320-dirty cap is now 320 game ticks (192s). The 20-tile return similarly
+/// estimated 25 old dirties, rounded to the current 40-game-tick cap.
 const ARDY_FIGHTER_BANK_SEEDED_DEPOSIT_WATCH_TICKS: u32 = 320;
 const ARDY_FIGHTER_BANK_SEEDED_RETURN_WATCH_TICKS: u32 = 40;
 /// ArdyFighter's loadout setting only selects gear (`weaponOf` falls back to

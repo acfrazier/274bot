@@ -318,9 +318,8 @@ pub(crate) fn herblore_secondaries_scenario() -> Scenario {
         ),
         ("watch further exact eggs after return", eggs),
     ] {
-        // Deposit arms on first ground egg while food/respawn still run.
         // Return is the reverse dungeon hop. See HERBLORE_EGG_* constant
-        // docs (dirty increments, not 150×600ms). Other arms keep 150.
+        // docs: 600 and 240 are observed game ticks, not dirty snapshots.
         let budget_ticks = if matches!(arm, Proof::BankItemId { .. }) {
             HERBLORE_EGG_DEPOSIT_WATCH_TICKS
         } else if matches!(arm, Proof::ArrivedNear { .. }) {

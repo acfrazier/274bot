@@ -44,13 +44,13 @@ pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
 const COMBAT_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(300);
-/// Runner dirty-snapshot increments, not engine ticks or wall seconds. Live
-/// combat receipts run near two dirty increments/second; 750 keeps the named
-/// 300s wall as the controlling bound instead of the ordinary 150-dirty arm.
+/// Observed game-tick cap (one per `PLAYER_INFO`, about 600ms on 289). The
+/// 750-game-tick wait allows 450s, so the 300s whole-run wall stays controlling
+/// instead of the ordinary 150-game-tick arm.
 const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
 /// Measured GreenDragon pressure reached its loaded deposit 268s after the
 /// post-Start baseline, before the roughly 320-tile return and resumed combat.
-/// Keep the same 2.5 dirty increments/second allowance as the 300s/750 arm.
+/// The 1500-game-tick cap is a per-step budget, not a whole-run deadline.
 const BANK_QUALIFICATION_WATCH_TICKS: u32 = 1500;
 pub(crate) const RUNE_SCIMITAR_ID: i32 = 1333;
 const DEFENCE_STAT: i32 = 1;
@@ -173,7 +173,7 @@ fn prepared_combat_core_scenario(
 fn apply_combat_qualification_budget(
     scenario: &mut Scenario,
     deadline: Duration,
-    watch_ticks: u32,
+    watch_game_ticks: u32,
 ) {
     scenario.settings.deadline = deadline;
     let start = scenario
@@ -182,7 +182,7 @@ fn apply_combat_qualification_budget(
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("combat qualification has a Start step");
     for step in &mut scenario.steps[start + 1..] {
-        step.wait.budget_ticks = step.wait.budget_ticks.max(watch_ticks);
+        step.wait.budget_ticks = step.wait.budget_ticks.max(watch_game_ticks);
     }
 }
 
@@ -466,7 +466,7 @@ pub(crate) struct QuestJournalState {
     answered: Option<(i32, String)>,
 }
 
-/// One tick of the native quest-journal dialog machine: continue a
+/// One game tick of the native quest-journal dialog machine: continue a
 /// `BUTTON_CONTINUE` chat IF (the completion's level-ups), else answer the
 /// option dialog the individual-quest path waits on (Select Individual
 /// Quest. → the required quest's page row → Complete.), else close the
@@ -520,7 +520,7 @@ pub(crate) fn answer_quest_journal_dialogs(
                 state.answered = Some(identity);
                 true
             }
-            // Nothing pressable in that snapshot: retry on the next tick.
+            // Nothing pressable in that snapshot: retry on the next game tick.
             SendResult::Refused { .. } => true,
         };
     }
@@ -542,11 +542,11 @@ pub(crate) fn answer_quest_journal_dialogs(
 /// journal row green. That green row is the completion boundary: the stat
 /// and inventory reset, the prepared-gear acknowledgements and the
 /// hostile-field teleport all follow it, so no quest reward can arrive
-/// after Start. The step's tick budget bounds a preparation that never
+/// after Start. The step's game-tick budget bounds a preparation that never
 /// acknowledges — the run fails before Start instead of starting without
 /// the prerequisite.
 pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
-    // The machine is re-entered once per tick by the runner's `Repeat`
+    // The machine is re-entered once per observed game tick by the runner's `Repeat`
     // arm; its "already answered this dialog" state is behind a mutex so
     // the step closure stays `Fn + Send + Sync` (the `StepKind` bound).
     let state = std::sync::Mutex::new(QuestJournalState::default());
