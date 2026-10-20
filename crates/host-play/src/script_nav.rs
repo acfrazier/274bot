@@ -284,7 +284,7 @@ fn strict_bank_access_options(mut options: FindOptions) -> FindOptions {
 }
 
 fn route_blocker_diagnosis(request: &ScriptRouteRequest) -> BlockerDiagnosis {
-    if request.radius <= 0 {
+    if request.radius <= 0 && request.candidate_goals.is_none() {
         BlockerDiagnosis::SingleTarget
     } else {
         BlockerDiagnosis::FirstGoal
@@ -673,6 +673,9 @@ fn route_capture_bytes(
         .checked_add(state.try_shared_retained_bytes()?)?
         .checked_add(route_vec_bytes(&request.bank)?)?
         .checked_add(arc_slice_heap_bytes::<AvoidRect>(request.avoid().len())?)?;
+    if let Some(goals) = &request.candidate_goals {
+        bytes = bytes.checked_add(arc_slice_heap_bytes::<WorldTile>(goals.as_slice().len())?)?;
+    }
     if let Some(geometry) = &request.live_geometry {
         bytes = bytes.checked_add(route_vec_bytes(&geometry.flags)?)?;
     }
@@ -1112,10 +1115,12 @@ impl RouteJob {
             .map_err(|_| RouteJobError::Allocation)?;
         let target_cursor = RouteTargetCursor::new(&request)?;
         let targets = Vec::new();
-        let search_mode = if request.radius > 0
-            && (request.arrival == ArrivalKind::Area
-                || request.live_geometry.is_some()
-                || (request.loc_id.is_none() && !request.world.collision.standable(request.to)))
+        let search_mode = if request.candidate_goals.is_some()
+            || (request.radius > 0
+                && (request.arrival == ArrivalKind::Area
+                    || request.live_geometry.is_some()
+                    || (request.loc_id.is_none()
+                        && !request.world.collision.standable(request.to))))
         {
             RouteSearchMode::First
         } else {
@@ -2198,6 +2203,7 @@ impl RouteJob {
             }
         }
         RouteJobOutput {
+            candidate_goals: self.request.candidate_goals.is_some(),
             kind: self.kind.take().expect("route demand kind is present"),
             completion: std::mem::take(&mut self.request.completion),
             identity: self
@@ -2729,6 +2735,7 @@ impl CooperativeJob for RouteJob {
 }
 
 pub(crate) struct RouteJobOutput {
+    candidate_goals: bool,
     kind: RouteDemandKind,
     completion: RouteCompletion,
     identity: WorkIdentity,
@@ -3504,6 +3511,14 @@ fn apply_route_output(
             {
                 return;
             }
+            let chosen_goal = if output.candidate_goals {
+                pending.as_ref().map_or_else(
+                    || route_path.as_ref().map(RoutePath::destination),
+                    |pending| Some(pending.dest),
+                )
+            } else {
+                None
+            };
             if let Some(assessment) = output.assessment.as_ref() {
                 crate::admission::log(Some(name), assessment, output.compat_v1);
             }
@@ -3541,6 +3556,13 @@ fn apply_route_output(
                     output.quest_evidence.clone(),
                 ) {
                     return;
+                }
+                if let Some(goal) = chosen_goal {
+                    // Recovery follows the chosen exact goal, not the caller's
+                    // ranking tile that may be in another component.
+                    if let Some(key) = bot.requested_route.as_mut() {
+                        key.0 = goal;
+                    }
                 }
                 if bot.route_basis.is_none() {
                     if let Some(route) = bot.route_path_for_follow() {
@@ -4307,6 +4329,7 @@ impl ScriptWalkArm {
             None
         };
         let request = ScriptRouteRequest {
+            candidate_goals: request.candidate_goals,
             generation: admission.generation,
             request_id: authority.request_id().get(),
             world: Arc::clone(world),
@@ -4493,6 +4516,7 @@ impl ScriptWalkArm {
             request.arrival,
             Some(admission),
             false,
+            request.candidate_goals,
         );
         if queued {
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
@@ -4535,6 +4559,7 @@ impl ScriptWalkArm {
             arrival,
             None,
             compat_tile_intent,
+            None,
         )
     }
 
@@ -4635,6 +4660,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4675,6 +4701,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4706,6 +4733,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4739,6 +4767,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             compat_tile_intent,
+            None,
         )
     }
 
@@ -4777,6 +4806,7 @@ impl ScriptWalkArm {
                 ArrivalKind::Reach,
                 None,
                 false,
+                None,
             )
             .then_some(receiver)
     }
@@ -4880,6 +4910,7 @@ impl ScriptWalkArm {
         arrival: ArrivalKind,
         request_admission: Option<crate::admission::Admission>,
         compat_tile_intent: bool,
+        candidate_goals: Option<script::native::WalkGoals>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -5159,6 +5190,7 @@ impl ScriptWalkArm {
             bot.native_walk_failure = None;
             bot.route_compat_tile_intent = compat_tile_intent;
             let request = ScriptRouteRequest {
+                candidate_goals,
                 generation: bot.route_generation,
                 request_id,
                 world: Arc::clone(world),
@@ -5381,12 +5413,16 @@ enum RouteTargetMode {
     Exact,
     Geometry,
     Radius,
+    Candidates,
 }
 
 impl RouteTargetCursor {
     fn shape(
         request: &ScriptRouteRequest,
     ) -> Result<(RouteTargetMode, usize, usize), RouteJobError> {
+        if let Some(goals) = &request.candidate_goals {
+            return Ok((RouteTargetMode::Candidates, goals.as_slice().len(), 0));
+        }
         if request.radius <= 0 {
             return Ok((RouteTargetMode::Exact, 1, 0));
         }
@@ -5442,6 +5478,20 @@ impl RouteTargetCursor {
             return false;
         }
         match self.mode {
+            RouteTargetMode::Candidates => {
+                let goals = request
+                    .candidate_goals
+                    .as_ref()
+                    .expect("candidate mode")
+                    .as_slice();
+                if let Some(&tile) = goals.get(self.index) {
+                    if request.world.collision.standable(tile) {
+                        self.targets.push(tile);
+                    }
+                }
+                self.index += 1;
+                self.index >= goals.len()
+            }
             RouteTargetMode::Exact => {
                 if self.index == 0 {
                     self.targets.push(request.to);
@@ -5720,6 +5770,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) world: Arc<NavWorld>,
     pub(crate) from: WorldTile,
     pub(crate) to: WorldTile,
+    pub(crate) candidate_goals: Option<script::native::WalkGoals>,
     pub(crate) radius: i32,
     pub(crate) loc_id: Option<i32>,
     pub(crate) arrival: ArrivalKind,
@@ -5749,7 +5800,14 @@ const BANK_ZONE_DIAGNOSTIC_TARGETS: usize = 8;
 impl ScriptRouteRequest {
     #[cfg(test)]
     fn targets(&self) -> Vec<WorldTile> {
-        if self.radius <= 0 {
+        if let Some(goals) = &self.candidate_goals {
+            goals
+                .as_slice()
+                .iter()
+                .copied()
+                .filter(|&tile| self.world.collision.standable(tile))
+                .collect()
+        } else if self.radius <= 0 {
             vec![self.to]
         } else if let Some(geometry) = self.live_geometry.as_ref() {
             geometry.candidates(self.to)
@@ -6937,6 +6995,7 @@ mod diagnostic_tests {
             Vec::new(),
         );
         let mut request = ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -7006,6 +7065,7 @@ mod diagnostic_tests {
     fn stage_request(world: Arc<NavWorld>) -> Box<ScriptRouteRequest> {
         let from = world.collision.origin;
         Box::new(ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -7053,6 +7113,42 @@ mod diagnostic_tests {
             nav::transport::TransportGraph::default(),
             Vec::new(),
         )))
+    }
+
+    #[test]
+    fn candidate_search_keeps_reachable_components_without_per_goal_searches() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let world = Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: tile(0),
+                width: 3,
+                height: 1,
+                walk: vec![0; 3 * 4],
+                blocked: vec![1 << 1],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ));
+        let mut old = stage_request(Arc::clone(&world));
+        old.to = tile(2);
+        old.arrival = ArrivalKind::Area;
+        let (outcome, _) = old.drive_route_job_for_test();
+        assert!(matches!(outcome, RouteOutcome::NoPath));
+        for from in [tile(0), tile(2)] {
+            let mut request = stage_request(Arc::clone(&world));
+            request.from = from;
+            request.to = tile(2);
+            request.arrival = ArrivalKind::Area;
+            request.candidate_goals =
+                Some(script::native::WalkGoals::new(vec![tile(2), tile(0)]).unwrap());
+            let job = completed_search_stage(request);
+            assert!(matches!(job.search_mode, RouteSearchMode::First));
+            let RouteJobOutcome::Route(route) = job.outcome.as_ref().unwrap() else {
+                panic!("one multi-goal search must find this component");
+            };
+            assert_eq!(route.to_route(&world.graph).dest, from);
+        }
     }
 
     #[test]

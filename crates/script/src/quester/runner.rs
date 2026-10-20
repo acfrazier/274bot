@@ -4355,6 +4355,7 @@ mod tests {
 
         let arrived = scene(destination, npc_tile, warlord.id);
         ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+            goal: None,
             request_id,
             evidence: EvidenceStamp {
                 run,

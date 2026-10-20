@@ -2265,6 +2265,7 @@ mod tests {
         for timed_out in [false, true] {
             let failure = clue_walk_receipt_failure(
                 crate::native::WalkReceipt {
+                    goal: None,
                     request_id: 1,
                     evidence: api::quest_progress::EvidenceStamp {
                         run: RunKey {

@@ -445,6 +445,7 @@ pub(crate) fn post_user_input_walk_receipt(
         (action.request_id.get(), action.run())
     };
     ledger.as_mut().expect("ledger must remain present").walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run,
@@ -469,6 +470,7 @@ fn mapped_walk_receipt(
     detail: Option<Arc<str>>,
 ) -> crate::native::WalkReceipt {
     crate::native::WalkReceipt {
+        goal: None,
         request_id: 7,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -1369,6 +1371,7 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
         .request_id
         .get();
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -1455,6 +1458,7 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
         FactKey::new("reach-gate"),
     )]);
     ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -7615,6 +7619,7 @@ fn arrive_slot_walk(
     slot.complete_native_walk(
         authority,
         crate::native::WalkReceipt {
+            goal: None,
             request_id: authority.request_id().get(),
             evidence: EvidenceStamp {
                 run: authority.run(),

@@ -2281,6 +2281,7 @@ fn real_squire_walk(
         escape: None,
     };
     let request = crate::ScriptRouteRequest {
+        candidate_goals: None,
         admission,
         generation: 1,
         request_id: 1,

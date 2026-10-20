@@ -65,6 +65,7 @@ impl Script for SettlementWalker {
             control.started = true;
             let request = WalkRequest {
                 target: TARGET,
+                candidate_goals: None,
                 loc_id: Some(0),
                 radius: 1,
                 arrival: nav::arrival::ArrivalKind::Reach,

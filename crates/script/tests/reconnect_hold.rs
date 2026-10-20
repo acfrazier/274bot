@@ -182,6 +182,7 @@ export default class T extends LoopingBot {
     iso.slot.complete_native_walk(
         &old,
         script::native::WalkReceipt {
+            goal: None,
             request_id: old.request_id().get(),
             evidence: api::quest_progress::EvidenceStamp {
                 run: old.run(),

@@ -2474,6 +2474,7 @@ impl SlotScript {
         }) {
             let request_id = action.request_id.get();
             ledger.walk = Some(crate::native::WalkReceipt {
+                goal: None,
                 request_id,
                 evidence: api::quest_progress::EvidenceStamp {
                     run: action.run(),

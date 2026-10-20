@@ -456,6 +456,7 @@ impl Gatherer {
     ) -> bool {
         let request = WalkRequest {
             target,
+            candidate_goals: None,
             loc_id: None,
             radius,
             arrival,
@@ -2142,6 +2143,7 @@ impl Gatherer {
         };
         let request = WalkRequest {
             target,
+            candidate_goals: None,
             loc_id: None,
             radius: 0,
             arrival: ArrivalKind::Reach,
@@ -2720,6 +2722,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             gatherer.handle_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 1,
                     evidence: tick.cx.evidence(),
                     end: WalkEnd::Arrived,
@@ -2763,6 +2766,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 4, |tick| {
             gatherer.handle_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 1,
                     evidence: tick.cx.evidence(),
                     end: WalkEnd::Arrived,
@@ -2823,6 +2827,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 1, |tick| {
             gatherer.handle_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 7,
                     evidence: tick.cx.evidence(),
                     end: WalkEnd::Failed,
@@ -2887,6 +2892,7 @@ mod tests {
         with_tick(&snapshot, &mut ledger, 1, |native| {
             gatherer.handle_walk(
                 WalkReceipt {
+                    goal: None,
                     request_id: 7,
                     evidence: api::quest_progress::EvidenceStamp {
                         run,
