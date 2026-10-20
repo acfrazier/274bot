@@ -15,6 +15,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   archives at the revision-bound nav builder's expected cache paths.
 - The 274 nav input inventory matches the pinned content commit and excludes
   a test-only script that is absent from that source tree.
+- The prepared 274 cache uses an explicit, byte-verified server/cache manifest
+  because its `versionlist` differs from the checked-in public identity.
 
 ### Panel
 
