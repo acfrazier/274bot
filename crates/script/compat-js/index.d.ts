@@ -888,11 +888,8 @@ export const Bank: {
     withdrawById(id: number, op?: string): boolean | Promise<boolean>;
     withdrawX(name: string, count: number): Promise<boolean>;
     withdrawXById(id: number, count: number, landsAsId?: number): Promise<boolean>;
-    /**
-     * Fill the pack from one bank item: Withdraw-All when the op exists, otherwise Withdraw-X for the free slots.
-     * Why: the 10-at-a-time fallback is several clicks slower than one X (#710).
-     */
-    withdrawLoad(name: string): Promise<boolean>;
+    /** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */
+    withdrawLoad(name: string | number): Promise<boolean>;
     deposit(name: string, op?: string): boolean | Promise<boolean>;
     depositInventory(): Promise<void>;
     depositAllMatching(match: (name: string, id: number) => boolean, log?: (msg: string) => void): Promise<void>;

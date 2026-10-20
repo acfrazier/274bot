@@ -12831,6 +12831,16 @@
       "nav_consuming": false
     },
     {
+      "id": "bank-withdraw-load-numeric-id",
+      "module": "api/bank/Bank.js",
+      "selector": "Bank.withdrawLoad",
+      "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
+      "runtime": "crates/script/src/shim/bank.js:162",
+      "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
       "id": "native-gathering-helper-types",
       "module": "shim/gathering_locations.js",
       "selector": "$module",
