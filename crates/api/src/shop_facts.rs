@@ -49,6 +49,8 @@ pub struct ShopItemFact {
     pub obj: String,
     pub name: String,
     pub baseline: i32,
+    /// Inv stock rate. `World.ts:1173-1198` moves one item toward baseline
+    /// when the engine tick is a multiple of this rate.
     #[serde(rename = "restockTicks")]
     pub restock_ticks: i32,
     pub cost: i32,
@@ -290,14 +292,21 @@ pub fn vendor_by_keeper_config<'a>(
     })
 }
 
-/// Frozen `unitPrice`: stock-sensitive per-unit sell price, never below 1.
+/// Content per-unit buying price, never below 1 gp.
+///
+/// Formula: `shop.rs2:131-147` and `shop.rs2:183-192`.
+/// Integer scaling: `NumberOps.ts:124-126`.
 pub fn unit_price(item: &ShopItemFact, sell: i32, delta: i32, stock: i32) -> i64 {
     let d = i64::from(stock) - i64::from(item.baseline);
     let haggle = (d * i64::from(delta)).clamp(-5000, 1000);
     let pct = (i64::from(sell) - haggle).max(100);
     (pct * i64::from(item.cost) / 1000).max(1)
 }
-/// Stock-sensitive total for `units`, pricing each unit at the remaining stock.
+/// Total price from `stock`, pricing each unit at the stock left by earlier units.
+///
+/// `units` is the unit count to price, not a held target.
+/// Content: `shop.rs2:66-67`, `shop.rs2:131-147` and `shop.rs2:183-192`.
+/// Integer scaling: `NumberOps.ts:124-126`.
 pub fn quote(rec: &ShopRecord, item: &ShopItemFact, units: i32, stock: i32) -> i64 {
     (0..units.max(0)).fold(0i64, |total, unit| {
         total.saturating_add(unit_price(
@@ -812,27 +821,25 @@ mod tests {
                 ["gerrant", "harry"],
                 "{revision:?}"
             );
-            for (vendor, (name, inv)) in vendors
-                .iter()
-                .zip([("Gerrant", "fishingshop"), ("Harry", "fishingshop2")])
-            {
+            let keepers = [
+                ("Gerrant", "fishingshop", 558, (3013, 3225, 0)),
+                ("Harry", "fishingshop2", 576, (2834, 3445, 0)),
+            ];
+            for (vendor, (name, inv, keeper_id, tile)) in vendors.iter().zip(keepers) {
                 assert_eq!(vendor.keeper_name, name);
                 assert_eq!(vendor.record.inv, inv);
                 assert_eq!(vendor.item.obj, "harpoon");
-                assert_eq!(
-                    vendor.keeper_id,
-                    catalog
-                        .npc_by_config(vendor.keeper_config)
-                        .expect("keeper config")
-                        .id
-                );
+                assert_eq!(vendor.keeper_id, keeper_id);
                 assert!(
                     catalog
                         .npc_placements()
                         .expect("NPC placements")
                         .rows
                         .iter()
-                        .any(|placement| placement.npc_id == vendor.keeper_id),
+                        .any(|placement| {
+                            placement.npc_id == keeper_id
+                                && (placement.x, placement.z, placement.plane) == tile
+                        }),
                     "{revision:?} {name} has a placement"
                 );
             }
@@ -915,33 +922,13 @@ param=shop_title,Fishing shop 2"#,
         let gerrant = vendor_by_keeper_config(&catalog, "gerrant", harpoon_id)
             .expect("Gerrant's harpoon row");
         assert_eq!(quote(gerrant.record, gerrant.item, 1, 2), 5);
-        assert_eq!(
-            quote(gerrant.record, gerrant.item, 2, 2),
-            unit_price(gerrant.item, gerrant.record.sell, gerrant.record.delta, 2)
-                + unit_price(gerrant.item, gerrant.record.sell, gerrant.record.delta, 1)
-        );
 
         let soulrune_id = catalog.item_by_alias("soulrune").expect("soul rune").id;
         let soulrune = vendor_by_keeper_config(&catalog, "magic_store_owner", soulrune_id)
             .expect("Magic Store owner's soul rune");
-        let one_at_baseline = unit_price(
-            soulrune.item,
-            soulrune.record.sell,
-            soulrune.record.delta,
-            soulrune.item.baseline,
-        );
-        let two_at_baseline = quote(soulrune.record, soulrune.item, 2, soulrune.item.baseline);
-        assert_eq!(
-            two_at_baseline,
-            one_at_baseline
-                + unit_price(
-                    soulrune.item,
-                    soulrune.record.sell,
-                    soulrune.record.delta,
-                    soulrune.item.baseline - 1,
-                )
-        );
-        assert!(two_at_baseline > one_at_baseline * 2);
+        assert_eq!(quote(soulrune.record, soulrune.item, 1, 50), 1250);
+        assert_eq!(quote(soulrune.record, soulrune.item, 1, 49), 1262);
+        assert_eq!(quote(soulrune.record, soulrune.item, 2, 50), 2512);
     }
 
     #[test]
