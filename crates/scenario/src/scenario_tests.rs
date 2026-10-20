@@ -2933,6 +2933,31 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+    let bank_prepare = bank.steps[..start]
+        .iter()
+        .position(|step| step.name.starts_with("prepare melee stats"))
+        .expect("fire_giant_bank prepares combat stats");
+    let bank_drain = bank.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "drain setstat level-up dialogs before the hostile-field teleport"
+        })
+        .expect("fire_giant_bank drains setstat level-up dialogs");
+    let bank_tele = bank.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("fire_giant_bank hostile-field teleport");
+    assert!(
+        bank_prepare < bank_drain && bank_drain < bank_tele && bank_tele < start,
+        "combat preparation, dialog drain, hostile-field teleport, then Start"
+    );
+    assert!(matches!(
+        bank.steps[bank_drain].kind,
+        StepKind::DrainDialogs { choice: 1 }
+    ));
+    assert_eq!(bank.steps[bank_drain].wait.arm, Proof::NoActiveContinue);
 }
 
 #[test]

@@ -215,6 +215,7 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
         ],
     );
     insert_waterfall_quest(&mut scenario);
+    insert_setstat_drain_before_hostile_tele(&mut scenario);
     scenario
 }
 
