@@ -647,7 +647,8 @@ impl Gatherer {
                     return;
                 };
                 for item in inventory.value.iter().filter(|item| item.count > 0) {
-                    let Some(index) = supply::unbankable_index(&self.prepared.selected, item)
+                    let Some(index) =
+                        crate::acquire::unbankable_index(&self.prepared.selected, item)
                     else {
                         continue;
                     };
