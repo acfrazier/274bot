@@ -3604,11 +3604,11 @@ fn apply_route_output(
                     }
                 }
                 bot.admission_pending = true;
+                bot.walk_outcome_detail = detail;
                 if bot.walk_outcome_generation == output.generation
                     && bot.walk_outcome_request_id == output.request_id
                 {
                     bot.native_walk_failure = native_failure.map(|end| (output.request_id, end));
-                    bot.walk_outcome_detail = detail;
                     bot.native_walk_blocked = if native_refused {
                         (!blocked.is_empty())
                             .then(|| (output.request_id, Arc::<[ZoneKey]>::from(blocked)))
@@ -6548,7 +6548,8 @@ impl NavBot {
         self.walk_outcome_radius = radius;
         self.walk_outcome_allow_teleports = allow_teleports;
         self.native_walk_blocked = None;
-        self.walk_outcome_detail = None;
+        // The request arm clears stale detail. Keep this route's host detail
+        // for its correlated terminal receipt.
         self.walk_missing_carry.clear();
         self.walk_live_refusal_id = 0;
     }
