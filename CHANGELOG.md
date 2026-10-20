@@ -43,6 +43,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Navigation checks
+
+- The built-in Elkoy and rune-essence navigation checks start beside the
+  transport NPC and seed only their required quest. They no longer start
+  transport checks while unrelated quest rewards still run.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
