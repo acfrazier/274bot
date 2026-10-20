@@ -2863,6 +2863,26 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/acquire/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/plan.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/plan_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/run.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/run_tests.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/anchor_return.rs",
       "owner": "T2"
     },
@@ -3748,10 +3768,6 @@
     },
     {
       "path": "crates/script/src/quest_journal/native_tests.rs",
-      "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/quester/bank_run.rs",
       "owner": "T2"
     },
     {
