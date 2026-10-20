@@ -66,6 +66,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
 
+- Scenario wait budgets and the receipt `ticks` count now use observed game
+  ticks, not client polling cycles. Repeated steps send at most once per game
+  tick.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain

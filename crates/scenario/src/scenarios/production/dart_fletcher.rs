@@ -34,10 +34,10 @@ const RUNE_DART_SUPPLY: i32 = 1_200;
 /// 1,000 Rune darts at the plan's 18.8 XP per dart is 18,800 XP; the
 /// gate keeps slack for the wire XP floor (`exp / 10`).
 const RUNE_DART_SUSTAINED_XP: i32 = 18_000;
-/// Runner dirty-snapshot increments for the sustained arms. The script
-/// pays one server tick per loop and sends at most five actions per
-/// loop, so 100 actions take 20-100 engine ticks; double the gold watch
-/// keeps the 180s deadline the controlling bound.
+/// Runner cap in observed game ticks (one per `PLAYER_INFO`). The script
+/// pays one server game tick per loop and sends at most five actions per
+/// loop, so 100 actions take 20–100 game ticks. The 300-game-tick cap is
+/// 180s; the whole-scenario 180s wall can pre-empt it after seed/setup.
 const RUNE_DART_SUSTAINED_WATCH_TICKS: u32 = 300;
 pub(crate) fn dart_fletcher_scenario() -> Scenario {
     dart_fletcher_variant(

@@ -95,8 +95,8 @@ const fn inj_list(id: &'static str, value: &'static [&'static str]) -> ScriptSet
     }
 }
 
-/// One post-Start watch with an explicit dirty-snapshot budget (runner
-/// increments, ~2.5/s at full rate; not engine ticks or wall seconds).
+/// One post-Start watch with an explicit observed game-tick budget (one per
+/// `PLAYER_INFO`; dirty snapshots and client cycles do not count).
 fn jive_watch(name: &'static str, arm: Proof, budget_ticks: u32) -> Step {
     Step {
         name,

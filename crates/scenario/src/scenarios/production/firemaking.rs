@@ -19,12 +19,13 @@ const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
 /// withdraws a full pack (`inventorySize - used` = 27 beside the tinderbox)
 /// and banks only once every log is burnt, so the core's restock and further
 /// light follow a whole 27-fire lane. At Firemaking 1 each light is a run of
-/// 4-tick attempts: 73 live fire-to-fire gaps (2eeaa5090, 1b88d89, 341f0f4e4)
-/// average 9.9 ticks (SD 7.3). The cycle is ~30 ticks Start → first fire,
-/// 26 gaps (~257), the bank leg (~17), then close, the walk back to a lane
-/// and one light (~26): ~345 engine ticks after the observed Start tick (13),
-/// ~212s at the measured ~0.62s a tick (all three cells hit 180s at tick
-/// 292, having lit 24, 25 and 27 of the 27 logs). 300s is that mean plus
+/// 4-game-tick attempts: 73 live fire-to-fire gaps (2eeaa5090, 1b88d89, 341f0f4e4)
+/// average 9.9 game ticks (SD 7.3). The cycle is ~30 game ticks from Start
+/// to first fire, 26 gaps (~257 game ticks), the bank leg (~17 game ticks),
+/// then close, the walk back to a lane, and one light (~26 game ticks):
+/// ~345 engine game ticks after the observed Start game tick (13), ~212s at
+/// the measured ~0.62s per game tick (all three cells hit 180s at game tick
+/// 292, having lit 24, 25, and 27 of the 27 logs). 300s is that mean plus
 /// ~3.8 SD of the 27-light sum.
 ///
 /// The 7bbfab323 core-gated Oak rerun (Firemaking 15) likewise burnt all
