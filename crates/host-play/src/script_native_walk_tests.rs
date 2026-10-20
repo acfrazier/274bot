@@ -314,6 +314,13 @@ fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
         rig.observe(1);
         rig.wait_routed();
         assert_eq!(
+            rig.navs.lock().unwrap()["alice"]
+                .walk_outcome_detail
+                .as_deref(),
+            Some(tier),
+            "the host publishes the selected tier before follow starts"
+        );
+        assert_eq!(
             rig.navs.lock().unwrap()["alice"].route_destination(),
             Some(goal),
             "preferred={preferred:?}: a reachable preferred stand outranks the nearer fallback"

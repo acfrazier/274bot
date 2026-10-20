@@ -18,9 +18,8 @@ pub struct Walk {
     key: WalkKey,
     loc_id: Option<i32>,
     arrival: ArrivalKind,
-    // Share the bounded request data only while this action is pending, so
-    // its exact host-selected goal can be labelled without persistent nav state.
-    candidate_goals: Option<super::WalkGoals>,
+    // Retain only arrival mode. The host retains the goals and reports their tier.
+    candidate_goals: bool,
     request_id: u64,
     required_after: EvidenceStamp,
     deadline: Duration,
@@ -98,7 +97,7 @@ impl NativeMachine for Walk {
         let loc_id = request.loc_id;
         let arrival = request.arrival;
         let required_after = request.required_after;
-        let candidate_goals = request.candidate_goals.clone();
+        let candidate_goals = request.candidate_goals.is_some();
         let request_id = cx.walk(request)?;
         let mut wait = WalkSlot::new();
         wait.begin(
@@ -161,7 +160,7 @@ impl NativeMachine for Walk {
             outcome,
             loc_id: self.loc_id,
             arrival: self.arrival,
-            candidate_goals: self.candidate_goals.is_some(),
+            candidate_goals: self.candidate_goals,
             goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(self.request_id, &frame) {
@@ -179,20 +178,8 @@ impl NativeMachine for Walk {
             return Poll::Pending;
         }
 
-        let detail = self
-            .candidate_goals
-            .as_ref()
-            .zip(frame.goal)
-            .and_then(|(goals, goal)| {
-                if goals.preferred().contains(&goal) {
-                    Some(std::sync::Arc::from("candidate_goal_tier=preferred"))
-                } else if goals.fallback().contains(&goal) {
-                    Some(std::sync::Arc::from("candidate_goal_tier=fallback"))
-                } else {
-                    None
-                }
-            });
         if frame.arrived(self.key) {
+            let detail = receipt.and_then(|receipt| receipt.detail.clone());
             return Poll::Ready(Ok(WalkReceipt {
                 goal: frame.goal,
                 request_id: self.request_id,
@@ -206,13 +193,7 @@ impl NativeMachine for Walk {
             }));
         }
         match receipt {
-            Some(receipt) => {
-                let mut receipt = receipt.clone();
-                if let Some(detail) = detail {
-                    receipt.detail = Some(detail);
-                }
-                Poll::Ready(Ok(receipt))
-            }
+            Some(receipt) => Poll::Ready(Ok(receipt.clone())),
             None => Poll::Pending,
         }
     }

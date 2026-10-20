@@ -120,6 +120,12 @@ const CATHERBY_HARPOON_START: WorldTile = WorldTile {
     z: 3436,
     level: 0,
 };
+const ARDOUGNE_GUILD_START: WorldTile = WorldTile {
+    x: 2661,
+    z: 3306,
+    level: 0,
+};
+
 const FISHING_GUILD_START: WorldTile = WorldTile {
     x: 2611,
     z: 3399,
@@ -5824,7 +5830,7 @@ fn fixture_plan(
         LiveCase::FishHarpoonBank => fixture_tile(cell.tile_env(case), world_tile(2840, 3436))?,
         LiveCase::FishHarpoonBankAuto => CATHERBY_HARPOON_START,
         LiveCase::FishBankSoak => CATHERBY_HARPOON_START,
-        LiveCase::FishGuildApproach => FISHING_GUILD_START,
+        LiveCase::FishGuildApproach => ARDOUGNE_GUILD_START,
         LiveCase::Site => match cell {
             Cell::Fishing => fixture_tile(cell.tile_env(case), FISHING_GUILD_START)?,
             Cell::Woodcutting => world_tile(3120, 3267),
@@ -7559,7 +7565,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             )
         };
         receipt["guild_approach"] = json!({
-            "start_tile": [FISHING_GUILD_START.x, FISHING_GUILD_START.z, FISHING_GUILD_START.level],
+            "start_tile": [ARDOUGNE_GUILD_START.x, ARDOUGNE_GUILD_START.z, ARDOUGNE_GUILD_START.level],
             "end_tile": end_tile,
             "ticks": end_tick,
             "native_ticks": native_tick,
@@ -9687,7 +9693,12 @@ mod fish_guild_ardougne_fixture_tests {
         assert_eq!(Cell::Fishing.default_tool_id(case), 311);
         assert_eq!(Cell::Fishing.products(case), &[TUNA_ID, SWORDFISH_ID]);
         let (start, plan, task) = fixture_plan(Cell::Fishing, case).unwrap();
-        assert_eq!(start, FISHING_GUILD_START);
+        assert_eq!(start, ARDOUGNE_GUILD_START);
+        assert!(!fishing_guild_area_reached(Some((
+            start.x,
+            start.z,
+            start.level
+        ))));
         assert!(plan.inventory_seed.is_empty());
         assert!(plan.bank_seed.is_empty());
         assert!(plan.seed_locs.is_empty());

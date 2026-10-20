@@ -2666,6 +2666,7 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
+        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
         assert!(
             size_of::<Gatherer>() <= 1024,
             "Gatherer={} exceeds its inline budget",
@@ -2673,7 +2674,7 @@ mod tests {
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
-            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} WalkGoals={} WalkRequest={} WalkReceipt={}",
+            "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
             size_of::<Active>(),
             size_of::<GatherRun>(),
@@ -2682,6 +2683,7 @@ mod tests {
             size_of::<GatherRetained>(),
             size_of::<GatherScratch>(),
             size_of::<TargetPlan>(),
+            size_of::<Walk>(),
             size_of::<crate::native::WalkGoals>(),
             size_of::<crate::native::WalkRequest>(),
             size_of::<crate::native::WalkReceipt>()
