@@ -111,12 +111,13 @@ fn observation_stand(cell: SceneRegionInput, here: WorldTile) -> WorldTile {
     }
 }
 
-/// All exact, standable positions that can observe a whole selected cell.
-/// Build this bounded set once, after placement ranking; collision legality
-/// alone does not say which component the player can reach.
+/// Prefer the old ranked stand's legal radius-one arrivals. Only an unreachable
+/// preferred tier permits the wider observation set, so reachable old choices
+/// retain their work-area and resource-origin preference.
 fn observation_goals(
     cells: impl Iterator<Item = SceneRegionInput> + Clone,
     collision: Option<nav::contract::CollisionView<'_>>,
+    preferred_stand: Option<WorldTile>,
 ) -> Result<WalkGoals, WalkGoalsError> {
     let capacity = cells
         .clone()
@@ -155,7 +156,27 @@ fn observation_goals(
             }
         }
     }
-    WalkGoals::new(goals)
+    if let Some(stand) = preferred_stand {
+        let mut preferred = [stand; 9];
+        let mut count = 0;
+        let radius = i32::from(RESOURCE_APPROACH_RADIUS);
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                let tile = WorldTile {
+                    x: stand.x + dx,
+                    z: stand.z + dz,
+                    level: stand.level,
+                };
+                if collision.is_none_or(|view| view.standable(tile)) {
+                    preferred[count] = tile;
+                    count += 1;
+                }
+            }
+        }
+        WalkGoals::with_preferred(goals, &preferred[..count])
+    } else {
+        WalkGoals::new(goals)
+    }
 }
 
 fn region_visible(bounds: SceneRegionInput, here: WorldTile) -> bool {
@@ -937,7 +958,7 @@ fn select_with_access(
         if method.skill == GatherSkill::Fishing {
             let survey = fishing.placement(method_index, spot.id.0);
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
-            match observation_goals(survey.unobserved_cells(bounds), collision) {
+            match observation_goals(survey.unobserved_cells(bounds), collision, Some(tile)) {
                 Ok(candidates) => goals = Some(candidates),
                 Err(error) => {
                     return SelectionResult {
@@ -1107,7 +1128,7 @@ pub fn resource_return_target(
         let mut goals = None;
         if method.skill == GatherSkill::Fishing {
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
-            match observation_goals(observation_cells(bounds), observation.collision) {
+            match observation_goals(observation_cells(bounds), observation.collision, Some(tile)) {
                 Ok(candidates) => goals = Some(candidates),
                 Err(WalkGoalsError::Empty) => {
                     return ResourceReturn::Unavailable {
@@ -1773,7 +1794,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn real_catalog() -> Arc<GatherCatalog> {
+    pub(super) fn real_catalog() -> Arc<GatherCatalog> {
         let data = api::game_data::for_revision(client::io::ClientRevision::R289)
             .expect("embedded game data");
         api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
@@ -1910,7 +1931,7 @@ pub(crate) mod tests {
         z: 3412,
         level: 0,
     };
-    fn real_nav_world() -> &'static nav::world::NavWorld {
+    pub(super) fn real_nav_world() -> &'static nav::world::NavWorld {
         super::test_real_nav_world().as_ref()
     }
 
@@ -1950,7 +1971,10 @@ pub(crate) mod tests {
         }
     }
 
-    fn guild_fishing_settings(method: &GatherMethod, area: WorkArea) -> GathererSettings {
+    pub(super) fn guild_fishing_settings(
+        method: &GatherMethod,
+        area: WorkArea,
+    ) -> GathererSettings {
         GathererSettings {
             skill: "Fishing".into(),
             fishing_method: method.id.0.to_string(),
@@ -1965,7 +1989,7 @@ pub(crate) mod tests {
         super::FISHING_STAND_SEARCHES.with(|count| count.replace(0))
     }
 
-    fn select_unloaded_fishing(
+    pub(super) fn select_unloaded_fishing(
         catalog: &GatherCatalog,
         method: &GatherMethod,
         index: usize,
@@ -1992,7 +2016,10 @@ pub(crate) mod tests {
         )
     }
 
-    fn area_goals(collision: &nav::collision::WorldCollision, stand: WorldTile) -> Vec<WorldTile> {
+    pub(super) fn area_goals(
+        collision: &nav::collision::WorldCollision,
+        stand: WorldTile,
+    ) -> Vec<WorldTile> {
         let radius = i32::from(RESOURCE_APPROACH_RADIUS);
         (-radius..=radius)
             .flat_map(move |dx| {
@@ -2004,6 +2031,37 @@ pub(crate) mod tests {
             })
             .filter(|tile| collision.standable(*tile))
             .collect()
+    }
+
+    fn route_observation(
+        world: &nav::world::NavWorld,
+        from: WorldTile,
+        goals: &WalkGoals,
+        state: &nav::world_state::WorldState,
+    ) -> Result<nav::router::Route, nav::router::RouteError> {
+        let preferred = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            goals.preferred(),
+            nav::router::FindOptions::default(),
+            state,
+        )
+        .into_route();
+        preferred.or_else(|error| {
+            if goals.fallback().is_empty() {
+                return Err(error);
+            }
+            nav::router::find_first_with(
+                &world.collision,
+                &world.graph,
+                from,
+                goals.fallback(),
+                nav::router::FindOptions::default(),
+                state,
+            )
+            .into_route()
+        })
     }
 
     #[test]
@@ -2925,6 +2983,75 @@ pub(crate) mod tests {
                 "{mode:?}: return must not reuse the player-clamped observation stand {player_clamp:?}"
             );
         }
+    }
+
+    #[test]
+    fn draynor_real_router_returns_to_the_spots_not_the_bank_booth() {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
+            return;
+        };
+        let world = real_nav_world();
+        let lease = test_real_nav_lease();
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.saltfish.op3").unwrap();
+        let bank = WorldTile {
+            x: 3092,
+            z: 3242,
+            level: 0,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Site,
+            anchor: WorldTile {
+                x: 3086,
+                z: 3229,
+                level: 0,
+            },
+            radius: 8,
+        };
+        let ResourceReturn::Ready(selected) = resource_return_target(
+            &catalog,
+            &[method_index(&catalog, method)],
+            &guild_fishing_settings(method, area),
+            area,
+            ReturnObservation {
+                here: bank,
+                now: 1,
+                skill_stat: 68,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(lease.collision()),
+            },
+        ) else {
+            panic!("Draynor must supply an observation return");
+        };
+        let goals = selected.observation_goals.as_ref().unwrap();
+        assert!(
+            goals.fallback().contains(&bank),
+            "reproduce the review's admitted booth stand"
+        );
+        assert!(!goals.preferred().contains(&bank));
+        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        state.stats = (0..=20).map(|skill| (skill, 99)).collect();
+        let route = route_observation(world, bank, goals, &state).unwrap();
+        assert!(goals.preferred().contains(&route.dest));
+        assert!(area.contains(route.dest));
+        assert_ne!(route.dest, bank);
+        assert!(route.ticks > 0.0);
+        let old = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            bank,
+            &area_goals(&world.collision, selected.plan.tile),
+            nav::router::FindOptions::default(),
+            &state,
+        )
+        .into_route()
+        .unwrap();
+        assert_eq!(
+            route, old,
+            "the router must preserve the old resource-origin choice"
+        );
     }
 
     #[test]
@@ -4343,11 +4470,11 @@ pub(crate) mod tests {
             max_z: 0,
             level: 0,
         };
-        let goals = observation_goals(observation_cells(bounds), None).unwrap();
+        let goals = observation_goals(observation_cells(bounds), None, None).unwrap();
         assert_eq!(goals.as_slice().len(), 992);
         assert!(goals.as_slice().windows(2).all(|pair| pair[0] != pair[1]));
         assert_eq!(
-            observation_goals(std::iter::empty(), None).unwrap_err(),
+            observation_goals(std::iter::empty(), None, None).unwrap_err(),
             WalkGoalsError::Empty
         );
         let too_large = SceneRegionInput {
@@ -4355,7 +4482,7 @@ pub(crate) mod tests {
             ..bounds
         };
         assert_eq!(
-            observation_goals(observation_cells(too_large), None).unwrap_err(),
+            observation_goals(observation_cells(too_large), None, None).unwrap_err(),
             WalkGoalsError::TooMany {
                 count: WalkGoals::MAX + 1,
                 limit: WalkGoals::MAX,
@@ -4387,7 +4514,7 @@ pub(crate) mod tests {
                     let Some(bounds) = movement_bounds(spot) else {
                         continue;
                     };
-                    let goals = observation_goals(observation_cells(bounds), None).unwrap();
+                    let goals = observation_goals(observation_cells(bounds), None, None).unwrap();
                     maximum = maximum.max(goals.as_slice().len());
                     checked += 1;
                     assert!(goals.as_slice().iter().all(|goal| {
@@ -4448,17 +4575,19 @@ pub(crate) mod tests {
             old.route().is_err(),
             "the old locally legal clamp must reproduce the disconnected-island failure"
         );
-        let routed = nav::router::find_first_with(
-            &world.collision,
-            &world.graph,
+        let route = route_observation(
+            world,
             here,
-            goals,
-            nav::router::FindOptions::default(),
+            selected.observation_goals.as_ref().unwrap(),
             &state,
-        );
-        let route = routed
-            .route()
-            .expect("one source-reachable observation goal is enough");
+        )
+        .expect("one source-reachable observation goal is enough");
+        assert!(!selected
+            .observation_goals
+            .as_ref()
+            .unwrap()
+            .preferred()
+            .contains(&route.dest));
         assert!(goals.contains(&route.dest));
         assert!(route.ticks > 0.0);
         let island = *old_goals.first().expect("old clamp has legal island goals");
@@ -4466,17 +4595,13 @@ pub(crate) mod tests {
             goals.contains(&island),
             "never discard non-mainland components"
         );
-        let from_island = nav::router::find_first_with(
-            &world.collision,
-            &world.graph,
+        let island_route = route_observation(
+            world,
             island,
-            goals,
-            nav::router::FindOptions::default(),
+            selected.observation_goals.as_ref().unwrap(),
             &state,
-        );
-        let island_route = from_island
-            .route()
-            .expect("the player's island is a valid start");
+        )
+        .expect("the player's island is a valid start");
         assert_eq!(island_route.dest, island);
         assert_eq!(island_route.ticks, 0.0);
         eprintln!(
@@ -4499,15 +4624,16 @@ pub(crate) mod tests {
         ) else {
             panic!("bank return must retain the same multi-goal policy");
         };
-        let return_goals = returned.observation_goals.as_ref().unwrap().as_slice();
-        let return_route = nav::router::find_first_with(
-            &world.collision,
-            &world.graph,
+        let return_route = route_observation(
+            world,
             here,
-            return_goals,
-            nav::router::FindOptions::default(),
+            returned.observation_goals.as_ref().unwrap(),
             &state,
         );
-        assert!(return_route.route().is_ok());
+        assert!(return_route.is_ok());
     }
 }
+
+#[cfg(test)]
+#[path = "select_site_parity_tests.rs"]
+mod site_parity_tests;
