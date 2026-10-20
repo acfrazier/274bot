@@ -3,7 +3,10 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WorldTile};
+use api::snapshot::{
+    ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WidgetRoot, WidgetView,
+    WorldTile,
+};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -173,6 +176,16 @@ pub enum Proof {
     /// `getvar` reply must come from this arm. The runner captures the baseline
     /// at step start; a bare [`Proof::check`] without it fails closed.
     FreshChat { needle: &'static str },
+    /// A fresh system-chat quest-completion line and the exact visible
+    /// completion-scroll text in the expected main-interface root/component.
+    /// The runner captures the chat baseline when the step begins; a bare
+    /// snapshot check fails closed.
+    FreshQuestCompletion {
+        chat_needle: &'static str,
+        main_root_component_id: i32,
+        component_id: i32,
+        text: &'static str,
+    },
     /// An exact system-chat confirmation from `::speed` that is newer than
     /// the runner's pre-send chat baseline. A confirmation already in the
     /// ring is stale; a bare [`Proof::check`] without the baseline fails
@@ -289,6 +302,31 @@ pub(crate) fn fresh_chat_contains(snap: &GameSnapshot, baseline: i32, needle: &s
         .any(|line| line.sequence > baseline && line.text.contains(needle))
 }
 
+/// Whether fresh completion chat and the named visible main-interface
+/// component are both present in the current observation.
+pub(crate) fn fresh_quest_completion_contains(
+    chat_lines: &[ChatLineView],
+    widgets: &[WidgetView],
+    baseline: i32,
+    chat_needle: &str,
+    main_root_component_id: i32,
+    component_id: i32,
+    text: &str,
+) -> bool {
+    chat_lines.iter().any(|line| {
+        line.type_ == 0
+            && line.username.is_none()
+            && line.sequence > baseline
+            && line.text.contains(chat_needle)
+    }) && widgets.iter().any(|widget| {
+        widget.root == WidgetRoot::Main
+            && widget.root_component_id == main_root_component_id
+            && widget.component_id == component_id
+            && !widget.hidden
+            && widget.text.as_deref() == Some(text)
+    })
+}
+
 /// Whether the snapshot's player tile stands inside the inclusive
 /// rectangle on `level`. Backs [`Proof::VisitedWithin`]; the runner
 /// latches it per step over observed ticks.
@@ -381,6 +419,14 @@ impl Proof {
                 crate::tutorial::TUTORIAL_CHAT_NEEDLE
             ),
             Proof::FreshChat { needle } => format!("fresh_chat(contains \"{needle}\")"),
+            Proof::FreshQuestCompletion {
+                chat_needle,
+                main_root_component_id,
+                component_id,
+                text,
+            } => format!(
+                "fresh_quest_completion(chat contains \"{chat_needle}\",main={main_root_component_id}/{component_id}=\"{text}\")"
+            ),
             Proof::WorldSpeedChanged { ms } => format!("world_speed_changed({ms}ms)"),
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::FreshStatXpGain { id, min } => {
@@ -693,6 +739,9 @@ impl Proof {
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::FreshTutorial => false,
             Proof::FreshChat { .. } => false,
+            // Fresh chat plus an exact visible quest scroll needs the
+            // runner's step-start baseline and full widget observation.
+            Proof::FreshQuestCompletion { .. } => false,
             // Visited-latch needs the runner's per-step observation (see
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::VisitedWithin { .. } => false,
@@ -2411,6 +2460,171 @@ mod tests {
             Proof::FreshChat { needle }.name(),
             "fresh_chat(contains \"get murderquest: 1\")"
         );
+    }
+
+    #[test]
+    fn fresh_quest_completion_requires_fresh_chat_and_exact_visible_scroll() {
+        use api::snapshot::WidgetKind;
+
+        const CHAT: &str = "Congratulations! Quest complete!";
+        const TEXT: &str = "You have completed the Waterfall Quest!";
+        let line = ChatLineView {
+            type_: 0,
+            username: None,
+            text: CHAT.into(),
+            sequence: 10,
+        };
+        let widget =
+            |root, root_component_id, component_id, hidden, text: Option<&str>| WidgetView {
+                kind: WidgetKind::Widget,
+                component_id,
+                layer_id: 0,
+                parent_id: -1,
+                root_component_id,
+                root,
+                type_: 0,
+                button_type: 0,
+                client_code: 0,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                scroll_height: 0,
+                scroll_position: 0,
+                hidden,
+                text: text.map(str::to_owned),
+                alternate_text: None,
+                button_text: None,
+                target_verb: None,
+                target_base: None,
+                target_mask: 0,
+                model_type: 0,
+                model_id: 0,
+                alternate_model_type: 0,
+                alternate_model_id: 0,
+                scripts: None,
+                script_comparators: None,
+                script_operands: None,
+                varp_bindings: vec![],
+                colour: 0,
+                actions: vec![],
+                items: vec![],
+            };
+        let proof = Proof::FreshQuestCompletion {
+            chat_needle: CHAT,
+            main_root_component_id: 297,
+            component_id: 301,
+            text: TEXT,
+        };
+        let matching = widget(WidgetRoot::Main, 297, 301, false, Some(TEXT));
+        assert!(fresh_quest_completion_contains(
+            std::slice::from_ref(&line),
+            std::slice::from_ref(&matching),
+            9,
+            CHAT,
+            297,
+            301,
+            TEXT,
+        ));
+        assert!(!proof.check(&GameSnapshot::new(), None));
+        assert_eq!(
+            proof.name(),
+            "fresh_quest_completion(chat contains \"Congratulations! Quest complete!\",main=297/301=\"You have completed the Waterfall Quest!\")"
+        );
+
+        let fails = |lines: &[ChatLineView], widgets: &[WidgetView], baseline| {
+            !fresh_quest_completion_contains(lines, widgets, baseline, CHAT, 297, 301, TEXT)
+        };
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                std::slice::from_ref(&matching),
+                10,
+            ),
+            "stale chat"
+        );
+        assert!(
+            fails(&[], std::slice::from_ref(&matching), 9),
+            "missing chat"
+        );
+
+        assert!(
+            fails(
+                &[ChatLineView {
+                    type_: 1,
+                    ..line.clone()
+                }],
+                std::slice::from_ref(&matching),
+                9,
+            ),
+            "non-system chat"
+        );
+        assert!(
+            fails(
+                &[ChatLineView {
+                    username: Some("Other".into()),
+                    ..line.clone()
+                }],
+                std::slice::from_ref(&matching),
+                9,
+            ),
+            "attributed chat"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(
+                    WidgetRoot::Main,
+                    297,
+                    301,
+                    false,
+                    Some("Quest complete!")
+                )],
+                9,
+            ),
+            "wrong quest text"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Side, 297, 301, false, Some(TEXT))],
+                9,
+            ),
+            "wrong root kind"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 296, 301, false, Some(TEXT))],
+                9,
+            ),
+            "wrong root component"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 300, false, Some(TEXT))],
+                9,
+            ),
+            "wrong component"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 301, true, Some(TEXT))],
+                9,
+            ),
+            "hidden text"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 301, false, None)],
+                9,
+            ),
+            "missing text"
+        );
+        assert!(fails(&[line], &[], 9), "missing scroll");
     }
 
     #[test]

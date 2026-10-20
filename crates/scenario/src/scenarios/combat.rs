@@ -401,36 +401,30 @@ fn combat_core_scenario_with_preparation(
 /// quest-journal command `~quest` (`_test/scripts/cheats/cheat_quest.rs2`
 /// `@debug_quests`): "Select Individual Quest." → the quest's row on the
 /// paginated `p_choice5_header` list → "Complete.", which queues that
-/// quest's own `[queue,<quest>_complete]` script. The path is targeted: the
-/// required quest's completion is the only script queued, so no *other*
-/// completion's rewards can arrive after Start (the demonstrated
-/// `~completequests` leak: `QuestDone(Waterfall)` returned while ~60 queued
-/// completions still owed stats/items/dialogs).
+/// quest's own `[queue,<quest>_complete]` script. The path is targeted: only
+/// the required quest's completion is queued, so no other quest can complete
+/// during these cells.
 ///
 /// `dialog` is the quest's `quest_names_enum` label
 /// (`content/scripts/general/configs/quest.enum`: index 34 `Lost City`,
 /// index 50 `Waterfall Quest`) — the text the native list renders as
-/// `<index>. <label>`; `journal` is the quest-tab row the native
-/// `~send_quest_complete` helper paints green
-/// (`content/scripts/player/interfaces/questlist.if` `[zanaris]`/`[waterfall]`,
-/// `content/scripts/general/scripts/quests.rs2`), the acknowledgement the
-/// fixture waits for.
+/// `<index>. <label>`. `acknowledgement` is the completion boundary: Lost
+/// City and Shilo use their completed journal row; Waterfall requires the
+/// content's fresh generic completion message and exact visible Waterfall
+/// completion-scroll text.
+/// Waterfall varp 65 does not transmit to the client: `[waterfall_quest]`
+/// has no `transmit=yes`. Its varp update and rewards run in the same server
+/// script/tick, so there is no client-visible ordering delay to wait out. The
+/// message plus named scroll provide the observable, quest-specific signal.
 ///
-/// The acknowledgement is the completion boundary itself, verified in clean
-/// native content: `quest_zanaris.rs2` `[queue,zanaris_quest_complete]` sets
-/// `%zanaris = ^zanaris_complete` (the var `levelrequire_zanaris_quest` gates
-/// `opheld2 dragon_dagger` on, `levelrequire/scripts/levelrequire.rs2`) and
-/// then calls `~send_quest_complete(questlist:zanaris, …)`; the FireGiant
-/// counterpart `[queue,waterfall_quest_complete]`
-/// (`quest_waterfall/scripts/quest_waterfall.rs2`) banks 2 diamonds, 2 gold
-/// bars, 40 mithril seeds and 137,500 attack + strength XP before the same
-/// helper. Every reward statement precedes the green, and `send_quest_complete`
-/// is the last call in both scripts, so a fixture that waits for the green and
-/// then resets stats/inventory cannot have quest rewards land after Start.
+/// Shilo and Lost City set their completion varp and paint the corresponding
+/// journal row in their native completion scripts. Their rewards precede
+/// `~send_quest_complete`, so the journal acknowledgement remains their
+/// completion boundary.
 #[derive(Clone, Copy)]
 pub(crate) struct NativeQuestPrereq {
     dialog: &'static str,
-    journal: &'static str,
+    acknowledgement: Proof,
 }
 
 /// Shilo Village (`quest_names_enum` 43, journal row `[zombiequeen]` text
@@ -438,7 +432,9 @@ pub(crate) struct NativeQuestPrereq {
 /// wooden-gate membership (`quest_zombiequeen.rs2` `[oploc1,_shilo_woodengate]`).
 pub(super) const SHILO_VILLAGE_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Shilo Village",
-    journal: "Shilo Village",
+    acknowledgement: Proof::QuestDone {
+        name: "Shilo Village",
+    },
 };
 
 /// The native quest-journal command and the labels of its individual-quest
@@ -589,9 +585,7 @@ pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
                 }),
             },
             wait: Wait {
-                arm: Proof::QuestDone {
-                    name: prereq.journal,
-                },
+                arm: prereq.acknowledgement,
                 budget_ticks: 600,
             },
         },

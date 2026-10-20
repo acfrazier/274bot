@@ -333,12 +333,24 @@ pub fn fire_pending_catalog_start(
             }) {
                 match error {
                     script::StartLoadError::Waiting(reason) => pending[index].waiting(reason),
-                    other => pair.fail_start(other.to_string()),
+                    script::StartLoadError::NoLoadouts(reason) => {
+                        pair.fail_start(reason.clone());
+                        return StartScriptPump::Failed(format!("start failed: {reason}"));
+                    }
+                    other => {
+                        if pending.iter().all(|card| !card.started) {
+                            pair.retry_start();
+                        }
+                        pending[index].waiting(other.to_string());
+                    }
                 }
                 return StartScriptPump::Hold;
             }
             pending[index].started = true;
             pending[index].waiting_reason = None;
+            if index == 0 {
+                pair.accept_start();
+            }
         }
         return StartScriptPump::Continue;
     }
@@ -350,12 +362,21 @@ pub fn fire_pending_catalog_start(
         if let Err(error) =
             start_stashed_catalog_card(handle, card, || watch.begin_start(&card.slot))
         {
-            if let script::StartLoadError::Waiting(reason) = error {
-                card.waiting(reason);
-                return StartScriptPump::Hold;
+            match error {
+                script::StartLoadError::Waiting(reason) => {
+                    card.waiting(reason);
+                    return StartScriptPump::Hold;
+                }
+                script::StartLoadError::NoLoadouts(reason) => {
+                    watch.fail_start(&card.slot, reason.clone());
+                    return StartScriptPump::Failed(format!("start failed: {reason}"));
+                }
+                other => {
+                    watch.retry_start(&card.slot);
+                    card.waiting(other.to_string());
+                    return StartScriptPump::Hold;
+                }
             }
-            watch.fail_start(&card.slot, error.to_string());
-            return StartScriptPump::Failed(format!("start failed: {error}"));
         }
         card.started = true;
         card.waiting_reason = None;

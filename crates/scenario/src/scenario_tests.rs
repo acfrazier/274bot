@@ -3,6 +3,13 @@ use super::scenarios::{
 };
 use super::*;
 
+const WATERFALL_COMPLETION_ACK: Proof = Proof::FreshQuestCompletion {
+    chat_needle: "Congratulations! Quest complete!",
+    main_root_component_id: 297,
+    component_id: 301,
+    text: "You have completed the Waterfall Quest!",
+};
+
 #[test]
 fn budget_s_from_parses_rs2b0t_style_seconds() {
     assert_eq!(budget_s_from(None), None);
@@ -1760,6 +1767,10 @@ fn maze_owned_is_registered_and_uses_one_authentic_macro_trigger() {
         .expect("passive catalog Start");
     assert_eq!(scenario.settings.start_script, Some("TradeBot"));
     assert!(
+        scenario.settings.nav.engine_speed_ms.is_none(),
+        "Maze must not send a world-wide ::speed cheat"
+    );
+    assert!(
         start > 0,
         "mainland hop must stand on an unblocked courtyard tile before Start"
     );
@@ -2849,12 +2860,10 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
 
     let approach = get("fire_giant_approach").expect("fire_giant_approach registered");
     assert_eq!(approach.settings.start_script, Some("FireGiant"));
-    assert!(approach.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(approach
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = approach
         .steps
         .iter()
@@ -5514,18 +5523,23 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
     assert!(brim.steps[..start].iter().any(|step| step.name
-        == "seed Agility 84, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
-    // Engine PlayerOps.ts: value = floor(80*(99-L)/98) +
-    // floor(280*(L-1)/98) + 1 at the worst Brimhaven obstacle.
-    // The failed level-75 run showed two plank attempts in this 150-tick watch.
-    let agility_seed = 84_u64;
-    let success_value = 80 * (99 - agility_seed) / 98 + 280 * (agility_seed - 1) / 98 + 1;
-    assert_eq!(success_value, 250);
-    let fail_numerator = 256 - success_value;
-    assert!(
-        fail_numerator.pow(2) * 1_000 < 256_u64.pow(2),
-        "two failed rolls must be less likely than 1 in 1000 per watch"
-    );
+        == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+    let seed_step = brim.steps[..start]
+        .iter()
+        .find(|step| {
+            step.name
+                == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"
+        })
+        .expect("Brimhaven seeds level 75");
+    let StepKind::Perform { send } = &seed_step.kind else {
+        panic!("Brimhaven seed is a one-shot Perform");
+    };
+    let mut seed_client = native_seed_client();
+    let mut seed_snapshot = GameSnapshot::new();
+    seed_snapshot.rebuild(&seed_client);
+    assert!(send(&mut seed_client, &seed_snapshot));
+    assert!(emitted_has(&seed_client, "advancestat agility 75"));
+    assert!(!emitted_has(&seed_client, "advancestat agility 84"));
     assert!(seed.contains(&Proof::ChatClosed));
     assert!(seed.contains(&Proof::ItemId {
         id: 995,
@@ -8664,12 +8678,10 @@ fn remaining_fighter_core_cases_register_melee_cycles() {
         Some(&Value::String("Barrel (free)".into()))
     );
     assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
-    assert!(giant.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(giant
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = giant
         .steps
         .iter()
@@ -8958,9 +8970,7 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(fire_arms.contains(&Proof::QuestDone {
-        name: "Waterfall Quest",
-    }));
+    assert!(fire_arms.contains(&WATERFALL_COMPLETION_ACK));
     for id in [GLARIALS_AMULET_ID, ROPE_ID] {
         assert!(fire_arms.contains(&Proof::ItemId { id, count: 1 }));
     }
@@ -11491,11 +11501,14 @@ fn reference_close_bytes(main_modal: i32) -> Vec<u8> {
 
 #[test]
 fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
-    for (name, journal) in [
-        ("fire_giant", "Waterfall Quest"),
-        ("fire_giant_approach", "Waterfall Quest"),
-        ("fire_giant_bank", "Waterfall Quest"),
-        ("green_dragon_special", "Lost City"),
+    for (name, expected_ack) in [
+        ("fire_giant", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_approach", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_bank", WATERFALL_COMPLETION_ACK),
+        (
+            "green_dragon_special",
+            Proof::QuestDone { name: "Lost City" },
+        ),
     ] {
         let scenario = get(name).expect("the combat fixture is registered");
         let index = |prefix: &str| {
@@ -11521,9 +11534,9 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
             matches!(scenario.steps[ack].kind, StepKind::Repeat { .. }),
             "{name}: the dialog machine re-sends every tick"
         );
-        assert!(
-            matches!(scenario.steps[ack].wait.arm, Proof::QuestDone { name: row } if row == journal),
-            "{name}: the boundary is the required quest's journal acknowledgement"
+        assert_eq!(
+            scenario.steps[ack].wait.arm, expected_ack,
+            "{name}: the boundary uses its configured quest completion signal"
         );
         assert!(
             scenario.steps[ack].wait.budget_ticks > 0,
@@ -11553,6 +11566,32 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         assert!(
             !emitted_has(&client, "~completequests"),
             "{name}: the complete-all debugproc is not used"
+        );
+    }
+}
+
+#[test]
+fn waterfall_cells_use_the_fresh_named_completion_scroll() {
+    for name in [
+        "fire_giant",
+        "fire_giant_prepared",
+        "fire_giant_approach",
+        "fire_giant_bank",
+        "fire_giant_bank_prepared",
+        "fire_giant_camelot_prepared",
+    ] {
+        let scenario = get(name).expect("the Waterfall FireGiant fixture is registered");
+        let acknowledgement = scenario
+            .steps
+            .iter()
+            .find(|step| {
+                step.name
+                    .starts_with("answer the quest-journal dialogs until the required quest")
+            })
+            .unwrap_or_else(|| panic!("{name}: no native quest acknowledgement step"));
+        assert_eq!(
+            acknowledgement.wait.arm, WATERFALL_COMPLETION_ACK,
+            "{name}: Waterfall requires fresh completion chat and named scroll"
         );
     }
 }

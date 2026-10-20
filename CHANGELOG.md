@@ -54,14 +54,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 #### Live scenario fixtures
 
-- Live starts now fail at once when a required saved loadout or TradeBot card
-  is missing. The TUI loads registered file fixtures before it starts a
-  scenario.
-- The Brimhaven Agility fixture starts at level 84. Its existing 150-tick
-  obstacle watch now has less than a 1-in-1000 chance that both plank
-  attempts fail.
-- The Fire Giant quest cell repeats its no-option `~quest` command until
-  the engine posts a chat-choice prompt.
+- Only an empty saved-loadout store and a missing TradeBot fixture fail a live
+  start immediately; other start errors hold and retry. The TUI loads registered
+  file fixtures before Start.
+- Brimhaven keeps the baseline level-75 seed. The course can contain visible
+  broken planks that the frozen script does not avoid; this is a product defect,
+  not a chance-outcome watch.
+- The Fire Giant quest cells repeat their no-option `~quest` command until
+  the engine posts a chat-choice prompt. Waterfall completion now requires a
+  fresh completion message and the exact quest-scroll text.
+- The Maze fixture uses the engine's configured speed and does not issue
+  a world-speed override.
+
 #### Banking
 
 - When bank selection cannot find a route, the session log now gives the
