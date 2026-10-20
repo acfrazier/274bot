@@ -45,9 +45,15 @@ fn fixture_bot_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade-0.1.8.1-home/home/.274bot")
 }
 
-fn copy_fixture_file(bot: &Path, scratch: &Scratch, name: &str) -> PathBuf {
-    let destination = scratch.0.join(name);
+fn copy_fixture_file(bot: &Path, destination_dir: &Path, name: &str) -> PathBuf {
+    let destination = destination_dir.join(name);
     std::fs::copy(bot.join(name), &destination).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o600))
+            .expect("set copied state to the product's private mode");
+    }
     destination
 }
 
@@ -75,7 +81,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         "throwaway password must not appear in plaintext"
     );
 
-    let vault_path = copy_fixture_file(&fixture, &scratch, "vault-289");
+    let vault_path = copy_fixture_file(&fixture, &scratch.0, "vault-289");
     let mut opened = VaultFixture::unlock(&vault_path, "bot");
     let auto = opened
         .profile("fixture-auto")
@@ -156,8 +162,8 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         "a current rewrite must preserve every 0.1.8.1 profile field"
     );
 
-    copy_fixture_file(&fixture, &scratch, "panel-ui.json");
-    copy_fixture_file(&fixture, &scratch, "loadouts.json");
+    copy_fixture_file(&fixture, &scratch.0, "panel-ui.json");
+    copy_fixture_file(&fixture, &scratch.0, "loadouts.json");
     // The scratch directory is the state root the current readers open: the
     // preferences and the loadouts form go through one process service.
     let service = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
@@ -264,7 +270,7 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
         expected_loadouts.as_slice()
     );
 
-    let settings_path = copy_fixture_file(&fixture, &scratch, "script-settings.json");
+    let settings_path = copy_fixture_file(&fixture, &scratch.0, "script-settings.json");
     let mut settings = SettingsFixture::at(settings_path.clone());
     let overrides = settings.overrides(CardSource::Catalog, "ChickenKiller");
     assert_eq!(overrides["buryBones"], json!(false));
@@ -301,7 +307,7 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
         "script-settings.json",
     ];
     for name in names {
-        std::fs::copy(fixture.join(name), bot.join(name)).unwrap();
+        copy_fixture_file(&fixture, &bot, name);
     }
     let before: Vec<Vec<u8>> = names
         .iter()

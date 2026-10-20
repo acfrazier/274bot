@@ -18,7 +18,7 @@ fn tcp_client(port: u16) -> Client {
         client::client::ClientConfig {
             host: "127.0.0.1".into(),
             port,
-            cache_dir: "/tmp".into(),
+            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
             members: true,
             lowmem: false,
         },
@@ -824,11 +824,15 @@ fn real_client_adopted_reset_socket_reports_write_transport_event() {
     client.set_login_deadline(Instant::now() + Duration::from_secs(1));
     let error = client.login("alice", "secret", true).unwrap_err();
     let transport = error.transport.as_ref().unwrap();
-    assert!(matches!(
-        transport.kind,
-        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-    ));
     let kind = transport.kind;
+    assert!(
+        matches!(
+            kind,
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ),
+        "reset write error kind on {}: {kind:?}",
+        std::env::consts::OS
+    );
     assert_transport_event(
         error,
         client::client::LoginStage::SendHello,

@@ -1458,11 +1458,9 @@ mod tests {
 
     #[test]
     fn bank_unbankable_set_covers_engine_content_refusals() {
-        let Some(engine) = crate::ctx::test_support::local_asset_path(
-            "ENGINE_DIR",
-            "/srv/dev/experiments/lostcity-289/engine",
-            "289 engine content",
-        ) else {
+        let Some(engine) =
+            crate::ctx::test_support::local_asset_path("ENGINE_DIR", "", "289 engine content")
+        else {
             return;
         };
         let scripts = engine.parent().unwrap().join("content/scripts");

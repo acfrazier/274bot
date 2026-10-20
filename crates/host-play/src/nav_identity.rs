@@ -351,13 +351,14 @@ mod tests {
     #[test]
     fn matching_row_selects_contained_install_path() {
         let table = [identity("nav/274bot.navpack")];
+        let external = std::env::temp_dir().join(".274bot").join("274bot.navpack");
         let origin = select_nav_origin(
             &table,
             Some(Path::new("/app/Resources")),
             289,
             "cache",
             false,
-            Path::new("/home/.274bot/274bot.navpack"),
+            &external,
         )
         .unwrap();
         match origin {
