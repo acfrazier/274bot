@@ -562,7 +562,7 @@ impl Gatherer {
                 );
             }
             ResourceReturn::InvalidGoals(error) => {
-                self.fail("return-failed", format!("observation goals: {error:?}"));
+                self.fail("return-failed", format!("observation goals: {error}"));
             }
         }
     }
@@ -840,6 +840,7 @@ impl Gatherer {
                 .map(|target| (target.entity, target.tile)),
         );
         self.active = Active::None;
+        self.scratch.observation_walk = false;
         self.target = None;
     }
 
@@ -1184,6 +1185,9 @@ impl Gatherer {
             ActionError::Held | ActionError::BudgetExhausted => {}
             ActionError::BankDeposit(failure) => {
                 self.fail("bank-deposit-failed", failure.message());
+            }
+            ActionError::WalkGoals(error) => {
+                self.fail("action-error", format!("observation goals: {error}"));
             }
             error => self.fail("action-error", format!("native action failed: {error:?}")),
         }
@@ -2065,7 +2069,7 @@ impl Gatherer {
                 Selection::InvalidGoals(error) => {
                     self.fail(
                         "resource-unavailable",
-                        format!("observation goals: {error:?}"),
+                        format!("observation goals: {error}"),
                     );
                 }
                 Selection::Absent { absent } => {
@@ -2197,6 +2201,7 @@ impl Gatherer {
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
+                self.scratch.observation_walk = false;
                 self.active = Active::Walk(handle);
                 self.set_event("walking away from hazard");
             }
@@ -3782,6 +3787,65 @@ mod tests {
             crate::native::WalkBit::Forbid
         );
         assert_eq!(gatherer.last_event.as_ref(), "walking away from hazard");
+    }
+
+    #[test]
+    fn cancelled_observation_walk_does_not_poison_hazard_retreat_arrival() {
+        use crate::quester::families::tests::with_tick;
+
+        for cancel in [true, false] {
+            let here = WorldTile {
+                x: 3087,
+                z: 3228,
+                level: 0,
+            };
+            let hazard = WorldTile { x: 3086, ..here };
+            let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |_| false);
+            let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+            let mut gatherer = draynor_net_gatherer();
+            let snapshot = bank_snapshot(here);
+            let mut ledger = None;
+            with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let goals = crate::native::WalkGoals::new(vec![here]).unwrap();
+                assert!(gatherer.trip_walk(here, 0, ArrivalKind::Area, Some(goals), tick));
+            });
+            assert!(gatherer.scratch.observation_walk);
+            if cancel {
+                gatherer.cancel_active();
+                assert!(
+                    !gatherer.scratch.observation_walk,
+                    "cancellation must retire the goal contract"
+                );
+            } else {
+                // Also protect the retreat begin site from a stale completed
+                // observation, independently of the cancellation boundary.
+                gatherer.active = Active::None;
+            }
+            gatherer.hazard_escape = Some(hazard);
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                gatherer.retreat_from_hazard(tick, Some(lease.collision()));
+                assert!(
+                    !gatherer.scratch.observation_walk,
+                    "Reach retreat has no candidate goal receipt"
+                );
+                gatherer.handle_walk(
+                    WalkReceipt {
+                        goal: None,
+                        request_id: 2,
+                        evidence: tick.cx.evidence(),
+                        end: WalkEnd::Arrived,
+                        blocked: None,
+                        detail: None,
+                        refusal: None,
+                        assessment: None,
+                        escape: None,
+                    },
+                    tick,
+                );
+            });
+            assert!(gatherer.failure.is_none());
+            assert_eq!(gatherer.last_event.as_ref(), "arrived; observing resources");
+        }
     }
 
     #[test]

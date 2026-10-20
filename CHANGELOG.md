@@ -34,6 +34,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
 
+### Gatherer
+
+- At every fishing site, the Gatherer keeps its preferred observation stand
+  when that stand is reachable. Otherwise, it chooses a reachable alternative.
+  This applies to the initial approach and the return after banking. It fixes
+  the Catherby failure from the Fishing Guild when the preferred stand is on
+  the Water Obelisk island. A bot already on that island can still use it.
+
+### Navigation checks
+
+- The built-in Elkoy and rune-essence navigation checks start beside the
+  transport NPC and seed only their required quest. They no longer start
+  transport checks while unrelated quest rewards still run.
+
 ### Fixed during development
 
 #### Startup and saved state
@@ -46,20 +60,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   changes to one of these settings wait for the disk, the later change
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
-
-#### Gatherer
-
-- A Catherby fishing card started from the Fishing Guild now chooses a
-  reachable place to observe the fishing spots, instead of stopping because
-  its nearest candidate is on the Water Obelisk island. Fishing bank returns
-  use the same route choice. A bot already on the island can still use a
-  valid place there.
-
-#### Navigation checks
-
-- The built-in Elkoy and rune-essence navigation checks start beside the
-  transport NPC and seed only their required quest. They no longer start
-  transport checks while unrelated quest rewards still run.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
