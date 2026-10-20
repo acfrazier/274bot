@@ -1,0 +1,64 @@
+#!/bin/bash
+# Review-machine side of the revision-274 nightly lane: pull each
+# finished run from the 274 guest (zinfandel) into the local NIGHTLY
+# mirror folder. Runs land as <mirror>/<run>-274/ beside the 289 runs.
+#
+# Runs from launchd (launchd/local.274bot-nightly-274-pull.plist),
+# hourly. The key is a dedicated read-only rrsync key on the guest. It
+# cannot open a shell or read outside /srv/nightly/runs/. The guest
+# holds no key for any other machine.
+#
+# A run is copied only when its DONE file arrives with it. A run that
+# is still being written stays on the guest and is pulled an hour
+# later. A run already in the mirror is never copied again. Nothing
+# is pruned here: there is no archive-host copy of a 274 run, so this
+# folder is the record. The guest prunes its own runs after 14 days.
+set -euo pipefail
+
+HOST=${NIGHTLY274_HOST:?set NIGHTLY274_HOST (the 274 guest, zinfandel.lan)}
+USER_AT=${NIGHTLY274_USER:-bot}
+KEY=${NIGHTLY274_KEY:?set NIGHTLY274_KEY (read-only rrsync key)}
+KNOWN_HOSTS=${NIGHTLY274_KNOWN_HOSTS:?set NIGHTLY274_KNOWN_HOSTS (pinned host key of the guest)}
+DEST=${NIGHTLY274_DEST:?set NIGHTLY274_DEST (local NIGHTLY mirror folder)}
+RSYNC=${NIGHTLY274_RSYNC:-$HOME/.local/libexec/274bot-standby/rsync}
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
+
+lock="$DEST/.pull-274.lock"
+mkdir -p "$DEST"
+if ! mkdir "$lock" 2>/dev/null; then
+    log "another pull holds $lock; exiting"
+    exit 0
+fi
+trap 'rmdir "$lock"' EXIT
+
+ssh_cmd="ssh -i $KEY -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o UserKnownHostsFile=$KNOWN_HOSTS -o StrictHostKeyChecking=yes"
+
+copied=0
+waiting=0
+# One run directory per line from the restricted listing of the runs
+# folder. Names are <date>-dev-<commit>-274, with -r2, -r3, ... for a
+# second run of one commit on one date.
+while IFS= read -r run; do
+    case "$run" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*-274|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*-274-r[0-9]*) ;;
+        *) continue ;;
+    esac
+    [ -f "$DEST/$run/DONE" ] && continue
+    incoming="$DEST/.incoming-$run"
+    rm -rf -- "$incoming"
+    "$RSYNC" -e "$ssh_cmd" -rt --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r "$USER_AT@$HOST:/$run/" "$incoming/"
+    if [ ! -f "$incoming/DONE" ]; then
+        rm -rf -- "$incoming"
+        waiting=$((waiting + 1))
+        log "$run: no DONE yet; left on the guest"
+        continue
+    fi
+    rm -rf -- "${DEST:?}/$run"
+    mv -- "$incoming" "$DEST/$run"
+    log "$run: pulled"
+    copied=$((copied + 1))
+done <<EOF
+$("$RSYNC" -e "$ssh_cmd" --list-only "$USER_AT@$HOST:/" | awk '$1 ~ /^d/ && $NF != "." {print $NF}')
+EOF
+log "done: $copied pulled, $waiting still running"

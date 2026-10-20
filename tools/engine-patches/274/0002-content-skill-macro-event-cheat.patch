@@ -1,0 +1,185 @@
+From 6cec18638c6798b63e2ce5d7e3998517e963bc92 Mon Sep 17 00:00:00 2001
+From: 274bot <274bot@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 13:01:58 -0400
+Subject: [PATCH] Add ::skill_macro_event test cheat (274bot engine test patch)
+
+---
+ .../cheats/cheat_skill_macro_event.rs2        | 166 ++++++++++++++++++
+ 1 file changed, 166 insertions(+)
+ create mode 100644 scripts/_test/scripts/cheats/cheat_skill_macro_event.rs2
+
+diff --git a/scripts/_test/scripts/cheats/cheat_skill_macro_event.rs2 b/scripts/_test/scripts/cheats/cheat_skill_macro_event.rs2
+new file mode 100644
+index 000000000..d136e9f77
+--- /dev/null
++++ b/scripts/_test/scripts/cheats/cheat_skill_macro_event.rs2
+@@ -0,0 +1,166 @@
++// 274bot engine test patch (tools/engine-patches/274/0002-content-skill-macro-event-cheat.patch).
++// Install at content/scripts/_test/scripts/cheats/cheat_skill_macro_event.rs2.
++//
++// ::skill_macro_event <id> calls the content's own skill random-event spawn
++// proc for the calling player, with the same preconditions the skill scripts
++// check before they roll one (`~macro_event_allowed`, the active fishing
++// spot / rock / tree, the tool). It never adds an NPC itself: each event is
++// the content's spawn proc, so it is owned by the player exactly as a rolled
++// one (`%npc_macro_event_target`, `%macro_event`).
++//
++// Every call answers with one "skill_macro_event <id>: ..." game message, so
++// a client can tell an installed cheat (always answers) from an engine
++// without it (the cheat handler ignores an unknown debugproc silently).
++//
++//  1 big fish      (fishing: adjacent fishing spot + fishing tool in the pack)
++//  2 river troll   (fishing)
++//  3 whirlpool     (fishing: adjacent fishing spot that has a whirlpool type)
++//  4 gas           (mining: adjacent rock that has a gas type)
++//  5 lost pickaxe  (mining: a usable pickaxe worn or held)
++//  6 rock golem    (mining)
++//  7 tree spirit   (woodcutting; content proc macro_event_dryad_spawn)
++//  8 ent           (woodcutting: a nearby tree that has an ent type)
++//  9 lost axe      (woodcutting: a usable axe worn or held)
++// 10 shade         (prayer)
++// 11 zombie        (prayer)
++// 12 watchman      (thieving)
++[debugproc,skill_macro_event](int $event)
++if_close;
++if (p_finduid(uid) = false) {
++    @please_finish;
++    return;
++}
++if ($event < 1 | $event > 12) {
++    mes("skill_macro_event <tostring($event)>: event_id must be between 1 and 12.");
++    @debugusage("::skill_macro_event (event_id)", "::skill_macro_event 2", "");
++    return;
++}
++// The skill scripts roll an event only when this holds (no event already
++// active, an allowed area): the cheat keeps that gate.
++if (~macro_event_allowed = false) {
++    mes("skill_macro_event <tostring($event)>: refused, a random event is active or not allowed here.");
++    return;
++}
++switch_int ($event) {
++    case 1 :
++        def_namedobj $tool = ~skill_macro_event_fishing_tool;
++        if ($tool = null) {
++            mes("skill_macro_event 1: refused, no fishing tool in the pack.");
++            return;
++        }
++        if (npc_finduid(~skill_macro_event_fishing_spot) = false) {
++            mes("skill_macro_event 1: refused, no fishing spot next to you.");
++            return;
++        }
++        mes("skill_macro_event 1: big fish.");
++        ~macro_event_bigfish_spawn($tool);
++    case 2 :
++        mes("skill_macro_event 2: river troll.");
++        ~macro_event_river_troll_spawn;
++    case 3 :
++        if (npc_finduid(~skill_macro_event_fishing_spot) = false) {
++            mes("skill_macro_event 3: refused, no fishing spot next to you.");
++            return;
++        }
++        mes("skill_macro_event 3: whirlpool.");
++        ~macro_event_whirlpool_spawn;
++    case 4 :
++        def_coord $rock;
++        def_loc $rock_type;
++        $rock, $rock_type = ~skill_macro_event_find_loc(macro_gas, 2);
++        if ($rock = null | loc_find($rock, $rock_type) = false) {
++            mes("skill_macro_event 4: refused, no gas rock next to you.");
++            return;
++        }
++        mes("skill_macro_event 4: gas.");
++        ~macro_event_gas_spawn;
++    case 5 :
++        if (~pickaxe_checker = null) {
++            mes("skill_macro_event 5: refused, no usable pickaxe.");
++            return;
++        }
++        mes("skill_macro_event 5: lost pickaxe.");
++        ~macro_event_lost_pickaxe_spawn;
++    case 6 :
++        mes("skill_macro_event 6: rock golem.");
++        ~macro_event_rock_golem_spawn;
++    case 7 :
++        mes("skill_macro_event 7: tree spirit.");
++        ~macro_event_dryad_spawn;
++    case 8 :
++        def_coord $tree;
++        def_loc $tree_type;
++        $tree, $tree_type = ~skill_macro_event_find_loc(ent, 3);
++        if ($tree = null | loc_find($tree, $tree_type) = false) {
++            mes("skill_macro_event 8: refused, no ent tree next to you.");
++            return;
++        }
++        mes("skill_macro_event 8: ent.");
++        ~macro_event_ent_spawn;
++    case 9 :
++        if (~woodcutting_axe_checker(false) = null) {
++            mes("skill_macro_event 9: refused, no usable axe.");
++            return;
++        }
++        mes("skill_macro_event 9: lost axe.");
++        ~macro_event_lost_axe_spawn;
++    case 10 :
++        mes("skill_macro_event 10: shade.");
++        ~macro_event_shade_spawn;
++    case 11 :
++        mes("skill_macro_event 11: zombie.");
++        ~macro_event_zombie_spawn;
++    case 12 :
++        mes("skill_macro_event 12: watchman.");
++        ~macro_event_watchman_spawn;
++}
++
++// The fishing tool the skill script passes to `@macro_event_fishing`, taken
++// from the pack in the order the fishing spots use them.
++[proc,skill_macro_event_fishing_tool]()(namedobj)
++if (inv_total(inv, harpoon) > 0) return(harpoon);
++if (inv_total(inv, lobster_pot) > 0) return(lobster_pot);
++if (inv_total(inv, big_net) > 0) return(big_net);
++if (inv_total(inv, net) > 0) return(net);
++if (inv_total(inv, fly_fishing_rod) > 0) return(fly_fishing_rod);
++if (inv_total(inv, fishing_rod) > 0) return(fishing_rod);
++return(null);
++
++// The adjacent fishing spot the fishing script's own op would act on, or
++// null. Only a spot with a whirlpool type that is not already a whirlpool
++// counts: the fishing scripts roll `@macro_event_fishing` only on such a spot.
++[proc,skill_macro_event_fishing_spot]()(npc_uid)
++def_npc_uid $spot = null;
++npc_findallany(coord, 1, ^vis_off);
++while (npc_findnext = true) {
++    if ($spot = null & npc_param(whirlpool) ! null & npc_param(is_whirlpool) = ^false) {
++        $spot = npc_uid;
++    }
++}
++return($spot);
++
++// The nearest loc within $range whose `$param` is set (the rock or tree the
++// skill script's own oploc would act on), as its coord and type, or null.
++// Searches the zones around the player.
++[proc,skill_macro_event_find_loc](param $param, int $range)(coord, loc)
++def_coord $best = null;
++def_loc $best_type = null;
++def_int $best_distance = calc($range + 1);
++def_int $dx = -8;
++def_int $dz;
++while ($dx <= 8) {
++    $dz = -8;
++    while ($dz <= 8) {
++        loc_findallzone(movecoord(coord, $dx, 0, $dz));
++        while (loc_findnext = true) {
++            if (loc_param($param) ! null & distance(coord, loc_coord) < $best_distance) {
++                $best = loc_coord;
++                $best_type = loc_type;
++                $best_distance = distance(coord, loc_coord);
++            }
++        }
++        $dz = calc($dz + 8);
++    }
++    $dx = calc($dx + 8);
++}
++return($best, $best_type);
+-- 
+2.54.0 (Apple Git-157)
+

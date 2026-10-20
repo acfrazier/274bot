@@ -135,7 +135,10 @@ python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.4   
 
 Settings can also go in `/etc/274bot-nightly.env` on the VM (read by the unit):
 `NIGHTLY_PARALLEL`, `NIGHTLY_CELL_CAP_S`, `NIGHTLY_BRANCHES` (space-separated;
-overrides `branches.conf`), `NIGHTLY_KEEP_DAYS`, `NIGHTLY_NAME_PREFIX`.
+overrides `branches.conf`), `NIGHTLY_KEEP_DAYS`, `NIGHTLY_NAME_PREFIX`,
+`NIGHTLY_REVISION` (`289` by default; `274` on the 274 lane's guest) and
+`NIGHTLY_CELLS_FILE` (a cell list like [`cells-274.conf`](cells-274.conf);
+`--cells` on the command line wins over both).
 
 On the Windows host, as BotTest, through the same task the schedule starts (it runs in
 the console session; from an SSH shell, which is session 0, start the task rather than
@@ -306,11 +309,61 @@ administrator, once.
 | `274bot-nightly-pull` | archive host `/etc/274bot-nightly/pull_ed25519` | VM user `bot` | read-only rsync of `/srv/nightly/runs/` from the archive host's address; no shell, no forwarding |
 | `274bot-nightly-win-pull` | archive host `/etc/274bot-nightly/win_pull_ed25519` | Windows host user `274bot-pull` (`%ProgramData%\ssh\274bot_pull_authorized_keys`) | read-only SFTP of `C:\274bot-nightly\runs\` (chroot) from the archive host's address; no shell, no forwarding, no TTY |
 | `274bot-nightly-mirror` | review machine `~/.ssh/274bot_nightly_mirror_ed25519` | archive host root | read-only rsync of `/tank/274bot-nightly/` from the review machine's address; no shell, no forwarding |
+| `274bot-nightly-274-pull` | review machine `~/.ssh/274bot_nightly274_pull_ed25519` | 274 guest user `bot` | read-only rsync of `/srv/nightly/runs/` from the review machine's address; no shell, no forwarding |
 
 The VM and the Windows host clone only public repositories, anonymously
 (`credential.helper` empty, no terminal prompt), and hold no push credentials. The
 Windows host gets Engine B from the review machine's reverse forward; it holds no key
 to the builder VM.
+
+## Revision 274 lane
+
+A second Linux guest (zinfandel) runs the same script against a
+revision-274 engine every night. The point is narrow: the
+multi-revision code (revision selection, the per-revision cache and
+nav pack, the client revision features, content-derived data) stays
+exercised while nobody checks it by hand. That protects the future
+revision-377 work. 289 stays the production revision. This lane
+reports only. It never gates a merge or a release, and its failures
+sit at the back of the backlog.
+
+What differs from the 289 lane:
+
+- Settings, in the guest's `/etc/274bot-nightly.env`:
+  `NIGHTLY_REVISION=274`, `NIGHTLY_BRANCHES=dev` (no release line),
+  `NIGHTLY_CELLS_FILE=cells-274.conf`, `NIGHTLY_CELL_CAP_S=900`,
+  `NIGHTLY_RUN_DEADLINE_S=9000`, `NIGHTLY_NAME_PREFIX=n4`. The
+  revision selects the built-in `local-274` profile (game 43594,
+  assets on port 80), the `start-274.sh`/`stop-274.sh` engine
+  scripts, the `unpack` decoded-cache folder, the 274 nav bake
+  (`BOT_NAV_REVISION=274`) and the `-274` run suffix. Runs are
+  `<date>-dev-<commit>-274`.
+- Cells: [`cells-274.conf`](cells-274.conf), a breadth subset of the
+  catalog (111 of 244 on 2026-10-20). The file's header states the
+  selection rule and each exclusion. A name in the file that leaves
+  the catalog fails the run. It is never dropped silently.
+- Engine: clean clones at engine `4c95f87e` and content `000c19997`
+  (branch `274`), with the patches in `tools/engine-patches/274/`
+  and the control scripts and `world.json` in
+  [`engine-274/`](engine-274/). Listeners stay on loopback. The
+  guest's node binary carries `cap_net_bind_service` for port 80.
+- Schedule: [`systemd/274bot-nightly-274.timer`](systemd/274bot-nightly-274.timer),
+  22:30 America/New_York, starting the same `274bot-nightly.service`
+  the 289 guest uses (the guests' unattended-upgrade gate watches
+  that unit name). Malbec builds near 02:00 and 06:20. This lane
+  builds at 22:30 and ends before malbec starts.
+- Results: the review machine pulls finished runs straight from the
+  guest into its `NIGHTLY/<run>-274/` mirror folder (launchd agent
+  `local.274bot-nightly-274-pull`, hourly, the restricted pull key
+  in the table above). There is no archive-host copy of a 274 run.
+  The mirror keeps every run it pulled. The guest prunes its own
+  runs after 14 days like the 289 guest.
+
+Stop it: `sudo systemctl disable --now 274bot-nightly-274.timer` on
+the guest stops the lane. `sudo systemctl stop
+274bot-nightly.service` stops tonight's run. On the review machine,
+`launchctl bootout gui/$(id -u)/local.274bot-nightly-274-pull`
+stops the pull.
 
 ## Windows nightly
 
