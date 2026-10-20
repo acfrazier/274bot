@@ -209,6 +209,47 @@ byte-identical only after all six files from all three platform archives
 compare equal; a partial per-platform verification explicitly reports that navigation was not compared.
 Verification does not publish anything.
 
+### Python version
+
+The known-issues ledger is TOML and is read with `tomllib`, which exists
+only on Python 3.11 and newer. `tools/known-issues/known_issues.py` needs
+3.11+ for every command, and `release.py preflight` (run on the
+orchestrator host) needs 3.11+ because it loads that tool. On an older
+interpreter both exit with a one-line error naming the running interpreter
+instead of a traceback. Run those commands with an interpreter that meets
+the floor. On macOS that is the Homebrew `python3`
+(`/opt/homebrew/bin/python3`, 3.11 or newer); Apple's `/usr/bin/python3`
+is 3.9 and fails the check.
+
+The `build`, `finalize`, `verify`, and `clean` steps run with the worker's
+own `python3` (`python` on Windows) and need only what `release.py` already
+needs (3.9 today), including on a macOS worker over SSH where `python3` is
+Apple's 3.9.
+
+### Known-issues ledger
+
+`docs/known-issues.toml` is the single source of truth for the
+`### Known issues` and `### Not in this release` blocks in `CHANGELOG.md`.
+Edit the ledger, never the CHANGELOG blocks. When a release section is cut,
+render the blocks, paste them over the old ones, then check:
+
+```sh
+python3 tools/known-issues/known_issues.py render --release 0.2.5
+python3 tools/known-issues/known_issues.py check --release 0.2.5
+python3 tools/known-issues/known_issues.py carried --release 0.2.5
+```
+
+`check` fails when the CHANGELOG blocks differ from the render. `carried`
+lists every open item with its carry count and flags `needs ruling` when the
+release reaches the item's target or the item has been carried through two or
+more releases; it informs the release approval and never blocks it. Fixed
+items leave the ledger in the commit that fixes them. `preflight` runs the
+same check against a commit's own tree before packaging:
+
+```sh
+python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.5
+```
+
 ### Retry and cleanup
 
 The retry controls are deliberately scoped to the release work root:
