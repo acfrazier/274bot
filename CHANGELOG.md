@@ -43,6 +43,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Live scenario fixtures
+
+- Live starts now fail at once when a required saved loadout or TradeBot card
+  is missing. The TUI loads registered file fixtures before it starts a
+  scenario.
+- The Brimhaven Agility fixture starts at level 84. Its existing 150-tick
+  obstacle watch now has less than a 1-in-1000 chance that both plank
+  attempts fail.
+- The Fire Giant quest cell repeats its no-option `~quest` command until
+  the engine posts a chat-choice prompt.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
