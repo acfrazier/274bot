@@ -702,6 +702,7 @@ impl GameSnapshot {
             .flatten();
         self.shop = ShopView {
             open,
+            server_closes: client.main_modal_packet_state().close_packets,
             stock: if open {
                 inv_items(client, SHOP_STOCK_INV, ItemContainer::ShopStock).unwrap_or_default()
             } else {
