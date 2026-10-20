@@ -1,9 +1,49 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.3` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.4` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
+
+### Panel
+
+- Panel and TUI now share `frontend-core` live scenario preparation, runner
+  state and proof gates; screenshot capture and TUI proof output remain
+  surface-specific.
+- Every panel action that changes state goes through the shared command
+  path that the TUI and the headless driver also use. This includes Start,
+  the draw switches, the Nav config grants, session log, map bake, Quest
+  Paths, marks, the filter, the vault and Quit. Each action returns a typed
+  report.
+- Fleet Assign & restart reports its paced Starts through completion, after
+  the assignment is durable.
+- Saved draw preferences (capture input, sidecar and focused 50 fps), the
+  render-all and background-bots acknowledgements, the map-bake choice and
+  the session log file are written only when you change them. Saving the
+  panel's own window state no longer rewrites them.
+- A capture frame that fills the input queue is reported, instead of
+  dropping events silently.
+
+### TUI
+
+- Marks, the fleet filter, log saving, the session log file, the Nav and
+  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
+  through the same command path as the panel.
+
+### Fixed during development
+
+#### Startup and saved state
+
+- On a slow or busy disk, 274bot no longer reports a preference change as
+  failed while the disk still saves it. This applies to a Nav config grant,
+  danger routing, a draw switch, the session log file, map bake, Quest Paths
+  and a notice's "Don't show again". The Nav config grants, danger routing
+  and the session log file change when the disk confirms the save. When two
+  changes to one of these settings wait for the disk, the later change
+  applies. If you close 274bot before the disk confirms a change, 274bot can
+  lose that change or a part of it. Check the setting after the next start.
+
+## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
 
@@ -396,35 +436,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - The Assign & restart confirmation names the first six bots it stops
   and the first six it starts, and counts the rest ("+N more") beside
   the total for each, instead of listing every name.
-- Panel and TUI now share `frontend-core` live scenario preparation, runner
-  state and proof gates; screenshot capture and TUI proof output remain
-  surface-specific.
 - Render-all draws up to 128 clients at once. A client past that shows
   "renderer refused: render head cap of 128 is full" in its own tile.
 - Clients without a drawn view retain less render scratch memory. Hiding a view
   releases that scratch, and showing it again keeps the same game connection.
-- Every panel action that changes state goes through the shared command
-  path that the TUI and the headless driver also use. This includes Start,
-  the draw switches, the Nav config grants, session log, map bake, Quest
-  Paths, marks, the filter, the vault and Quit. Each action returns a typed
-  report.
-- Fleet Assign & restart reports its paced Starts through completion, after
-  the assignment is durable.
-- Saved draw preferences (capture input, sidecar and focused 50 fps), the
-  render-all and background-bots acknowledgements, the map-bake choice and
-  the session log file are written only when you change them. Saving the
-  panel's own window state no longer rewrites them.
-- A capture frame that fills the input queue is reported, instead of
-  dropping events silently.
+- On Windows, the instance-lock warning names the live panel or TUI that
+  already holds the lock, even when this Windows account cannot open that
+  process. It no longer calls that live copy an unknown process.
 
 ### TUI
 
 - The Assign & restart confirmation names the bots whose running script
   it stops and the idle bots it starts, as the panel's does: the first
   six of each, with the rest counted ("+N more") beside each total.
-- Marks, the fleet filter, log saving, the session log file, the Nav and
-  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
-  through the same command path as the panel.
 
 ### Profiles
 
@@ -452,6 +476,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 
 ### Performance
 
+- A bot running a script uses about 8 % less memory than in 0.2.3: about
+  49.5 MiB instead of 54.0 MiB per bot with ten Thiever bots, measured on
+  Linux. The lists of NPCs, objects, players and ground items that scripts
+  read are now built in a more compact form.
 - Each running bot copies its route facts (held and worn items, skills,
   settings and quest progress) only when it prepares a walk request, a bank
   selection or a route inspection. Before, its script watchdog also copied them on
@@ -544,25 +572,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
 - A loadout list that did not load can no longer save. Add, rename, remove
   and Save in the panel and the TUI refuse and show why the list did not
   load. The saved loadouts stay as they were.
-- On a slow or busy disk, 274bot no longer reports a preference change as
-  failed while the disk still saves it. This applies to a Nav config grant,
-  danger routing, a draw switch, the session log file, map bake, Quest Paths
-  and a notice's "Don't show again". The Nav config grants, danger routing
-  and the session log file change when the disk confirms the save. When two
-  changes to one of these settings wait for the disk, the later change
-  applies. If you close 274bot before the disk confirms a change, 274bot can
-  lose that change or a part of it. Check the setting after the next start.
 
 #### Login
 
 - Windows now promptly cancels blocked login transport I/O when a login attempt
   ends.
-
-#### Windows
-
-- On Windows, the instance-lock warning names the live panel or TUI that
-  already holds the lock, even when this Windows account cannot open that
-  process. It no longer calls that live copy an unknown process.
 
 ### Release engineering
 
@@ -606,6 +620,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.3` 
   `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
   random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
   unavailable. The host does not recreate the foreign router or random pacing.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back
+  Dragon bones reliably. In testing it ran out of food at the dragon and went
+  to the bank without the bones. A fix is planned for 0.2.5.
+- On Windows, resuming a local map bake that stopped part-way (for example
+  after a crash) and left a damaged tile can fail with "Access is denied"
+  instead of repairing the tile. Release packages ship the baked map, so this
+  affects only self-built copies and local bakes. A fix is planned for 0.2.5.
 
 ## [0.2.3] — 2026-10-14 — Beta 1 patch
 
