@@ -48,6 +48,23 @@ fn client_with_npc() -> Client {
     c
 }
 
+fn r289_client() -> Client {
+    Client::from_shared_with_revision(
+        cfg(),
+        Arc::new(client::config::Cache::default()),
+        Arc::new(Vec::new()),
+        Vec::new(),
+        client::io::ClientRevision::R289,
+    )
+}
+
+fn handle_r289_packet(client: &mut Client, ptype: i32, bytes: Vec<u8>) {
+    client.psize = bytes.len() as i32;
+    let mut packet = Packet::new(bytes);
+    client.handle_packet(ptype, &mut packet);
+    assert_eq!(packet.pos, packet.length());
+}
+
 /// An unchanged npc gen means `rebuild_family` copies nothing: the second
 /// call returns the same slice pointer and the same views.
 #[test]
@@ -3330,6 +3347,92 @@ fn shop_view_stock_when_modal_open() {
     assert_eq!(snap.inventory().len(), 1);
     assert_eq!(snap.inventory()[0].def.id, 3);
     assert_eq!(snap.inventory()[0].container, ItemContainer::Inventory);
+}
+
+/// The shop view publishes a decoded server close after an open page closes.
+#[test]
+fn shop_close_counter_projects_decoded_close_after_open_shop() {
+    let mut client = r289_client();
+    let mut snapshot = GameSnapshot::new();
+    handle_r289_packet(
+        &mut client,
+        client::io::ServerProt289::IF_OPENMAIN,
+        3824u16.to_be_bytes().to_vec(),
+    );
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 0);
+
+    handle_r289_packet(&mut client, client::io::ServerProt289::IF_CLOSE, Vec::new());
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(!snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 1);
+}
+
+/// A close followed by an open in one drain is visible only in the close count.
+#[test]
+fn shop_close_counter_projects_close_then_reopen_without_an_intermediate_rebuild() {
+    let mut client = r289_client();
+    let mut snapshot = GameSnapshot::new();
+    handle_r289_packet(
+        &mut client,
+        client::io::ServerProt289::IF_OPENMAIN,
+        3824u16.to_be_bytes().to_vec(),
+    );
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 0);
+
+    handle_r289_packet(&mut client, client::io::ServerProt289::IF_CLOSE, Vec::new());
+    handle_r289_packet(
+        &mut client,
+        client::io::ServerProt289::IF_OPENMAIN,
+        3824u16.to_be_bytes().to_vec(),
+    );
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 1);
+}
+
+/// A decoded close advances the shop view when the main modal was already down.
+#[test]
+fn shop_close_counter_projects_decoded_close_while_already_closed() {
+    let mut client = r289_client();
+    let mut snapshot = GameSnapshot::new();
+    handle_r289_packet(&mut client, client::io::ServerProt289::IF_CLOSE, Vec::new());
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(!snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 1);
+
+    handle_r289_packet(&mut client, client::io::ServerProt289::IF_CLOSE, Vec::new());
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert!(!snapshot.shop().open);
+    assert_eq!(snapshot.shop().server_closes, 2);
+}
+
+/// An unrelated partial inventory update rebuilds the shop view without a close.
+#[test]
+fn shop_close_counter_is_preserved_by_unrelated_partial_inventory_update() {
+    let mut client = r289_client();
+    let mut snapshot = GameSnapshot::new();
+    handle_r289_packet(&mut client, client::io::ServerProt289::IF_CLOSE, Vec::new());
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert_eq!(snapshot.shop().server_closes, 1);
+
+    handle_r289_packet(
+        &mut client,
+        client::io::ServerProt289::UPDATE_INV_PARTIAL,
+        42u16.to_be_bytes().to_vec(),
+    );
+
+    assert!(snapshot.rebuild_family(&client, Family::Shop));
+    assert_eq!(snapshot.shop().server_closes, 1);
+}
+
+#[test]
+fn shop_close_counter_stays_inline() {
+    // Design 4.8 R4-1 adds one u64 (+8 B); exact inline layout, 0 B headroom.
+    assert_eq!(std::mem::size_of::<api::snapshot::ShopView>(), 64);
 }
 
 /// The shop side interface (3822 → 3823) is the Sell container: while it is
