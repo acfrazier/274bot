@@ -43,6 +43,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Map baking
+
+- Resuming an interrupted local map bake on Windows now repairs a damaged
+  tile instead of failing with "Access is denied".
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
