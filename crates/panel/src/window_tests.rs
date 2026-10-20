@@ -8,6 +8,27 @@ use super::*;
 use crate::test_support::headless_gpu;
 use crate::theme::PANEL_FONT_SIZE;
 
+#[test]
+fn panel_power_preference_uses_the_platform_default() {
+    let expected = if cfg!(target_os = "linux") {
+        wgpu::PowerPreference::None
+    } else {
+        wgpu::PowerPreference::LowPower
+    };
+    assert_eq!(panel_power_preference(None), expected);
+}
+
+#[test]
+fn panel_power_preference_override_wins_over_the_platform_default() {
+    for preference in [
+        wgpu::PowerPreference::None,
+        wgpu::PowerPreference::LowPower,
+        wgpu::PowerPreference::HighPerformance,
+    ] {
+        assert_eq!(panel_power_preference(Some(preference)), preference);
+    }
+}
+
 /// The `Gpu` texture-id manager must delegate register/update/unregister
 /// to the renderer's texture store (the surface `game_view` and later
 /// screenshot tasks rely on).

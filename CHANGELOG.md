@@ -43,6 +43,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+- On Linux, the panel now follows the system's choice of graphics chip
+  instead of preferring built-in graphics. This can help on desktops with
+  two graphics chips. If "importing the supplied dmabufs failed" still
+  appears, start it with `WGPU_POWER_PREF=high ./panel-play`.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain
