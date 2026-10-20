@@ -265,6 +265,30 @@ without symlinks (`rsync -rt`, or SFTP's recursive get for Windows runs) into
 User units run only while the user has a session, unless lingering is enabled
 (`loginctl enable-linger`). `Persistent=true` catches up a missed hour at the next login.
 
+### Revision-274 pull (review machine)
+
+The 274 lane runs on a Mac review machine, so its pull is a launchd agent, not a
+user unit. The committed plist and script carry no machine-specific path.
+
+1. `ssh-keygen -t ed25519 -N '' -C '274bot-nightly-274-pull' -f ~/.ssh/274bot_nightly274_pull_ed25519`
+   and add the public key to the guest user `bot`'s `authorized_keys` (see
+   [Keys](#keys)). Pin the guest's key in
+   `~/.config/274bot-nightly/zinfandel_known_hosts`.
+2. Write `~/.config/274bot-nightly/pull-274.env` (this file stays outside the
+   repository):
+   ```
+   NIGHTLY274_HOST=<274 guest host>
+   NIGHTLY274_KEY=<home>/.ssh/274bot_nightly274_pull_ed25519
+   NIGHTLY274_KNOWN_HOSTS=<home>/.config/274bot-nightly/zinfandel_known_hosts
+   NIGHTLY274_DEST=<mirror folder>
+   ```
+   `NIGHTLY274_USER` defaults to `bot`. `NIGHTLY274_RSYNC` overrides the rsync
+   binary.
+3. Copy `pull-274.sh` to `~/.local/lib/274bot-nightly/pull-274.sh` and
+   `launchd/local.274bot-nightly-274-pull.plist` to `~/Library/LaunchAgents/`, then run
+   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist`.
+   The agent writes `~/.local/state/274bot-nightly-274/pull.log`.
+
 ### Windows nightly host (BotTest, no elevation)
 
 Every step runs as BotTest without the admin token, so the nightly keeps working if
@@ -356,9 +380,12 @@ What differs from the 289 lane:
 - Results: the review machine pulls finished runs straight from the
   guest into its `NIGHTLY/<run>-274/` mirror folder (launchd agent
   `local.274bot-nightly-274-pull`, hourly, the restricted pull key
-  in the table above). There is no archive-host copy of a 274 run.
-  The mirror keeps every run it pulled. The guest prunes its own
-  runs after 14 days like the 289 guest.
+  in the table above). The agent takes the guest, key, pinned host
+  key and destination from `~/.config/274bot-nightly/pull-274.env`
+  (see [Revision-274 pull](#revision-274-pull-review-machine)). There
+  is no archive-host copy of a 274 run. The mirror keeps every run it
+  pulled. The guest prunes its own runs after 14 days like the 289
+  guest.
 
 Stop it: `sudo systemctl disable --now 274bot-nightly-274.timer` on
 the guest stops the lane. `sudo systemctl stop

@@ -8,6 +8,10 @@
 # cannot open a shell or read outside /srv/nightly/runs/. The guest
 # holds no key for any other machine.
 #
+# Host, key, pinned host key and destination come from a local file,
+# ~/.config/274bot-nightly/pull-274.env, which is not committed. The
+# launchd agent passes no machine-specific path (see README.md).
+#
 # A run is copied only when its DONE file arrives with it. A run that
 # is still being written stays on the guest and is pulled an hour
 # later. A run already in the mirror is never copied again. Nothing
@@ -15,11 +19,18 @@
 # folder is the record. The guest prunes its own runs after 14 days.
 set -euo pipefail
 
-HOST=${NIGHTLY274_HOST:?set NIGHTLY274_HOST (the 274 guest, zinfandel.lan)}
+ENV_FILE="$HOME/.config/274bot-nightly/pull-274.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+fi
+
+HOST=${NIGHTLY274_HOST:?set NIGHTLY274_HOST in $ENV_FILE (the 274 guest)}
 USER_AT=${NIGHTLY274_USER:-bot}
-KEY=${NIGHTLY274_KEY:?set NIGHTLY274_KEY (read-only rrsync key)}
-KNOWN_HOSTS=${NIGHTLY274_KNOWN_HOSTS:?set NIGHTLY274_KNOWN_HOSTS (pinned host key of the guest)}
-DEST=${NIGHTLY274_DEST:?set NIGHTLY274_DEST (local NIGHTLY mirror folder)}
+KEY=${NIGHTLY274_KEY:?set NIGHTLY274_KEY in $ENV_FILE (read-only rrsync key)}
+KNOWN_HOSTS=${NIGHTLY274_KNOWN_HOSTS:?set NIGHTLY274_KNOWN_HOSTS in $ENV_FILE (pinned host key of the guest)}
+DEST=${NIGHTLY274_DEST:?set NIGHTLY274_DEST in $ENV_FILE (local NIGHTLY mirror folder)}
 RSYNC=${NIGHTLY274_RSYNC:-$HOME/.local/libexec/274bot-standby/rsync}
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
