@@ -129,8 +129,8 @@ Only some branches, cells or a different parallelism (as user `bot`, outside the
 ```sh
 cd /srv/nightly
 PATH=$HOME/.cargo/bin:$PATH python3 runner/tools/nightly/run_nightly.py \
-  --branch release/0.2.3 --cells shop_buyout_aubury,walk --parallel 2
-python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.3   # cell list only
+  --branch release/0.2.4 --cells shop_buyout_aubury,walk --parallel 2
+python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.4   # cell list only
 ```
 
 Settings can also go in `/etc/274bot-nightly.env` on the VM (read by the unit):

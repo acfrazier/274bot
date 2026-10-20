@@ -2025,6 +2025,41 @@ fn mule_observed_gap_counts_one_transfer_for_both_actors() {
 }
 
 #[test]
+fn mule_two_tick_gap_then_confirm_counts_one_transfer_for_both_actors() {
+    // Live repro (FIX-024 mule run 2): the offer interface posts inactive
+    // snapshots on two consecutive ticks before the confirm screen, so
+    // the confirm lands one tick after the first gap tick.
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 10, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 10, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 11, 0, 0));
+    mule.observe(mule_inactive(MuleRole::Mule, 11, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 12, 0, 0));
+    mule.observe(mule_inactive(MuleRole::Mule, 12, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 12, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 12, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 14, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 14, 0, MULE_TRADE_CAP));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
+fn mule_gap_then_next_tick_confirm_counts_one_transfer_for_both_actors() {
+    let mut crafter = mule_slot(MuleRole::Crafter);
+    let mut mule = mule_slot(MuleRole::Mule);
+    crafter.observe(mule_offer(MuleRole::Crafter, 10, 0, MULE_TRADE_CAP, 0));
+    mule.observe(mule_offer(MuleRole::Mule, 10, MULE_TRADE_CAP, 0, 0));
+    crafter.observe(mule_inactive(MuleRole::Crafter, 11, 0, 0));
+    mule.observe(mule_inactive(MuleRole::Mule, 11, 0, 0));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 12, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 12, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 14, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 14, 0, MULE_TRADE_CAP));
+    assert_mule_transfer(&crafter, &mule, 1, MULE_TRADE_CAP);
+}
+
+#[test]
 fn flax_direct_confirm_without_gap_still_counts() {
     let mut runner = flax_slot(FlaxRole::Runner);
     let mut spinner = flax_slot(FlaxRole::Spinner);
@@ -2136,16 +2171,19 @@ fn flax_skipped_offer_later_confirm_drops_without_latch() {
 
 #[test]
 fn mule_skipped_offer_later_confirm_drops_without_latch() {
+    // A confirm two ticks after the gap is outside the one-tick
+    // interface-swap window every live trace stays inside, so it cannot
+    // be tied to the observed offer.
     let mut crafter = mule_slot(MuleRole::Crafter);
     let mut mule = mule_slot(MuleRole::Mule);
     crafter.observe(mule_offer(MuleRole::Crafter, 1, 0, MULE_TRADE_CAP, 0));
     mule.observe(mule_offer(MuleRole::Mule, 1, MULE_TRADE_CAP, 0, 0));
     crafter.observe(mule_inactive(MuleRole::Crafter, 2, 0, 0));
     mule.observe(mule_inactive(MuleRole::Mule, 2, 0, 0));
-    crafter.observe(mule_confirm(MuleRole::Crafter, 3, 0, 0));
-    mule.observe(mule_confirm(MuleRole::Mule, 3, 0, 0));
-    crafter.observe(mule_close(MuleRole::Crafter, 4, MULE_TRADE_CAP, 0));
-    mule.observe(mule_close(MuleRole::Mule, 4, 0, MULE_TRADE_CAP));
+    crafter.observe(mule_confirm(MuleRole::Crafter, 4, 0, 0));
+    mule.observe(mule_confirm(MuleRole::Mule, 4, 0, 0));
+    crafter.observe(mule_close(MuleRole::Crafter, 5, MULE_TRADE_CAP, 0));
+    mule.observe(mule_close(MuleRole::Mule, 5, 0, MULE_TRADE_CAP));
     assert_mule_no_transfer(&crafter, &mule, false);
     assert_eq!(mule.exchange_stage, MuleExchangeStage::Offer);
 }
@@ -3408,6 +3446,47 @@ fn nature_first_close(master: &mut AirSlotRecord, runner: &mut AirSlotRecord) {
     runner.observe(air_confirm(AirRole::Runner, 14, 0));
     master.observe(air_close(AirRole::Master, 16, TRADE_CAP));
     runner.observe(air_close(AirRole::Runner, 16, 0));
+}
+
+#[test]
+fn nature_two_tick_gap_then_confirm_counts_one_transfer_for_both_actors() {
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_offer(AirRole::Master, 10, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 10, TRADE_CAP, 0));
+    master.observe(air_inactive(AirRole::Master, 11, 0));
+    runner.observe(air_inactive(AirRole::Runner, 11, 0));
+    master.observe(air_inactive(AirRole::Master, 12, 0));
+    runner.observe(air_inactive(AirRole::Runner, 12, 0));
+    master.observe(air_confirm(AirRole::Master, 12, 0));
+    runner.observe(air_confirm(AirRole::Runner, 12, 0));
+    master.observe(air_close(AirRole::Master, 14, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 14, 0));
+    assert_air_transfer(&master, &runner, 1, TRADE_CAP);
+}
+
+#[test]
+fn nature_confirm_two_ticks_after_the_gap_drops_without_transfer() {
+    // The opposite boundary of the one-tick window above: a confirm two
+    // ticks after the first gap is outside every live trace's interface
+    // swap, so the conserved close after it is not a transfer.
+    let mut master = air_slot(AirRole::Master);
+    let mut runner = air_slot(AirRole::Runner);
+    master.observe(air_offer(AirRole::Master, 10, 0, 0));
+    runner.observe(air_offer(AirRole::Runner, 10, TRADE_CAP, 0));
+    master.observe(air_inactive(AirRole::Master, 11, 0));
+    runner.observe(air_inactive(AirRole::Runner, 11, 0));
+    master.observe(air_confirm(AirRole::Master, 13, 0));
+    runner.observe(air_confirm(AirRole::Runner, 13, 0));
+    master.observe(air_close(AirRole::Master, 15, TRADE_CAP));
+    runner.observe(air_close(AirRole::Runner, 15, 0));
+    for slot in [&master, &runner] {
+        assert!(!slot.saw_confirm_with_partner);
+        assert_eq!(slot.partner_transfer_events, 0);
+        assert_eq!(slot.exchange_stage, AirExchangeStage::Offer);
+    }
+    assert_eq!(master.transferred_in, 0);
+    assert_eq!(runner.transferred_out, 0);
 }
 
 fn nature_first_craft(master: &mut AirSlotRecord) {
