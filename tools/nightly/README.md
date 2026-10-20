@@ -332,16 +332,17 @@ What differs from the 289 lane:
 - Settings, in the guest's `/etc/274bot-nightly.env`:
   `NIGHTLY_REVISION=274`, `NIGHTLY_BRANCHES=dev` (no release line),
   `NIGHTLY_CELLS_FILE=cells-274.conf`, `NIGHTLY_CELL_CAP_S=900`,
-  `NIGHTLY_RUN_DEADLINE_S=9000`, `NIGHTLY_NAME_PREFIX=n4`. The
+  `NIGHTLY_RUN_DEADLINE_S=9000`, `NIGHTLY_NAME_PREFIX=n4`,
+  `NIGHTLY_START=22:30`. The
   revision selects the built-in `local-274` profile (game 43594,
   assets on port 80), the `start-274.sh`/`stop-274.sh` engine
   scripts, the `unpack` decoded-cache folder, the 274 nav bake
   (`BOT_NAV_REVISION=274`) and the `-274` run suffix. Runs are
   `<date>-dev-<commit>-274`.
-- Cells: [`cells-274.conf`](cells-274.conf), a breadth subset of the
-  catalog (111 of 244 on 2026-10-20). The file's header states the
-  selection rule and each exclusion. A name in the file that leaves
-  the catalog fails the run. It is never dropped silently.
+- Cells: [`cells-274.conf`](cells-274.conf), 103 of 244. Its header
+  states the breadth rule, the R289-only quester and random-event
+  oracle exclusions, and the known 289 non-PASS exclusions. The runner
+  fails if a listed name leaves the catalog. It never drops a name silently.
 - Engine: clean clones at engine `4c95f87e` and content `000c19997`
   (branch `274`), with the patches in `tools/engine-patches/274/`
   and the control scripts and `world.json` in

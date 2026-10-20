@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ## Unreleased
 
+### Nightly
+
+- The nightly runner can select revision 274 with its own `local-274`
+  profile, cache path and cell list. The default remains revision 289.
+
 ### Panel
 
 - On Linux, the panel now follows the system's choice of graphics chip
