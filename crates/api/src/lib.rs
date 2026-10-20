@@ -38,6 +38,7 @@ pub mod random;
 pub mod run_policy;
 pub mod script_contract;
 pub mod selected;
+pub mod service_pick;
 pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;

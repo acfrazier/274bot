@@ -2568,6 +2568,7 @@ impl SlotScript {
                 crate::native::HostEffect::Interaction(req) => seat_interact_class(req, owner),
                 crate::native::HostEffect::Walk(_)
                 | crate::native::HostEffect::BankPick(_)
+                | crate::native::HostEffect::ServicePick(_)
                 | crate::native::HostEffect::AssessWalk(_) => {
                     (api::script_contract::EmissionClass::Gameplay, None)
                 }
@@ -2792,6 +2793,17 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_bank_pick(authority, receipt);
+        }
+    }
+
+    /// Deliver a service pick only to its still-live native run/request owner.
+    pub fn complete_native_service_pick(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native_bank::ServicePickReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_service_pick(authority, receipt);
         }
     }
 

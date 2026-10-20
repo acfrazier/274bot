@@ -175,6 +175,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/service_pick.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/shop_facts.rs",
       "owner": "T2"
     },
@@ -1860,6 +1864,14 @@
     },
     {
       "path": "crates/nav/src/router_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/service_pick.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/service_pick_tests.rs",
       "owner": "T5"
     },
     {

@@ -270,7 +270,8 @@ reasons to change.
 | `prayer.rs` | prayer queries | over fact rows and observed stats |
 | `quest_facts.rs`, `quest_facts/catalog.rs` | quest identity and prereqs; roster rows | stage resolution belongs to the Path |
 | `quest_progress.rs` | compact journal/progress evidence | shared by runner, host and nav provider |
-| `shop_facts.rs` | shop preset facts | ShopBuyout presets only |
+| `shop_facts.rs` | pinned shop and keeper facts | borrowed config/type joins; posted stock and content prices |
+| `service_pick.rs` | borrowed service candidates and shared resolved keeper rows | plain facts only; collision and search stay in `nav` |
 | `clue_facts.rs` | clue row lookup | over the posted trail family |
 | `clue_logic.rs` | held-step identify | first held step in posted order |
 | `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
@@ -358,6 +359,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
 | `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
+| `service_pick.rs`, `service_pick_tests.rs` | shared service-footprint access and complete-domain air/routed selection | prevalidated borrowed access; no `script` dependency |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
 | `transport/condparse.rs` | shared condition text helpers | fail-closed, same behavior |
@@ -374,7 +376,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `traveller/npc_hop.rs` | NPC-backed Boat/Npc/Glider approach and recovery | live scene operability, reachable-cost selection, bounded retry |
 | `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
-| `world.rs` | bound world handle | packed collision plus transport graph |
+| `world.rs` | bound world handle | packed collision, transport graph and once-bound shared bank/keeper facts |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
 | `zones.rs`, `zones/curated.rs` | exclusion zones, their spatial index and the per-search exemption filter | content-derived; curated groups and hazards in the child |
 | `bin/nav-pack.rs` | `nav-pack` CLI | whole-world bake entrypoint |
@@ -514,7 +516,7 @@ the operator's consent and adopts the tiles already verified).
 | `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Quester` and (with `load`) `Sherlock` |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
-| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
+| `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, typed service picks, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
