@@ -2996,20 +2996,23 @@ fn native_observation_without_compat_harvests_completed_inspection() {
     assert_eq!(terminal.reason, "NoPath");
 }
 
-fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>) {
-    let pack = std::env::var_os("WORLD_NAV_PACK")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-        .expect("set WORLD_NAV_PACK to the reviewed real 289 navpack");
-    let snapshot_root = std::env::var_os("BOT_NAV_SNAPSHOT_ROOT")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-        .expect("set BOT_NAV_SNAPSHOT_ROOT to the decoded 289 cache snapshot root");
+fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)> {
     const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
     const CONFIG_SHA256: &str = "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce";
     const FLAGS_SHA256: &str = "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a";
     const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
     use sha2::Digest as _;
+
+    let pack = script::ctx::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
+        "reviewed real 289 navpack",
+    )?;
+    let snapshot_root = script::ctx::test_support::local_asset_path(
+        "BOT_NAV_SNAPSHOT_ROOT",
+        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
+        "decoded 289 cache snapshot root",
+    )?;
 
     let pack_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),
@@ -3050,7 +3053,7 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
     loaded_world
         .collision
         .attach_flags(Arc::try_unwrap(flags.flags).expect("sole real flags owner"));
-    (Arc::new(loaded_world), cache, obj_names)
+    Some((Arc::new(loaded_world), cache, obj_names))
 }
 
 /// Deterministic old/new inspection handoff over the pinned real revision-289
@@ -3059,13 +3062,18 @@ fn real_content_inspection_world() -> (Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
+    let Some(old_capture) = script::ctx::test_support::local_asset_path(
+        "T5W_INSPECT_CAPTURE_BASELINE",
+        "/Volumes/dev-scratch/274bot-evidence/TRACK-T5/T5W/inspection-old-capture-r5/inspect.fb",
+        "immutable old inspection capture",
+    ) else {
+        return;
+    };
+    let Some((world, cache, obj_names)) = real_content_inspection_world() else {
+        return;
+    };
     let output = std::env::var_os("T5W_INSPECT_CAPTURE_OUT").map(std::path::PathBuf::from);
-    let old_capture = std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-        .expect("set T5W_INSPECT_CAPTURE_BASELINE to the immutable old capture");
     const REQUEST_ID: u64 = 2_890_001;
-    let (world, cache, obj_names) = real_content_inspection_world();
 
     // The recorded Al Kharid toll Gate (loc 2882) consumes ten coins.
     // `calculate` is the retained old implementation/oracle; actual output
@@ -3562,7 +3570,9 @@ fn drive_inspection_job(job: &mut InspectJob) -> (InspectJobOutput, u64, Duratio
 #[test]
 #[ignore = "requires immutable real revision-289 navigation and cache inputs"]
 fn real_content_inspection_whole_job_memory() {
-    let (world, cache, obj_names) = real_content_inspection_world();
+    let Some((world, cache, obj_names)) = real_content_inspection_world() else {
+        return;
+    };
     let mut charge_bytes = 0;
     let mut result = None;
     let measured = allocation_counter::measure(|| {
@@ -3626,7 +3636,9 @@ fn real_content_inspection_whole_job_memory() {
 #[test]
 #[ignore = "requires immutable real revision-289 navigation and cache inputs"]
 fn real_content_inspection_bank_fetch_whole_job_memory() {
-    let (world, cache, obj_names) = real_content_inspection_world();
+    let Some((world, cache, obj_names)) = real_content_inspection_world() else {
+        return;
+    };
     let from = tile(3202, 9909, 0);
     let to = tile(3209, 9891, 0);
     let mut state = WorldState::empty().with_map_members(true);
@@ -3887,7 +3899,9 @@ fn real_content_inspection_result_distribution() {
         "inspection corpus needs 100–128 requests for a useful p99"
     );
 
-    let (world, cache, obj_names) = real_content_inspection_world();
+    let Some((world, cache, obj_names)) = real_content_inspection_world() else {
+        return;
+    };
     let ledger = nav::producer::OwnerResultLedger::with_limits(
         nav::producer::OWNER_RESULT_CAPACITY_BYTES,
         nav::producer::OWNER_RESULT_MAX_BYTES,
