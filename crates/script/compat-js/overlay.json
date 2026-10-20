@@ -336,5 +336,13 @@
     "reason": "The script-specific camp names have no verified native location source.",
     "runtime": "crates/script/src/shim/data/woodcutting_locations.js:6",
     "declaration": "export const WOODCUTTING_LOCATION_OPTIONS: never;"
+  },
+  {
+    "id": "bank-withdraw-load-numeric-id",
+    "module": "api/bank/Bank.js",
+    "selector": "Bank.withdrawLoad",
+    "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
+    "runtime": "crates/script/src/shim/bank.js:162",
+    "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;"
   }
 ]
