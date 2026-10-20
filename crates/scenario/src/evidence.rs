@@ -45,6 +45,9 @@ pub struct Evidence {
     /// Random-event Guardian episode receipt, when the scenario observed one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub random_event: Option<serde_json::Value>,
+    /// Pre-Start ground-loot isolation guard, when the scenario used one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ground_guard: Option<GroundGuardEvidence>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -60,6 +63,23 @@ pub struct ProtectWindowEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kill_evidence: Option<&'static str>,
     pub prayer_off_tick: Option<u32>,
+}
+
+/// Content-timed fixture isolation, counted only by observed PLAYER_INFO ticks.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundGuardEvidence {
+    pub start_tick: u32,
+    pub ticks_waited: u32,
+    pub budget_game_ticks: u32,
+    pub items_seen: Vec<GroundGuardItem>,
+}
+
+/// Maximum observed stack count for one exact ground-item identity and tile.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundGuardItem {
+    pub id: i32,
+    pub count: i32,
+    pub tile: [i32; 3],
 }
 
 /// One inventory slot's row; `name` resolves through the runner's obj
@@ -142,6 +162,7 @@ impl Evidence {
             receipt: None,
             protect_window: None,
             random_event: None,
+            ground_guard: None,
             scene: snap.scene_state(),
         }
     }

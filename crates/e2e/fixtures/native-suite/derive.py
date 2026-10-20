@@ -72,7 +72,7 @@ MAPPING = [
          options=["location/drop/loot"],
          unsupported=[("selected herb/law/nature pickup", "combat fixture for selected pickups is still open")]),
     case("RockCrab", "rock_crab", reference=["rockcrab-dart-test"],
-         variants=["rock_crab_range", "rock_crab_bank"],
+         variants=["rock_crab_range"],
          note="Native stand (2712,3707,0) is inside the source spawn visibility window and outside wake range; "
               "the live baseline must still prove dormant Rocks and subsequent script activation. No LIVE qualification is implied."),
     case("MossGiant", "moss_giant", reference=["mossgiant-dart-test"], variants=["moss_giant_bank"],

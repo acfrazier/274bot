@@ -15,7 +15,7 @@ use nav::router::{FindOptions, Route};
 use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 
-use crate::evidence::Evidence;
+use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
 use crate::proof::Proof;
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
@@ -415,6 +415,7 @@ pub struct ScenarioRunner {
     engine_speed_sent: bool,
     speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
+    ground_guard: Option<GroundGuardEvidence>,
     /// Cumulative skill XP baselines: captured at StartScript for its later
     /// watches, otherwise when the first XP watch for that skill begins.
     xp_baselines: Vec<(i32, i32)>,
@@ -547,6 +548,7 @@ impl ScenarioRunner {
             speed_chat_baseline: None,
             engine_speed_sent: false,
             evidence: None,
+            ground_guard: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
@@ -1015,6 +1017,14 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
+            self.observe_ground_guard(arm);
+            let waited = if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+                self.ground_guard
+                    .as_ref()
+                    .map_or(0, |guard| guard.ticks_waited)
+            } else {
+                self.ticks_waited
+            };
             if matches!(self.current_step().kind, StepKind::Relog) {
                 self.relog_left_session |= !self.snapshot.ingame()
                     || self
@@ -1084,7 +1094,15 @@ impl ScenarioRunner {
                     }
                     self.advance_step();
                 }
-            } else if self.ticks_waited >= budget {
+            } else if waited >= budget {
+                if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+                    self.finish_fail(&format!(
+                        "fixture interference: step {} ({}): public loot field did not become clean within {budget} observed game ticks",
+                        self.step + 1,
+                        self.current_step().name,
+                    ));
+                    return;
+                }
                 let missing = self
                     .lamp_episode
                     .as_ref()
@@ -1179,6 +1197,17 @@ impl ScenarioRunner {
         self.fresh_chat_baseline = None;
         self.visited_within = false;
         self.capture_chat_baseline(self.current_step().wait.arm);
+        if matches!(
+            self.current_step().wait.arm,
+            Proof::GroundItemIdsAbsentNear { .. }
+        ) {
+            self.ground_guard = Some(GroundGuardEvidence {
+                start_tick: self.snapshot.tick(),
+                ticks_waited: 0,
+                budget_game_ticks: self.current_step().wait.budget_ticks,
+                items_seen: Vec::new(),
+            });
+        }
         self.lamp_episode = match self.current_step().kind {
             StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
                 reward_baseline: self.stat_xp(reward_stat),
@@ -1982,6 +2011,37 @@ impl ScenarioRunner {
         }
     }
 
+    fn observe_ground_guard(&mut self, arm: Proof) {
+        if !matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+            return;
+        }
+        let Some(guard) = self.ground_guard.as_mut() else {
+            return;
+        };
+        guard.ticks_waited = self.snapshot.tick().wrapping_sub(guard.start_tick);
+        for item in self
+            .snapshot
+            .ground_items()
+            .iter()
+            .filter(|item| arm.ground_guard_contains(item))
+        {
+            let tile = [item.tile.x, item.tile.z, item.tile.level];
+            if let Some(seen) = guard
+                .items_seen
+                .iter_mut()
+                .find(|seen| seen.id == item.def.id && seen.tile == tile)
+            {
+                seen.count = seen.count.max(item.count);
+            } else {
+                guard.items_seen.push(GroundGuardItem {
+                    id: item.def.id,
+                    count: item.count,
+                    tile,
+                });
+            }
+        }
+    }
+
     fn record_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
@@ -2001,6 +2061,7 @@ impl ScenarioRunner {
             .as_ref()
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
+        evidence.ground_guard = self.ground_guard.take();
         self.evidence = Some(evidence);
     }
 
@@ -2027,6 +2088,7 @@ impl ScenarioRunner {
             .as_ref()
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
+        evidence.ground_guard = self.ground_guard.take();
         self.evidence = Some(evidence);
     }
 }

@@ -43,6 +43,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Banking
+
+- When bank selection cannot find a route, the session log now gives the
+  routing error, start tile and number of candidate banks and access tiles.
+
+#### Scenario checks
+
+- The Ardougne Thiever fight check now prepares food and attacks a real Guard
+  before script Start. It no longer depends on a random stall catch.
+- The AutoFighter bank check now waits for public Bones to leave its starting
+  field before script Start. The receipt records the wait and observed loot.
+- Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
+  check keeps its name and still checks deposit, return and further combat.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain

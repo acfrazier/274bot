@@ -3,6 +3,9 @@ pub(crate) const BONES_ID: i32 = 526;
 pub(crate) const NOTED_BONES_ID: i32 = 527;
 pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
 const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
+// Engine content: drop tables/configs/lootdrop.constant:1 gives 200 ticks.
+// Two extra PLAYER_INFO observations cover the ordered ground-remove update.
+const AUTO_FIGHTER_FLOOR_CLEAR_TICKS: u32 = 200 + 2;
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
 const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -396,7 +399,7 @@ pub(crate) fn auto_fighter_range_scenario() -> Scenario {
 /// after a guaranteed Guard drop. No Bones are seeded: the script must loot
 /// them, deposit at East Ardougne, restock ten Trout, close, return and fight.
 pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
-    combat_bank_scenario(
+    let mut scenario = combat_bank_scenario(
         "auto_fighter_bank",
         "AutoFighter",
         ARDOUGNE_GUARD,
@@ -445,7 +448,37 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
                 },
             ),
         ],
-    )
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat bank fixture has Start");
+    scenario.steps.insert(
+        start,
+        Step {
+            name: "wait for the Guard field's public Bones to clear before Start",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::GroundItemIdsAbsentNear {
+                    ids: &[BONES_ID],
+                    x: ARDOUGNE_GUARD.x,
+                    z: ARDOUGNE_GUARD.z,
+                    level: ARDOUGNE_GUARD.level,
+                    // AutoFighter LootDrops: default leash 8 + pickup margin 4.
+                    radius: 12,
+                },
+                budget_ticks: AUTO_FIGHTER_FLOOR_CLEAR_TICKS,
+            },
+        },
+    );
+    // Preserve the existing post-Start allowance. Only the content-derived
+    // pre-Start guard adds time, at Engine A's ordinary 600 ms game tick.
+    scenario.settings.deadline +=
+        Duration::from_millis(u64::from(AUTO_FIGHTER_FLOOR_CLEAR_TICKS) * 600);
+    scenario
 }
 
 pub(crate) const UNICORN_HORN_ID: i32 = 237;

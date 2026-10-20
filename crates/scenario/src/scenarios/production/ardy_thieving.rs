@@ -96,11 +96,9 @@ const ARDY_THIEVER_FIGHT_INJECT: &[ScriptSettingInject] = &[
         id: "bankAtLootSlots",
         value: ScriptInjectValue::Num(1.0),
     },
-    // A full opening restock: one frozen stealCakes session (<= 90 s) at the
-    // stall, where the Guard catches. See ardy_thiever_fight_scenario.
     ScriptSettingInject {
         id: "foodTarget",
-        value: ScriptInjectValue::Num(27.0),
+        value: ScriptInjectValue::Num(1.0),
     },
     ScriptSettingInject {
         id: "restockAtFood",
@@ -503,32 +501,18 @@ pub(crate) fn ardy_thiever_knight_scenario() -> Scenario {
     })
 }
 
-/// `guardResponse=Fight` on ArdyThiever: FightBack kills the Guard that catches
-/// a stall steal, then pickpocket coins and the loot-count bank/return/further
-/// cycle of the Flee cell. Combat kit is prepared before Start; catalog owns
-/// the Guard defeat + no-Flee gate.
+/// `guardResponse=Fight` on ArdyThiever: prepare food and use an ordinary
+/// Attack on a real market Guard before Start. FightBack then handles the
+/// attacker, followed by the pickpocket bank/return/further cycle.
 ///
-/// **Why the kill comes first (289 content).** A failed pickpocket never starts
-/// combat: `fail_pick_pocket` (thieving.rs2) only stuns and deals 2 damage.
-/// The only Guard aggression is `stealing_check_for_guard` on a stall steal
-/// (stealing.rs2). ArdyThiever steals from the stall only while its food is at
-/// `restockAtFood`, and after the first coins it gets there only by eating,
-/// which needs HP lost to failed pickpockets (Guard success at Thieving 40 is
-/// 126/256). Each success also costs a ~60-tick bank trip at loot-count 1.
-/// Modelled, a catch after the coins within the 150-dirty watch is 1-9% with
-/// the old inject and about 42% with the best food seed (at a 0.2 catch
-/// chance per steal). So this cell watches
-/// Strength XP first, and injects `foodTarget` 27 with `restockAtFood` 0: the
-/// opening RestockCakes call is one full frozen stealCakes session at the
-/// stall. A Monte Carlo of that session (8-tick respawn after a success, ~5
-/// ticks per silent owner refusal with a swap after three) puts a Guard catch
-/// within 150 ticks of Start at 0.97 on the pooled 289 rates (11 success /
-/// 5 refused / 3 caught of 19 steals), 0.84 on the ArdyCakes run alone, and
-/// 1.0 at the passing `ardy_cakes_fight` rates. The watch is 150 runner
-/// dirties, about 143 engine ticks at the measured 1.05 dirties per tick,
-/// which gives 0.967 / 0.837 / 1.0. The coins, deposit, return and
-/// further-coins gates follow unchanged; the whole-run cap is
-/// `ARDY_THIEVER_FIGHT_DEADLINE`.
+/// A failed pickpocket only stuns and damages the player
+/// (`thieving.rs2:fail_pick_pocket`). A Guard catch during a stall steal is
+/// a secondary chance outcome (`stealing.rs2:stealing_check_for_guard`), so
+/// it cannot trigger this cell. Prepared cake also avoids an opening stall
+/// restock. The catalog still requires a Guard defeat without the Flee path.
+/// Thieving 99 gives the Guard's primary success roll 241/256. Three misses
+/// have probability (15/256)^3 < 1/1000 (`PlayerOps.ts:591-599` and
+/// `pickpocket.dbrow:68-79`), without changing the post-Start watch.
 pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
     let stand = ARDOUGNE_GUARD;
     let first_xp = Proof::StatXpGain {
@@ -545,15 +529,16 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed thieving, combat stats, scimitar, empty pack and market stand before Start",
+        name: "seed thieving, combat stats, scimitar, cake and market stand before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                cheat(c, "setstat thieving 40");
+                cheat(c, "setstat thieving 99");
                 cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, "give adamant_scimitar 1");
+                cheat(c, "give cake 8");
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
@@ -573,7 +558,7 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
             "confirm prepared Thieving before Start",
             Proof::Stat {
                 id: THIEVING_STAT,
-                min: 40,
+                min: 99,
             },
         ),
         (
@@ -612,10 +597,10 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
             },
         ),
         (
-            "confirm no seeded cake in pack before Start",
-            Proof::ItemIdAtMost {
+            "confirm prepared cake before Start",
+            Proof::ItemId {
                 id: CAKE_ID,
-                count: 0,
+                count: 8,
             },
         ),
     ] {
@@ -626,10 +611,44 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
         COMBAT_SCIMITAR_ID,
     ));
     steps.push(select_strength_combat_style_step());
+    steps.push(bank_fletcher_watch(
+        "acknowledge an unengaged market Guard before the fixture Attack",
+        ARDY_CAKES_GUARD_READY,
+    ));
+    steps.push(Step {
+        name: "Attack a real market Guard and acknowledge its target before Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, snapshot| {
+                let Some(guard) = snapshot
+                    .npcs()
+                    .iter()
+                    .filter(|npc| {
+                        npc.name.as_deref() == Some("Guard")
+                            && npc.distance <= 5
+                            && !npc.in_combat
+                            && npc.target.is_none()
+                    })
+                    .min_by_key(|npc| npc.distance)
+                else {
+                    return false;
+                };
+                let mut interactions = Interactions::new(snapshot, c);
+                matches!(
+                    interactions
+                        .interact(OpTarget::Npc(guard), ActionSpec::Label("Attack".into()),),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::NpcNameTargetingLocal { name: "Guard" },
+            budget_ticks: 150,
+        },
+    });
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         (
-            "watch Strength XP from FightBack on the catching Guard after Start",
+            "watch Strength XP from FightBack on the prepared Guard after Start",
             style_xp,
         ),
         ("watch Thieving XP after Start", first_xp),
