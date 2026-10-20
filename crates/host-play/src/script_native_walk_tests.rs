@@ -295,6 +295,40 @@ fn candidate_walk_returns_and_settles_the_chosen_goal() {
 }
 
 #[test]
+fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
+    let tile = |x| WorldTile { x, z: 4, level: 0 };
+    for (preferred, goal, tier) in [
+        (tile(8), tile(8), "candidate_goal_tier=preferred"),
+        (tile(44), tile(4), "candidate_goal_tier=fallback"),
+    ] {
+        let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
+        {
+            let mut shared = rig.shared.lock();
+            shared.target = Some(tile(20));
+            shared.arrival = nav::contract::ArrivalKind::Area;
+            shared.candidate_goals = Some(
+                script::native::WalkGoals::with_preferred(vec![preferred, tile(4)], &[preferred])
+                    .unwrap(),
+            );
+        }
+        rig.observe(1);
+        rig.wait_routed();
+        assert_eq!(
+            rig.navs.lock().unwrap()["alice"].route_destination(),
+            Some(goal),
+            "preferred={preferred:?}: a reachable preferred stand outranks the nearer fallback"
+        );
+        rig.step_at(goal);
+        rig.observe_at(2, goal);
+        let shared = rig.shared.lock();
+        let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(receipt.end, WalkEnd::Arrived);
+        assert_eq!(receipt.goal, Some(goal));
+        assert_eq!(receipt.detail.as_deref(), Some(tier));
+    }
+}
+
+#[test]
 fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
     let mut rig = open_rig(false);
     {
