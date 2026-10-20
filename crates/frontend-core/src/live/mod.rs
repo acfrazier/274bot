@@ -1425,7 +1425,7 @@ impl RunnerHandle {
             mark_live_script_start(live_timing, pending, on_start_script, &pump, Instant::now());
             match pump {
                 host_play::live_start::StartScriptPump::Hold => {}
-                host_play::live_start::StartScriptPump::CompiledFailed(error) => {
+                host_play::live_start::StartScriptPump::Failed(error) => {
                     runner.fail_start(&error);
                 }
                 host_play::live_start::StartScriptPump::Continue
@@ -1462,7 +1462,7 @@ impl RunnerHandle {
                             host_play::live_start::StartScriptPump::CompiledRunning => {
                                 runner.observe_script_running();
                             }
-                            host_play::live_start::StartScriptPump::CompiledFailed(error) => {
+                            host_play::live_start::StartScriptPump::Failed(error) => {
                                 runner.fail_start(&error);
                             }
                             _ => {}

@@ -247,19 +247,24 @@ pub enum StartScriptPump {
     /// Tick the runner this frame (seed, File StartScript, later steps).
     Continue,
     /// Do not tick (missing handle, pair barrier, delayed fleet Start, or
-    /// a JS Start that failed before admission).
+    /// a Start held by an operator hold it must wait out).
     Hold,
     /// A compiled card settled Ready; latch ScriptRunning then tick.
     CompiledRunning,
-    /// A compiled card was refused or failed; fail the StartScript step.
-    CompiledFailed(String),
+    /// A Start was refused or failed; fail the StartScript step with this
+    /// reason instead of holding the runner (which would starve its
+    /// deadline and hang the cell).
+    Failed(String),
 }
 
 /// Pump stashed catalog lifetimes once per driven-slot frame. Start all pending
 /// cards on StartScript; otherwise settle already-started preparation/setup.
 /// StopScript revokes each slot and resets its pending Start for the restart.
 /// Hold the runner while Start/Stop cannot advance, including preparation or
-/// witness readiness, and report compiled Running/Failed outcomes explicitly.
+/// witness readiness, and report Running/Failed outcomes explicitly. A
+/// refused or failed Start is never a Hold: the runner must fail its
+/// StartScript step with the reason, not wait out a deadline it cannot
+/// reach while held.
 pub fn fire_pending_catalog_start(
     pending: &mut [PendingCatalogStart],
     on_start_script: bool,
@@ -350,10 +355,7 @@ pub fn fire_pending_catalog_start(
                 return StartScriptPump::Hold;
             }
             watch.fail_start(&card.slot, error.to_string());
-            if card.compiled.is_some() {
-                return StartScriptPump::CompiledFailed(format!("start failed: {error}"));
-            }
-            return StartScriptPump::Hold;
+            return StartScriptPump::Failed(format!("start failed: {error}"));
         }
         card.started = true;
         card.waiting_reason = None;
@@ -362,14 +364,15 @@ pub fn fire_pending_catalog_start(
 }
 
 /// Settle setup once, keeping the card for a subsequent Stop/Start transaction.
-/// A failed setup fails the watch that armed its Start. Compiled cards return
-/// a pump notice so the scenario can wait for Running or report the rejection.
+/// A failed setup fails the watch that armed its Start and returns a pump
+/// notice so the scenario fails its StartScript step with the reason.
+/// Compiled cards also return a Running notice so the scenario can latch it.
 fn settle_started_catalog_cards(
     pending: &mut [PendingCatalogStart],
     handle: &ScriptStartHandle,
     arming: &StartArming,
 ) -> Option<StartScriptPump> {
-    let mut compiled_pump = None;
+    let mut settle_pump = None;
     for card in pending
         .iter_mut()
         .filter(|card| card.started && !card.settled)
@@ -378,45 +381,33 @@ fn settle_started_catalog_cards(
         let error = match handle.poll_start(&card.slot) {
             script::StartPoll::Pending => continue,
             script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
-                if compiled {
-                    compiled_pump = Some(StartScriptPump::CompiledFailed(format!(
-                        "start failed: {error}"
-                    )));
-                }
+                settle_pump = Some(StartScriptPump::Failed(format!("start failed: {error}")));
                 Some(error)
             }
             script::StartPoll::Settled(script::StartOutcome::Rejected(error)) => {
-                if compiled {
-                    compiled_pump = Some(StartScriptPump::CompiledFailed(format!(
-                        "start rejected: {error}"
-                    )));
-                }
+                settle_pump = Some(StartScriptPump::Failed(format!("start rejected: {error}")));
                 Some(error.to_string())
             }
             script::StartPoll::Settled(script::StartOutcome::Ready) => {
                 if compiled {
-                    compiled_pump = Some(StartScriptPump::CompiledRunning);
+                    settle_pump = Some(StartScriptPump::CompiledRunning);
                 }
                 None
             }
             script::StartPoll::Settled(script::StartOutcome::Cancelled) => {
-                if compiled {
-                    compiled_pump = Some(StartScriptPump::CompiledFailed("start cancelled".into()));
-                }
+                settle_pump = Some(StartScriptPump::Failed("start cancelled".into()));
                 None
             }
             script::StartPoll::NotOwed => {
                 if compiled {
-                    compiled_pump = Some(match handle.run_state(&card.slot) {
+                    settle_pump = Some(match handle.run_state(&card.slot) {
                         script::RunState::Running | script::RunState::Paused => {
                             StartScriptPump::CompiledRunning
                         }
-                        _ => StartScriptPump::CompiledFailed(
-                            handle.last_error(&card.slot).map_or_else(
-                                || "start did not reach running".into(),
-                                |error| format!("start rejected: {error}"),
-                            ),
-                        ),
+                        _ => StartScriptPump::Failed(handle.last_error(&card.slot).map_or_else(
+                            || "start did not reach running".into(),
+                            |error| format!("start rejected: {error}"),
+                        )),
                     });
                 }
                 None
@@ -431,7 +422,7 @@ fn settle_started_catalog_cards(
             }
         }
     }
-    compiled_pump
+    settle_pump
 }
 
 /// Both slots of a paired proof with complementary role bags. The same bags
