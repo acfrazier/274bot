@@ -1603,7 +1603,8 @@ impl Run {
                 return Ok(false);
             }
             drop(start_hold);
-            return match play.script_start_typed(name, script::gatherer::CARD.id, card_bag.clone()) {
+            return match play.script_start_typed(name, script::gatherer::CARD.id, card_bag.clone())
+            {
                 Ok(()) => Ok(true),
                 Err(script::StartLoadError::Waiting(_)) => Ok(false),
                 Err(error) => Err(format!("gatherer_native_start_failed:{name}:{error}")),
