@@ -1693,7 +1693,7 @@ impl Run {
         );
 
         let gatherer_fleet = self.is_gatherer_fleet();
-        let gatherer_active = gatherer_fleet && self.teardown.is_none() && !self.stopped;
+        let gatherer_active = gatherer_fleet && self.teardown.is_none();
         if gatherer_active {
             if let Some(selected) = play.game_data() {
                 if let Some(catalog) = api::gather_methods::cached(&selected) {
@@ -1878,9 +1878,20 @@ impl Run {
                 if cycle != self.lifecycle_cycle {
                     for name in &self.names {
                         if should_stop {
+                            if gatherer_fleet {
+                                crate::memory_diagnostics::gatherer_planned_stop(name);
+                            }
                             play.script_stop(name);
                         } else {
-                            self.start_script(play, name)?;
+                            let admitted = self.start_script(play, name)?;
+                            if gatherer_fleet {
+                                if !admitted {
+                                    return Err(format!(
+                                        "gatherer_lifecycle_start_not_admitted:{name}"
+                                    ));
+                                }
+                                crate::memory_diagnostics::gatherer_planned_start(name);
+                            }
                         }
                     }
                     self.stopped = should_stop;
@@ -1888,6 +1899,15 @@ impl Run {
                 }
             }
             if observing.elapsed() >= self.config.observe && self.teardown.is_none() {
+                if gatherer_fleet
+                    && !self.stopped
+                    && !matches!(
+                        crate::memory_diagnostics::gatherer_verdict_current(),
+                        Some(crate::memory_diagnostics::GathererVerdict::Pass { .. })
+                    )
+                {
+                    return Err("gatherer_restart_incomplete_at_observe_end".into());
+                }
                 self.write_qualification(play, "observe-end")?;
                 for name in &self.names {
                     play.script_stop(name);

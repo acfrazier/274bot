@@ -11,6 +11,16 @@ use std::time::Instant;
 const GATHERER_RESOURCE_WAIT: &str = "waiting for a resource";
 const GATHERER_WOODCUTTING_STAT: usize = 8;
 const MAX_GATHERER_CHOP_RECEIPTS: usize = 300;
+// A warm Gatherer restart has two cooperative actions (Configure, Construct),
+// then host adoption: script/src/slot/compiled.rs::prepare_run / poll_compiled.
+// Allow one observed PLAYER_INFO tick per step, not an unbounded worker wait.
+const GATHERER_RESTART_TICKS: u64 = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GathererRestart {
+    Stopped,
+    Starting { tick: u64 },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DeniedSample {
@@ -74,6 +84,7 @@ struct GathererBot {
     deaths_seen: bool,
     native_failure: Option<String>,
     final_run_state: Option<RunState>,
+    planned_restart: Option<GathererRestart>,
     final_phase: Option<NativePhase>,
     final_phase_label: Option<Arc<str>>,
     final_event: Option<Arc<str>>,
@@ -85,6 +96,31 @@ struct GathererBot {
     failed_chop_dispatches: u32,
     window_chop_dispatches: u32,
     chop_receipts: Vec<ChopReceipt>,
+}
+
+impl GathererBot {
+    fn planned_stop(&mut self) {
+        self.planned_restart = Some(GathererRestart::Stopped);
+    }
+
+    fn planned_start(&mut self) {
+        if self.planned_restart == Some(GathererRestart::Stopped) {
+            self.planned_restart = self.last_tick.map(|tick| GathererRestart::Starting { tick });
+        }
+    }
+
+    fn observe_run_state(&mut self, state: RunState) {
+        self.final_run_state = Some(state);
+        if let Some(GathererRestart::Starting { tick }) = self.planned_restart {
+            if state == RunState::Running
+                && self
+                    .last_tick
+                    .is_some_and(|now| now.saturating_sub(tick) <= GATHERER_RESTART_TICKS)
+            {
+                self.planned_restart = None;
+            }
+        }
+    }
 }
 
 struct GathererFleet {
@@ -205,6 +241,22 @@ pub(crate) fn gatherer_started(name: &str) {
     }
 }
 
+/// Only the lifecycle harness's own Stop arms a restart allowance.
+pub(crate) fn gatherer_planned_stop(name: &str) {
+    let mut all = GATHERER_FLEET.lock().unwrap();
+    if let Some(bot) = all.as_mut().and_then(|fleet| fleet.bots.get_mut(name)) {
+        bot.planned_stop();
+    }
+}
+
+/// Start the tick bound only after the harness successfully admits its Start.
+pub(crate) fn gatherer_planned_start(name: &str) {
+    let mut all = GATHERER_FLEET.lock().unwrap();
+    if let Some(bot) = all.as_mut().and_then(|fleet| fleet.bots.get_mut(name)) {
+        bot.planned_start();
+    }
+}
+
 pub(crate) fn gatherer_script_error(name: &str, error: &str) {
     let mut all = GATHERER_FLEET.lock().unwrap();
     if let Some(bot) = all.as_mut().and_then(|fleet| fleet.bots.get_mut(name)) {
@@ -220,7 +272,7 @@ pub(crate) fn gatherer_native_status(name: &str, state: RunState, status: Option
     let Some(bot) = fleet.bots.get_mut(name) else {
         return;
     };
-    bot.final_run_state = Some(state);
+    bot.observe_run_state(state);
     let Some(status) = status else { return };
     let tick = bot.last_tick;
     bot.native_status_tick = tick;
@@ -661,6 +713,7 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
         return GathererVerdict::Pending;
     };
     let mut xp_delta = 0i64;
+    let mut restarting = false;
     for name in &fleet.names {
         let Some(bot) = fleet.bots.get(name) else {
             return GathererVerdict::Fail(format!("gatherer_bot_missing:{name}"));
@@ -712,11 +765,43 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
         if bot.final_phase == Some(NativePhase::Blocked) {
             return GathererVerdict::Fail(format!("gatherer_final_blocked:{name}"));
         }
-        if bot.final_run_state != Some(RunState::Running) {
-            return GathererVerdict::Fail(format!(
-                "gatherer_not_running:{name}:{:?}",
-                bot.final_run_state
-            ));
+        match bot.planned_restart {
+            Some(GathererRestart::Stopped)
+                if matches!(
+                    bot.final_run_state,
+                    Some(RunState::Running | RunState::Stopping | RunState::Idle)
+                ) =>
+            {
+                restarting = true;
+            }
+            Some(GathererRestart::Starting { tick }) => {
+                if bot
+                    .last_tick
+                    .is_none_or(|now| now.saturating_sub(tick) > GATHERER_RESTART_TICKS)
+                {
+                    return GathererVerdict::Fail(format!(
+                        "gatherer_restart_timeout:{name}:start_tick={tick}:last_tick={:?}:budget={GATHERER_RESTART_TICKS}",
+                        bot.last_tick
+                    ));
+                }
+                if !matches!(
+                    bot.final_run_state,
+                    Some(RunState::Starting | RunState::Running)
+                ) {
+                    return GathererVerdict::Fail(format!(
+                        "gatherer_not_running:{name}:{:?}",
+                        bot.final_run_state
+                    ));
+                }
+                restarting = true;
+            }
+            _ if bot.final_run_state != Some(RunState::Running) => {
+                return GathererVerdict::Fail(format!(
+                    "gatherer_not_running:{name}:{:?}",
+                    bot.final_run_state
+                ));
+            }
+            _ => {}
         }
         let delta = i64::from(end_xp) - i64::from(start_xp);
         if delta < 0 {
@@ -749,6 +834,9 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
         return GathererVerdict::Fail(format!(
             "gatherer_fleet_zero_xp:anchor_owner={anchor_owner}:delta={xp_delta}"
         ));
+    }
+    if restarting {
+        return GathererVerdict::Pending;
     }
     GathererVerdict::Pass {
         fleet_xp_delta: xp_delta,
@@ -1220,6 +1308,96 @@ mod tests {
     }
 
     #[test]
+    fn planned_lifecycle_restart_qualifies_but_unplanned_or_overdue_starting_fails() {
+        let mut fleet = r2_fleet();
+        let name = "gm1d8f7qgp_0";
+        let passed = GathererVerdict::Pass { fleet_xp_delta: 675 };
+        assert_eq!(gatherer_verdict(&fleet), passed);
+        let start = fleet.bots[name].last_tick.unwrap() + 100;
+        {
+            let bot = fleet.bots.get_mut(name).unwrap();
+            bot.planned_stop();
+            bot.last_tick = Some(start);
+            bot.observe_run_state(RunState::Idle);
+        }
+        fleet.bots.get_mut(name).unwrap().planned_start();
+        for elapsed in 0..=GATHERER_RESTART_TICKS {
+            let bot = fleet.bots.get_mut(name).unwrap();
+            bot.last_tick = Some(start + elapsed);
+            bot.observe_run_state(RunState::Starting);
+            assert_eq!(gatherer_verdict(&fleet), GathererVerdict::Pending);
+        }
+        // A denied position, death, native failure, missing position or Blocked
+        // phase must still fail during the planned restart.
+        for bad in 0..5 {
+            let bot = fleet.bots.get_mut(name).unwrap();
+            match bad {
+                0 => bot.missing_position_samples = 1,
+                1 => bot.deaths = 1,
+                2 => bot.native_failure = Some("restart failure".into()),
+                3 => bot.final_phase = Some(NativePhase::Blocked),
+                _ => {
+                    bot.first_denied = Some(DeniedSample {
+                        tick: start,
+                        tile: WorldTile {
+                            x: 3104,
+                            z: 3229,
+                            level: 0,
+                        },
+                        zone: 514,
+                    })
+                }
+            }
+            assert!(matches!(gatherer_verdict(&fleet), GathererVerdict::Fail(_)));
+            let bot = fleet.bots.get_mut(name).unwrap();
+            bot.missing_position_samples = 0;
+            bot.deaths = 0;
+            bot.native_failure = None;
+            bot.final_phase = Some(NativePhase::Working);
+            bot.first_denied = None;
+        }
+        fleet
+            .bots
+            .get_mut(name)
+            .unwrap()
+            .observe_run_state(RunState::Running);
+        assert_eq!(gatherer_verdict(&fleet), passed);
+        assert_eq!(fleet.bots[name].planned_restart, None);
+
+        // The allowance ends at Running. A later unplanned Starting fails.
+        fleet
+            .bots
+            .get_mut(name)
+            .unwrap()
+            .observe_run_state(RunState::Starting);
+        assert!(failure(&fleet).starts_with("gatherer_not_running:"));
+        // A Start without a harness Stop cannot grant an allowance either.
+        fleet.bots.get_mut(name).unwrap().planned_start();
+        assert!(failure(&fleet).starts_with("gatherer_not_running:"));
+
+        let bot = fleet.bots.get_mut(name).unwrap();
+        bot.planned_stop();
+        bot.observe_run_state(RunState::Idle);
+        assert_eq!(gatherer_verdict(&fleet), GathererVerdict::Pending);
+        let bot = fleet.bots.get_mut(name).unwrap();
+        bot.planned_start();
+        let restart = bot.last_tick.unwrap();
+        bot.observe_run_state(RunState::Starting);
+        assert_eq!(gatherer_verdict(&fleet), GathererVerdict::Pending);
+        let bot = fleet.bots.get_mut(name).unwrap();
+        bot.last_tick = Some(restart + GATHERER_RESTART_TICKS + 1);
+        bot.observe_run_state(RunState::Starting);
+        assert!(failure(&fleet).starts_with("gatherer_restart_timeout:"));
+        // A late Running cannot erase an overrun.
+        fleet
+            .bots
+            .get_mut(name)
+            .unwrap()
+            .observe_run_state(RunState::Running);
+        assert!(failure(&fleet).starts_with("gatherer_restart_timeout:"));
+    }
+
+    #[test]
     fn chop_receipt_requires_one_exact_chop_down_request() {
         use script::shim::InteractReq;
 
@@ -1315,6 +1493,14 @@ mod tests {
         let mut blocked = r2_fleet();
         blocked.bots.get_mut("gm1d8f7qgp_0").unwrap().final_phase = Some(NativePhase::Blocked);
         assert!(failure(&blocked).starts_with("gatherer_final_blocked:"));
+
+        for (sampled, missing) in [(1, 1), (0, 0)] {
+            let mut missing_position = r2_fleet();
+            let bot = missing_position.bots.get_mut("gm1d8f7qgp_0").unwrap();
+            bot.sampled_positions = sampled;
+            bot.missing_position_samples = missing;
+            assert!(failure(&missing_position).starts_with("gatherer_position_evidence_missing:"));
+        }
     }
 
     #[test]
@@ -1417,6 +1603,12 @@ mod tests {
         ));
         assert!(!is_resource_wait_sample(
             RunState::Idle,
+            NativePhase::Waiting,
+            Some("waiting"),
+            Some("waiting for a resource"),
+        ));
+        assert!(!is_resource_wait_sample(
+            RunState::Paused,
             NativePhase::Waiting,
             Some("waiting"),
             Some("waiting for a resource"),

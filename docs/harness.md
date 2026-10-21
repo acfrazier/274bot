@@ -946,6 +946,17 @@ also show a genuine resource-exhaustion wait. Generic `Waiting`, idle and paused
 states do not supply that evidence. The qualifier collects its evidence even
 when the optional diagnostic sidecar is disabled.
 
+During a planned lifecycle restart, safety checks continue through the harness's
+Stop and Start. Only that Stop arms the restart allowance. The admitted Start
+allows `Starting` for at most three observed `PLAYER_INFO` ticks, then requires
+`Running`. The warm Gatherer start has two cooperative actions, Configure and
+Construct, followed by host adoption (`script/src/slot/compiled.rs`,
+`prepare_run` and `poll_compiled`). The harness allows one tick per step.
+This is a qualification bound, not a guarantee about worker scheduling.
+An unplanned `Starting`, a restart overrun or an unfinished restart at
+observation end fails the cell. A planned restart never resets the original
+300-tick proof window.
+
 The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
 Gatherer live cells retain their individual gates. They do not use this fleet's
 shared-tree fixture.
