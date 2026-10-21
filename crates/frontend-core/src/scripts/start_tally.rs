@@ -24,6 +24,8 @@ pub(super) enum Outcome {
 pub(super) struct StartTally {
     label: &'static str,
     bots: Vec<(String, Outcome)>,
+    /// Opened by a planned fleet action: its report stays off the banner.
+    quiet: bool,
 }
 
 impl StartTally {
@@ -31,6 +33,7 @@ impl StartTally {
         Self {
             label,
             bots: Vec::new(),
+            quiet: false,
         }
     }
 
@@ -41,6 +44,15 @@ impl StartTally {
     /// A later click folded into this tally names it.
     pub fn relabel(&mut self, label: &'static str) {
         self.label = label;
+    }
+
+    /// Whether its report stays off the banner (a planned fleet action's).
+    pub fn quiet(&self) -> bool {
+        self.quiet
+    }
+
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.quiet = quiet;
     }
 
     /// Whether any bot is still waiting for its permit.

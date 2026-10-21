@@ -3585,7 +3585,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         .map(|row| {
             (
                 row.name(),
-                row.checked(&s.fleet_selection),
+                row.checked(s.fleet_model.marks()),
                 row.status.exclusion(),
             )
         })
@@ -3665,7 +3665,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     for name in ["alice", "bob", "logged-out", "nopos"] {
         s.core.fleet_mut().add(name);
         let identity = s.fleet_identity(name);
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     s.refresh_walk_send();
@@ -3712,7 +3712,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         s.core.fleet_mut().add(name);
     }
     let alice = s.fleet_identity("alice");
-    s.fleet_selection.set_for_test(alice, true);
+    s.fleet_model.set_mark_for_test(alice, true);
 
     s.open_walkto_for_marked();
 
@@ -3722,11 +3722,11 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         .walk_send
         .rows()
         .iter()
-        .map(|row| (row.name(), row.checked(&s.fleet_selection)))
+        .map(|row| (row.name(), row.checked(s.fleet_model.marks())))
         .collect();
     assert_eq!(checked, [("alice", true), ("bob", false)]);
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
-    assert_eq!(s.fleet_selection.len(), 1, "a mark is never added");
+    assert_eq!(s.fleet_model.marks().len(), 1, "a mark is never added");
 }
 
 /// WalkTo's Send keeps no selection of its own: the Walk button's count reads
@@ -3761,7 +3761,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         s.core.fleet_mut().add(name);
     }
     let (alice, bob) = (s.fleet_identity("alice"), s.fleet_identity("bob"));
-    s.fleet_selection.set_for_test(alice, true);
+    s.fleet_model.set_mark_for_test(alice, true);
     s.open_walkto_for_marked();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
@@ -3782,11 +3782,11 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
     // Another surface marks bob; Send was not pressed and the list was not
     // rebuilt.
-    s.fleet_selection.set_for_test(bob, true);
+    s.fleet_model.set_mark_for_test(bob, true);
     assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
-    s.fleet_selection.set_for_test(alice, false);
+    s.fleet_model.set_mark_for_test(alice, false);
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
-    s.fleet_selection.clear_for_test();
+    s.fleet_model.clear_marks_for_test();
     assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
 }
 
@@ -8066,10 +8066,10 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     let identity = s.core.profile_identity("alice").unwrap();
-    s.fleet_selection.set_for_test(identity, true);
+    s.fleet_model.set_mark_for_test(identity, true);
     assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
     assert!(
-        !s.fleet_selection.contains(identity),
+        !s.fleet_model.marks().contains(identity),
         "deleting a profile removes its shared mark"
     );
     assert!(
@@ -9029,7 +9029,7 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
     session.core.set_spawn_workers(false);
     install_vault(&mut session.core, vault);
     session.core.set_play(Some(play));
-    session.fleet_selection.mark_all_for_test([
+    session.fleet_model.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(11),
         frontend_core::ProfileIdentity::uid(22),
         frontend_core::ProfileIdentity::uid(33),

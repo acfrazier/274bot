@@ -222,6 +222,7 @@ impl<Io> OperatorSession<Io> {
         )
         .unwrap_or(true);
         self.set_pause_script_on_manual_walk_abort(pause);
+        self.adopt_profile_order(&preferences);
         view
     }
 
@@ -367,6 +368,7 @@ impl<Io> OperatorSession<Io> {
                     queued,
                     what,
                     effect,
+                    order: None,
                 });
                 Applied::Later
             }
@@ -389,6 +391,7 @@ impl<Io> OperatorSession<Io> {
                 crate::log_file::apply_session_log(on);
                 None
             }
+            PrefEffect::ProfileOrder => None,
         }
     }
 
@@ -410,12 +413,27 @@ impl<Io> OperatorSession<Io> {
                     if let Some(view) = self.apply_pref_effect(watch.effect) {
                         self.commands.settle_walk_globals(view);
                     }
+                    if let Some(order) = watch.order {
+                        log_order_saved(watch.request, &order.audit);
+                        if order.seq > self.durable_order_seq {
+                            self.durable_order_seq = order.seq;
+                            self.durable_order = order.order;
+                        }
+                    }
                     (Settlement::Completed(Completion::Done), None)
                 }
-                Err(error) => (
-                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
-                    Some(format!("{}: {error}", watch.what)),
-                ),
+                Err(error) => {
+                    // The newest reorder's write failed: show the last
+                    // durable order again. An older one's failure changes
+                    // nothing (a newer write carries the current order).
+                    if matches!(watch.effect, PrefEffect::ProfileOrder) {
+                        self.revert_profile_order();
+                    }
+                    (
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                        Some(format!("{}: {error}", watch.what)),
+                    )
+                }
             };
             self.settle_later(
                 watch.request,
@@ -688,6 +706,64 @@ impl<Io> OperatorSession<Io> {
             .begin_set(key, value)
             .map_err(|error| write_failed(key, &error))
     }
+
+    /// Write the saved Load order a reorder just changed from `before`.
+    /// `Done` (with one audit line) once durable; a write still queued
+    /// keeps the member pending ([`Self::settle_pref_writes`]). A refused
+    /// or failed write puts back the last durable order, so a failure
+    /// never shows as the saved order.
+    pub(super) fn write_profile_order(
+        &mut self,
+        request: RequestId,
+        before: &crate::profile_order::ProfileOrder,
+    ) -> Applied {
+        let audit = self.profile_order.moved_from(before);
+        let write = match self.write_preference(
+            crate::profile_order::PROFILE_ORDER_KEY,
+            self.profile_order.to_value(),
+        ) {
+            Ok(write) => write,
+            Err(refused) => {
+                self.revert_profile_order();
+                return refused;
+            }
+        };
+        for older in self.commands.pref_writes().iter_mut() {
+            older.effect = older.effect.superseded_by(PrefEffect::ProfileOrder);
+        }
+        self.order_write_seq += 1;
+        match write {
+            Update::Durable => {
+                log_order_saved(request, &audit);
+                self.durable_order_seq = self.order_write_seq;
+                self.durable_order.assign_from(&self.profile_order);
+                Applied::Done
+            }
+            Update::Queued(queued) => {
+                self.commands.watch_pref_write(PrefWriteWatch {
+                    request,
+                    queued,
+                    what: "profile order",
+                    effect: PrefEffect::ProfileOrder,
+                    order: Some(OrderWrite {
+                        seq: self.order_write_seq,
+                        order: self.profile_order.snapshot(),
+                        audit,
+                    }),
+                });
+                Applied::Later
+            }
+        }
+    }
+
+    /// Put back the last durable saved Load order (a reorder whose write
+    /// failed), reconciled with the vault.
+    fn revert_profile_order(&mut self) {
+        self.profile_order.assign_from(&self.durable_order);
+        self.order_reconciled_at = None;
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        self.reconcile_profile_order();
+    }
 }
 
 fn no_model(what: &str) -> Applied {
@@ -722,6 +798,9 @@ pub(super) enum PrefEffect {
     Walk(Option<bool>),
     /// Open or close the session file.
     SessionLog(bool),
+    /// The saved Load order: on a failure, put back the order the file
+    /// holds.
+    ProfileOrder,
 }
 
 impl PrefEffect {
@@ -734,6 +813,7 @@ impl PrefEffect {
         match (self, newer) {
             (Self::Walk(Some(_)), Self::Walk(Some(_))) => Self::Walk(None),
             (Self::SessionLog(_), Self::SessionLog(_)) => Self::None,
+            (Self::ProfileOrder, Self::ProfileOrder) => Self::None,
             (effect, _) => effect,
         }
     }
@@ -747,6 +827,27 @@ pub(super) struct PrefWriteWatch {
     /// What the write saves, for a failure's detail.
     pub(super) what: &'static str,
     pub(super) effect: PrefEffect,
+    /// The Load order a reorder's write carries, logged (and made the
+    /// durable order, unless a newer write already is) when it is durable.
+    pub(super) order: Option<OrderWrite>,
+}
+
+/// The Load order one reorder writes.
+pub(super) struct OrderWrite {
+    /// The write's number: a higher one began later.
+    seq: u64,
+    order: crate::profile_order::ProfileOrder,
+    /// The moved names and their old and new places, for the audit line.
+    audit: String,
+}
+
+/// The one audit line of a durable Load order change.
+fn log_order_saved(request: RequestId, moved: &str) {
+    api::host_log!(
+        api::hostlog::Category::Lifecycle,
+        api::hostlog::Level::Info,
+        "profile order: request {request:?}: saved Load order: {moved}"
+    );
 }
 
 fn write_failed(what: &str, error: &std::io::Error) -> Applied {

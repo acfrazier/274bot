@@ -13,13 +13,13 @@
 //! menu and never acts as a left click.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use frontend_core::{combined_bulk_scope, BulkScope};
+use frontend_core::MarkOp;
 
 use crate::app::{AppAction, TuiApp};
 use crate::commands::{
     script_key_command, Command, Group, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
-use crate::fleet::{FilterEdit, MARK_COLUMNS};
+use crate::fleet::{toggled_mark, FilterEdit, MARK_COLUMNS};
 use crate::help::HelpState;
 use crate::layout::{contains, Pane, Screen, SizeClass, Tab};
 use crate::log_pane::{LogKey, LogPaneState};
@@ -202,6 +202,7 @@ impl TuiApp {
         }
         match self.key_scope() {
             "Fleet filter" => "type: name, wN, state · Up/Down move · Enter keep · Esc clear",
+            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · m load all · U logout all",
             "Fleet" => "Up/Down move · Enter select · Space select row · / filter · m load all · U logout all",
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
@@ -298,24 +299,11 @@ impl TuiApp {
     }
 
     /// Run `command` if it is available now; otherwise say why on the
-    /// message line. Fleet-wide commands first confirm their frozen scope.
+    /// message line. A fleet action goes to core as a plan; the dispatcher
+    /// asks for confirmation only when the plan says so.
     pub fn run_command(&mut self, command: Command) -> AppAction {
         if let Err(reason) = command.availability(self) {
             self.error = Some(format!("{}: {reason}", command.label(self)));
-            return AppAction::None;
-        }
-        if command.is_bulk() {
-            let marked = combined_bulk_scope(&self.table.selection) == BulkScope::Marked;
-            let members = if marked {
-                self.marked_names()
-            } else {
-                self.names.clone()
-            };
-            self.confirm(ConfirmKind::Bulk {
-                command,
-                members,
-                marked,
-            });
             return AppAction::None;
         }
         match command {
@@ -341,14 +329,29 @@ impl TuiApp {
                 self.focus_pane(Pane::Fleet);
                 self.table.editing = true;
             }
-            Command::MarkAllShown => {
-                self.table
-                    .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
-                return AppAction::MarkAll(
-                    self.table.shown_identities(&self.names, &self.profile_ids),
-                );
+            Command::PickFleetCard => {
+                self.open_modal(Modal::FleetCard(crate::fleet_card::CardPicker::open(self)));
+            }
+            Command::MarkAllShown => return AppAction::MarkFleet(MarkOp::Shown),
+            Command::UnmarkShown => return AppAction::MarkFleet(MarkOp::UnmarkShown),
+            Command::InvertShown => return AppAction::MarkFleet(MarkOp::InvertShown),
+            Command::MarkWhere(predicate) => {
+                return AppAction::MarkFleet(MarkOp::Where(predicate));
             }
             Command::ClearMarks => return AppAction::ClearMarks,
+            Command::MoveProfileUp | Command::MoveProfileDown => {
+                let delta = if command == Command::MoveProfileUp {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(op) = self.table.reorder_step(&self.fleet_model, delta) {
+                    return AppAction::ReorderProfiles(op);
+                }
+            }
+            Command::MoveMarkedToTop => {
+                return AppAction::ReorderProfiles(frontend_core::ReorderOp::MarkedToTop);
+            }
             Command::Login => return AppAction::Login,
             Command::Logout => return AppAction::Logout,
             Command::Remove => {
@@ -414,13 +417,7 @@ impl TuiApp {
             Command::LogSessionFile => {
                 return AppAction::SetSessionLog(LogPaneState::session_file_toggled());
             }
-            Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
-            Command::LoadLoginAll
-            | Command::LogoutAll
-            | Command::ScriptStartAll
-            | Command::ScriptStopAll
-            | Command::ScriptAssignMarked
-            | Command::ScriptRestartMarked => {}
+            Command::Fleet(action) => return AppAction::PlanFleet(action),
         }
         AppAction::None
     }
@@ -467,7 +464,8 @@ impl TuiApp {
     /// text and commits it before the next key, so the rows follow the text
     /// as it is typed.
     fn fleet_filter_key(&mut self, key: KeyEvent) -> Option<AppAction> {
-        let empty = self.table.filter.staged().is_empty() && self.table.filter.text().is_empty();
+        let filter = self.fleet_model.filter();
+        let empty = filter.staged().is_empty() && filter.text().is_empty();
         let edit = match key.code {
             KeyCode::Esc => {
                 self.table.editing = false;
@@ -479,11 +477,11 @@ impl TuiApp {
             }
             KeyCode::Backspace => (!empty).then_some(FilterEdit::Pop),
             KeyCode::Up => {
-                self.table.move_cursor(-1, &self.names);
+                self.table.move_cursor(-1, &self.fleet_model);
                 None
             }
             KeyCode::Down => {
-                self.table.move_cursor(1, &self.names);
+                self.table.move_cursor(1, &self.fleet_model);
                 None
             }
             KeyCode::Char(c) if is_text(&key) => {
@@ -495,45 +493,68 @@ impl TuiApp {
         if let Some(edit) = edit {
             return Some(AppAction::FleetFilter(edit));
         }
-        self.table
-            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
+        self.table.sync(&self.fleet_model);
         Some(AppAction::None)
     }
 
+    /// Enter or a click on universe row `index`: focus a loaded bot, or
+    /// say why an unloaded profile cannot be focused.
+    fn focus_row(&mut self, index: usize) -> AppAction {
+        let Some(row) = self.fleet_model.rows().get(index) else {
+            return AppAction::None;
+        };
+        if !row.loaded() {
+            self.error = Some(format!(
+                "{} is not loaded: mark it and press m to log in",
+                row.name()
+            ));
+            return AppAction::None;
+        }
+        let name = row.name().to_owned();
+        let action = self.select_bot(&name);
+        if self.regions.class == SizeClass::Compact {
+            // The fleet drawer closes on a selection.
+            self.key_focus = Pane::Detail;
+        }
+        action
+    }
+
     fn fleet_key(&mut self, key: KeyEvent) -> AppAction {
-        self.table
-            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
+        self.table.sync(&self.fleet_model);
         let page = self.regions.fleet_rows.height.max(1) as isize;
+        if key.modifiers == KeyModifiers::ALT {
+            // Pane-scoped reorder keys: the cursor row moves one shown row.
+            match key.code {
+                KeyCode::Up => return self.run_command(Command::MoveProfileUp),
+                KeyCode::Down => return self.run_command(Command::MoveProfileDown),
+                _ => {}
+            }
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => self.table.move_cursor(-1, &self.names),
-            KeyCode::Down | KeyCode::Char('j') => self.table.move_cursor(1, &self.names),
-            KeyCode::PageUp => self.table.move_cursor(-page, &self.names),
-            KeyCode::PageDown => self.table.move_cursor(page, &self.names),
-            KeyCode::Home => self.table.cursor_to(0, &self.names),
-            KeyCode::End => self.table.cursor_to(usize::MAX, &self.names),
+            KeyCode::Up | KeyCode::Char('k') => self.table.move_cursor(-1, &self.fleet_model),
+            KeyCode::Down | KeyCode::Char('j') => self.table.move_cursor(1, &self.fleet_model),
+            KeyCode::PageUp => self.table.move_cursor(-page, &self.fleet_model),
+            KeyCode::PageDown => self.table.move_cursor(page, &self.fleet_model),
+            KeyCode::Home => self.table.cursor_to(0, &self.fleet_model),
+            KeyCode::End => self.table.cursor_to(usize::MAX, &self.fleet_model),
             KeyCode::Enter => {
-                let Some(member) = self.table.cursor_member() else {
+                let Some(index) = self.table.cursor_row(&self.fleet_model) else {
                     return AppAction::None;
                 };
-                let name = self.names[member].clone();
-                let action = self.select_bot(&name);
-                if self.regions.class == SizeClass::Compact {
-                    // The fleet drawer closes on a selection.
-                    self.key_focus = Pane::Detail;
-                }
-                return action;
+                return self.focus_row(index);
             }
             KeyCode::Char(' ') => {
-                if let Some((name, on)) = self.table.cursor_member().and_then(|member| {
-                    self.table
-                        .toggled_mark(&self.names, &self.profile_ids, member)
-                }) {
+                if let Some((name, on)) = self
+                    .table
+                    .cursor_row(&self.fleet_model)
+                    .and_then(|index| toggled_mark(&self.fleet_model, index))
+                {
                     return AppAction::SetMark(name, on);
                 }
             }
             KeyCode::Char('/') => self.table.editing = true,
             KeyCode::Esc => {
-                if !self.table.filter.text().is_empty() {
+                if !self.fleet_model.filter().text().is_empty() {
                     return AppAction::FleetFilter(FilterEdit::Clear);
                 } else if self.regions.class == SizeClass::Compact {
                     self.key_focus = Pane::Detail;
@@ -750,35 +771,28 @@ impl TuiApp {
         AppAction::None
     }
 
+    /// The shown position and the universe row index under terminal row
+    /// `row`.
     fn fleet_row_at(&mut self, row: u16) -> Option<(usize, usize)> {
         let rows = self.regions.fleet_rows;
         let position = self.regions.fleet_first + usize::from(row.checked_sub(rows.y)?);
-        self.table
-            .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
-        let member = *self.table.shown().get(position)?;
-        Some((position, member))
+        self.table.sync(&self.fleet_model);
+        let index = *self.fleet_model.shown().get(position)?;
+        Some((position, index))
     }
 
     fn fleet_click(&mut self, col: u16, row: u16) -> AppAction {
-        let Some((position, member)) = self.fleet_row_at(row) else {
+        let Some((position, index)) = self.fleet_row_at(row) else {
             return AppAction::None;
         };
-        self.table.cursor_to(position, &self.names);
+        self.table.cursor_to(position, &self.fleet_model);
         if col < self.regions.fleet_rows.x + MARK_COLUMNS {
-            return match self
-                .table
-                .toggled_mark(&self.names, &self.profile_ids, member)
-            {
+            return match toggled_mark(&self.fleet_model, index) {
                 Some((name, on)) => AppAction::SetMark(name, on),
                 None => AppAction::None,
             };
         }
-        let name = self.names[member].clone();
-        let action = self.select_bot(&name);
-        if self.regions.class == SizeClass::Compact {
-            self.key_focus = Pane::Detail;
-        }
-        action
+        self.focus_row(index)
     }
 
     fn settings_click(&mut self, col: u16, row: u16) -> AppAction {
@@ -807,19 +821,25 @@ impl TuiApp {
             return AppAction::None;
         }
         let menu = if contains(self.regions.fleet_rows, col, row) {
-            let Some((_, member)) = self.fleet_row_at(row) else {
+            let Some((_, index)) = self.fleet_row_at(row) else {
                 return AppAction::None;
             };
-            let name = self.names[member].clone();
-            let mut items = vec![
-                ContextItem::Select(name.clone()),
-                ContextItem::Mark(name.clone()),
-            ];
-            items.extend(
-                Screen::ALL
-                    .iter()
-                    .map(|screen| ContextItem::Open(name.clone(), *screen)),
-            );
+            let profile = &self.fleet_model.rows()[index];
+            let name = profile.name().to_owned();
+            let mut items = Vec::new();
+            // A bot that is not loaded can only be marked: it has no
+            // detail to select or open.
+            if profile.loaded() {
+                items.push(ContextItem::Select(name.clone()));
+            }
+            items.push(ContextItem::Mark(name.clone()));
+            if profile.loaded() {
+                items.extend(
+                    Screen::ALL
+                        .iter()
+                        .map(|screen| ContextItem::Open(name.clone(), *screen)),
+                );
+            }
             ContextMenu {
                 title: name,
                 items,
@@ -867,9 +887,8 @@ impl TuiApp {
             return AppAction::None;
         }
         if contains(self.regions.fleet_rows, col, row) {
-            self.table
-                .sync_with_ids(&self.names, &self.profile_ids, &self.fleet);
-            self.table.move_cursor(delta * 3, &self.names);
+            self.table.sync(&self.fleet_model);
+            self.table.move_cursor(delta * 3, &self.fleet_model);
         } else if contains(self.regions.log_rows, col, row) {
             self.log.scroll_by(delta * 3);
         } else if contains(self.regions.map, col, row) {

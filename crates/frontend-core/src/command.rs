@@ -363,6 +363,28 @@ pub enum OperatorCommand {
     MarkAll,
     /// Clear the marks (`MarkedSelection::clear`).
     ClearMarks,
+    /// Reorder the saved Load order with the staged
+    /// [`crate::profile_order::ReorderOp`] (a rail or Fleet-row drag, the
+    /// TUI move keys, Move marked to top;
+    /// [`crate::OperatorSession::stage_reorder`]). Refused unless the fleet
+    /// view shows Load order. Settles `Done` when the saved order is
+    /// durable (at once when nothing moved).
+    ReorderProfiles,
+    /// Commit the fleet card the lent fleet model staged
+    /// ([`crate::FleetModel::stage_card`]): which card the fleet buttons
+    /// use. Changes no assignment, Browse pick, form or run.
+    SetFleetCard,
+    /// Mark, unmark or invert the shown fleet rows, or mark the shown rows
+    /// in a status ([`crate::MarkOp`]).
+    MarkFleet(crate::fleet::MarkOp),
+    /// Freeze a fleet action into a plan ([`crate::fleet_plan`]): the
+    /// marked profiles (hidden ones too), or the loaded shown rows with no
+    /// marks, the resolved card, the interrupted and skipped rows and the
+    /// prompt. The plan then runs with [`crate::Targets::Plan`].
+    PlanFleetAction(crate::fleet_plan::FleetAction),
+    /// Drop the pending fleet plan without running it (a settings copy's
+    /// start hold is released; nothing is written).
+    CancelFleetPlan,
 
     // --- Movement and game input ---
     /// Walk the focused member to the staged map destination (panel
@@ -485,11 +507,11 @@ pub enum DrawSwitch {
 }
 
 /// The fleet row order, owned by the core fleet model
-/// ([`crate::fleet::fill_visible_indices`]): the panel offers `Name`
-/// (its default) and `Status`; the TUI keeps `LoadOrder`.
+/// ([`crate::FleetModel`]). Load order is the default on every surface;
+/// Name and Status are view sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetOrder {
-    /// The order the surface supplied the rows in (load order).
+    /// The order the universe holds the rows in (load order).
     LoadOrder,
     /// By profile name.
     Name,
@@ -498,8 +520,8 @@ pub enum FleetOrder {
 }
 
 impl FleetOrder {
-    /// The orders the panel's Sort drop-down offers.
-    pub const PANEL_CHOICES: [FleetOrder; 2] = [Self::Name, Self::Status];
+    /// The orders the Sort drop-down offers, the default first.
+    pub const CHOICES: [FleetOrder; 3] = [Self::LoadOrder, Self::Name, Self::Status];
 
     /// The drop-down entry.
     pub fn label(self) -> &'static str {
@@ -687,7 +709,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 91] = [
+    pub const ALL: [OperatorCommand; 96] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -758,6 +780,11 @@ impl OperatorCommand {
         Self::SetMark(true),
         Self::MarkAll,
         Self::ClearMarks,
+        Self::ReorderProfiles,
+        Self::SetFleetCard,
+        Self::MarkFleet(crate::fleet::MarkOp::Shown),
+        Self::PlanFleetAction(crate::fleet_plan::FleetAction::Start),
+        Self::CancelFleetPlan,
         Self::WalkTo,
         Self::GroupWalk,
         Self::Teleport,
@@ -827,6 +854,11 @@ impl OperatorCommand {
             | Self::DeleteLoadout
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::ReorderProfiles
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetMultiBox(_)
             | Self::SetDraw(..)
             | Self::SetNavPreference(..)
@@ -958,6 +990,10 @@ impl OperatorCommand {
             | Self::SetMark(_)
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetFleetFilter
             | Self::SetFleetSort(_)
             | Self::PickBrowseCard

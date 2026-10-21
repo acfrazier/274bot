@@ -133,10 +133,17 @@ fn iteration_polls_the_host(mode: Loop) {
     let (session, _arm) = session_with_alice();
     publish(&session, true);
     let mut rig = Rig::new(mode, session);
-    assert!(rig.app.fleet.is_empty(), "nothing is polled before a pass");
+    assert!(
+        rig.app.fleet_model.rows().is_empty(),
+        "nothing is polled before a pass"
+    );
     assert_eq!(rig.iterate(), None);
     assert!(
-        rig.app.fleet.first().is_some_and(|row| row.connected()),
+        rig.app
+            .fleet_model
+            .rows()
+            .first()
+            .is_some_and(|row| row.connected()),
         "one iteration must poll the host and project the fleet row"
     );
     if matches!(mode, Loop::Headed) {
@@ -149,6 +156,45 @@ fn iteration_polls_the_host(mode: Loop) {
 }
 
 scenario!(host_poll, iteration_polls_the_host);
+
+/// A steady iteration rebuilds nothing: with the core's rows and the
+/// vault's profiles unmoved, the fleet model keeps its universe across
+/// iterations (its rows generation holds), and it follows a real change.
+fn steady_iterations_do_not_rebuild_the_fleet_model(mode: Loop) {
+    let _iso = IsolatedStores::enter("tui-loop-steady-model");
+    let (session, _arm) = session_with_alice();
+    publish(&session, true);
+    let mut rig = Rig::new(mode, session);
+    assert_eq!(rig.iterate(), None);
+    assert_eq!(rig.iterate(), None);
+    let settled = rig.app.fleet_model.rows_generation();
+    assert!(settled > 0, "the first pass built the universe");
+    for _ in 0..3 {
+        assert_eq!(rig.iterate(), None);
+    }
+    assert_eq!(
+        rig.app.fleet_model.rows_generation(),
+        settled,
+        "a steady iteration rebuilt the fleet model"
+    );
+    publish(&rig.session, false);
+    assert_eq!(rig.iterate(), None);
+    assert!(
+        rig.app.fleet_model.rows_generation() > settled,
+        "a changed row rebuilds the model"
+    );
+    assert!(rig
+        .app
+        .fleet_model
+        .rows()
+        .first()
+        .is_some_and(|row| !row.connected()));
+}
+
+scenario!(
+    steady_fleet_model,
+    steady_iterations_do_not_rebuild_the_fleet_model
+);
 
 /// Every iteration advances a pending removal: the iteration after the slot
 /// disconnected stops the removed lifetime.

@@ -56,6 +56,11 @@ pub enum Targets<'a> {
     /// ([`crate::MarkedSelection`]), by name; a mark whose profile is gone
     /// names no member.
     Marked,
+    /// The waiting fleet plan's frozen targets
+    /// ([`crate::OperatorSession::fleet_plan`]), with its card. The command
+    /// must be the plan's [`crate::FleetPlan::command`]; submitting it
+    /// takes the plan.
+    Plan,
 }
 
 /// Why [`OperatorSession::submit`] opened no command.
@@ -336,14 +341,29 @@ pub(super) struct CommandDesk {
     quester_game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// The rows the next MarkAll marks (reused buffer).
     mark_all: Vec<crate::selection::ProfileIdentity>,
+    /// The reorder the next ReorderProfiles applies.
+    reorder: Option<crate::profile_order::ReorderOp>,
     /// What the next vault row commits.
     vault: Option<super::vault_rows::StagedVault>,
     /// The next Select also brings the member's worker up (the panel's
     /// chooser pick).
     select_opens_slot: bool,
+    /// The fleet plan waiting for Confirm or Cancel.
+    pub(super) fleet_plan: Option<crate::fleet_plan::FleetPlan>,
+    /// The plan of the planned command being dispatched.
+    pub(super) planned: Option<crate::fleet_plan::FleetPlan>,
+    /// The latest fleet action's result view.
+    pub(super) fleet_result: Option<crate::fleet_plan::FleetResult>,
+    /// The card the next PlanFleetAction uses instead of the fleet card
+    /// (the Scripts window's copy shortcut).
+    pub(super) plan_card: Option<crate::scripts::ScriptChoice>,
 }
 
 impl CommandDesk {
+    pub(super) fn book(&self) -> &CommandBook {
+        &self.book
+    }
+
     pub(super) fn stage_vault(&mut self, staged: super::vault_rows::StagedVault) {
         self.vault = Some(staged);
     }
@@ -354,6 +374,14 @@ impl CommandDesk {
 
     pub(super) fn mark_all_staging(&mut self) -> &mut Vec<crate::selection::ProfileIdentity> {
         &mut self.mark_all
+    }
+
+    pub(super) fn stage_reorder(&mut self, op: crate::profile_order::ReorderOp) {
+        self.reorder = Some(op);
+    }
+
+    pub(super) fn take_reorder(&mut self) -> Option<crate::profile_order::ReorderOp> {
+        self.reorder.take()
     }
 
     pub(super) fn stage_notice(&mut self, notice: super::prefs::Notice) {
@@ -480,7 +508,7 @@ impl<Io> OperatorSession<Io> {
     /// Stage a new profile with `username`, `password`, a fresh uid and
     /// default settings for the next [`OperatorCommand::CreateProfile`].
     pub fn stage_new_profile(&mut self, username: &str, password: &str) {
-        let uid = self.vault.as_ref().map_or(274_000_001, crate::fresh_uid);
+        let uid = self.fresh_uid();
         let profile = vault::Profile {
             username: username.to_string(),
             password: password.into(),
@@ -554,11 +582,50 @@ impl<Io> OperatorSession<Io> {
             return Err(SubmitError::NoEntryPoint(command));
         }
         let command = self.route_paint_control(command, targets, surface);
-        {
-            let models = surface.models();
-            self.resolve_targets(command, targets, models.marks.as_deref())?;
+        // A planned command runs over the plan's frozen marks, never the
+        // lent ones.
+        let plan = if matches!(targets, Targets::Plan) {
+            Some(self.take_plan_for(command)?)
+        } else {
+            None
+        };
+        let targets = if plan.is_some() {
+            Targets::Marked
+        } else {
+            targets
+        };
+        let resolved = match plan.as_ref() {
+            Some(plan) => self.resolve_targets(command, targets, Some(&plan.marks)),
+            None => {
+                let models = surface.models();
+                self.resolve_targets(command, targets, models.marks())
+            }
+        };
+        if let Err(error) = resolved {
+            return match plan {
+                // Every frozen target is gone: the plan ends here, its
+                // result naming each one skipped.
+                Some(plan) if matches!(error, SubmitError::NoTarget(_)) => {
+                    self.end_emptied_plan(plan, surface)
+                }
+                // Nothing ran: the plan stays for another try or a Cancel.
+                Some(plan) => {
+                    self.commands.fleet_plan = Some(plan);
+                    Err(error)
+                }
+                None => Err(error),
+            };
         }
-        let request = self.open_command(command)?;
+        let request = match self.open_command(command) {
+            Ok(request) => request,
+            Err(error) => {
+                if let Some(plan) = plan {
+                    self.commands.fleet_plan = Some(plan);
+                }
+                return Err(error);
+            }
+        };
+        self.commands.planned = plan;
         let mut submitted = Submitted {
             request,
             operation: None,
@@ -569,9 +636,29 @@ impl<Io> OperatorSession<Io> {
         };
         self.commands.posts.clear();
         self.commands.recording = command.settles() == Settles::IntentApplied;
+        let planned = self.commands.planned.is_some();
+        if planned {
+            let root = self
+                .commands
+                .planned
+                .as_ref()
+                .and_then(|plan| plan.catalog_root.clone());
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.set_planned_run(true);
+                if root.is_some() {
+                    scripts.stage_start_catalog_root(root);
+                }
+            }
+        }
         self.dispatch(command, targets, now, surface, &mut submitted);
+        if planned {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.set_planned_run(false);
+            }
+        }
         self.commands.recording = false;
         self.record_posts(request, command);
+        let ran_plan = self.commands.planned.take();
         if let Some(op) = submitted.operation {
             if command.settles() == Settles::Owner {
                 self.own_members(request, command, op);
@@ -588,6 +675,18 @@ impl<Io> OperatorSession<Io> {
         );
         self.drain_watched();
         self.settle_owned();
+        if let Some(plan) = ran_plan {
+            // A planned Log in can load the first members: with nothing
+            // selected, focus the remembered (else first) one, as Load all
+            // does. An existing selection is never taken.
+            if plan.action() == crate::FleetAction::Login && self.selected.is_none() {
+                let hint = self.focus_hint.clone();
+                if let Some(name) = super::pick_focus(self.members(), hint.as_deref()) {
+                    self.select(&name);
+                }
+            }
+            self.open_fleet_result(Some(request), plan);
+        }
         Ok(submitted)
     }
 
@@ -688,14 +787,19 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             (SubjectKind::Profile, Targets::Everyone) => self.everyone(command, &mut names),
-            (SubjectKind::Profile, Targets::Marked) => {
+            (SubjectKind::Profile, Targets::Marked | Targets::Plan) => {
                 if let Some(marks) = marks {
                     for (name, identity) in crate::selection::profile_rows(self) {
                         if marks.contains(identity) && !names.contains(&name) {
                             names.push(name);
                         }
                     }
-                    names.sort();
+                    // The saved Load order, as Load all admits them; a
+                    // name the order lacks follows by name.
+                    names.sort_by(|a, b| {
+                        let rank = |name: &str| self.order_rank(name).unwrap_or(usize::MAX);
+                        rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+                    });
                 }
             }
         }
@@ -760,6 +864,37 @@ impl<Io> OperatorSession<Io> {
             .book
             .open(request, command, &self.commands.targets, &conditions)?;
         Ok(request)
+    }
+
+    /// A plan none of whose frozen targets remains: nothing runs, a copy
+    /// gives back its prepared scope and start hold, and the result is
+    /// terminal at once with every target a named skip. The request is
+    /// minted for the caller but opens no command record (a record needs
+    /// a member).
+    fn end_emptied_plan<S: SlotSurface<Io = Io>>(
+        &mut self,
+        plan: crate::FleetPlan,
+        surface: &mut S,
+    ) -> Result<Submitted, SubmitError> {
+        let request = WorkService::shared()?
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .map_err(|_| SubmitError::IdentityExhausted)?
+            .job();
+        if plan.action() == crate::FleetAction::CopySettings {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.cancel_settings_sync();
+            }
+        }
+        self.open_fleet_result(None, plan);
+        Ok(Submitted {
+            request,
+            operation: None,
+            removal: None,
+            added: 0,
+            bulk: None,
+            marked: None,
+        })
     }
 
     /// Whether the book admitted the application member of `request` as
@@ -946,7 +1081,10 @@ impl<Io> OperatorSession<Io> {
                 self.release_names(names);
             }
             OperatorCommand::StopScript => {
-                let names = self.admitted_names(request);
+                let mut names = self.admitted_names(request);
+                if !matches!(targets, Targets::Everyone) {
+                    self.cancel_waiting_starts(request, command, &mut names, surface, submitted);
+                }
                 match (targets, names.as_slice()) {
                     // One member: today's single Stop, which settles when the
                     // run owner reports the slot idle.
@@ -1269,11 +1407,11 @@ impl<Io> OperatorSession<Io> {
                     let identity = self.profile_identity_or_synthetic(name);
                     match self.vault_remove(name) {
                         Ok(Some(op)) => {
-                            if let Some(marks) = models.marks.as_deref_mut() {
-                                marks.remove(identity);
+                            if let Some(fleet) = models.fleet.as_deref_mut() {
+                                fleet.remove_mark(identity);
                             }
                             submitted.operation = Some(op);
-                            self.own_member(request, command, name, op);
+                            self.own_member_as(request, command, name, identity, op);
                         }
                         Ok(None) => self.settle_name(
                             request,
@@ -1403,6 +1541,26 @@ impl<Io> OperatorSession<Io> {
             }
             OperatorCommand::ClearMarks => {
                 let row = super::fleet::FleetRow::ClearMarks;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::ReorderProfiles => {
+                let row = super::fleet::FleetRow::Reorder;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::SetFleetCard => {
+                let row = super::fleet::FleetRow::Card;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::MarkFleet(op) => {
+                let row = super::fleet::FleetRow::MarkOp(op);
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::PlanFleetAction(action) => {
+                let row = super::fleet::FleetRow::Plan(action);
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::CancelFleetPlan => {
+                let row = super::fleet::FleetRow::CancelPlan;
                 self.fleet_row(row, request, application_admitted, surface, submitted)
             }
             OperatorCommand::SetMultiBox(on) => {
@@ -1725,6 +1883,48 @@ impl<Io> OperatorSession<Io> {
         );
     }
 
+    /// Stop's half for a member whose Start still waits for its permit or
+    /// its preparation: the coordinator cancels that Start (it never runs
+    /// later, and its own command settles cancelled), and the member
+    /// settles done here. A member with a live script stays in `names`
+    /// for the host stop.
+    fn cancel_waiting_starts<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        names: &mut Vec<String>,
+        surface: &mut S,
+        submitted: &mut Submitted,
+    ) {
+        let mut models = surface.models();
+        let Some(scripts) = models.scripts.as_deref_mut() else {
+            return;
+        };
+        let mut cancelled_any = false;
+        let mut index = 0;
+        while index < names.len() {
+            let name = &names[index];
+            let idle = self.play.as_ref().is_none_or(|play| {
+                matches!(
+                    play.script_state(name),
+                    script::RunState::Idle | script::RunState::Error
+                )
+            });
+            if scripts.cancel_queued_as(name, "cancelled") {
+                cancelled_any = true;
+                if idle {
+                    let name = names.remove(index);
+                    self.settle_member(request, command, &name, Applied::Done, submitted);
+                    continue;
+                }
+            }
+            index += 1;
+        }
+        if cancelled_any {
+            scripts.publish_start_places(self);
+        }
+    }
+
     /// Settle `name`'s member of `request` as `applied` says.
     pub(super) fn settle_member(
         &mut self,
@@ -1798,7 +1998,11 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let planned = self.planned_marks();
+        let mut rows = match planned.as_ref() {
+            Some(marks) => self.gone_marks(Some(marks)),
+            None => self.gone_marks(surface.models().marks()),
+        };
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());
@@ -1864,7 +2068,11 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let planned = self.planned_marks();
+        let mut rows = match planned.as_ref() {
+            Some(marks) => self.gone_marks(Some(marks)),
+            None => self.gone_marks(surface.models().marks()),
+        };
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());
@@ -2023,7 +2231,22 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         op: OperationId,
     ) {
-        let subject = Subject::Profile(self.profile_identity_or_synthetic(name));
+        let identity = self.profile_identity_or_synthetic(name);
+        self.own_member_as(request, command, name, identity, op);
+    }
+
+    /// [`Self::own_member`] for a member whose identity was read before
+    /// its dispatch changed the vault (a deleted profile no longer
+    /// resolves its name to its identity).
+    fn own_member_as(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        name: &str,
+        identity: crate::selection::ProfileIdentity,
+        op: OperationId,
+    ) {
+        let subject = Subject::Profile(identity);
         let pending = self
             .commands
             .book

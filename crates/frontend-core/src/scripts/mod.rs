@@ -742,6 +742,12 @@ pub struct Scripts {
     catalog_import_update: Option<(PathBuf, Result<usize, String>)>,
     catalog_import_command_result: Option<Result<usize, String>>,
     start_command_failures: Vec<(String, String)>,
+    /// Queued Starts that left the queue skipped: their commands settle
+    /// on the next poll ([`Self::settle_start_command_failures`]).
+    start_command_skips: Vec<(String, String)>,
+    /// Assign & restart commands whose restart was withdrawn before it
+    /// started, with the reason: they settle on the next poll.
+    withdrawn_restart_commands: Vec<(PendingStartCommand, String)>,
     /// The card library: catalog, loaded files, transpile cache.
     js: script::JsLibrary,
     /// Legacy global per-card overrides (`script-settings.json`), claimed
@@ -764,6 +770,10 @@ pub struct Scripts {
     /// The running Start all / marked-Start report (see [`start_tally`]).
     tally: Option<StartTally>,
     last_bulk_report: Option<String>,
+    /// A planned fleet action ([`crate::Targets::Plan`]) is being
+    /// dispatched: the tally or sync report it opens reports through the
+    /// plan's one result line, not the banner.
+    planned_run: bool,
     catalog_filled: bool,
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
@@ -815,6 +825,8 @@ impl Scripts {
             catalog_import_command_result: None,
             catalog_fill_update: None,
             start_command_failures: Vec::new(),
+            start_command_skips: Vec::new(),
+            withdrawn_restart_commands: Vec::new(),
             js,
             legacy,
             inject: None,
@@ -828,6 +840,7 @@ impl Scripts {
             admit_catalog: None,
             tally: None,
             last_bulk_report: None,
+            planned_run: false,
             catalog_filled: false,
             catalog_root: None,
             async_work: reload::ScriptWorkState::default(),
@@ -1732,6 +1745,19 @@ impl Scripts {
             .map(ScriptChoice::from_script)
     }
 
+    /// The label of [`Self::heading`], borrowed (no copy): the pending
+    /// Browse selection's label, else the assignment's display name.
+    pub fn heading_label<'a, Io>(
+        &'a self,
+        core: &'a OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<&'a str> {
+        if let Some(sel) = self.pending_browse.get(profile) {
+            return Some(sel.label());
+        }
+        Self::assignment_name(core, profile)
+    }
+
     /// Whether `profile`'s Browse selection differs from its assignment.
     pub fn heading_is_pending<Io>(&self, core: &OperatorSession<Io>, profile: &str) -> bool {
         let Some(pending) = self.pending_browse.get(profile) else {
@@ -2141,38 +2167,112 @@ impl Scripts {
         self.admit.status(profile)
     }
 
+    /// Whether a Start of `profile` is still waiting anywhere it can wait
+    /// before its slot runs it: a paced place, a card preparation (tallied
+    /// or not), a marked catalog restart, or an Assign & restart waiting
+    /// for the catalog scan or for its assignment write. Each of these is
+    /// what [`Self::cancel_queued_as`] withdraws.
+    pub fn start_waiting(&self, profile: &str) -> bool {
+        self.admit.status(profile).is_some()
+            || self.has_start_preparation(profile)
+            || self.pending_marked_restart(profile)
+            || self
+                .pending_catalog_assignment_commands
+                .iter()
+                .any(|command| command.restart && command.profile == profile)
+            || self
+                .pending_assignment_writes
+                .values()
+                .flatten()
+                .any(|command| command.restart && command.profile == profile)
+    }
+
     /// Drop a queued-but-not-yet-admitted Start. Returns whether a place
     /// was removed. Already-dispatched Starts are stopped through the host.
     pub(crate) fn cancel_queued(&mut self, profile: &str) -> bool {
         self.cancel_queued_as(profile, "cancelled")
     }
 
-    /// Drop a waiting Start and record `reason` in the running Start tally.
+    /// Withdraw every waiting Start of `profile` (see
+    /// [`Self::start_waiting`]), record `reason` in the running Start
+    /// tally and settle each withdrawn Start's command on the next poll.
     pub(crate) fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
-        let pending_marked = self
+        let mut cancelled = false;
+        if self
             .cancel_pending_catalog_assignment(Some(profile))
-            .is_some();
-        if pending_marked {
+            .is_some()
+        {
             self.credit_skipped(profile, reason);
+            cancelled = true;
         }
         if self.admit.leave(profile).is_some() {
             self.credit_skipped(profile, reason);
-            return true;
+            cancelled = true;
         }
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
             if tallied {
                 self.skip_unstarted_tally(profile, reason);
-            } else if kind == StartKind::RestartSettings {
-                self.show(format!("Restart cancelled for {profile}: {reason}"));
+            } else {
+                if kind == StartKind::RestartSettings {
+                    self.show(format!("Restart cancelled for {profile}: {reason}"));
+                }
+                self.start_command_skips
+                    .push((profile.to_string(), reason.to_string()));
             }
-            return true;
+            cancelled = true;
         }
-        pending_marked
+        if self.withdraw_assignment_restarts(Some(profile), reason) {
+            self.publish_bulk();
+            cancelled = true;
+        }
+        cancelled
+    }
+
+    /// Drop the restart of every Assign & restart of `profile` (every
+    /// profile when `None`) that still waits: one waiting for the catalog
+    /// scan is dropped whole (nothing was written); one waiting for its
+    /// assignment write keeps the write and drops the Start after it. Each
+    /// command settles on the next poll. Returns whether any was dropped.
+    fn withdraw_assignment_restarts(&mut self, profile: Option<&str>, reason: &str) -> bool {
+        let matches = |restart: bool, name: &str| restart && profile.is_none_or(|p| p == name);
+        let mut withdrawn = Vec::new();
+        let mut index = 0;
+        while index < self.pending_catalog_assignment_commands.len() {
+            let command = &self.pending_catalog_assignment_commands[index];
+            if matches(command.restart, &command.profile) {
+                let command = self.pending_catalog_assignment_commands.swap_remove(index);
+                withdrawn.push((command.profile, command.request, command.subject));
+            } else {
+                index += 1;
+            }
+        }
+        for commands in self.pending_assignment_writes.values_mut() {
+            let mut index = 0;
+            while index < commands.len() {
+                if matches(commands[index].restart, &commands[index].profile) {
+                    let command = commands.swap_remove(index);
+                    withdrawn.push((command.profile, command.request, command.subject));
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.pending_assignment_writes
+            .retain(|_, commands| !commands.is_empty());
+        let any = !withdrawn.is_empty();
+        for (name, request, subject) in withdrawn {
+            self.tally_record(&name, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+            self.withdrawn_restart_commands
+                .push((PendingStartCommand { request, subject }, reason.to_string()));
+        }
+        any
     }
 
     /// Open the running tally for a Start click. While a bot it holds still
     /// waits for its permit or its setup, the click folds into it (and
-    /// names it); otherwise the finished tally is replaced.
+    /// names it); otherwise the finished tally is replaced. A tally a
+    /// planned fleet action opens (the last click decides) is never put on
+    /// the banner: the plan's result line reports it.
     pub(crate) fn open_tally(&mut self, label: &'static str) {
         let open = self.tally.as_ref().is_some_and(StartTally::waiting)
             || self.starts.values().any(|pending| pending.tallied)
@@ -2181,6 +2281,16 @@ impl Scripts {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
         }
+        if let Some(tally) = self.tally.as_mut() {
+            tally.set_quiet(self.planned_run);
+        }
+    }
+
+    /// Mark the dispatch of a planned fleet action ([`crate::Targets::Plan`])
+    /// while it runs: see [`Self::open_tally`] and
+    /// [`Self::apply_settings_sync`].
+    pub(crate) fn set_planned_run(&mut self, planned: bool) {
+        self.planned_run = planned;
     }
 
     /// A click-time skip. A bot this tally already started stays started.
@@ -2507,26 +2617,31 @@ impl Scripts {
     ) -> (usize, Option<OperationId>) {
         let cancelled = self.admit.drain();
         for entry in &cancelled {
-            self.tally_record(
-                &entry.profile,
-                Outcome::Skipped("cancelled".into()),
-                LogTo::Slot,
-            );
+            self.withdraw_start(&entry.profile, "cancelled");
         }
         let preparing = self.cancel_all_start_preparations();
         for (profile, _, tallied) in &preparing {
             if *tallied {
-                self.skip_unstarted_tally(profile, "cancelled");
+                if let Some(tally) = &mut self.tally {
+                    tally.retract_unstarted(profile);
+                }
+                self.withdraw_start(profile, "cancelled");
+            } else {
+                self.start_command_skips
+                    .push((profile.clone(), "cancelled".to_string()));
             }
         }
         let pending_marked = self
             .cancel_pending_catalog_assignment(None)
             .unwrap_or_default();
         for profile in &pending_marked {
-            self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
+            self.withdraw_start(profile, "cancelled");
         }
-        let cancelled_any =
-            !cancelled.is_empty() || !preparing.is_empty() || !pending_marked.is_empty();
+        let restarts = self.withdraw_assignment_restarts(None, "cancelled");
+        let cancelled_any = !cancelled.is_empty()
+            || !preparing.is_empty()
+            || !pending_marked.is_empty()
+            || restarts;
         if cancelled_any {
             self.publish_bulk();
         }
@@ -3148,6 +3263,10 @@ impl Scripts {
         }
     }
 
+    /// Settle the Start commands of profiles whose Start failed or was
+    /// skipped without a slot terminal (setup failures, and queued Starts
+    /// that left the queue failed or skipped), so a command's report
+    /// never waits on a Start that will not happen.
     fn settle_start_command_failures<Io>(&mut self, core: &mut OperatorSession<Io>) {
         for (profile, reason) in std::mem::take(&mut self.start_command_failures) {
             let Some(commands) = self.pending_start_commands.remove(&profile) else {
@@ -3161,6 +3280,28 @@ impl Scripts {
                     Some(&reason),
                 );
             }
+        }
+        for (profile, reason) in std::mem::take(&mut self.start_command_skips) {
+            let Some(commands) = self.pending_start_commands.remove(&profile) else {
+                continue;
+            };
+            let terminal = withdrawn_terminal(&reason);
+            for command in commands {
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    terminal.clone(),
+                    Some(&reason),
+                );
+            }
+        }
+        for (command, reason) in std::mem::take(&mut self.withdrawn_restart_commands) {
+            core.settle_later(
+                command.request,
+                command.subject,
+                withdrawn_terminal(&reason),
+                Some(&reason),
+            );
         }
     }
 
@@ -3289,11 +3430,21 @@ impl Scripts {
     fn credit_failed(&mut self, profile: &str, error: &str) {
         self.tally_record(profile, Outcome::Failed(error.to_string()), LogTo::Slot);
         self.publish_bulk();
+        self.start_command_failures
+            .push((profile.to_string(), error.to_string()));
     }
 
     fn credit_skipped(&mut self, profile: &str, reason: &str) {
-        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+        self.withdraw_start(profile, reason);
         self.publish_bulk();
+    }
+
+    /// A Start that left the queue or its preparation without running:
+    /// its tally row says why, and its command settles on the next poll.
+    fn withdraw_start(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+        self.start_command_skips
+            .push((profile.to_string(), reason.to_string()));
     }
     /// The permit was credited, but the worker had not dispatched a script.
     fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
@@ -3303,7 +3454,8 @@ impl Scripts {
         self.credit_skipped(profile, reason);
     }
 
-    /// Show the running tally when its text changed.
+    /// Show the running tally when its text changed (never a planned
+    /// action's: its result line reports it).
     pub(crate) fn publish_bulk(&mut self) {
         let Some(tally) = self.tally.as_ref() else {
             return;
@@ -3312,8 +3464,11 @@ impl Scripts {
         if self.last_bulk_report.as_deref() == Some(report.as_str()) {
             return;
         }
+        let quiet = tally.quiet();
         self.last_bulk_report = Some(report.clone());
-        self.show(report);
+        if !quiet {
+            self.show(report);
+        }
     }
 
     pub(crate) fn publish_start_places<Io>(&mut self, core: &mut OperatorSession<Io>) {
@@ -3321,6 +3476,23 @@ impl Scripts {
             return;
         }
         core.publish_start_queue(|name| self.admit.status(name));
+    }
+}
+
+/// The command terminal of a Start withdrawn before it ran, by the reason
+/// it was withdrawn.
+fn withdrawn_terminal(reason: &str) -> Settlement<Completion, CommandFailure> {
+    use crate::command::SkipReason;
+    match reason {
+        "cancelled" => Settlement::Cancelled(api::identity::Cancellation::Operator),
+        "already active" | "script already active" => {
+            Settlement::Completed(Completion::Skipped(SkipReason::AlreadyActive))
+        }
+        "logged out" | "disconnected" => {
+            Settlement::Completed(Completion::Skipped(SkipReason::NotLoggedIn))
+        }
+        "removed" => Settlement::Completed(Completion::Skipped(SkipReason::NotLoaded)),
+        _ => Settlement::Completed(Completion::Skipped(SkipReason::NotReady)),
     }
 }
 

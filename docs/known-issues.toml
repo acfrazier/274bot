@@ -143,3 +143,28 @@ listed = "0.2.5"
 target = "0.2.6"
 severity = "medium"
 owner = "event-driven runtime endpoint"
+
+[[item]]
+id = "fleet-copy-settings-64-limit"
+kind = "known-issue"
+area = "Fleet"
+text = """Copying a card's settings to more than 64 bots at once saves the first
+  64 and reports the rest as "too many pending native settings saves". Copy
+  again to the remaining bots. A fix is planned for 0.2.6."""
+first = "0.2.4"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "low"
+owner = "fleet/rail"
+
+[[item]]
+id = "fleet-combined-toolbar-planned"
+kind = "not-in-release"
+area = "Fleet"
+text = """The combined fleet toolbar (one toolbar in the rail, the Fleet window
+  and the strip) and world switching from the fleet are planned for 0.2.6."""
+first = "0.2.4"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "low"
+owner = "fleet/rail"

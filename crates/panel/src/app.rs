@@ -63,7 +63,9 @@ use frontend_core::scripts::{
     format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView,
 };
-use frontend_core::{FleetRow, OperatorCommand, Phase, ResourceView, Targets};
+use frontend_core::{
+    FleetOrder, FleetRow, OperatorCommand, Phase, ProfileIdentity, ReorderOp, ResourceView, Targets,
+};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -170,12 +172,16 @@ struct PanelState {
     paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
-    /// The fleet rows the rail and the grid draw: a copy of the core's
-    /// projection, refreshed only when its rows generation moves, with each
-    /// row's cap strings built once per refresh (never per frame).
-    fleet: Vec<FleetRow>,
+    /// Each fleet-model row's cap strings for the rail and the grid,
+    /// parallel to `session.fleet_model.rows()` and rebuilt only when the
+    /// model's rows generation moves (never per frame). The rows themselves
+    /// are the model's: the panel keeps no copy.
     fleet_labels: Vec<CapLabels>,
     fleet_generation: Option<u64>,
+    /// `Not loaded (N)###not-loaded`, rebuilt when the model's generation
+    /// moves.
+    not_loaded_label: String,
+    not_loaded_generation: Option<u64>,
     /// Last resource sample reported under `BOT_DEBUG`.
     debug_resources: u64,
     /// Headed `--live` watch (`null_raster`, `stress50`, `stress50_full`,
@@ -637,9 +643,10 @@ impl PanelState {
             queue_cards: QueueCards::default(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
-            fleet: Vec::new(),
             fleet_labels: Vec::new(),
             fleet_generation: None,
+            not_loaded_label: String::new(),
+            not_loaded_generation: None,
             debug_resources: 0,
             live: None,
             dock_size: None,
@@ -652,29 +659,35 @@ impl PanelState {
         }
     }
 
-    /// Copy the core's fleet rows for the rail and the grid when (and only
-    /// when) they changed, and rebuild their cap strings; both reuse their
-    /// buffers.
+    /// Rebuild the rail and grid cap strings of the fleet model's rows when
+    /// (and only when) the rows changed; the strings reuse their buffers.
     fn sync_fleet(&mut self) {
         use std::fmt::Write as _;
-        let view = self.session.core.fleet_view();
-        if self.fleet_generation == Some(view.rows_generation()) {
-            return;
-        }
-        self.fleet_generation = Some(view.rows_generation());
-        view.copy_rows_into(&mut self.fleet);
-        self.fleet_labels
-            .resize_with(self.fleet.len(), CapLabels::default);
-        for (row, labels) in self.fleet.iter().zip(&mut self.fleet_labels) {
-            labels.title.clear();
-            // `###cap`: the select keeps its ID while the brief changes.
-            let _ = write!(labels.title, "{}: {}###cap", row.name(), row.brief());
-            labels.world.clear();
-            labels.world_tip.clear();
-            if let Some(number) = row.world() {
-                let _ = write!(labels.world, "{number}");
-                let _ = write!(labels.world_tip, "w{number} · {}", row.brief());
+        let model = &self.session.fleet_model;
+        if self.fleet_generation != Some(model.rows_generation()) {
+            self.fleet_generation = Some(model.rows_generation());
+            self.fleet_labels
+                .resize_with(model.rows().len(), CapLabels::default);
+            for (row, labels) in model.rows().iter().zip(&mut self.fleet_labels) {
+                labels.title.clear();
+                // `###cap`: the select keeps its ID while the brief changes.
+                let _ = write!(labels.title, "{}: {}###cap", row.name(), row.brief());
+                labels.world.clear();
+                labels.world_tip.clear();
+                if let Some(number) = row.world() {
+                    let _ = write!(labels.world, "{number}");
+                    let _ = write!(labels.world_tip, "w{number} · {}", row.brief());
+                }
             }
+        }
+        if self.not_loaded_generation != Some(model.generation()) {
+            self.not_loaded_generation = Some(model.generation());
+            self.not_loaded_label.clear();
+            let _ = write!(
+                self.not_loaded_label,
+                "Not loaded ({})###not-loaded",
+                model.counts().shown_unloaded()
+            );
         }
     }
 
@@ -1474,15 +1487,33 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 /// only. Capture reaches the focused cell's body.
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     state.sync_fleet();
-    if state.fleet.is_empty() {
+    let shown = state.session.fleet_model.counts().shown_loaded();
+    if shown == 0 {
         state.queue_cards.clear();
-        ui.text_disabled("no wall members");
+        let loaded = state
+            .session
+            .fleet_model
+            .rows()
+            .iter()
+            .any(|row| row.loaded());
+        ui.text_disabled(if loaded {
+            "no wall member matches the Fleet filter"
+        } else {
+            "no wall members"
+        });
         state.paint.release_canvas(gpu);
+        // No cell paints: free the tile views the cells held (the rail,
+        // which also disposes them, is not drawn in Grid).
+        let model = &state.session.fleet_model;
+        dispose_idle_views(&mut state.views, gpu, |name| tile_shown(model, name));
         return;
     }
-    let rows = std::mem::take(&mut state.fleet);
+    // The cells read the model's rows while their clicks need the session:
+    // lend the rows out for the frame (no allocation) and apply the one
+    // clicked action once they are back.
+    let model = std::mem::take(&mut state.session.fleet_model);
     let labels = std::mem::take(&mut state.fleet_labels);
-    let cells = grid_cells(rows.len(), avail);
+    let cells = grid_cells(shown, avail);
     let (capture, only_selected) = {
         let focus = state.session.focus.lock().unwrap();
         (should_capture(&focus), focus.only_render_selected)
@@ -1490,13 +1521,19 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
+            tile_shown(&model, name) && draw_for_slot(&focus, name)
         });
     }
     let debug_actions = state.session.debug_ui();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
-    for ((row, labels), [cx, cy, cw, ch]) in rows.iter().zip(&labels).zip(cells) {
+    let mut clicked = None;
+    for ((index, row), [cx, cy, cw, ch]) in model
+        .shown_rows()
+        .filter(|(_, row)| row.loaded())
+        .zip(cells)
+    {
+        let labels = &labels[index];
         let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
@@ -1513,8 +1550,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let identity = state.session.core.profile_identity_or_synthetic(row.name());
-        let mut marked = state.session.fleet_selection.contains(identity);
+        let mut marked = model.is_marked(index);
         let restart_required = state.session.scripts.has_restart_badge(name);
         let (cap_select, cap_remove, cap_fold) = rail_cap(
             ui,
@@ -1528,11 +1564,10 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 debug_actions,
             },
             &mut marked,
+            None,
         );
-        if marked != state.session.fleet_selection.contains(identity) {
-            state
-                .session
-                .submit(OperatorCommand::SetMark(marked), Targets::Profile(name));
+        if marked != model.is_marked(index) {
+            clicked = Some(TileClick::Mark(index, marked));
         }
         let mut body_clicked = false;
         if preview {
@@ -1581,14 +1616,63 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             state.session.ui.rail_preview.insert(name.to_string(), next);
             crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
-            state.session.rail_remove(name);
+            clicked = Some(TileClick::Remove(index));
         } else if cap_select || body_clicked {
-            state.session.select(name);
+            clicked = Some(TileClick::Select(index));
         }
     }
     state.queue_cards.end_frame();
-    state.fleet = rows;
+    state.session.fleet_model = model;
     state.fleet_labels = labels;
+    apply_tile_click(&mut state.session, clicked);
+}
+
+/// Whether `name` is a loaded row the fleet model shows (a rail tile or a
+/// grid cell is drawn for it).
+fn tile_shown(model: &frontend_core::FleetModel, name: &str) -> bool {
+    model
+        .shown_rows()
+        .any(|(_, row)| row.loaded() && row.name() == name)
+}
+
+/// The one fleet-row click of a rail or grid frame, by model row index.
+#[derive(Clone, Copy)]
+enum TileClick {
+    Mark(usize, bool),
+    Remove(usize),
+    Select(usize),
+    /// A tile dropped on another: the reorder it asks for.
+    Move(ReorderOp),
+}
+
+/// Apply a frame's tile click once the session holds its fleet model again.
+fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
+    let Some(clicked) = clicked else {
+        return;
+    };
+    let index = match clicked {
+        TileClick::Mark(index, _) | TileClick::Remove(index) | TileClick::Select(index) => index,
+        TileClick::Move(op) => {
+            session.reorder_profiles(op);
+            return;
+        }
+    };
+    let Some(name) = session
+        .fleet_model
+        .rows()
+        .get(index)
+        .map(|row| row.name().to_string())
+    else {
+        return;
+    };
+    match clicked {
+        TileClick::Mark(_, marked) => {
+            session.submit(OperatorCommand::SetMark(marked), Targets::Profile(&name));
+        }
+        TileClick::Remove(_) => session.rail_remove(&name),
+        TileClick::Select(_) => session.select(&name),
+        TileClick::Move(_) => {}
+    }
 }
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
@@ -2387,7 +2471,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         let queued = session
             .core
             .selected()
-            .is_some_and(|name| session.scripts.start_queue_place(name).is_some());
+            .is_some_and(|name| session.scripts.start_waiting(name));
         let _stop = if script_stop_enabled(state) || queued {
             None
         } else {
@@ -3897,31 +3981,43 @@ fn script_parameter_rows(
     }
 }
 
-/// Apply to all: copy the focused profile's parameters for this card to
-/// every wall member assigned the same card, after a confirmation naming
-/// the frozen scope. The last result stays below it.
+/// Apply to same-card members: copy the focused profile's parameters for
+/// its card to the bots the fleet buttons cover, through the fleet plan
+/// flow. Its confirmation (naming the frozen scope) and its result are the
+/// fleet plan row and result line, drawn by the Fleet window; while that
+/// window is closed they are drawn here, for this action only.
 fn apply_to_all_section(ui: &Ui, session: &mut Session) {
     ui.separator();
-    if let Some(scope) = session.scripts.prepared_settings_sync() {
-        ui.text_wrapped(scope.prompt());
-        if ui.button("Apply") {
-            session.apply_settings_sync();
-        }
-        ui.same_line();
-        if ui.button("Cancel##apply-to-all") {
-            session.cancel_settings_sync();
-        }
-    } else {
-        if ui.button("Apply to same-card members…") {
-            session.prepare_settings_sync();
-        }
-        ui.set_item_tooltip(
-            "copy these parameters to every wall member assigned this card; members on another card are skipped",
-        );
+    if ui.button("Apply to same-card members…") {
+        session.copy_focused_settings_to_same_card();
     }
-    if let Some(report) = session.scripts.last_settings_sync() {
-        ui.text_wrapped(report.summary());
+    ui.set_item_tooltip(
+        "copy these parameters to the marked bots (every loaded bot shown when none is marked) \
+         assigned this card; a confirmation names them first, and bots on another card are skipped",
+    );
+    if !session.fleet_open {
+        let is_copy = |action| action == frontend_core::FleetAction::CopySettings;
+        if session
+            .core
+            .fleet_plan()
+            .is_some_and(|plan| is_copy(plan.action()))
+        {
+            crate::fleet::plan_row(ui, session);
+        }
+        if session
+            .core
+            .fleet_result()
+            .is_some_and(|result| is_copy(result.action()))
+        {
+            crate::fleet::result_line(ui, session);
+        }
     }
+}
+
+/// Draw the Scripts window's Apply to same-card members section for a test.
+#[cfg(test)]
+pub(crate) fn draw_test_apply_section(ui: &Ui, session: &mut Session) {
+    apply_to_all_section(ui, session);
 }
 
 const RESTART_SETTINGS_POPUP: &str = "##script-restart-required";
@@ -5008,27 +5104,44 @@ fn background_ack_window(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// One tile per wall member, in wall order: cap (world number or local
-/// traffic-light dot, name + brief, ✗) then a `TILE_W`×`TILE_H` body. The
-/// body blits the slot's `FrameBuf` when `draw_for_slot` says this member
-/// paints; otherwise it shows the renderer-off placeholder. While
+/// One tile per shown wall member, in the fleet model's order and filter
+/// (the Fleet window's): cap (world number or local traffic-light dot,
+/// name + brief, ✗) then a `TILE_W`×`TILE_H` body. The body blits the
+/// slot's `FrameBuf` when `draw_for_slot` says this member paints;
+/// otherwise it shows the renderer-off placeholder. While
 /// `only_render_selected` is on (the safe default) the strip is collapsed:
 /// cap only, no body. Clicking the name or body focuses the member; the ✗
-/// (a sibling button, never part of the name click) removes it.
+/// (a sibling button, never part of the name click) removes it. Shown
+/// profiles that are not loaded follow in a folded "Not loaded" group of
+/// markable names (no tile, no texture).
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     state.sync_fleet();
-    let rows = std::mem::take(&mut state.fleet);
+    let filter = state.session.fleet_model.filter().text();
+    if !filter.is_empty() {
+        ui.text_disabled("Fleet filter:");
+        ui.same_line();
+        ui.text_wrapped(filter);
+    }
+    // The tiles read the model's rows while their clicks need the session:
+    // lend the rows out for the frame (no allocation) and apply the one
+    // clicked action once they are back.
+    let model = std::mem::take(&mut state.session.fleet_model);
     let labels = std::mem::take(&mut state.fleet_labels);
     let debug_actions = state.session.debug_ui();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
-            rows.iter().any(|row| row.name() == name) && draw_for_slot(&focus, name)
+            tile_shown(&model, name) && draw_for_slot(&focus, name)
         });
     }
-    for (row, labels) in rows.iter().zip(&labels) {
+    let mut clicked = None;
+    // Dragging a tile reorders the saved Load order, so only that view
+    // offers it.
+    let reorder = model.order() == FleetOrder::LoadOrder;
+    for (index, row) in model.shown_rows().filter(|(_, row)| row.loaded()) {
+        let labels = &labels[index];
         let name = row.name();
         let (is_focused, draw) = {
             let focus = state.session.focus.lock().unwrap();
@@ -5045,9 +5158,13 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
-        let identity = state.session.core.profile_identity_or_synthetic(name);
-        let mut marked = state.session.fleet_selection.contains(identity);
+        let mut marked = model.is_marked(index);
         let restart_required = state.session.scripts.has_restart_badge(name);
+        let mut drag = reorder.then(|| CapDrag {
+            identity: model.identities()[index],
+            dropped: None,
+            dragging: false,
+        });
         let (cap_select, cap_remove, cap_fold) = rail_cap(
             ui,
             row,
@@ -5060,14 +5177,18 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 debug_actions,
             },
             &mut marked,
+            drag.as_mut(),
         );
-        if marked != state.session.fleet_selection.contains(identity) {
-            state
-                .session
-                .submit(OperatorCommand::SetMark(marked), Targets::Profile(name));
+        if marked != model.is_marked(index) {
+            clicked = Some(TileClick::Mark(index, marked));
         }
+        let mut dropped = drag.as_ref().and_then(|drag| drag.dropped);
         let body_clicked = if preview {
-            rail_body(ui, gpu, state, name, draw)
+            let body_clicked = rail_body(ui, gpu, state, name, draw);
+            if reorder && dropped.is_none() {
+                dropped = crate::fleet::profile_drop_target(ui);
+            }
+            body_clicked
         } else {
             false
         };
@@ -5076,14 +5197,32 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             state.session.ui.rail_preview.insert(name.to_string(), next);
             crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
-            state.session.rail_remove(name);
+            clicked = Some(TileClick::Remove(index));
         } else if cap_select || body_clicked {
-            state.session.select(name);
+            clicked = Some(TileClick::Select(index));
+        }
+        if let Some(op) = dropped.and_then(|moving| crate::fleet::drop_op(&model, moving, index)) {
+            clicked = Some(TileClick::Move(op));
         }
         ui.spacing();
     }
-    state.fleet = rows;
+    if model.counts().shown_unloaded() > 0
+        && ui.collapsing_header(&state.not_loaded_label, TreeNodeFlags::NONE)
+    {
+        for (index, row) in model.shown_rows().filter(|(_, row)| !row.loaded()) {
+            let _id = ui.push_id(row.name());
+            let mut marked = model.is_marked(index);
+            if ui.checkbox("##not-loaded-mark", &mut marked) {
+                clicked = Some(TileClick::Mark(index, marked));
+            }
+            ui.set_item_tooltip("mark to log in from the Fleet window");
+            ui.same_line();
+            ui.text_disabled(row.name());
+        }
+    }
+    state.session.fleet_model = model;
     state.fleet_labels = labels;
+    apply_tile_click(&mut state.session, clicked);
 }
 
 /// Cap row: the active public-world number (or a status dot for local
@@ -5102,12 +5241,24 @@ struct CapDrawState {
     debug_actions: bool,
 }
 
+/// One rail cap's reorder gesture, offered only while the fleet shows Load
+/// order: the cap name is a drag source for `identity` and a drop target.
+struct CapDrag {
+    identity: ProfileIdentity,
+    /// Set by [`rail_cap`]: the profile dropped on the name this frame
+    /// ([`ProfileIdentity::raw`]).
+    dropped: Option<u64>,
+    /// Set by [`rail_cap`]: the name is being dragged now.
+    dragging: bool,
+}
+
 fn rail_cap(
     ui: &Ui,
     row: &FleetRow,
     labels: &CapLabels,
     draw: CapDrawState,
     marked: &mut bool,
+    drag: Option<&mut CapDrag>,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
@@ -5147,13 +5298,19 @@ fn rail_cap(
     ui.same_line_with_pos(marker_x + dot_w + gap + mark_w + gap);
     let name_w =
         (draw.width - btn * 2.0 - dot_w - mark_w - gap * 4.0 - restart_w).max(scale_px(ui, 10.0));
-    let clicked = ui
+    let mut clicked = ui
         .selectable_config(&labels.title)
         .selected(draw.is_focused)
         .size([name_w, 0.0])
         .build();
     #[cfg(test)]
     record_test_rail_item(ui);
+    if let Some(drag) = drag {
+        drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
+        drag.dropped = crate::fleet::profile_drop_target(ui);
+        // A drag is not a click: it must not focus the bot.
+        clicked &= !drag.dragging;
+    }
     if draw.restart_required {
         ui.same_line_with_spacing(0.0, gap);
         ui.text_colored(WARN, "[restart]");
@@ -5218,6 +5375,7 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
             debug_actions: true,
         },
         &mut marked,
+        None,
     );
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
@@ -5260,6 +5418,7 @@ fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
             debug_actions,
         },
         &mut marked,
+        None,
     );
     TEST_RAIL_MARK_TOOLTIP.get()
 }
