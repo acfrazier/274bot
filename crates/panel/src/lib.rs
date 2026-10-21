@@ -6,6 +6,7 @@ pub mod debug_panel;
 pub mod fleet;
 mod fleet_actions;
 mod fleet_columns;
+mod fleet_toolbar;
 pub mod focus;
 pub mod game_view;
 pub mod grid;

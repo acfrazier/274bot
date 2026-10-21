@@ -408,13 +408,13 @@ fn opener_cases() -> Vec<OpenerCase> {
             press: Press::Op(|s| s.open_rs2b0t_catalog_picker(false)),
         },
         OpenerCase {
-            name: "Fleet Walk 1 marked bots",
+            name: "Fleet toolbar Walk 1",
             target: PanelWindow::WalkTo,
             setup: with_marked_bob,
             opener: no_opener,
             press: Press::Button {
                 host: fleet,
-                label: "Walk 1 marked bots",
+                label: "Walk 1###fleet-action-6",
             },
         },
     ]
@@ -447,7 +447,7 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
 
         // Open the target the ordinary way; it appears and has the focus.
         match case.target {
-            PanelWindow::WalkTo => state.session.open_walkto_for_marked(),
+            PanelWindow::WalkTo => state.session.open_walkto_for_fleet(),
             PanelWindow::LoadScript => state.session.open_script_load_browser(),
             PanelWindow::ImportCatalog => state.session.open_rs2b0t_catalog_picker(false),
             target => {

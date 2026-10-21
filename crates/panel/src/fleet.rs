@@ -1,11 +1,10 @@
 //! Fleet window: the wide table over the shared fleet model (every profile,
-//! loaded or not, in the model's order and filter), its identity-keyed marks,
-//! the fleet card drop-down, the marks row (tri-state box, marks menu and
-//! count), the action bar (Start / Stop, Assign, Assign & restart, log in /
-//! out, Copy settings, group walk) with its plan confirmation and result
-//! line, and toggleable status columns. A loaded bot's World / login cell
-//! and the marks menu's Switch world… entry open the shared world picker
-//! (`crate::world_picker`); its plan shows in the same plan row.
+//! loaded or not, in the model's order and filter), its identity-keyed marks
+//! and toggleable status columns, under the shared fleet toolbar
+//! ([`crate::fleet_toolbar`]: card, marks, filter and sort, the nine
+//! actions, the plan confirmation and the result). A click on a loaded
+//! bot's name focuses it; its check box only marks it. A loaded bot's
+//! World / login cell opens the shared world picker (`crate::world_picker`).
 //!
 //! The window draws the same rows, order, filter and marks as the MultiBox
 //! rail and the Grid: all three read [`Session::fleet_model`]. Every decision
@@ -18,18 +17,17 @@
 use std::cell::RefCell;
 
 use dear_imgui_rs::{
-    Condition, DragDropTargetFlags, ItemHoveredFlags, SelectableFlags, StyleColor,
-    TableColumnFlags, TableFlags, TableOptions, TableRowFlags, TableSizingPolicy, Ui, WindowFlags,
+    Condition, DragDropTargetFlags, SelectableFlags, StyleColor, TableColumnFlags, TableFlags,
+    TableHoveredColumn, TableOptions, TableRowFlags, TableSizingPolicy, Ui, WindowFlags,
 };
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
-    contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, FleetRow, MarkOp, MarkPredicate,
-    OperatorCommand, Placement, ProfileIdentity, ReorderOp, Scripts, ShownMarks, Targets,
-    FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
+    FleetModel, FleetOrder, FleetRow, MarkOp, OperatorCommand, Placement, ProfileIdentity,
+    ReorderOp, Scripts, Targets,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
-use crate::script_picker::{display_category, resolve_category_order};
+use crate::fleet_toolbar::{self, label_width, tri_state_box, tri_state_op, tri_state_tooltip};
 use crate::session::Session;
 use crate::theme::{scale_px, scale_size, WARN};
 
@@ -100,14 +98,24 @@ pub(crate) fn drop_op(model: &FleetModel, moving: u64, target: usize) -> Option<
     })
 }
 
-/// What a test sees of the Fleet window after one frame.
+/// What a test sees of a fleet surface (the Fleet window, or a toolbar in
+/// the rail or the strip) after one frame.
 #[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct FleetLayout {
-    /// Left and right edge of the window's content region, in screen space.
+    /// The site of the last toolbar drawn.
+    pub site: Option<fleet_toolbar::Site>,
+    /// Left and right edge of the toolbar's content region, in screen space.
     pub content: [f32; 2],
-    /// How far the window scrolls sideways; 0 when nothing runs past its edge.
+    /// How far the Fleet window scrolls sideways; 0 when nothing runs past
+    /// its edge.
     pub scroll_max_x: f32,
+    /// The fold header's `[min_x, min_y, max_x, max_y]` (rail and strip).
+    pub fold_header: [f32; 4],
+    /// The folded summary ("5 marked · <card>"), when the toolbar is folded.
+    pub folded: Option<String>,
+    /// The filter field.
+    pub filter: [f32; 4],
     /// The Sort drop-down's `[min_x, min_y, max_x, max_y]`.
     pub sort_combo: [f32; 4],
     /// Each entry of the open Sort drop-down.
@@ -117,7 +125,9 @@ pub(crate) struct FleetLayout {
     /// The Profile name cell of each shown row, in row order, as
     /// `[min_x, min_y, max_x, max_y]`.
     pub names: Vec<[f32; 4]>,
-    /// The Move marked to top button's `[min_x, min_y, max_x, max_y]`.
+    /// The Mark check box of each shown row, in row order: name and rect.
+    pub mark_boxes: Vec<(String, [f32; 4])>,
+    /// The Marks menu's Move marked to top entry, while the menu is open.
     pub move_to_top: [f32; 4],
     /// The card drop-down's `[min_x, min_y, max_x, max_y]`.
     pub card_combo: [f32; 4],
@@ -133,12 +143,14 @@ pub(crate) struct FleetLayout {
     pub marks_menu: Vec<(String, [f32; 4])>,
     /// The marks row's count text.
     pub marks_text: String,
-    /// Each fleet action button, in action-bar order.
+    /// Each toolbar button, in toolbar order.
     pub actions: Vec<ActionRecord>,
     /// The waiting plan's prompt, Confirm and Cancel, when one is drawn.
     pub plan: Option<PlanRecord>,
     /// The result line's text and rect, when one is drawn.
     pub result: Option<(String, [f32; 4])>,
+    /// Every toolbar item drawn, to check that none runs past the edge.
+    pub items: Vec<[f32; 4]>,
     /// The World / login cell of each shown row that opens the world picker
     /// when clicked, in row order: the profile's name and the cell.
     pub world_cells: Vec<(String, [f32; 4])>,
@@ -146,14 +158,16 @@ pub(crate) struct FleetLayout {
     pub world_picker: Vec<crate::world_picker::EntryRecord>,
 }
 
-/// One fleet action button as a test sees it.
+/// One toolbar button as a test sees it.
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct ActionRecord {
-    pub action: FleetAction,
+    pub action: fleet_toolbar::ToolbarAction,
     pub label: String,
     pub rect: [f32; 4],
     pub disabled: bool,
+    /// The label's text and padding: the button is never narrower.
+    pub text_width: f32,
     pub tooltip: &'static str,
 }
 
@@ -171,34 +185,35 @@ std::thread_local! {
     static LAYOUT: RefCell<FleetLayout> = RefCell::new(FleetLayout::default());
 }
 
+/// Record into this thread's fleet layout (a test reads it back with
+/// [`take_layout`]).
+#[cfg(test)]
+pub(crate) fn record(write: impl FnOnce(&mut FleetLayout)) {
+    LAYOUT.with_borrow_mut(write);
+}
+
+/// What the fleet surfaces recorded since the last call.
+#[cfg(test)]
+pub(crate) fn take_layout() -> FleetLayout {
+    LAYOUT.with_borrow_mut(std::mem::take)
+}
+
 #[cfg(test)]
 std::thread_local! {
     /// Plan rows drawn since the last [`take_plan_rows`].
     static PLAN_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Count one drawn plan row.
+#[cfg(test)]
+pub(crate) fn count_plan_row() {
+    PLAN_ROWS.set(PLAN_ROWS.get() + 1);
+}
+
 /// How many plan rows were drawn since the last call.
 #[cfg(test)]
 pub(crate) fn take_plan_rows() -> usize {
     PLAN_ROWS.replace(0)
-}
-
-#[cfg(test)]
-fn record_content_edges(ui: &Ui) {
-    let left = ui.cursor_screen_pos()[0];
-    LAYOUT.with_borrow_mut(|layout| layout.content = [left, left + ui.content_region_avail()[0]]);
-}
-
-#[cfg(test)]
-fn record_sort_combo(ui: &Ui) {
-    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
-    LAYOUT.with_borrow_mut(|layout| layout.sort_combo = [min[0], min[1], max[0], max[1]]);
-}
-
-#[cfg(test)]
-fn record_sort_choice(ui: &Ui) {
-    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
-    LAYOUT.with_borrow_mut(|layout| layout.sort_choices.push([min[0], min[1], max[0], max[1]]));
 }
 
 #[cfg(test)]
@@ -223,19 +238,6 @@ fn record_name(ui: &Ui, at: [f32; 2], name: &str) {
 }
 
 #[cfg(test)]
-fn record_move_to_top(ui: &Ui) {
-    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
-    LAYOUT.with_borrow_mut(|layout| layout.move_to_top = [min[0], min[1], max[0], max[1]]);
-}
-
-/// The last item's `[min_x, min_y, max_x, max_y]`.
-#[cfg(test)]
-fn item_rect(ui: &Ui) -> [f32; 4] {
-    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
-    [min[0], min[1], max[0], max[1]]
-}
-
-#[cfg(test)]
 fn record_window_layout(ui: &Ui) {
     LAYOUT.with_borrow_mut(|layout| layout.scroll_max_x = ui.scroll_max_x());
 }
@@ -244,540 +246,13 @@ fn record_window_layout(ui: &Ui) {
 /// world picker is drawn after it, as `ui_frame` does.
 #[cfg(test)]
 pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
-    LAYOUT.with_borrow_mut(|layout| *layout = FleetLayout::default());
+    take_layout();
     window(ui, session);
     crate::world_picker::popup(ui, session);
     LAYOUT.with_borrow_mut(|layout| {
         layout.world_picker = crate::world_picker::take_entries();
         std::mem::take(layout)
     })
-}
-
-const MOVE_TO_TOP_LABEL: &str = "Move marked to top";
-const MARKS_MENU_POPUP: &str = "##fleet-marks-menu";
-/// The tooltip of a button that needs a card while the fleet card is each
-/// bot's own.
-const PICK_A_CARD: &str = "pick a card above";
-/// The tooltip of a fleet button with no bot to act on.
-const NOTHING_TO_ACT_ON: &str = "mark bots, or show loaded ones, first";
-/// The Marks menu's entry that opens the world picker over the marked bots.
-const SWITCH_WORLD_LABEL: &str = "Switch world…";
-/// Why the world picker is not offered: a local server has one world.
-const NO_WORLDS: &str = "this server has one world";
-
-/// The window's count-bearing labels (the marks count and the action
-/// buttons), rebuilt only when the fleet model's generation moves, never
-/// per frame. No label ends in an ellipsis: a button that opens a
-/// confirmation still names its action plainly. Each carries an id part
-/// after `###`, so a changed count never changes the button's identity.
-#[derive(Debug, Default)]
-pub(crate) struct FleetLabels {
-    generation: Option<u64>,
-    /// How many bots are marked, shown or not.
-    marked: usize,
-    /// How many bots an action covers: the marks, else the loaded shown rows.
-    scope: usize,
-    /// "5 marked, 2 not shown".
-    marks: String,
-    /// "Stop 5" with marks, "Stop all 12" without, in [`FleetAction::ALL`] order.
-    actions: [String; FleetAction::ALL.len()],
-    walk: String,
-}
-
-impl FleetLabels {
-    /// Rebuild every label when `model` changed since the last call.
-    fn sync(&mut self, model: &FleetModel) {
-        use std::fmt::Write as _;
-        if self.generation == Some(model.generation()) {
-            return;
-        }
-        self.generation = Some(model.generation());
-        let counts = model.counts();
-        // The mark set itself, not the per-row count: it is right before the
-        // first session sync too, and the plan acts on it.
-        self.marked = model.marks().len();
-        self.scope = if self.marked > 0 {
-            self.marked
-        } else {
-            counts.shown_loaded()
-        };
-        self.marks.clear();
-        let _ = write!(
-            self.marks,
-            "{} marked, {} not shown",
-            self.marked,
-            counts.hidden_marked()
-        );
-        for (index, (label, action)) in self.actions.iter_mut().zip(FleetAction::ALL).enumerate() {
-            label.clear();
-            let _ = if self.marked > 0 {
-                write!(
-                    label,
-                    "{} {}###fleet-action-{index}",
-                    action.verb(),
-                    self.marked
-                )
-            } else {
-                write!(
-                    label,
-                    "{} all {}###fleet-action-{index}",
-                    action.verb(),
-                    self.scope
-                )
-            };
-        }
-        self.walk.clear();
-        let _ = write!(self.walk, "Walk {} marked bots", self.marked);
-    }
-
-    /// Every label of the bar, including the fixed one.
-    #[cfg(test)]
-    fn all(&self) -> impl Iterator<Item = &str> {
-        self.actions.iter().map(String::as_str).chain([
-            self.walk.as_str(),
-            MOVE_TO_TOP_LABEL,
-            self.marks.as_str(),
-        ])
-    }
-
-    /// The buffers of every cached label, to see that a frame kept them.
-    #[cfg(test)]
-    pub(crate) fn buffers(&self) -> Vec<*const u8> {
-        self.actions
-            .iter()
-            .map(|label| label.as_ptr())
-            .chain([self.marks.as_ptr(), self.walk.as_ptr()])
-            .collect()
-    }
-}
-
-/// The tooltip of `action`'s button: what it does and over whom.
-fn action_tooltip(action: FleetAction, marked: bool) -> &'static str {
-    match (action, marked) {
-        (FleetAction::Start, true) => {
-            "start the fleet card on every marked bot (each bot's own card when that is picked)"
-        }
-        (FleetAction::Start, false) => {
-            "start the fleet card on every loaded bot shown, after asking first"
-        }
-        (FleetAction::Stop, true) => {
-            "stop every marked bot's script; a confirmation names the running ones"
-        }
-        (FleetAction::Stop, false) => "stop every loaded bot shown, after asking first",
-        (FleetAction::Assign, true) => {
-            "save the fleet card on every marked bot without starting it, so each bot's \
-             settings can be adjusted first"
-        }
-        (FleetAction::Assign, false) => {
-            "save the fleet card on every loaded bot shown, after asking first"
-        }
-        (FleetAction::AssignRestart, true) => {
-            "save the fleet card and start it on every marked bot; running scripts are \
-             stopped first (a confirmation names them)"
-        }
-        (FleetAction::AssignRestart, false) => {
-            "save the fleet card and start it on every loaded bot shown, after asking first"
-        }
-        (FleetAction::Login, true) => "log in every marked bot, loading the ones not loaded yet",
-        (FleetAction::Login, false) => "log in every loaded bot shown, after asking first",
-        (FleetAction::Logout, true) => "log out every marked bot",
-        (FleetAction::Logout, false) => "log out every loaded bot shown, after asking first",
-        (FleetAction::CopySettings, true) => {
-            "copy the focused bot's settings for the fleet card to the marked bots on that \
-             card; a confirmation names them first"
-        }
-        (FleetAction::CopySettings, false) => {
-            "copy the focused bot's settings for the fleet card to the loaded bots shown \
-             that are on that card, after asking first"
-        }
-        (FleetAction::SwitchWorld(_), true) => {
-            "move every marked bot to the world you pick; a confirmation names them first"
-        }
-        (FleetAction::SwitchWorld(_), false) => {
-            "move every loaded bot shown to the world you pick; a confirmation names them first"
-        }
-    }
-}
-
-/// Stage `card` as the fleet card and commit it. Nothing else changes: no
-/// Browse pick, no assignment, no profile form, no Start.
-fn pick_card(session: &mut Session, card: FleetCard) {
-    session.fleet_model.stage_card(card);
-    session.submit(OperatorCommand::SetFleetCard, Targets::Application);
-}
-
-/// The "Card:" drop-down, full width like Sort: the card the Start, Assign,
-/// Assign & restart and Copy settings buttons use. Entries are each bot's
-/// own card, the focused bot's card, then every Browse card under its
-/// category in the Browse window's category order. While it is open a
-/// search field narrows the entries.
-fn card_combo(ui: &Ui, session: &mut Session) {
-    ui.text("Card:");
-    session
-        .fleet_model
-        .sync_card_label(&session.scripts, &session.core);
-    ui.set_next_item_width(-1.0);
-    let combo = ui.begin_combo("##fleet-card", session.fleet_model.card_label());
-    #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| layout.card_combo = item_rect(ui));
-    let Some(_open) = combo else {
-        session.fleet_card_filter = None;
-        return;
-    };
-    let mut filter = session.fleet_card_filter.take().unwrap_or_else(|| {
-        ui.set_keyboard_focus_here();
-        String::new()
-    });
-    ui.set_next_item_width(-1.0);
-    ui.input_text("##fleet-card-filter", &mut filter)
-        .hint("Filter cards")
-        .build();
-    ui.separator();
-    let picked = card_entries(ui, session, &filter);
-    session.fleet_card_filter = Some(filter);
-    if let Some(card) = picked {
-        pick_card(session, card);
-    }
-}
-
-/// The open card drop-down's entries that match `filter`; the one picked.
-fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
-    let current = session.fleet_model.card();
-    let matches = |text: &str| filter.is_empty() || contains_ci(text, filter);
-    let mut picked = None;
-    let entry = |label: &str, selected: bool, picked: &mut Option<FleetCard>, card| {
-        let clicked = ui.selectable_config(label).selected(selected).build();
-        #[cfg(test)]
-        LAYOUT.with_borrow_mut(|layout| {
-            layout.card_entries.push((label.to_owned(), item_rect(ui)));
-        });
-        if clicked {
-            *picked = Some(card);
-        }
-        if selected {
-            ui.set_item_default_focus();
-        }
-    };
-    if matches(OWN_CARD_LABEL) {
-        entry(
-            OWN_CARD_LABEL,
-            current.is_own(),
-            &mut picked,
-            FleetCard::OWN,
-        );
-    }
-    if matches(FOCUSED_CARD_LABEL) {
-        entry(
-            FOCUSED_CARD_LABEL,
-            current.is_focused(),
-            &mut picked,
-            FleetCard::FOCUSED,
-        );
-    }
-    ui.separator();
-    let mut present: Vec<String> = Vec::new();
-    for card in session.scripts.browse_cards() {
-        let category = display_category(card.category());
-        if !present.iter().any(|known| known == category) {
-            present.push(category.to_owned());
-        }
-    }
-    let order = resolve_category_order(&session.ui.script_category_order, &present);
-    let mut any = false;
-    for category in &order {
-        let mut heading = false;
-        for (index, card) in session.scripts.browse_cards().enumerate() {
-            if display_category(card.category()) != category.as_str() || !matches(card.name()) {
-                continue;
-            }
-            if !heading {
-                heading = true;
-                ui.text_disabled(category);
-            }
-            any = true;
-            let _id = ui.push_id(index);
-            let choice = card.selection();
-            let selected = current.pinned_card() == Some(&choice);
-            entry(
-                card.name(),
-                selected,
-                &mut picked,
-                FleetCard::pinned(choice),
-            );
-        }
-    }
-    if !any {
-        ui.text_disabled("no matching cards");
-    }
-    picked
-}
-
-/// A check box over the shown rows that also reads "some": a dash in the
-/// box while only some shown rows are marked. Returns whether it was
-/// clicked; the caller decides what each state's click does.
-fn tri_state_box(ui: &Ui, id: &str, state: ShownMarks) -> bool {
-    let mut checked = state == ShownMarks::All;
-    let clicked = ui.checkbox(id, &mut checked);
-    if state == ShownMarks::Some {
-        let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
-        let side = max[1] - min[1];
-        let (mid_y, thickness) = ((min[1] + max[1]) / 2.0, (side * 0.14).max(2.0));
-        ui.get_window_draw_list()
-            .add_rect(
-                [min[0] + side * 0.28, mid_y - thickness / 2.0],
-                [min[0] + side * 0.72, mid_y + thickness / 2.0],
-                ui.style_color(StyleColor::CheckMark),
-            )
-            .filled(true)
-            .build();
-    }
-    clicked
-}
-
-/// What a click on the tri-state box asks for: no shown row marked or some
-/// marked mark every shown row; every shown row marked unmarks them.
-fn tri_state_op(state: ShownMarks) -> MarkOp {
-    match state {
-        ShownMarks::All => MarkOp::UnmarkShown,
-        ShownMarks::None | ShownMarks::Some => MarkOp::Shown,
-    }
-}
-
-/// The tooltip of the tri-state box in `state`.
-fn tri_state_tooltip(state: ShownMarks) -> &'static str {
-    match state {
-        ShownMarks::None => "mark every shown bot",
-        ShownMarks::Some => "mark the rest of the shown bots",
-        ShownMarks::All => "unmark every shown bot",
-    }
-}
-
-/// The marks row: the tri-state box over the shown rows, the marks menu and
-/// the count ("5 marked, 2 not shown"; filtered-out marks stay).
-fn marks_row(ui: &Ui, session: &mut Session) {
-    let state = session.fleet_model.shown_marks();
-    let no_rows = session.fleet_model.counts().shown() == 0;
-    let mut op = None;
-    let mut switch_world = false;
-    {
-        let _disabled = no_rows.then(|| ui.begin_disabled());
-        if tri_state_box(ui, "##fleet-mark-all", state) {
-            op = Some(tri_state_op(state));
-        }
-        #[cfg(test)]
-        LAYOUT.with_borrow_mut(|layout| layout.mark_box = item_rect(ui));
-        ui.set_item_tooltip(tri_state_tooltip(state));
-    }
-    ui.same_line();
-    if ui.button("Marks##fleet-marks-menu-button") {
-        ui.open_popup(MARKS_MENU_POPUP);
-    }
-    #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| layout.marks_button = item_rect(ui));
-    ui.set_item_tooltip(
-        "mark or unmark the shown bots, mark them by status, or switch their world",
-    );
-    if let Some(_menu) = ui.begin_popup(MARKS_MENU_POPUP) {
-        let item = |label: &str| {
-            let clicked = ui.menu_item(label);
-            #[cfg(test)]
-            LAYOUT.with_borrow_mut(|layout| {
-                layout.marks_menu.push((label.to_owned(), item_rect(ui)));
-            });
-            clicked
-        };
-        if item("Mark shown") {
-            op = Some(MarkOp::Shown);
-        }
-        if item("Unmark shown") {
-            op = Some(MarkOp::UnmarkShown);
-        }
-        if item("Invert shown") {
-            op = Some(MarkOp::InvertShown);
-        }
-        let by_status = ui.begin_menu("Mark by status");
-        #[cfg(test)]
-        LAYOUT.with_borrow_mut(|layout| {
-            layout
-                .marks_menu
-                .push(("Mark by status".to_owned(), item_rect(ui)));
-        });
-        if let Some(_status) = by_status {
-            for predicate in MarkPredicate::ALL {
-                if item(predicate.label()) {
-                    op = Some(MarkOp::Where(predicate));
-                }
-            }
-        }
-        ui.separator();
-        // The same scope rule as the action buttons: the marked bots, or
-        // the loaded shown ones when none is marked.
-        let reason = if !session.can_switch_world() {
-            Some(NO_WORLDS)
-        } else if session.fleet_labels.scope == 0 {
-            Some(NOTHING_TO_ACT_ON)
-        } else {
-            None
-        };
-        let clicked =
-            ui.menu_item_enabled_selected_no_shortcut(SWITCH_WORLD_LABEL, false, reason.is_none());
-        #[cfg(test)]
-        LAYOUT.with_borrow_mut(|layout| {
-            layout
-                .marks_menu
-                .push((SWITCH_WORLD_LABEL.to_owned(), item_rect(ui)));
-        });
-        if ui.is_item_hovered_with_flags(ItemHoveredFlags::ALLOW_WHEN_DISABLED) {
-            ui.tooltip_text(reason.unwrap_or_else(|| {
-                action_tooltip(FleetAction::SwitchWorld(0), session.fleet_labels.marked > 0)
-            }));
-        }
-        switch_world |= clicked;
-    }
-    ui.same_line();
-    ui.text(&session.fleet_labels.marks);
-    #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| layout.marks_text = session.fleet_labels.marks.clone());
-    if let Some(op) = op {
-        session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
-    }
-    if switch_world {
-        session.open_world_picker(None);
-    }
-}
-
-/// The action bar: one button per fleet action, naming the verb and how
-/// many bots it covers, then Walk and Move marked to top. A click plans the
-/// action (see [`Session::plan_fleet_action`]).
-fn action_bar(ui: &Ui, session: &mut Session) {
-    let labels = &session.fleet_labels;
-    let own = session.fleet_model.card().is_own();
-    let marked = labels.marked > 0;
-    let nothing = labels.scope == 0;
-    let mut planned = None;
-    for (index, action) in FleetAction::ALL.into_iter().enumerate() {
-        let label = labels.actions[index].as_str();
-        if index > 0 {
-            continue_line_if_fits(ui, button_width(ui, label));
-        }
-        let needs_card = action.needs_card() && own;
-        let tooltip = if needs_card {
-            PICK_A_CARD
-        } else if nothing {
-            NOTHING_TO_ACT_ON
-        } else {
-            action_tooltip(action, marked)
-        };
-        let _disabled = (needs_card || nothing).then(|| ui.begin_disabled());
-        if ui.button(label) {
-            planned = Some(action);
-        }
-        ui.set_item_tooltip(tooltip);
-        #[cfg(test)]
-        LAYOUT.with_borrow_mut(|layout| {
-            layout.actions.push(ActionRecord {
-                action,
-                label: label.to_owned(),
-                rect: item_rect(ui),
-                disabled: needs_card || nothing,
-                tooltip,
-            });
-        });
-    }
-    let mut walk = false;
-    continue_line_if_fits(ui, button_width(ui, &labels.walk));
-    {
-        let _disabled = (!marked).then(|| ui.begin_disabled());
-        if ui.button(&labels.walk) {
-            walk = true;
-        }
-        ui.set_item_tooltip(
-            "open the WalkTo picker for the marked bots: pick a tile and every bot \
-             walks there from where it stands",
-        );
-    }
-    continue_line_if_fits(ui, button_width(ui, MOVE_TO_TOP_LABEL));
-    let mut move_to_top = false;
-    {
-        let load_order = session.fleet_model.order() == FleetOrder::LoadOrder;
-        let ready = load_order && marked;
-        let _disabled = (!ready).then(|| ui.begin_disabled());
-        if ui.button(MOVE_TO_TOP_LABEL) {
-            move_to_top = true;
-        }
-        #[cfg(test)]
-        record_move_to_top(ui);
-        ui.set_item_tooltip(if !load_order {
-            "choose Load order to reorder"
-        } else if !marked {
-            "mark profiles first"
-        } else {
-            "move the marked profiles to the top of the saved Load order, \
-             keeping their relative order"
-        });
-    }
-    if let Some(action) = planned {
-        session.plan_fleet_action(action);
-    }
-    if walk {
-        session.open_walkto_for_marked();
-    }
-    if move_to_top {
-        session.reorder_profiles(ReorderOp::MarkedToTop);
-    }
-}
-
-/// The waiting plan's confirmation row: the core's prompt, wrapped, with
-/// Confirm and Cancel. Draws nothing while no plan waits. Draw it from one
-/// window only: the Fleet window, or the Scripts window while the Fleet
-/// window is closed.
-pub(crate) fn plan_row(ui: &Ui, session: &mut Session) {
-    let Some(plan) = session.core.fleet_plan() else {
-        return;
-    };
-    #[cfg(test)]
-    PLAN_ROWS.set(PLAN_ROWS.get() + 1);
-    ui.text_wrapped(plan.prompt());
-    #[cfg(test)]
-    let prompt = plan.prompt().to_owned();
-    let confirm = ui.button("Confirm##fleet-plan");
-    #[cfg(test)]
-    let confirm_rect = item_rect(ui);
-    ui.same_line();
-    let cancel = ui.button("Cancel##fleet-plan");
-    #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| {
-        layout.plan = Some(PlanRecord {
-            prompt,
-            confirm: confirm_rect,
-            cancel: item_rect(ui),
-        });
-    });
-    if confirm {
-        session.confirm_fleet_plan();
-    } else if cancel {
-        session.cancel_fleet_plan();
-    }
-}
-
-/// The one result line of the latest fleet action (the core's text:
-/// failures, skips, done, pending), wrapped, with the full text in a
-/// tooltip. Draws nothing before the first action.
-pub(crate) fn result_line(ui: &Ui, session: &Session) {
-    let Some(result) = session.core.fleet_result() else {
-        return;
-    };
-    ui.text_wrapped(result.text());
-    #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| {
-        layout.result = Some((result.text().to_owned(), item_rect(ui)));
-    });
-    if ui.is_item_hovered() {
-        ui.tooltip(|| {
-            let _wrap = ui.push_text_wrap_pos(scale_px(ui, 420.0));
-            ui.text_wrapped(result.text());
-        });
-    }
 }
 
 /// The checkboxes that show and hide the status columns. The choice is saved
@@ -800,45 +275,6 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
     if changed && session.persist_ui {
         crate::ui_state::save(&session.preferences, &session.ui);
     }
-}
-
-/// The "Sort:" drop-down, full width like the Danger routing one.
-fn sort_combo(ui: &Ui, session: &mut Session) {
-    ui.text("Sort:");
-    ui.set_next_item_width(-1.0);
-    let order = session.fleet_model.order();
-    let combo = ui.begin_combo("##fleet-sort", order.label());
-    #[cfg(test)]
-    record_sort_combo(ui);
-    if let Some(_open) = combo {
-        for sort in FleetOrder::CHOICES {
-            let selected = sort == order;
-            let picked = ui
-                .selectable_config(sort.label())
-                .selected(selected)
-                .build();
-            #[cfg(test)]
-            record_sort_choice(ui);
-            if picked {
-                session.submit(OperatorCommand::SetFleetSort(sort), Targets::Application);
-            }
-            if selected {
-                ui.set_item_default_focus();
-            }
-        }
-    }
-}
-
-/// Width of a label's visible text (what follows `##` is only an id).
-fn label_width(ui: &Ui, label: &str) -> f32 {
-    let visible = label.split("##").next().unwrap_or(label);
-    ui.current_font()
-        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, visible)[0]
-}
-
-/// A button's width: its text and the frame padding either side.
-fn button_width(ui: &Ui, label: &str) -> f32 {
-    label_width(ui, label) + 2.0 * ui.clone_style().frame_padding()[0]
 }
 
 /// Continue the current line with an item `width` wide when it still fits
@@ -872,17 +308,18 @@ fn world_cell(ui: &Ui, row: &FleetRow) -> bool {
         ui.selectable(&*buffer)
     });
     #[cfg(test)]
-    LAYOUT.with_borrow_mut(|layout| {
+    record(|layout| {
         layout
             .world_cells
-            .push((row.name().to_owned(), item_rect(ui)));
+            .push((row.name().to_owned(), fleet_toolbar::item_rect(ui)));
     });
     ui.set_item_tooltip("click to switch world");
     clicked
 }
 
-/// The table over the model's shown rows. A mark click is submitted after
-/// the rows are drawn (the rows are borrowed from the session's model).
+/// The table over the model's shown rows. A mark, a name click (focus) or a
+/// world click is submitted after the rows are drawn (the rows are borrowed
+/// from the session's model).
 fn table(ui: &Ui, session: &mut Session) {
     let columns: Vec<FleetColumn> = FleetColumn::ALL
         .into_iter()
@@ -896,6 +333,7 @@ fn table(ui: &Ui, session: &mut Session) {
     let mut dropped: Option<(u64, usize)> = None;
     let can_switch = session.can_switch_world();
     let mut world_click: Option<usize> = None;
+    let mut name_click: Option<usize> = None;
     // Dragging reorders the saved Load order, so only that view offers it.
     let reorder = session.fleet_model.order() == FleetOrder::LoadOrder;
     // Every column stretches with the window, so the table is never wider
@@ -951,7 +389,7 @@ fn table(ui: &Ui, session: &mut Session) {
                     header_op = Some(tri_state_op(state));
                 }
                 #[cfg(test)]
-                LAYOUT.with_borrow_mut(|layout| layout.header_mark_box = item_rect(ui));
+                record(|layout| layout.header_mark_box = fleet_toolbar::item_rect(ui));
                 ui.set_item_tooltip(tri_state_tooltip(state));
             } else {
                 ui.table_header(ui.table_get_column_name(column));
@@ -968,13 +406,20 @@ fn table(ui: &Ui, session: &mut Session) {
             if ui.checkbox(format!("##fleet-mark-{}", marked_id.raw()), &mut marked) {
                 mark_click = Some((index, marked));
             }
+            #[cfg(test)]
+            record(|layout| {
+                layout
+                    .mark_boxes
+                    .push((row.name().to_owned(), fleet_toolbar::item_rect(ui)));
+            });
             ui.table_next_column();
             #[cfg(test)]
             record_cell(ui);
             if reorder {
                 // The name is the drag handle and the whole row the drop
                 // target (a selectable spanning every column; the Mark
-                // checkbox, submitted first, keeps its own clicks).
+                // checkbox, submitted first, keeps its own clicks). A click
+                // focuses the bot only inside the Profile column.
                 #[cfg(test)]
                 let name_at = ui.cursor_screen_pos();
                 {
@@ -984,9 +429,20 @@ fn table(ui: &Ui, session: &mut Session) {
                             ui.style_color(StyleColor::TextDisabled),
                         )
                     });
-                    ui.selectable_config(row.name())
+                    let clicked = ui
+                        .selectable_config(row.name())
                         .flags(SelectableFlags::SPAN_ALL_COLUMNS | SelectableFlags::ALLOW_OVERLAP)
                         .build();
+                    let on_name = matches!(
+                        ui.table_get_hovered_column(),
+                        TableHoveredColumn::Column(column) if column.get() == 1
+                    );
+                    if clicked && on_name && row.loaded() {
+                        name_click = Some(index);
+                    }
+                    if row.loaded() {
+                        ui.set_item_tooltip("click to focus; drag to reorder");
+                    }
                     profile_drag_source(ui, marked_id, row.name());
                     if let Some(moving) = profile_drop_target(ui) {
                         dropped = Some((moving, index));
@@ -995,9 +451,14 @@ fn table(ui: &Ui, session: &mut Session) {
                 #[cfg(test)]
                 record_name(ui, name_at, row.name());
             } else if row.loaded() {
-                ui.text(row.name());
                 #[cfg(test)]
-                record_name(ui, ui.item_rect_min(), row.name());
+                let name_at = ui.cursor_screen_pos();
+                if ui.selectable(row.name()) {
+                    name_click = Some(index);
+                }
+                ui.set_item_tooltip("click to focus");
+                #[cfg(test)]
+                record_name(ui, name_at, row.name());
             } else {
                 ui.text_disabled(row.name());
                 #[cfg(test)]
@@ -1090,15 +551,18 @@ fn table(ui: &Ui, session: &mut Session) {
             session.reorder_profiles(op);
         }
     }
-    if let Some(index) = world_click {
-        let name = session
+    let row_name = |session: &Session, index: usize| {
+        session
             .fleet_model
             .rows()
             .get(index)
-            .map(|row| row.name().to_owned());
-        if let Some(name) = name {
-            session.open_world_picker(Some(&name));
-        }
+            .map(|row| row.name().to_owned())
+    };
+    if let Some(name) = world_click.and_then(|index| row_name(session, index)) {
+        session.open_world_picker(Some(&name));
+    }
+    if let Some(name) = name_click.and_then(|index| row_name(session, index)) {
+        session.select(&name);
     }
 }
 
@@ -1119,26 +583,10 @@ pub fn window(ui: &Ui, session: &mut Session) {
             [f32::MAX, f32::MAX],
         )
         .build(|| {
-            #[cfg(test)]
-            record_content_edges(ui);
-            if ui
-                .input_text("Filter", session.fleet_model.staged_filter_mut())
-                .hint("name or status")
-                .build()
-            {
-                session.submit(OperatorCommand::SetFleetFilter, Targets::Application);
-            }
-            sort_combo(ui, session);
             // The rows, their order and the shown set are the shared fleet
             // model's, refreshed at the session sync (`pump_status`): this
             // frame computes nothing.
-            ui.separator();
-            session.fleet_labels.sync(&session.fleet_model);
-            card_combo(ui, session);
-            marks_row(ui, session);
-            action_bar(ui, session);
-            plan_row(ui, session);
-            result_line(ui, session);
+            fleet_toolbar::body(ui, session, fleet_toolbar::Site::Window, true);
             column_toggles(ui, session);
             ui.separator();
             table(ui, session);
@@ -1150,12 +598,11 @@ pub fn window(ui: &Ui, session: &mut Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::FleetLabels;
     use frontend_core::test_support::session::install_vault;
     use frontend_core::test_support::{FixtureProfile, VaultFixture};
     use frontend_core::{
-        fill_visible_row_indices, fleet_row_matches, FleetAction, FleetCard, FleetModel,
-        FleetOrder, FleetRow, OperatorCommand, Phase, Targets,
+        fill_visible_row_indices, fleet_row_matches, FleetAction, FleetCard, FleetOrder, FleetRow,
+        OperatorCommand, Phase, Targets,
     };
 
     /// The open window survives frames while columns come and go (the table
@@ -1412,33 +859,6 @@ mod tests {
             fleet_row_matches(rows[2].name(), Some(&rows[2]), "OFF"),
             "brief matches case-insensitively"
         );
-    }
-
-    /// No label of the action bar ends in an ellipsis, whatever the marks.
-    #[test]
-    fn action_button_labels_have_no_ellipsis() {
-        let mut model = FleetModel::new();
-        model.set_universe_for_test(
-            vec![
-                FleetRow::fixture("bob", Phase::Ready, Some(301), None),
-                FleetRow::fixture("alice", Phase::Ready, Some(302), None),
-            ],
-            &[],
-        );
-        let mut labels = FleetLabels::default();
-        for marked in [0, 1, 2] {
-            model.clear_marks_for_test();
-            for row in 0..marked {
-                model.set_mark_for_test(model.identity(row).unwrap(), true);
-            }
-            labels.sync(&model);
-            for label in labels.all() {
-                assert!(
-                    !label.contains('\u{2026}') && !label.contains("..."),
-                    "{label:?}"
-                );
-            }
-        }
     }
 }
 

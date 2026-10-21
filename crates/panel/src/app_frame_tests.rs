@@ -1206,7 +1206,9 @@ fn a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(grid: bool) {
         prompt.starts_with("Move 1 bot to world 1: bob."),
         "{prompt}"
     );
-    assert!(rig.session().fleet_open, "the Fleet window shows the plan");
+    // The rail's toolbar (Grid: the strip's fleet section) shows the plan,
+    // so the Fleet window stays closed.
+    assert!(!rig.session().fleet_open, "a toolbar shows the plan");
     rig.frame(Pointer::Away);
     assert!(
         rig.text.contains("Move 1 bot to world 1: bob.") && rig.text.contains("Confirm"),
