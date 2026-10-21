@@ -1193,20 +1193,12 @@ fn seed_runner(
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "prepared once per memory run; boxing adds an allocation without reducing per-bot state"
-)]
-enum ScriptCard {
-    Catalog {
-        card: script::JsCard,
-        bag: serde_json::Map<String, serde_json::Value>,
-        siblings: Vec<(String, String)>,
-        loadouts: Vec<api::loadout::Loadout>,
-    },
-    CompiledGatherer {
-        bag: serde_json::Map<String, serde_json::Value>,
-    },
+struct ScriptCard {
+    /// Native Gatherer does not need a foreign catalog card.
+    catalog: Option<script::JsCard>,
+    bag: serde_json::Map<String, serde_json::Value>,
+    siblings: Vec<(String, String)>,
+    loadouts: Vec<api::loadout::Loadout>,
 }
 
 fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
@@ -1402,8 +1394,11 @@ impl Run {
             })?;
             let inject = scenario::settings_inject_map(benchmark.settings.script_settings_inject);
             if scenario_name == "gatherer" && config.n > 1 {
-                Some(ScriptCard::CompiledGatherer {
+                Some(ScriptCard {
+                    catalog: None,
                     bag: inject.unwrap_or_default(),
+                    siblings: Vec::new(),
+                    loadouts: Vec::new(),
                 })
             } else {
                 let root = std::env::var_os("RS2B0T")
@@ -1432,8 +1427,8 @@ impl Run {
                         api_family: Some(card.api_family.as_str().into()),
                     },
                 )?;
-                Some(ScriptCard::Catalog {
-                    card,
+                Some(ScriptCard {
+                    catalog: Some(card),
                     bag,
                     siblings,
                     loadouts: scenario_loadouts(&benchmark.settings),
@@ -1590,16 +1585,13 @@ impl Run {
         let Some(card) = &self.card else {
             return Ok(true);
         };
-        let ScriptCard::Catalog {
-            card,
+        let ScriptCard {
+            catalog,
             bag: card_bag,
             siblings,
             loadouts,
-        } = card
-        else {
-            let ScriptCard::CompiledGatherer { bag } = card else {
-                unreachable!("script card variant was matched above");
-            };
+        } = card;
+        let Some(card) = catalog else {
             // Avoid cloning the small settings bag while a settings copy
             // holds admission. The dispatcher rechecks the lock after this
             // hint, so a racing hold remains fail-closed.
@@ -1611,7 +1603,7 @@ impl Run {
                 return Ok(false);
             }
             drop(start_hold);
-            return match play.script_start_typed(name, script::gatherer::CARD.id, bag.clone()) {
+            return match play.script_start_typed(name, script::gatherer::CARD.id, card_bag.clone()) {
                 Ok(()) => Ok(true),
                 Err(script::StartLoadError::Waiting(_)) => Ok(false),
                 Err(error) => Err(format!("gatherer_native_start_failed:{name}:{error}")),
@@ -2709,11 +2701,13 @@ mod tests {
         library
             .ensure_js(script::ScriptSource::File, &lookup)
             .unwrap();
-        run.card = Some(ScriptCard::Catalog {
-            card: library
-                .get(script::ScriptSource::File, &lookup)
-                .unwrap()
-                .clone(),
+        run.card = Some(ScriptCard {
+            catalog: Some(
+                library
+                    .get(script::ScriptSource::File, &lookup)
+                    .unwrap()
+                    .clone(),
+            ),
             bag: serde_json::Map::new(),
             siblings: vec![],
             loadouts: vec![],
@@ -2946,10 +2940,7 @@ mod tests {
         std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
         let run = Run::prepare_unseeded(unit_config(10, Workload::Active), "unit")
             .expect("native Gatherer preparation without RS2B0T");
-        assert!(matches!(
-            &run.card,
-            Some(ScriptCard::CompiledGatherer { .. })
-        ));
+        assert!(run.card.as_ref().is_some_and(|card| card.catalog.is_none()));
 
         let mut scenario = scenario::get("gatherer").expect("Gatherer scenario");
         qualify_gatherer_fleet(&mut scenario, 10).expect("fleet qualification");
