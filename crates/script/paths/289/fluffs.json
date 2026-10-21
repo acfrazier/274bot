@@ -352,13 +352,13 @@
         "boxes": [
           [
             3288,
-            3494,
+            3493,
             3327,
             3527,
             0
           ]
         ],
-        "source": "A defs/gertrudescat.ts:168-170"
+        "source": "content/maps/m51_54.jm2:6240 (fence at [3305,3493,0]); content/scripts/quests/quest_fluffs/scripts/quest_fluffs.rs2:121-136 (the climb lands on the fence tile)"
       }
     },
     "tools": [

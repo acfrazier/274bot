@@ -72,9 +72,10 @@
             },
             "obj": "white_apron",
             "qty": 1,
-            "est_gp": 2,
+            "est_gp": 100,
             "option": "Buy 1"
           },
+          "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:166 stocks white_apron for 100 gp.",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
@@ -453,9 +454,10 @@
             },
             "obj": "karamja_rum",
             "qty": 1,
-            "est_gp": 30,
+            "est_gp": 100,
             "option": "Buy 1"
           },
+          "comment": "content/scripts/areas/area_karamja/configs/karamja.inv:10 stocks karamja_rum for 100 gp.",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },
@@ -1627,9 +1629,9 @@
                   "source": "content/pack/obj.pack:434; content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:23-27"
                 },
                 "radius": 1,
-                "settle_ms": 15000,
-                "dialogue": "none"
+                "settle_ms": 15000
               },
+              "comment": "The Read operation sets quest progress and opens the pirate scroll (content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:23-27). The default dialogue driver adopts and closes the scroll before the journal read.",
               "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3", "hunt:4"] } } },
               "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3"] } } }
             }
