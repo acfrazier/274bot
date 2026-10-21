@@ -1444,6 +1444,50 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 }
 
 #[test]
+fn guardian_no_navigation_terminal_drains_on_resumed_host_frame() {
+    let mut rig = GatherReconnectRig::new();
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    for tick in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        if tick % 2 == 0 {
+            let _ = rig.drain_host();
+        } else {
+            rig.slot().lock().unwrap().retain_held_seat_batches();
+        }
+    }
+
+    let result = rig.probe("globalThis.__runResult");
+    assert_eq!(result["value"]["end"], "blocked", "{result}");
+    assert_eq!(
+        result["value"]["failure"]["code"], "resource-unavailable",
+        "{result}"
+    );
+    assert!(
+        result["value"]["failure"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no navigation data")),
+        "{result}"
+    );
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    assert!(
+        rig.slot().lock().unwrap().seat_batch_backlog() > 0,
+        "the held Stop must exercise the retained-batch drain"
+    );
+
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+    rig.frame();
+    assert_eq!(rig.slot().lock().unwrap().seat_batch_backlog(), 0);
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    assert_eq!(rig.probe("globalThis.__settleCount"), 1);
+    assert_eq!(rig.probe("globalThis.__runResult"), result);
+}
+
+#[test]
 fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
