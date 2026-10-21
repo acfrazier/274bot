@@ -542,9 +542,7 @@ fn classify<Io>(
             if active {
                 return Ok(true);
             }
-            let queued = scripts.is_some_and(|scripts| {
-                scripts.start_queue_place(name).is_some() || scripts.has_start_preparation(name)
-            });
+            let queued = scripts.is_some_and(|scripts| scripts.start_waiting(name));
             if queued {
                 Ok(false)
             } else {

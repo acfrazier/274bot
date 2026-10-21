@@ -3354,7 +3354,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return false;
         };
-        self.core.memory_relog_warning(&name) || self.scripts.start_queue_place(&name).is_some()
+        self.core.memory_relog_warning(&name) || self.scripts.start_waiting(&name)
     }
 
     /// Explicit Relog-now through the login FIFO. Running or queued script

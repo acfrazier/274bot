@@ -525,7 +525,8 @@ pub struct TuiApp {
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: ScriptRunState,
-    /// Focused member holds a Start-all permit place (Stop still applies).
+    /// Focused member has a Start still waiting (a paced place, a card
+    /// preparation or an Assign & restart); Stop still applies.
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,

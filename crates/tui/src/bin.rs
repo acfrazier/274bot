@@ -971,8 +971,7 @@ impl TuiSession {
     /// first when running script work would be interrupted or a queued Start
     /// would be cancelled; otherwise relogs directly.
     fn memory_relog_request(&mut self, app: &mut TuiApp, name: &str) {
-        let script_work =
-            self.core.memory_relog_warning(name) || self.scripts.start_queue_place(name).is_some();
+        let script_work = self.core.memory_relog_warning(name) || self.scripts.start_waiting(name);
         if script_work {
             app.confirm(ConfirmKind::MemoryRelog(name.to_string()));
         } else {
@@ -2994,7 +2993,7 @@ impl TuiSession {
             if self.core.has_play() {
                 app.script_state = self.core.script_state(name);
             }
-            app.script_queued = self.scripts.start_queue_place(name).is_some();
+            app.script_queued = self.scripts.start_waiting(name);
         } else {
             app.script_queued = false;
             if app.map_active {
