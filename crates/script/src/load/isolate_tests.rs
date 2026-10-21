@@ -3141,10 +3141,10 @@ fn paint_controls_cold_heap_receipt() {
 }
 
 /// PAINT-CONTROLS-025 memory tripwire: the paint-controls helper records
-/// the one cached host-control pair into each frame and retains one frame,
-/// so after collection its frames keep no more V8 heap than the hint rows
-/// they replace. Bound: the old rows' growth plus 64 KiB (measured numbers
-/// are printed). The parent/candidate A/B is
+/// the one cached host-control pair into each frame and retains one frame.
+/// Over 20,000 frames, the collected V8 used heap of the helper frames may
+/// grow by at most 64 KiB more than that of the hint rows they replace
+/// (measured numbers are printed). The parent/candidate A/B is
 /// `paint_controls_cold_heap_receipt`.
 #[test]
 fn paint_controls_helper_keeps_collected_v8_heap_flat() {
