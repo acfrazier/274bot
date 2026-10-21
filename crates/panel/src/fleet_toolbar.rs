@@ -15,7 +15,9 @@
 //! core's plan and result. Every click goes through the session's command
 //! flow; nothing here changes marks, settings, preferences other than the
 //! fold, or lifecycle directly. The count-bearing labels are rebuilt only
-//! when the fleet model's generation moves.
+//! when the fleet model's generation moves, and an open card drop-down
+//! keeps its search text and card list ([`CardSearch`]), so a warm frame
+//! allocates nothing in any state the toolbar shows.
 
 use std::path::PathBuf;
 

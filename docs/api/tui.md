@@ -194,7 +194,9 @@ skipped and named in the status line. **Later** leaves their current scripts
 running and suppresses the prompt until settings change again.
 
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
-from its own position. Each of these prints one report with every marked bot
+from its own position. Pressing `g` while no bot that can walk is marked
+marks the loaded bots the fleet filter shows that can walk; a bot the filter
+hides is not added. Each of these prints one report with every marked bot
 counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:
 running a script, gwalk3: not logged in`); zone refusals include the danger
 zone names for each affected bot. On legacy grid packs `z` cannot enable
