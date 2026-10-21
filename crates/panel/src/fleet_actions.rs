@@ -1,116 +1,95 @@
-//! The Fleet window's commands on the marked rows: the panel adapter over the
-//! shared [`frontend_core`] commands. Each one reads the shared marked set
-//! ([`Session::fleet_selection`]) and puts its one bulk report in
-//! [`Session::fleet_report`].
+//! The fleet plan flow: the one path every fleet action button and key
+//! takes through the shared [`frontend_core`] commands.
+//!
+//! The core decides everything (which bots, which card, what is skipped,
+//! whether to ask first, what the prompt says). This adapter only submits:
+//! it plans the action, runs the plan at once when it needs no
+//! confirmation, and otherwise leaves it waiting for the plan row's
+//! Confirm or Cancel. The one result of the run is
+//! [`frontend_core::OperatorSession::fleet_result`]; nothing here copies it.
 
-use frontend_core::{OperatorCommand, Targets};
+use frontend_core::{FleetAction, OperatorCommand, Targets};
 
 use crate::session::Session;
 
 impl Session {
-    /// Save the selected card as the assignment of every marked bot without
-    /// starting it, so each bot's settings can be adjusted first.
-    pub fn fleet_assign_selected(&mut self) {
-        let Some(card) = self
-            .script_sel
-            .as_ref()
-            .map(frontend_core::scripts::ScriptChoice::duplicate)
-        else {
-            self.fleet_report = Some(frontend_core::ASSIGN_NO_CARD.into());
+    /// Plan `action` over the fleet model's marks (or, with none, its loaded
+    /// shown rows). A refusal shows its reason on the banner. A plan that
+    /// needs no confirmation runs now; any other waits for
+    /// [`Self::confirm_fleet_plan`] or [`Self::cancel_fleet_plan`]. A new
+    /// plan replaces a waiting one.
+    pub(crate) fn plan_fleet_action(&mut self, action: FleetAction) {
+        if matches!(
+            action,
+            FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart
+        ) {
+            // The plan freezes the catalog root for the row that runs it.
+            let root = self.start_catalog_root();
+            self.scripts.stage_start_catalog_root(root);
+        }
+        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(action));
+    }
+
+    /// Submit a `PlanFleetAction` row and run the plan at once when it
+    /// needs no confirmation.
+    fn submit_fleet_plan(&mut self, plan: OperatorCommand) {
+        let Some(planned) = self.submit(plan, Targets::Application) else {
             return;
         };
-        self.scripts.stage_browse_pick(card);
-        if self
-            .submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
-            .is_none()
-        {
-            self.fleet_report = self.error.clone();
+        if let Some(reason) = self.core.command_failure(planned.request()) {
+            self.error = Some(reason.to_owned());
             return;
         }
-        let root = self.start_catalog_root();
-        self.scripts.stage_start_catalog_root(root);
-        let submitted = self.submit_script_command(OperatorCommand::AssignScript, Targets::Marked);
-        self.apply_script_notice();
-        self.fleet_report_follows_start = false;
-        self.fleet_report =
-            submitted.and_then(|submitted| submitted.bulk().map(|report| report.summary()));
-    }
-
-    /// Which marked bots an Assign & restart would interrupt, for the
-    /// confirmation that names them.
-    pub fn fleet_restart_scope(&self) -> frontend_core::RestartScope {
-        frontend_core::restart_scope(&self.fleet_selection, &self.core)
-    }
-
-    /// Assign the selected card to every marked bot and start it there,
-    /// stopping an active script first. The Start is paced like Start all and
-    /// the fleet report follows the running Start report.
-    pub fn fleet_assign_restart_selected(&mut self) {
-        self.fleet_restart_confirm = false;
-        let Some(card) = self
-            .script_sel
-            .as_ref()
-            .map(frontend_core::scripts::ScriptChoice::duplicate)
-        else {
-            self.fleet_report = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
-            return;
-        };
-        self.scripts.stage_browse_pick(card);
         if self
-            .submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
-            .is_none()
+            .core
+            .fleet_plan()
+            .is_some_and(|plan| !plan.needs_confirm())
         {
-            self.fleet_report = self.error.clone();
-            return;
+            self.confirm_fleet_plan();
         }
-        let root = self.start_catalog_root();
-        self.scripts.stage_start_catalog_root(root);
-        self.submit_script_command(OperatorCommand::AssignAndRestart, Targets::Marked);
-        self.apply_script_notice();
-        self.fleet_report_follows_start = true;
-        self.follow_fleet_report();
     }
 
-    /// Log in every marked bot, loading the ones not loaded yet.
-    pub fn fleet_login_selected(&mut self) {
-        let report = self.login_marked_rows();
-        self.fleet_report_follows_start = false;
-        self.fleet_report = report.or_else(|| self.error.clone());
-    }
-
-    /// Log out every marked bot that is logged in or logging in.
-    pub fn fleet_logout_selected(&mut self) {
-        let report = self.submit_marked(OperatorCommand::Logout);
-        self.apply_script_notice();
-        self.fleet_report_follows_start = false;
-        self.fleet_report = report.or_else(|| self.error.clone());
-    }
-
-    /// Prepare copying the focused bot's parameters for the selected card to
-    /// the marked bots on that card. Nothing is written until the operator
-    /// applies the frozen scope the Fleet window then shows.
-    pub fn fleet_prepare_apply_settings(&mut self) {
-        self.error = None;
-        let (Some(source), Some(card)) = (
-            self.focused_name(),
-            self.script_sel
-                .as_ref()
-                .map(frontend_core::scripts::ScriptChoice::duplicate),
-        ) else {
-            self.fleet_report = Some("Apply to marked: focus a bot and select a card".into());
+    /// Run the waiting plan (the plan row's Confirm). The members' results
+    /// show on the result line, not on the banner. An Assign changes the
+    /// focused bot's heading when it was a target, so the Script section
+    /// re-reads it (a pending Browse pick stays).
+    pub(crate) fn confirm_fleet_plan(&mut self) {
+        let Some(plan) = self.core.fleet_plan() else {
             return;
         };
-        let kind = if card.compiled_id().is_some() {
-            frontend_core::command::CardKind::Native
-        } else {
-            frontend_core::command::CardKind::Script
-        };
-        self.scripts.stage_settings_sync_prepare(&source, &card);
-        self.submit_script_command(
-            OperatorCommand::ApplySettingsToMarked(kind),
-            Targets::Marked,
+        let command = plan.command();
+        let assigns = matches!(
+            plan.action(),
+            FleetAction::Assign | FleetAction::AssignRestart
         );
+        self.submit(command, Targets::Plan);
+        if assigns {
+            if let Some(name) = self.focused_name() {
+                self.restore_script_heading(&name);
+            }
+        }
         self.apply_script_notice();
-        self.fleet_report = self.error.clone();
+    }
+
+    /// Drop the waiting plan; nothing is written.
+    pub(crate) fn cancel_fleet_plan(&mut self) {
+        self.submit(OperatorCommand::CancelFleetPlan, Targets::Application);
+    }
+
+    /// The Scripts window's copy entry: copy the focused bot's settings for
+    /// its own card to the bots the fleet buttons cover (the marks, or the
+    /// loaded shown rows), through the same plan flow with the plan row's
+    /// confirmation.
+    pub(crate) fn copy_focused_settings_to_same_card(&mut self) {
+        let Some(focused) = self.focused_name() else {
+            self.error = Some("Copy settings: focus a bot first".into());
+            return;
+        };
+        let Some(card) = self.scripts.heading(&self.core, &focused) else {
+            self.error = Some("Copy settings: the focused bot has no card".into());
+            return;
+        };
+        self.core.stage_plan_card(card);
+        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(FleetAction::CopySettings));
     }
 }

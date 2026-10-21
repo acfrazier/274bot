@@ -156,9 +156,15 @@ impl Rig {
             Pointer::Away => [2.0, 2.0],
             Pointer::Over | Pointer::Click => self.game_centre.unwrap_or([480.0, 450.0]),
         };
+        self.frame_at(spot, pointer == Pointer::Click, pointer)
+    }
+
+    /// One frame with the pointer at `spot` and the left button `down`.
+    /// `pointer` is what the `Pumps` driver stages for the Game image.
+    fn frame_at(&mut self, spot: [f32; 2], down: bool, pointer: Pointer) -> bool {
         let io = self.ctx.io_mut();
         io.add_mouse_pos_event(spot);
-        io.add_mouse_button_event(MouseButton::Left, pointer == Pointer::Click);
+        io.add_mouse_button_event(MouseButton::Left, down);
         self.ctx
             .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let title = game_window_title(self.state.session.focused_name().as_deref());
@@ -779,3 +785,296 @@ fn captured_input_is_submitted_once_per_frame(drive: Drive) {
 }
 
 scenario!(captured_input, captured_input_is_submitted_once_per_frame);
+
+/// The rail caps a frame drew (`name: brief`), in their drawn order.
+fn drawn_caps<'a>(text: &str, names: &[&'a str]) -> Vec<&'a str> {
+    let mut caps: Vec<(usize, &str)> = names
+        .iter()
+        .filter_map(|name| text.find(&format!("{name}: ")).map(|at| (at, *name)))
+        .collect();
+    caps.sort_unstable();
+    caps.into_iter().map(|(_, name)| name).collect()
+}
+
+/// One fleet model behind every panel surface: the real frame draws the
+/// MultiBox rail, the Grid and the Fleet window from the same rows, filter
+/// and order. A profile that is not loaded is listed (folded) in the rail,
+/// never as a tile; the Fleet window's filter hides the same tiles in the
+/// rail and the Grid, and a filtered-out mark survives.
+#[test]
+fn the_rail_grid_and_fleet_window_draw_one_filtered_order() {
+    let (mut session, _dir) = session_with_play("fleet-one-order", &["carol", "alice", "bob"]);
+    frontend_core::test_support::session::vault_upsert(
+        &mut session.core,
+        FixtureProfile::new("dave", "pw").uid(9),
+    );
+    session.multibox = true;
+    session.fleet_open = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    let names = ["alice", "bob", "carol", "dave"];
+    // The docked rail lays out over the first frames.
+    rig.frames_until("the rail caps", |rig| {
+        !drawn_caps(&rig.text, &names).is_empty()
+    });
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["alice", "bob", "carol"],
+        "load order, and no tile for the profile that is not loaded:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Not loaded (1)"),
+        "the folded group names the profile count:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("not loaded"),
+        "the Fleet window lists dave as not loaded:\n{}",
+        rig.text
+    );
+
+    let alice = rig.session().core.profile_identity("alice").unwrap();
+    rig.session().fleet_model.set_mark_for_test(alice, true);
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("bob");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the rail shows the Fleet window's filter:\n{}",
+        rig.text
+    );
+    assert!(rig.session().fleet_model.marks().contains(alice));
+    assert_eq!(rig.session().fleet_model.counts().hidden_marked(), 1);
+
+    rig.session().wall.grid = true;
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the Grid shows the same filtered cells:\n{}",
+        rig.text
+    );
+
+    rig.session().fleet_model.staged_filter_mut().clear();
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.session().submit(
+        OperatorCommand::SetFleetSort(frontend_core::FleetOrder::Name),
+        Targets::Application,
+    );
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["alice", "bob", "carol"],
+        "the Grid follows the Fleet window's sort:\n{}",
+        rig.text
+    );
+}
+
+const REORDER_NAMES: [&str; 3] = ["alice", "bob", "carol"];
+
+fn centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
+    [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
+}
+
+/// The rail cap names of one frame, in drawn order (a `UiFrame` rig with the
+/// pointer away). `rail_cap` records five items per cap: world marker, mark
+/// box, name, fold, remove.
+fn rail_cap_names(rig: &mut Rig) -> Vec<[f32; 4]> {
+    super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    rig.frame(Pointer::Away);
+    super::TEST_RAIL_ITEM_BOUNDS
+        .with_borrow(|bounds| bounds.as_chunks::<5>().0.iter().map(|cap| cap[2]).collect())
+}
+
+fn saved_names(rig: &mut Rig) -> Vec<String> {
+    rig.session().core.profile_order().names().to_vec()
+}
+
+/// A rig on the MultiBox rail over `REORDER_NAMES`, settled until every cap
+/// is drawn; `None` when the host has no GPU.
+fn reorder_rig(label: &str) -> Option<(Rig, TestDir)> {
+    let (mut session, dir) = session_with_play(label, &REORDER_NAMES);
+    session.multibox = true;
+    let mut rig = Rig::new(Drive::UiFrame, session)?;
+    rig.frames_until("the rail caps", |rig| {
+        drawn_caps(&rig.text, &REORDER_NAMES).len() == REORDER_NAMES.len()
+    });
+    rig.frame(Pointer::Away);
+    Some((rig, dir))
+}
+
+/// Press on `from`, move over several frames, release on `to`, settle.
+fn rail_drag(rig: &mut Rig, from: [f32; 2], to: [f32; 2]) {
+    rig.frame_at(from, false, Pointer::Away);
+    rig.frame_at(from, true, Pointer::Away);
+    for step in 1..=4 {
+        let t = step as f32 / 4.0;
+        let at = [
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+        ];
+        rig.frame_at(at, true, Pointer::Away);
+    }
+    rig.frame_at(to, true, Pointer::Away);
+    rig.frame_at(to, false, Pointer::Away);
+    rig.frame_at(to, false, Pointer::Away);
+}
+
+/// A real drag of one rail tile's name onto another changes the saved Load
+/// order, and the next frames draw the rail and the Grid in the new order.
+/// The drag neither focuses the bot nor toggles a mark.
+#[test]
+fn dragging_a_rail_tile_reorders_the_saved_order_in_the_rail_and_the_grid() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag") else {
+        return;
+    };
+    let saved = saved_names(&mut rig);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        saved,
+        "the rail draws the saved order"
+    );
+    let focused = rig.session().focused_name();
+    let caps = rail_cap_names(&mut rig);
+    assert_eq!(caps.len(), 3, "one cap per loaded profile");
+    let before = crate::session::reorders_submitted();
+
+    // The first tile onto the last: it goes after it.
+    rail_drag(&mut rig, centre(caps[0]), centre(caps[2]));
+    assert_eq!(crate::session::reorders_submitted(), before + 1);
+    let mut expected = saved.clone();
+    let first = expected.remove(0);
+    expected.push(first);
+    assert_eq!(saved_names(&mut rig), expected, "the saved order moved");
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        expected,
+        "the rail follows the saved order:\n{}",
+        rig.text
+    );
+    assert_eq!(
+        rig.session().focused_name(),
+        focused,
+        "a drag does not focus the bot"
+    );
+    assert!(
+        rig.session().fleet_model.marks().is_empty(),
+        "a drag does not mark"
+    );
+    assert!(rig.session().error.is_none(), "{:?}", rig.session().error);
+
+    rig.session().wall.grid = true;
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        expected,
+        "the Grid follows the saved order:\n{}",
+        rig.text
+    );
+}
+
+/// Dropping a tile on the tile above it puts it before that tile.
+#[test]
+fn dragging_a_rail_tile_up_lands_before_the_target() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag-up") else {
+        return;
+    };
+    let saved = saved_names(&mut rig);
+    let caps = rail_cap_names(&mut rig);
+    rail_drag(&mut rig, centre(caps[2]), centre(caps[0]));
+    let mut expected = saved;
+    let last = expected.pop().unwrap();
+    expected.insert(0, last);
+    assert_eq!(saved_names(&mut rig), expected);
+}
+
+/// Outside Load order a rail drag does nothing: no reorder is submitted and
+/// the saved order stays.
+#[test]
+fn a_rail_drag_does_nothing_while_the_fleet_is_sorted_by_name() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag-name") else {
+        return;
+    };
+    rig.session().submit(
+        OperatorCommand::SetFleetSort(frontend_core::FleetOrder::Name),
+        Targets::Application,
+    );
+    rig.frame(Pointer::Away);
+    let saved = saved_names(&mut rig);
+    let caps = rail_cap_names(&mut rig);
+    assert_eq!(caps.len(), 3);
+    let before = crate::session::reorders_submitted();
+    rail_drag(&mut rig, centre(caps[0]), centre(caps[2]));
+    assert_eq!(crate::session::reorders_submitted(), before);
+    assert_eq!(saved_names(&mut rig), saved);
+}
+
+/// A steady frame in Load order, even with the pointer over a tile, submits
+/// nothing and rebuilds no label: the cached cap strings keep their buffers.
+#[test]
+fn a_steady_rail_frame_submits_nothing_and_keeps_its_labels() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-steady") else {
+        return;
+    };
+    let caps = rail_cap_names(&mut rig);
+    let label_buffers = |rig: &Rig| {
+        let mut buffers: Vec<*const u8> = rig
+            .state
+            .fleet_labels
+            .iter()
+            .map(|labels| labels.title.as_ptr())
+            .collect();
+        buffers.push(rig.state.not_loaded_label.as_ptr());
+        buffers
+    };
+    let buffers = label_buffers(&rig);
+    let before = crate::session::reorders_submitted();
+    for _ in 0..6 {
+        rig.frame_at(centre(caps[1]), false, Pointer::Away);
+    }
+    assert_eq!(crate::session::reorders_submitted(), before);
+    assert_eq!(label_buffers(&rig), buffers);
+}
+/// A Grid whose filter leaves no loaded profile frees the tile views its
+/// cells held: the rail, which also disposes them, is not drawn in Grid.
+#[test]
+fn an_empty_filtered_grid_frees_its_tile_views() {
+    let (mut session, _dir) = session_with_play("fleet-empty-grid", &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    rig.frames_until("a Grid cell holds a tile view", |rig| {
+        !rig.state.views.is_empty()
+    });
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("zzz");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert!(
+        rig.text.contains("no wall member matches the Fleet filter"),
+        "the Grid is empty:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.state.views.is_empty(),
+        "the hidden cells' views are freed: {:?}",
+        rig.state.views.keys().collect::<Vec<_>>()
+    );
+}

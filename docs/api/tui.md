@@ -70,10 +70,10 @@ label in its border. Everything is plain text as well as colour.
 
 | Pane | What it shows |
 | --- | --- |
-| Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
+| Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Logout buttons. The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world), the status pane's script, phase and reason rows (the same rows as the panel's Status card) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
-| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
+| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back), with its buttons as `[N] label` rows. A script that uses the standard paint-controls helper shows working **Pause** (reads **Resume** while paused) and **Stop** rows; they act on the bot whose paint is shown and are dimmed when the run cannot take them ([script.md](script.md)). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
@@ -98,31 +98,65 @@ is global, and moving the fleet cursor never changes the selected bot.
 
 | Pane | Keys |
 | --- | --- |
-| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `m` Load + log in and `U` Log out (a fleet plan: marked rows, else the loaded shown bots); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
 | rs2b0t import (palette **Import rs2b0t profiles…**) | type the path of rs2b0t's `rs2b0t-profiles.json`, `Enter` previews; in the preview `o` switches Skip/Overwrite for existing profiles, `u` (when the file has accounts the 289 client cannot log in with) imports those too or leaves them out, `Enter`/`y` imports, `Esc` goes back; in the report `d` asks to delete the export file (`y` deletes, `n` keeps; offered only once every chosen account is confirmed saved), `Esc` closes. See [vault.md](vault.md#importing-profiles-from-rs2b0t) |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
-| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start all…, `E` Stop all…; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`); in Parameters, `Space` steps through an option's choices and `Enter` opens its choice list (searchable past 16 options) |
+| Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start fleet (the fleet plan), `E` Stop fleet; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`); in Parameters, `Space` steps through an option's choices and `Enter` opens its choice list (searchable past 16 options) |
 | Chat | arrows / `j` `k` choose, `Space` / `Enter` continue or answer, `1`-`9` script paint buttons, `p` paint / game chat |
 | Logs, log drawer | `/` search, `v` level, `s` source, `b` scope, `f` follow, arrows PgUp PgDn Home End scroll, `w` save, `F` session file |
 | Manual walk | `W` `A` `S` `D` / arrows walk one tile; `Esc` disarms |
 
 Commands ending in `…` confirm first: Remove names the bot it will remove
-(and keeps the vault profile), and the fleet-wide commands list the
-members they cover. If the fleet changes before you confirm, the dialog
-shows the new scope instead of running.
+(and keeps the vault profile). The fleet actions confirm only when core's
+plan says so (below).
 
 **Marked rows.** The `[x]` marks are the one selection every fleet command
-reads. With rows marked, **Load+login all** and **Logout all** log in / out
-the marked bots only (loading unloaded ones first), **Start all** / **Stop
-all** start / stop them, and the palette adds **Assign script to marked…**
-(saves the Browse pick as their assignment without starting; running bots are
-skipped), **Assign & restart marked…** (stops a running script, then
-starts the pick through the same one-per-frame Start permit as Start all) and
-**Apply focused bot's settings to marked…** (copies the focused bot's
-parameters for the Browse pick to the marked bots on that card; the dialog
-names the bots it copies to, each marked bot it skips with the reason and how
-many unmarked bots stay unchanged, and nothing is written until you confirm).
+reads, including the Map's group send. A mark stays when the filter hides
+its row or the bot is unloaded; deleting the profile drops it. `a` marks
+every shown row (loaded or not) and `A` unmarks the shown rows; marks the
+filter hides are kept. The palette adds **Invert shown** and **Mark by
+status: ready / idle / running / logged out / login error / not loaded**,
+which mark the shown rows in that status (other marks stay). Core decides
+which rows each of these touches.
+
+**Fleet card.** The header line of the Fleet pane reads `card: <card> ·
+sort: <order> · N marked` (it wraps by part in a narrow pane). The card is
+the one the fleet actions use: **Each bot's own card** (the default),
+**Focused bot's card: X** (follows the focus; `(pending)` while X is an
+unsaved Browse pick) or one pinned card. `c` (palette **Pick fleet card…**)
+opens the picker over Each bot's own card, Focused bot's card and then every
+Browse card, grouped by category as the Script tab's Browse groups them.
+`Up` / `Down` / `j` / `k` / PgUp PgDn Home End move; `Enter` pins the
+highlighted card, `Esc` (or a click outside) keeps the card as it was.
+Picking changes no assignment, no Browse pick, no profile form and no run.
+
+**Fleet actions.** `m` Load + log in, `U` Log out, `T` Start fleet and `E`
+Stop fleet (Script tab), and the palette's **Assign**, **Assign & restart** and **Copy
+settings** each ask core for a plan. With rows marked the plan covers every
+marked profile, hidden ones too; with nothing marked it covers the loaded
+bots the filter shows and asks first. Unloaded profiles are reached only by
+marking them (`a`, then `m`). Core freezes the targets, the card and the
+skips with their reasons when the plan is made: a bot marked, loaded or made
+ready afterwards never joins it. A plan runs at once unless it covers the
+shown bots (nothing marked), would stop a running script, or copies
+settings; then a confirm overlay shows core's prompt as written. `Enter` /
+`y` runs the plan, `Esc` / `n` cancels it (nothing is written; a settings
+copy releases its hold). Only one plan waits: a newer action replaces it and
+its prompt starts "Replaces the waiting … plan." A refused action (for
+example "no bot to act on") shows its reason on the message line.
+**Assign**, **Assign & restart** and **Copy settings** need a card: while the
+fleet card is Each bot's own card they are unavailable ("pick a card first").
+**Start** with that card starts each bot's own assignment, paced through the
+same one-per-frame Start permit. **Assign & restart** stops a running script
+first; **Copy settings** copies the focused bot's parameters for the card to
+the targets on that card (the prompt names them and each skip).
+
+**Result.** Each action ends in one result on the message line (`msg:`),
+failures first, then skips, then done, with a `pending N` tail until every
+member settles (a paced Start settles with its last queued bot). It is
+written once, not repeated as a banner; core also writes one log line when
+it settles.
 
 **Script settings restarts.** Saved settings needing a restart show a `!`
 badge in the fleet; Parameters says `Restart required to apply saved
@@ -162,7 +196,8 @@ They now live in their pane: `i` / `u` / `x` / `o` / `l` on the Overview,
 Chat. `Tab` moves keyboard focus instead of cycling the bot (select bots in
 the Fleet with `Enter`, a click, or the palette's Select next / previous
 bot). WASD walks only in the armed Manual walk box. `q` asks before
-quitting while bots are loaded. `x`, `m`, `U`, `T` and `E` confirm first.
+quitting while bots are loaded. `x` and the fleet actions that ask (see
+Fleet actions above) confirm first.
 Esc no longer dismisses the background-bots notice (use `n` or its **Got
 it** button). A dialogue is answered from the Chat tab (`F6`). The map
 group checklist is the fleet's row selection.

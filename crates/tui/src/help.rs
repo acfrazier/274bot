@@ -56,6 +56,14 @@ const FLEET_NAV: &[(&str, &str)] = &[
         "/",
         "filter: name, wN or world:N, state (ready, queued, error…)",
     ),
+    (
+        "Alt-Up Alt-Down",
+        "move the cursor's profile up / down the saved Load order (Load order only)",
+    ),
+    (
+        "palette",
+        "Move marked to top: the marked profiles lead the Load order",
+    ),
 ];
 
 const MAP_NAV: &[(&str, &str)] = &[

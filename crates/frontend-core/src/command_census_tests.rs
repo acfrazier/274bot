@@ -97,14 +97,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure filter predicate over the staged filter text; SetFleetFilter stages the text"),
     ),
     (
-        "fleet.rs::member_row",
-        Excluded("pure lookup of a member's projected row; presentation"),
-    ),
-    (
-        "fleet.rs::fill_visible_indices",
-        Excluded("pure computation of the shown rows from the staged filter text and order"),
-    ),
-    (
         "fleet.rs::fill_visible_row_indices",
         Excluded("pure computation of the shown rows from the staged filter text and order"),
     ),
@@ -176,6 +168,10 @@ const CORE: &[(&str, Decision)] = &[
     ("marked.rs::assign_marked", Row(C::AssignScript)),
     ("marked.rs::assign_and_restart_marked", Row(C::AssignAndRestart)),
     (
+        "marked.rs::prepare_apply_settings_shown",
+        Row(C::PlanFleetAction(crate::fleet_plan::FleetAction::CopySettings)),
+    ),
+    (
         "marked.rs::prepare_apply_settings_marked",
         Rows(
             &[
@@ -228,11 +224,6 @@ const CORE: &[(&str, Decision)] = &[
     (
         "prefs.rs::UiPreferences::update",
         Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
-    ),
-    // profiles.rs
-    (
-        "profiles.rs::fresh_uid",
-        Excluded("derives the next profile UID from the vault; identity calculation only"),
     ),
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
@@ -357,8 +348,9 @@ const CORE: &[(&str, Decision)] = &[
                 C::AssignScript,
                 C::AssignAndRestart,
                 C::RestartForSettings,
+                C::PlanFleetAction(crate::fleet_plan::FleetAction::Start),
             ],
-            "the Start, assignment, assignment-and-restart or settings-restart row consumes the staged catalog root",
+            "the Start, assignment, assignment-and-restart or settings-restart row consumes the staged catalog root; a fleet plan freezes it for the row that runs the plan",
         ),
     ),
     (
@@ -571,14 +563,6 @@ const CORE: &[(&str, Decision)] = &[
     // scripts/reload.rs
     ("scripts/reload.rs::Scripts::take_reload_outcome", Excluded(RESULT)),
     // selection.rs: marks and the marked bulk commands.
-    (
-        "selection.rs::MarkedSelection::retain",
-        Excluded("projection maintenance: drops marks of rows no longer shown"),
-    ),
-    (
-        "selection.rs::MarkedSelection::retain_sorted",
-        Excluded("projection maintenance: drops marks of rows no longer shown"),
-    ),
     ("selection.rs::stop_marked", Row(C::StopScript)),
     (
         "selection.rs::profile_id_at",
@@ -675,6 +659,7 @@ const CORE: &[(&str, Decision)] = &[
     ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
+    ("session/fleet.rs::OperatorSession::stage_reorder", Staged(C::ReorderProfiles)),
     ("session/prefs.rs::OperatorSession::stage_notice", Staged(C::AcknowledgeNotice)),
     ("session/prefs.rs::OperatorSession::stage_log_save", Staged(C::SaveLog)),
     ("session/prefs.rs::OperatorSession::stage_quester_paths", Staged(C::SetQuesterPaths)),
@@ -697,10 +682,19 @@ const CORE: &[(&str, Decision)] = &[
     ("log_file.rs::restore_session_log", Excluded(STARTUP)),
     ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
     ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
+    ("fleet.rs::FleetModel::staged_filter_mut", Staged(C::SetFleetFilter)),
+    ("fleet.rs::FleetModel::stage_card", Staged(C::SetFleetCard)),
+    ("fleet.rs::FleetModel::sync_card_label", Excluded(PROJECTION)),
+    ("driver.rs::HeadlessDriver::sync_card_label", Excluded(PROJECTION)),
+    (
+        "session/fleet_plan.rs::OperatorSession::stage_plan_card",
+        Staged(C::PlanFleetAction(crate::fleet_plan::FleetAction::CopySettings)),
+    ),
+    ("fleet.rs::FleetModel::refresh", Excluded(PROJECTION)),
     ("driver.rs::HeadlessDriver::unlock", Rows(&[C::UnlockVault, C::CreateVault], "stages the vault and the play launch, then submits UnlockVault or, for a new file, CreateVault")),
     ("driver.rs::HeadlessDriver::session_mut", Excluded(ACCESSOR)),
     ("driver.rs::HeadlessDriver::models_mut", Excluded(ACCESSOR)),
-    ("driver.rs::DriverModels::fleet_filter_mut", Excluded(ACCESSOR)),
+    ("driver.rs::DriverModels::fleet_mut", Excluded(ACCESSOR)),
     ("driver.rs::DriverModels::map_mut", Excluded(ACCESSOR)),
     ("driver.rs::DriverModels::scripts_mut", Excluded(ACCESSOR)),
     // views.rs
@@ -783,14 +777,10 @@ const SURFACE: &[(&str, Decision)] = &[
     ("panel/session.rs::Session::reset_vault", Row(C::ResetVault)),
     // --- panel: fleet view ---
     (
-        "panel/fleet.rs::apply_settings_row",
+        "panel/fleet.rs::table",
         Rows(
-            &[
-                C::ApplySettingsToMarked(CardKind::Script),
-                C::ApplySettingsToMarked(CardKind::Native),
-                C::CancelSettingsSync,
-            ],
-            "prepares the marked scope, then applies or cancels the frozen settings copy",
+            &[C::MarkFleet(crate::MarkOp::Shown), C::SetMark(true)],
+            "the Mark column header is the tri-state shown-marks box; each row's checkbox sets that row's mark",
         ),
     ),
     // --- panel: session compositions ---
@@ -881,13 +871,6 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[C::LoadScriptFile, C::SelectScriptCard],
             "Load registers the file card, then selects it for the focused profile",
-        ),
-    ),
-    (
-        "panel/profile_script.rs::Session::fleet_start_selected",
-        Rows(
-            &[C::PickBrowseCard, C::StartScript],
-            "picks the selected card before starting it across marked profiles",
         ),
     ),
     (
@@ -1024,20 +1007,6 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     // --- tui: vault and preferences ---
     (
-        "panel/fleet_actions.rs::Session::fleet_assign_selected",
-        Rows(
-            &[C::PickBrowseCard, C::AssignScript],
-            "Assign: the card picked in Scripts becomes the shared pick, then the marked bots take it",
-        ),
-    ),
-    (
-        "panel/fleet_actions.rs::Session::fleet_assign_restart_selected",
-        Rows(
-            &[C::PickBrowseCard, C::AssignAndRestart],
-            "Assign & restart: the card picked in Scripts becomes the shared pick, then the marked bots take and restart it",
-        ),
-    ),
-    (
         "panel/app.rs::commit_nav_settings",
         Rows(
             &[
@@ -1105,27 +1074,6 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[C::PickBrowseCard, C::SelectScriptCard, C::StartScript],
             "Start picks the Browse card, records it as the profile's pending choice, then starts",
-        ),
-    ),
-    (
-        "tui/bin.rs::TuiSession::script_start_all",
-        Rows(
-            &[C::PickBrowseCard, C::StartScript],
-            "marked Start picks the Browse card before starting marks; Start all starts everyone",
-        ),
-    ),
-    (
-        "tui/bin.rs::TuiSession::script_assign_marked",
-        Rows(
-            &[C::PickBrowseCard, C::AssignScript],
-            "picks the selected card before assigning it to marks",
-        ),
-    ),
-    (
-        "tui/bin.rs::TuiSession::script_restart_marked",
-        Rows(
-            &[C::PickBrowseCard, C::AssignAndRestart],
-            "picks the selected card before assigning and starting marked profiles",
         ),
     ),
     (
