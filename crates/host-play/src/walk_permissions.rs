@@ -644,7 +644,11 @@ pub(crate) fn route_loc_access_geometry(
     target: api::WorldTile,
     loc_id: i32,
     radius: i32,
-) -> Option<(LocAccessGeometry, LocAccessWindow, &api::snapshot::SceneView)> {
+) -> Option<(
+    LocAccessGeometry,
+    LocAccessWindow,
+    &api::snapshot::SceneView,
+)> {
     let scene = snapshot.scene();
     if !api::query::SceneQuery::new(scene, None).contains(target) {
         return None;
