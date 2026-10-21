@@ -333,7 +333,8 @@ skipped with its new reason. With two toolbars on screen (the rail and the
 Fleet window) both show the plan; the first Confirm runs it once.
 
 Each run ends in one **result line** under the plan row: failures first,
-then cancellations (a bot a later Log in, Log out or Remove took over),
+then cancellations (a bot a later command took over; the reason names it,
+such as `a later Relog now took over`),
 then skips, then done, with counts. It reads as pending until every member
 has really finished (a paced Start counts its queued bots until they
 start or fail). The full text is in a tooltip, and the core logs one line
@@ -612,6 +613,7 @@ error is shown and the last saved order comes back.
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.
+
 
 
 The Scripts window's **Apply to same-card members** button copies the
