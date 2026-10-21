@@ -373,7 +373,7 @@ impl ScriptStartHandle {
     /// Observe one slot's generation and native run under the same slot lock.
     /// Live pumps use this pair at the actual PLAYER_INFO callback; separate
     /// generation and run reads could straddle a runtime replacement.
-    #[cfg(any(test, feature = "test-support", feature = "live-harness"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn observe_native_runtime(
         &self,
         name: &str,
@@ -403,7 +403,7 @@ impl Play {
     /// Install a read-only harness observer before spawning slots. It runs once
     /// after native execution and same-frame walk completion for each received
     /// PLAYER_INFO edge. Its storage and call are absent from product builds.
-    #[cfg(any(feature = "live-harness", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_post_native_player_info_observer(
         &mut self,
         observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
