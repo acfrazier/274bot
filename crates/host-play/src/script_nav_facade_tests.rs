@@ -522,8 +522,8 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         router_goal_tiles(
             &world,
             None,
-            blocked_target,
             target,
+            blocked_target,
             None,
             0,
             nav::arrival::ArrivalKind::Reach,

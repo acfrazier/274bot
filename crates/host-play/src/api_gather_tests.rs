@@ -1457,6 +1457,14 @@ fn guardian_no_navigation_terminal_drains_after_guardian_release() {
     rig.expect_running_page(token);
     assert!(rig.slot().lock().unwrap().api_owns_foreground());
 
+    // No data only blocks a needed walk, not work at the current stand.
+    // Move the observed player away while keeping the target tree in place.
+    rig.tile.x += 4;
+    let mut player = rig.snapshot.local_player().unwrap().clone();
+    player.player.actor.tile = rig.tile;
+    player.player.network = rig.tile;
+    rig.snapshot.seed_local_player(player);
+
     let _ = rig.probe("globalThis.__stop = true");
     rig.slot().lock().unwrap().seat_guardian_hold(true);
     for tick in 0..40 {
