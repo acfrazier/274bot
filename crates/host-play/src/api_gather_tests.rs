@@ -1444,7 +1444,7 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 }
 
 #[test]
-fn guardian_no_navigation_terminal_drains_on_resumed_host_frame() {
+fn guardian_no_navigation_terminal_drains_after_guardian_release() {
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1480,8 +1480,19 @@ fn guardian_no_navigation_terminal_drains_on_resumed_host_frame() {
     );
 
     rig.slot().lock().unwrap().seat_guardian_hold(false);
-    rig.frame();
-    assert_eq!(rig.slot().lock().unwrap().seat_batch_backlog(), 0);
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(!owned);
+    let cell = rig.slot();
+    let slot = cell.lock().unwrap();
+    assert_eq!(
+        slot.seat_batch_backlog(),
+        0,
+        "state={:?}, seat={:?}",
+        slot.state(),
+        slot.seat_probe()
+    );
+    drop(slot);
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
     assert_eq!(rig.probe("globalThis.__settleCount"), 1);
     assert_eq!(rig.probe("globalThis.__runResult"), result);
