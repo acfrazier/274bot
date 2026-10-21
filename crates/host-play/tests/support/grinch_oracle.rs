@@ -2092,6 +2092,10 @@ pub fn check_a_private_untradeable(trace: &HelperDropTrace) -> OracleResult {
         run.kind == CellKind::APrivateUntradeableDrops,
         "wrong cell kind for private-drop trace",
     )?;
+    ensure(
+        run.takes.is_empty(),
+        "private untradeable Drop produced a Take send",
+    )?;
     validate_unmodified_scratch_trace(run, true, true, false)?;
     let expected = set(PRIVATE_UNTRADEABLE_IDS);
     ensure(
@@ -2137,10 +2141,6 @@ pub fn check_a_private_untradeable(trace: &HelperDropTrace) -> OracleResult {
             )?;
         }
     }
-    ensure(
-        run.takes.is_empty(),
-        "private untradeable Drop produced a Take send",
-    )?;
     ensure(
         exact_positive_delta_map(&run.frames)?.is_empty(),
         "private untradeable Drop changed pack inventory",
@@ -2732,7 +2732,7 @@ fn current_frame_idle(
     frames: &[PlayerFrame],
     item_id: i32,
     tiles: &[Tile],
-    allowed_work_until: u64,
+    takes: &[TakeDispatch],
 ) -> OracleResult {
     for frame in frames {
         let has_target = tiles.iter().any(|tile| {
@@ -2741,16 +2741,31 @@ fn current_frame_idle(
                 .as_ref()
                 .is_some_and(|ground| ground.count(item_id, *tile) > 0)
         });
-        if !has_target && frame.tick > allowed_work_until {
+        let in_take_settlement = takes.iter().any(|take| {
+            (take.tick..=take.tick.saturating_add(MAX_TAKE_SETTLEMENT_TICKS))
+                .contains(&frame.tick)
+        });
+        if !has_target && !in_take_settlement {
             ensure(
                 main_status(frame)?.phase == StatusPhase::Waiting,
-                "Grinch did not remain in Waiting while all static rows were absent",
+                "Grinch did not remain in Waiting when no in-range static target was visible",
             )?;
             ensure(
                 main_status(frame)?.foreground_children == 0,
-                "Grinch retained foreground work while static rows were absent",
+                "Grinch retained foreground work when no in-range static target was visible",
             )?;
         }
+    }
+    Ok(())
+}
+
+fn require_no_recovery_or_restart(frames: &[PlayerFrame]) -> OracleResult {
+    for frame in frames {
+        let status = main_status(frame)?;
+        ensure(
+            status.recovery_count == 0 && status.restart_count == 0,
+            "scratch respawn cell recovered or restarted",
+        )?;
     }
     Ok(())
 }
@@ -2803,6 +2818,7 @@ pub fn check_b_pumpkin_respawns(trace: &StaticSpawnTrace) -> OracleResult {
         "wrong cell kind for pumpkin respawn trace",
     )?;
     validate_scratch_trace(trace, false)?;
+    require_no_recovery_or_restart(&trace.frames)?;
     let patch = require_respawn_patch(&trace.engine.scratch)?;
     ensure(
         trace.selected_ids == set([PUMPKIN_ID]),
@@ -2942,12 +2958,7 @@ pub fn check_b_pumpkin_respawns(trace: &StaticSpawnTrace) -> OracleResult {
         &trace.frames,
         PUMPKIN_ID,
         &in_range.iter().map(|spawn| spawn.tile).collect::<Vec<_>>(),
-        trace
-            .takes
-            .iter()
-            .map(|take| take.tick + MAX_TAKE_SETTLEMENT_TICKS)
-            .max()
-            .unwrap_or(trace.identity.start_tick),
+        &trace.takes,
     )?;
     require_no_failures_or_exclusions(&trace.frames)?;
     ensure_no_bank_trip(&trace.frames)?;
@@ -2961,6 +2972,7 @@ pub fn check_b_contested_pumpkin(trace: &StaticSpawnTrace) -> OracleResult {
         "wrong cell kind for contested pumpkin trace",
     )?;
     validate_scratch_trace(trace, true)?;
+    require_no_recovery_or_restart(&trace.frames)?;
     let patch = require_respawn_patch(&trace.engine.scratch)?;
     let competitor = trace.competitor.as_ref().unwrap();
     ensure(
@@ -3198,6 +3210,11 @@ pub fn check_b_duplicate_untradeable(trace: &StaticSpawnTrace, item_id: i32) -> 
         trace.refusals.len() == 1,
         "duplicate variant requires exactly one content refusal",
     )?;
+    let refusal = &trace.refusals[0];
+    ensure(
+        !trace.takes.iter().any(|take| take.tick > refusal.tick),
+        "Grinch sent another Take after duplicate ID exclusion",
+    )?;
     let spawn = &patch.static_spawns[0];
     let appearances = spawn_appearances(&trace.frames, item_id, spawn.tile)?;
     ensure(
@@ -3230,7 +3247,6 @@ pub fn check_b_duplicate_untradeable(trace: &StaticSpawnTrace, item_id: i32) -> 
     } else {
         RefusalKind::BunnyEarsAlreadyOwned
     };
-    let refusal = &trace.refusals[0];
     ensure(
         refusal.request_key == refused_take.request_key
             && refusal.item_id == item_id
@@ -3298,10 +3314,6 @@ pub fn check_b_duplicate_untradeable(trace: &StaticSpawnTrace, item_id: i32) -> 
             "duplicate exclusion did not return to Waiting",
         )?;
     }
-    ensure(
-        !trace.takes.iter().any(|take| take.tick > refusal.tick),
-        "Grinch sent another Take after duplicate ID exclusion",
-    )?;
     ensure(
         last_status(&trace.frames)?.duplicate_refusals == 1,
         "native duplicate refusal count is not one",
@@ -4410,11 +4422,17 @@ mod tests {
         validate_frame_sequence(&trace.identity, &trace.frames, true, false).unwrap();
 
         trace.frames[0].status.as_mut().unwrap().foreground_children = 2;
-        assert!(validate_frame_sequence(&trace.identity, &trace.frames, true, false).is_err());
+        assert_eq!(
+            validate_frame_sequence(&trace.identity, &trace.frames, true, false).unwrap_err(),
+            "native status retained more than one foreground child"
+        );
         let initial = trace.frames[0].status.as_mut().unwrap();
         initial.foreground_children = 1;
         initial.pickup_units = 1;
-        assert!(check_fresh_status(&trace.frames).is_err());
+        assert_eq!(
+            check_fresh_status(&trace.frames).unwrap_err(),
+            "run did not start with clean native counters and exclusions"
+        );
     }
 
     fn a_tradeable_fixture() -> HelperDropTrace {
@@ -4658,7 +4676,10 @@ mod tests {
     fn cell_a_rejects_wrong_id_dispatch() {
         let mut trace = a_tradeable_fixture();
         trace.run.takes[0].item_id = 1962;
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "Take dispatch used an unselected ID"
+        );
     }
 
     #[test]
@@ -4669,30 +4690,45 @@ mod tests {
                 status.pickup_units = 14;
             }
         }
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "native pickup counter disagrees with observed inventory deltas at a PLAYER_INFO edge"
+        );
     }
 
     #[test]
     fn unmodified_cells_reject_content_changes_and_unproven_shutdown() {
         let mut trace = a_tradeable_fixture();
         trace.run.engine.scratch.content_identity = "changed-content".into();
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "unmodified-content scratch differs from the protected source content"
+        );
 
         let mut trace = a_tradeable_fixture();
         trace.run.engine.scratch.stop_count = 0;
         trace.run.engine.scratch.process_tree_stopped = false;
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "scratch runner did not start once and stop its full process tree"
+        );
 
         let mut trace = a_tradeable_fixture();
         trace.run.engine.scratch.content_patch = scratch(PUMPKIN_ID, Vec::new()).content_patch;
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "unmodified-content cell received a respawn content patch"
+        );
     }
 
     #[test]
     fn cell_a_rejects_missing_ground_authority() {
         let mut trace = a_tradeable_fixture();
         trace.run.authority.ground_pages_complete = false;
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "missing complete posted-ground-page authority"
+        );
     }
 
     #[test]
@@ -4703,21 +4739,30 @@ mod tests {
             observation_sequence: 2,
             inventory: item_snapshot(&[], 0, 28),
         });
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "setup seed action count does not match the cell variant"
+        );
     }
 
     #[test]
     fn cell_a_rejects_incomplete_setup_seed_log() {
         let mut trace = a_tradeable_fixture();
         trace.run.authority.setup_seed_actions_complete = false;
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "missing complete runner-owned setup seed-action log"
+        );
     }
 
     #[test]
     fn cell_a_rejects_inferred_absolute_server_cycle() {
         let mut trace = a_tradeable_fixture();
         trace.run.frames[0].server_cycle = Some(1000);
-        assert!(check_a_tradeable(&trace).is_err());
+        assert_eq!(
+            check_a_tradeable(&trace).unwrap_err(),
+            "helper/bank trace substitutes server cycles for client settlement ticks"
+        );
     }
 
     #[test]
@@ -4733,7 +4778,10 @@ mod tests {
                 tile: trace.run.drops[0].tile,
                 quantity: 1,
             });
-        assert!(check_a_private_untradeable(&trace).is_err());
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "private item 1419 appeared in Grinch's posted ground page"
+        );
     }
 
     #[test]
@@ -4745,22 +4793,31 @@ mod tests {
             trace.run.drops[0].tile,
             120,
         ));
-        assert!(check_a_private_untradeable(&trace).is_err());
+        sync_helper_take_sends(&mut trace.run);
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "private untradeable Drop produced a Take send"
+        );
     }
 
     #[test]
     fn cell_a_private_rejects_missing_helper_inventory_decrease_confirmation() {
         let mut trace = a_private_fixture();
         trace.helper.post_drop_inventory.complete = false;
-        assert!(check_a_private_untradeable(&trace).is_err());
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "helper post-Drop inventory is incomplete"
+        );
     }
 
     #[test]
     fn cell_a_private_rejects_post_drop_inventory_not_exactly_decreased_by_drops() {
         let mut trace = a_private_fixture();
         trace.helper.post_drop_inventory.quantities.insert(1961, 1);
-        trace.helper.post_drop_inventory.occupied_slots = Some(1);
-        assert!(check_a_private_untradeable(&trace).is_err());
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "helper post-Drop inventory does not confirm every real Drop decrease"
+        );
     }
 
     #[test]
@@ -4770,14 +4827,20 @@ mod tests {
             .unwrap()
             .observation_sequence;
         trace.helper.post_drop_observation_sequence = fence_observation + 1;
-        assert!(check_a_private_untradeable(&trace).is_err());
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "receiver drain fence does not follow the helper post-Drop observation"
+        );
     }
 
     #[test]
     fn cell_a_private_requires_100_edges_after_the_drained_receiver_fence() {
         let mut trace = a_private_fixture();
         trace.helper.receiver_fence_tick = 51;
-        assert!(check_a_private_untradeable(&trace).is_err());
+        assert_eq!(
+            check_a_private_untradeable(&trace).unwrap_err(),
+            "private trace lacks 100 distinct receiver edges after the drain fence"
+        );
     }
 
     // The full B and C fixtures below deliberately create cycle-by-cycle
@@ -5689,9 +5752,619 @@ mod tests {
         check_cell_a(&a_cell_fixture()).expect("complete A fixture");
     }
 
+    fn sync_helper_take_sends(run: &mut PlayerRunTrace) {
+        let take_ticks: Vec<u64> = run.takes.iter().map(|take| take.tick).collect();
+        for frame in &mut run.frames {
+            frame.status.as_mut().unwrap().take_sends = take_ticks
+                .iter()
+                .filter(|tick| **tick < frame.tick)
+                .count() as u32;
+        }
+    }
+
+    fn negative_candidates_with_take(kind: NegativeCandidateKind) -> NegativeDropTrace {
+        let mut trace = a_negative_candidates_fixture();
+        let candidate = trace
+            .candidates
+            .iter()
+            .find(|candidate| candidate.kind == kind)
+            .unwrap();
+        let item_id = candidate.item_id;
+        let tile = candidate.tile;
+        let identity = trace.run.identity.clone();
+        trace
+            .run
+            .takes
+            .push(take(&identity, item_id, tile, 103));
+        sync_helper_take_sends(&mut trace.run);
+        trace
+    }
+
+    #[test]
+    fn cell_a_green_mask_rejects_selection_of_another_mask() {
+        let mut trace = a_green_mask_fixture();
+        trace.run.selected_ids.insert(BLUE_MASK_ID);
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "green-mask variant selected more than green 1053"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_rejects_missing_green_take() {
+        let mut trace = a_green_mask_fixture();
+        trace.run.takes.clear();
+        sync_helper_take_sends(&mut trace.run);
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "mask Take ledger was not green-only"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_rejects_blue_take() {
+        let mut trace = a_green_mask_fixture();
+        let identity = trace.run.identity.clone();
+        trace
+            .run
+            .takes
+            .push(take(&identity, BLUE_MASK_ID, identity.anchor, 102));
+        sync_helper_take_sends(&mut trace.run);
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "Take dispatch used an unselected ID"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_rejects_red_take() {
+        let mut trace = a_green_mask_fixture();
+        let identity = trace.run.identity.clone();
+        trace
+            .run
+            .takes
+            .push(take(&identity, RED_MASK_ID, identity.anchor, 103));
+        sync_helper_take_sends(&mut trace.run);
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "Take dispatch used an unselected ID"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_rejects_an_unselected_mask_pickup() {
+        let mut trace = a_green_mask_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 130) {
+            let inventory = frame.inventory.as_mut().unwrap();
+            inventory.quantities.insert(BLUE_MASK_ID, 1);
+            inventory.occupied_slots = Some(2);
+            frame.status.as_mut().unwrap().pickup_units = 2;
+        }
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "mask pack delta was not green-only"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_requires_blue_to_remain_posted() {
+        let mut trace = a_green_mask_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != BLUE_MASK_ID);
+        }
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "blue mask did not remain on its tile"
+        );
+    }
+
+    #[test]
+    fn cell_a_green_mask_requires_red_to_remain_posted() {
+        let mut trace = a_green_mask_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != RED_MASK_ID);
+        }
+        assert_eq!(
+            check_a_green_mask(&trace).unwrap_err(),
+            "red mask did not remain on its tile"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_rejects_take_of_ordinary_unselected_item() {
+        let trace =
+            negative_candidates_with_take(NegativeCandidateKind::OrdinaryUnselected);
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "Take dispatch used an unselected ID"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_rejects_take_of_certificate() {
+        let trace = negative_candidates_with_take(NegativeCandidateKind::Certificate);
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "Take dispatch used an unselected ID"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_rejects_take_of_selected_outside_radius_item() {
+        let trace =
+            negative_candidates_with_take(NegativeCandidateKind::SelectedOutsideRadius);
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "Take dispatch targeted a tile outside the anchor radius or plane"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_rejects_a_negative_item_pickup() {
+        let mut trace = a_negative_candidates_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 110) {
+            let inventory = frame.inventory.as_mut().unwrap();
+            inventory.quantities.insert(ORDINARY_UNSELECTED_ID, 1);
+            inventory.occupied_slots = Some(1);
+            frame.status.as_mut().unwrap().pickup_units = 1;
+        }
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "negative-only variant changed pack inventory"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_require_ordinary_row_to_remain_posted() {
+        let mut trace = a_negative_candidates_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != ORDINARY_UNSELECTED_ID);
+        }
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "negative row 995 disappeared or changed"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_require_certificate_to_remain_posted() {
+        let mut trace = a_negative_candidates_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != EASTER_EGG_CERTIFICATE_ID);
+        }
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "negative row 1962 disappeared or changed"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_require_outside_radius_row_to_remain_posted() {
+        let mut trace = a_negative_candidates_fixture();
+        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != PUMPKIN_ID);
+        }
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "negative row 1959 disappeared or changed"
+        );
+    }
+
+    #[test]
+    fn cell_a_negative_candidates_rejects_a_non_waiting_healthy_tail() {
+        let mut trace = a_negative_candidates_fixture();
+        trace.run.frames.last_mut().unwrap().status.as_mut().unwrap().phase =
+            StatusPhase::Working;
+        assert_eq!(
+            check_a_negative_candidates(&trace).unwrap_err(),
+            "idle tail left Waiting status"
+        );
+    }
+
     #[test]
     fn cell_b_complete_fixture_passes_respawn_race_and_duplicate_variants() {
         check_cell_b(&b_cell_fixture()).expect("complete B fixture");
+    }
+
+    fn sync_static_take_sends(trace: &mut StaticSpawnTrace) {
+        let main_actor = trace.identity.actor.clone();
+        let take_ticks: Vec<u64> = trace
+            .takes
+            .iter()
+            .filter(|take| take.actor == main_actor)
+            .map(|take| take.tick)
+            .collect();
+        for frame in &mut trace.frames {
+            frame.status.as_mut().unwrap().take_sends = take_ticks
+                .iter()
+                .filter(|tick| **tick < frame.tick)
+                .count() as u32;
+        }
+    }
+
+    #[test]
+    fn cell_b_pumpkin_rejects_work_between_respawns_without_a_target() {
+        let mut trace = b_pumpkin_fixture();
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| (20..=80).contains(&frame.tick))
+        {
+            frame.status.as_mut().unwrap().phase = StatusPhase::Working;
+        }
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "Grinch did not remain in Waiting when no in-range static target was visible"
+        );
+    }
+
+    #[test]
+    fn cell_b_pumpkin_rejects_foreground_child_between_respawns_without_a_target() {
+        let mut trace = b_pumpkin_fixture();
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| (20..=80).contains(&frame.tick))
+        {
+            frame.status.as_mut().unwrap().foreground_children = 1;
+        }
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "Grinch retained foreground work when no in-range static target was visible"
+        );
+    }
+
+    #[test]
+    fn cell_b_pumpkin_rejects_recovery_and_restart_during_the_trace() {
+        let mut trace = b_pumpkin_fixture();
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
+            let status = frame.status.as_mut().unwrap();
+            status.recovery_count = 1;
+            status.restart_count = 1;
+        }
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "scratch respawn cell recovered or restarted"
+        );
+    }
+
+    #[test]
+    fn cell_b_contested_rejects_recovery_and_restart_during_the_trace() {
+        let mut trace = b_contested_fixture();
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
+            let status = frame.status.as_mut().unwrap();
+            status.recovery_count = 1;
+            status.restart_count = 1;
+        }
+        assert_eq!(
+            check_b_contested_pumpkin(&trace).unwrap_err(),
+            "scratch respawn cell recovered or restarted"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_missing_content_refusal() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        trace.refusals.clear();
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate variant requires exactly one content refusal"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_wrong_typed_content_refusal() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        trace.refusals[0].kind = RefusalKind::BunnyEarsAlreadyOwned;
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "second-copy refusal lacks the exact typed content refusal receipt"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_missing_scythe_exclusion() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        let refusal_tick = trace.refusals[0].tick;
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= refusal_tick)
+        {
+            frame.status.as_mut().unwrap().id_exclusions.clear();
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate item ID exclusion is absent or incorrect"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_missing_bunny_ears_exclusion() {
+        let mut trace = b_single_item_fixture(BUNNY_EARS_ID, CellKind::BBunnyEarsDuplicate);
+        let refusal_tick = trace.refusals[0].tick;
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= refusal_tick)
+        {
+            frame.status.as_mut().unwrap().id_exclusions.clear();
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, BUNNY_EARS_ID).unwrap_err(),
+            "duplicate item ID exclusion is absent or incorrect"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_exclusion_before_refusal() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 50)
+        {
+            frame
+                .status
+                .as_mut()
+                .unwrap()
+                .id_exclusions
+                .insert(SCYTHE_ID);
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate ID exclusion appeared before refusal"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_refusal_outside_take_settlement() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        trace.refusals[0].tick += MAX_TAKE_SETTLEMENT_TICKS + 1;
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate refusal was not observed within the Take settlement fence"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_an_extra_take_after_exclusion() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        let refusal_tick = trace.refusals[0].tick;
+        let actor = trace.identity.actor.clone();
+        let tile = trace.identity.anchor;
+        let next_tick = refusal_tick + 1;
+        trace.takes.push(scratch_take(
+            &actor,
+            SCYTHE_ID,
+            tile,
+            next_tick,
+            1001 + next_tick,
+        ));
+        sync_static_take_sends(&mut trace);
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "Grinch sent another Take after duplicate ID exclusion"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_a_removed_refused_row() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick > 100) {
+            frame
+                .ground
+                .as_mut()
+                .unwrap()
+                .rows
+                .retain(|row| row.item_id != SCYTHE_ID);
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "refused duplicate row did not remain unchanged"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_non_waiting_after_refusal() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        let refusal_tick = trace.refusals[0].tick;
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= refusal_tick)
+        {
+            frame.status.as_mut().unwrap().phase = StatusPhase::Working;
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate exclusion did not return to Waiting"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_a_short_waiting_tail() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        let refusal_tick = trace.refusals[0].tick;
+        trace.frames.truncate(refusal_tick as usize + 40);
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "healthy Waiting tail started before the required work completed"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_foreground_work_in_waiting_tail() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 110) {
+            frame.status.as_mut().unwrap().foreground_children = 1;
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "idle tail retained foreground work"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_early_refusal_counter() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 50)
+        {
+            frame.status.as_mut().unwrap().duplicate_refusals = 1;
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate refusal counter advanced before refusal"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_an_extra_refusal_count() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        trace.frames.last_mut().unwrap().status.as_mut().unwrap().duplicate_refusals = 2;
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "native duplicate refusal count is not one"
+        );
+    }
+
+    #[test]
+    fn cell_b_duplicate_rejects_an_unrelated_failed_key() {
+        let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 100) {
+            frame.status.as_mut().unwrap().failed_key_attempts = 1;
+        }
+        assert_eq!(
+            check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
+            "duplicate variant contains an unrelated failure, avoidance, or exclusion"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_an_invented_duplicate_refusal() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        let take = trace.takes[1].clone();
+        trace.refusals.push(RefusalReceipt {
+            request_key: take.request_key,
+            item_id: YO_YO_ID,
+            tile: take.tile,
+            tick: take.tick + 1,
+            kind: RefusalKind::ScytheAlreadyOwned,
+        });
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "Yo-yo trace invented a duplicate refusal"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_an_invented_id_exclusion() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
+            frame.status.as_mut().unwrap().id_exclusions.insert(YO_YO_ID);
+        }
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "Yo-yo acquired an invented ID exclusion"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_a_missing_second_take() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        trace.takes.retain(|take| take.tick == 0);
+        sync_static_take_sends(&mut trace);
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "Yo-yo must have one fresh Take per appearance"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_an_extra_take_for_one_appearance() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        let actor = trace.identity.actor.clone();
+        let mut extra = scratch_take(
+            &actor,
+            YO_YO_ID,
+            trace.identity.anchor,
+            RESPAWN_OUTPUT_TICK_GAP,
+            1001 + RESPAWN_OUTPUT_TICK_GAP,
+        );
+        extra.request_key = "extra-yoyo-take".into();
+        trace.takes.push(extra);
+        sync_static_take_sends(&mut trace);
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "Yo-yo must have one fresh Take per appearance"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_fewer_than_two_landed_items() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick > RESPAWN_OUTPUT_TICK_GAP) {
+            let inventory = frame.inventory.as_mut().unwrap();
+            inventory.quantities.insert(YO_YO_ID, 1);
+            inventory.occupied_slots = Some(1);
+            frame.status.as_mut().unwrap().pickup_units = 1;
+        }
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "Yo-yo did not land exactly twice"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_a_failed_key_attempt() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
+            frame.status.as_mut().unwrap().failed_key_attempts = 1;
+        }
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "trace contains a failure, avoidance entry, or run exclusion"
+        );
+    }
+
+    #[test]
+    fn cell_b_yoyo_rejects_an_unexpected_bank_trip() {
+        let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
+            frame.status.as_mut().unwrap().bank_trips = 1;
+        }
+        assert_eq!(
+            check_b_yoyo_repeat(&trace).unwrap_err(),
+            "unexpected bank trip"
+        );
     }
 
     #[test]
@@ -5804,8 +6477,13 @@ mod tests {
             .find(|frame| frame.tick == 15)
             .unwrap();
         frame.inventory = Some(item_snapshot(&[(PUMPKIN_ID, 1)], 1, 28));
-        frame.status.as_mut().unwrap().pickup_units = 1;
-        assert!(check_b_contested_pumpkin(&trace).is_err());
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 15) {
+            frame.status.as_mut().unwrap().pickup_units = 1;
+        }
+        assert_eq!(
+            check_b_contested_pumpkin(&trace).unwrap_err(),
+            "Grinch pack changed during a competitor win"
+        );
     }
     #[test]
     fn cell_b_contested_rejects_competitor_take_after_twenty_own_edges() {
@@ -5904,7 +6582,10 @@ mod tests {
             .unwrap()
             .attested_pack_hashes_after
             .insert("server/obj.dat".into(), "e".repeat(64));
-        assert!(check_b_pumpkin_respawns(&trace).is_err());
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "map-only scratch patch changed attested pack server/obj.dat"
+        );
     }
 
     #[test]
@@ -5914,17 +6595,25 @@ mod tests {
     }
 
     #[test]
-    fn cell_b_rejects_premature_identical_copy_respawn() {
+    fn cell_b_rejects_premature_identical_copy_respawn_with_a_named_reason() {
         let mut trace = b_pumpkin_fixture();
         let anchor = trace.identity.anchor;
-        let first_take = trace
-            .takes
+        let removal_cycle = trace
+            .removals
+            .iter()
+            .find(|receipt| receipt.tile == anchor)
+            .unwrap()
+            .cycle;
+        let respawn = trace
+            .respawns
             .iter_mut()
-            .find(|take| take.tile == anchor && take.tick == 0)
+            .find(|receipt| receipt.tile == anchor)
             .unwrap();
-        let first_take_cycle = first_take.server_cycle.unwrap();
-        first_take.server_cycle = Some(first_take_cycle + 1);
-        assert!(check_b_pumpkin_respawns(&trace).is_err());
+        respawn.cycle = removal_cycle + 97;
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "respawn lifecycle gap was 97, expected exactly 98 server cycles"
+        );
     }
 
     #[test]
@@ -5941,7 +6630,10 @@ mod tests {
             frame.status.as_mut().unwrap().take_sends =
                 take_ticks.iter().filter(|tick| **tick < frame.tick).count() as u32;
         }
-        assert!(check_b_pumpkin_respawns(&trace).is_err());
+        assert_eq!(
+            check_b_pumpkin_respawns(&trace).unwrap_err(),
+            "fresh static copy lacks exactly one Take dispatch"
+        );
     }
 
     #[test]
@@ -5961,7 +6653,10 @@ mod tests {
                     .insert(key.clone());
             }
         }
-        assert!(check_b_contested_pumpkin(&trace).is_err());
+        assert_eq!(
+            check_b_contested_pumpkin(&trace).unwrap_err(),
+            "trace contains a failure, avoidance entry, or run exclusion"
+        );
     }
 
     #[test]
@@ -5974,7 +6669,10 @@ mod tests {
         {
             frame.status.as_mut().unwrap().avoidance_entries = 1;
         }
-        assert!(check_b_contested_pumpkin(&trace).is_err());
+        assert_eq!(
+            check_b_contested_pumpkin(&trace).unwrap_err(),
+            "trace contains a failure, avoidance entry, or run exclusion"
+        );
     }
 
     #[test]
@@ -6024,7 +6722,10 @@ mod tests {
                 .filter(|tick| **tick < frame.tick)
                 .count() as u32;
         }
-        assert!(check_b_contested_pumpkin(&trace).is_err());
+        assert_eq!(
+            check_b_contested_pumpkin(&trace).unwrap_err(),
+            "item 1959 Take was outside the fresh-row 20-tick bound"
+        );
     }
 
     #[test]
@@ -6313,7 +7014,10 @@ mod tests {
     fn cell_c_rejects_absent_exact_anchor_return_receipt() {
         let mut cell = c_cell_fixture();
         cell.deposit_28.receipts.return_to_anchor = None;
-        assert!(check_cell_c(&cell).is_err());
+        assert_eq!(
+            check_cell_c(&cell).unwrap_err(),
+            "missing exact-anchor return receipt"
+        );
     }
 
     #[test]
@@ -6327,14 +7031,20 @@ mod tests {
             .find(|action| action.actor == receiver)
             .unwrap();
         action.inventory.quantities.insert(PUMPKIN_ID, 25);
-        assert!(check_cell_c(&cell).is_err());
+        assert_eq!(
+            check_cell_c(&cell).unwrap_err(),
+            "setup seed action inventory does not match its observed account baseline"
+        );
     }
 
     #[test]
     fn cell_c_rejects_full_pack_without_receiver_seed_provenance() {
         let mut cell = c_cell_fixture();
         cell.inventory_blocked.setup_seed_actions.clear();
-        assert!(check_cell_c(&cell).is_err());
+        assert_eq!(
+            check_cell_c(&cell).unwrap_err(),
+            "inventory-blocked setup must contain exactly one receiver seed action"
+        );
     }
 
     #[test]
@@ -6343,18 +7053,33 @@ mod tests {
         check_c_inventory_blocked(&baseline).expect("actual terminal stop fixture");
         let mut trace = baseline.clone();
         trace.terminal_stop.active_run_key_after_stop = Some("invented-live-key".into());
-        assert!(check_c_inventory_blocked(&trace).is_err());
+        assert_eq!(
+            check_c_inventory_blocked(&trace).unwrap_err(),
+            "inventory-blocked stop lacks its observed Start generation and retired active key"
+        );
         let mut trace = baseline.clone();
         trace.terminal_stop.generation_after_stop += 1;
-        assert!(check_c_inventory_blocked(&trace).is_err());
+        assert_eq!(
+            check_c_inventory_blocked(&trace).unwrap_err(),
+            "inventory-blocked stop lacks its observed Start generation and retired active key"
+        );
         let mut trace = baseline.clone();
         trace.terminal_stop.run_number += 1;
-        assert!(check_c_inventory_blocked(&trace).is_err());
+        assert_eq!(
+            check_c_inventory_blocked(&trace).unwrap_err(),
+            "inventory-blocked stop lacks its exact retained native diagnostic"
+        );
         let mut trace = baseline.clone();
         trace.terminal_stop.failure_code = "different-failure".into();
-        assert!(check_c_inventory_blocked(&trace).is_err());
+        assert_eq!(
+            check_c_inventory_blocked(&trace).unwrap_err(),
+            "inventory-blocked stop lacks its exact retained native diagnostic"
+        );
         let mut trace = baseline;
         trace.terminal_stop.native_phase = "Working".into();
-        assert!(check_c_inventory_blocked(&trace).is_err());
+        assert_eq!(
+            check_c_inventory_blocked(&trace).unwrap_err(),
+            "inventory-blocked stop lacks its exact retained native diagnostic"
+        );
     }
 }
