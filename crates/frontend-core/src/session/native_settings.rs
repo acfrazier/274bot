@@ -651,7 +651,6 @@ impl<Io> OperatorSession<Io> {
                 if let Some(old) = pending.renamed_from {
                     self.hold_durable(&old);
                     self.cancel_profile_start(&old);
-                    self.rename_in_order(&old, &name);
                     if let Some(vault) = self.vault_for_write() {
                         vault.stage_remove(&old);
                     }

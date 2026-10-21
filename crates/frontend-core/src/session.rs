@@ -1280,32 +1280,29 @@ impl<Io> OperatorSession<Io> {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
-        let changed = match self.vault.as_ref() {
-            Some(vault) => self.profile_order.reconcile(
-                |name| vault.get(name).is_some(),
-                vault.profiles().map(|profile| profile.username.as_str()),
-            ),
+        let before = self.profile_order.names().len();
+        let added = match self.vault.as_ref() {
+            Some(vault) => {
+                let rows = || {
+                    vault
+                        .profiles()
+                        .map(|profile| (profile.uid, profile.username.as_str()))
+                };
+                // The durable copy follows the vault too, so a failed
+                // write's revert shows current names.
+                self.durable_order.reconcile(rows());
+                self.profile_order.reconcile(rows())
+            }
             None => false,
         };
-        if changed {
+        if added || self.profile_order.names().len() != before {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
-            if self.order_saved {
-                self.persist_profile_order_quietly();
-            }
+        }
+        if added && self.order_saved {
+            self.persist_profile_order_quietly();
         }
         self.order_reconciled_at = Some(self.profiles_generation);
         self.sort_members_by_order();
-    }
-
-    /// A rename keeps its place in the saved order, and the order is
-    /// written (a later start would otherwise put the new name last).
-    pub(crate) fn rename_in_order(&mut self, old: &str, new: &str) {
-        self.durable_order.rename(old, new);
-        if self.profile_order.rename(old, new) {
-            self.order_saved = true;
-            self.profiles_generation = self.profiles_generation.wrapping_add(1);
-            self.persist_profile_order_quietly();
-        }
     }
 
     /// Order the fleet members by the saved order (stable: a member the
@@ -2751,7 +2748,6 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(old);
         self.cancel_profile_start(old);
         api::hostlog::register_secret(&profile.password);
-        self.rename_in_order(old, &profile.username);
         if let Some(vault) = self.vault_for_write() {
             vault.stage_upsert(profile.clone());
             vault.stage_remove(old);
