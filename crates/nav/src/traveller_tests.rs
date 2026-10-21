@@ -6623,7 +6623,8 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
 /// Tenzing-shaped closed door at scene (6,6) — world (3206,3206), clear
 /// of the collision map's blocked border — with its wall on the east
 /// edge (3745 is angle 2), crossed along `dir` to `to_x`. Starts the
-/// cheap hop from scene (`from_x`, 6): one Open, no step.
+/// door hop from scene (`from_x`, 6): one Open, no step. The edge has a
+/// direction, so the hop runs the troll path.
 fn tenzing_door_hop(
     dir: DoorDir,
     from_x: i32,
@@ -6672,7 +6673,7 @@ fn tenzing_door_hop(
     assert!(t
         .follow(&mut rec, &snap, route.clone(), &mut options)
         .is_none());
-    assert_eq!(rec.loc_ops, 1, "the cheap hop sends Open");
+    assert_eq!(rec.loc_ops, 1, "the door hop sends Open");
     assert!(rec.sink.steps.is_empty() && rec.walked.is_empty());
     (c, snap, rec, t, route, options)
 }
@@ -6680,9 +6681,9 @@ fn tenzing_door_hop(
 /// Tenzing's hut door 3745 (`open_and_close_door2`, wall on the east
 /// edge of its loc tile): Open from the outside teleports the player
 /// onto the loc tile `at` and swaps the door for an inviswall for three
-/// ticks, so the loc never reads open. The cheap hop must take the
-/// wall-clear step to `to` instead of sitting out its budget until the
-/// troll (live: 60 idle ticks at (2822,3555) before every entry in the
+/// ticks, so the loc never reads open. The troll must take the wall-clear
+/// step to `to` on the landing tick instead of sitting out its budget
+/// (live: 60 idle ticks at (2822,3555) before every entry in the
 /// ClimbingBoots walk and teleport cells).
 #[test]
 fn cheap_door_hop_steps_through_when_open_lands_on_the_door_tile() {
@@ -6714,8 +6715,8 @@ fn cheap_door_hop_steps_through_when_open_lands_on_the_door_tile() {
 
 /// The same door left the other way (edge E, `to` across the closed
 /// wall): the server walks the player onto `at` before the queued Open
-/// fires. A step packet there would cancel that Open, so the cheap hop
-/// sends nothing while the wall still blocks `at` → `to`.
+/// fires. A step packet there would cancel that Open, so the troll sends
+/// nothing while the wall still blocks `at` → `to`.
 #[test]
 fn cheap_door_hop_does_not_step_into_a_closed_wall_from_the_door_tile() {
     let (mut c, mut snap, mut rec, mut t, route, mut options) = tenzing_door_hop(DoorDir::E, 5, 7);

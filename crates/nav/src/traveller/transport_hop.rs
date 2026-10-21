@@ -1231,10 +1231,10 @@ impl FollowRun {
                 };
             }
             if step_pending {
-                // Tenzing's entering-door script teleports the player onto `at`, waits
-                // one tick, then teleports across and adds an inviswall for three ticks.
-                // If that wall still blocks `at` → `to`, a walk would cancel the queued Open.
-                // Keep its tick and probe again next poll.
+                // The server walked the player onto `at` before the queued
+                // Open fired, and the wall still blocks `at` → `to`: a walk
+                // packet now would cancel that Open. Keep the tick and probe
+                // again next poll.
                 hop.open_sent_tick = Some(sent_tick);
             }
         }
