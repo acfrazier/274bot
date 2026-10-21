@@ -1567,7 +1567,7 @@
                   "max_ticks": 100
                 }
               },
-              "comment": "At 0 hp Delrith becomes delrith_weakened in the same slot for 100 ticks and the player gets the four-way incantation menu; option 4 banishes him, any other restores him at full health (quests/quest_demon/scripts/delrith.rs2:4-55).",
+              "comment": "At 0 hp Delrith becomes delrith_weakened for 100 ticks and opens a four-option incantation choice; option 4 is the phrase Gypsy Aris teaches, while options 1-3 restore him (quests/quest_demon/scripts/delrith.rs2:9,21,32-34,37-45; areas/area_varrock/scripts/gypsy.rs2:251-258). Sir Prysin references Aris but does not repeat the phrase (areas/area_varrock/scripts/sir_prysin.rs2:78-89).",
               "advances": true,
               "skip_if": {
                 "Any": []
