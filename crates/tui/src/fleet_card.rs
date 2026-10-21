@@ -50,13 +50,13 @@ impl CardPicker {
         let mut entries = vec![
             Entry::Choice {
                 label: OWN_CARD_LABEL.to_owned(),
-                card: FleetCard::Own,
-                current: matches!(now, FleetCard::Own),
+                card: FleetCard::OWN,
+                current: now.is_own(),
             },
             Entry::Choice {
                 label: FOCUSED_CARD_LABEL.to_owned(),
-                card: FleetCard::Focused,
-                current: matches!(now, FleetCard::Focused),
+                card: FleetCard::FOCUSED,
+                current: now.is_focused(),
             },
         ];
         for line in browse_lines(&app.script_cards, &app.script_category_order, false) {
@@ -78,7 +78,7 @@ impl CardPicker {
                     if card.unloadable.is_some() {
                         label.push_str(" (unloadable)");
                     }
-                    let pinned = FleetCard::Pinned(choice.duplicate());
+                    let pinned = FleetCard::pinned(choice.duplicate());
                     entries.push(Entry::Choice {
                         label,
                         current: *now == pinned,

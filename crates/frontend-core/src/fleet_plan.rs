@@ -23,7 +23,7 @@ use crate::selection::{MarkedSelection, ProfileIdentity};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetAction {
     /// Start the fleet card (each bot's own assignment for
-    /// [`crate::FleetCard::Own`]), paced like Start all.
+    /// [`crate::FleetCard::OWN`]), paced like Start all.
     Start,
     /// Stop the running scripts (a queued Start is cancelled).
     Stop,
@@ -66,7 +66,7 @@ impl FleetAction {
     }
 
     /// Whether the action needs a card (the fleet card must resolve to
-    /// one: [`crate::FleetCard::Own`] cannot).
+    /// one: [`crate::FleetCard::OWN`] cannot).
     pub const fn needs_card(self) -> bool {
         matches!(
             self,

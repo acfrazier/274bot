@@ -222,7 +222,7 @@ impl Rig {
         let id = CompiledCardId::lookup(card).expect("a compiled card");
         self.session
             .fleet_model
-            .stage_card(FleetCard::Pinned(ScriptChoice::compiled(id)));
+            .stage_card(FleetCard::pinned(ScriptChoice::compiled(id)));
         self.session
             .submit(OperatorCommand::SetFleetCard, Targets::Application);
         self.settle();
@@ -338,7 +338,7 @@ fn picking_a_pinned_card_changes_only_the_fleet_card() {
         rig.session.heading_is_pending(),
         "the focused bot has a pending pick"
     );
-    assert_eq!(rig.session.fleet_model.card(), &FleetCard::Own);
+    assert_eq!(rig.session.fleet_model.card(), &FleetCard::OWN);
     let before = untouched(&rig.session);
 
     rig.click(rig.layout.card_combo);
@@ -361,7 +361,7 @@ fn picking_a_pinned_card_changes_only_the_fleet_card() {
     rig.click(entry);
 
     let pinned = ScriptChoice::compiled(CompiledCardId::lookup(&fleet).unwrap());
-    assert_eq!(rig.session.fleet_model.card(), &FleetCard::Pinned(pinned));
+    assert_eq!(rig.session.fleet_model.card(), &FleetCard::pinned(pinned));
     assert_eq!(rig.session.fleet_model.card_label(), fleet);
     assert_eq!(untouched(&rig.session), before);
 }

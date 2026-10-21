@@ -10,7 +10,7 @@ use api::identity::{RequestId, Settlement};
 use super::commands::Applied;
 use crate::bulk::{BulkOutcome, BulkRow};
 use crate::command::{Completion, Rejection};
-use crate::fleet::FleetCard;
+use crate::fleet::CardChoice;
 use crate::fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 use crate::scripts::{ScriptChoice, ScriptRunState as RunState, Scripts};
 use crate::selection::{MarkedSelection, ProfileIdentity};
@@ -135,19 +135,20 @@ impl<Io> OperatorSession<Io> {
         )
         .then_some(staged_root)
         .flatten();
-        let card = match (staged_card, fleet.card()) {
+        let card = match (staged_card, fleet.card().choice()) {
             (Some(card), _) => Some(card),
-            (None, FleetCard::Own) => None,
-            (None, FleetCard::Pinned(card)) => Some(card.duplicate()),
-            (None, FleetCard::Focused) => match (scripts.as_deref(), self.selected()) {
+            (None, CardChoice::Own) => None,
+            (None, CardChoice::Pinned(card)) => Some(card.duplicate()),
+            (None, CardChoice::Focused) => match (scripts.as_deref(), self.selected()) {
                 (Some(scripts), Some(name)) => scripts.heading(self, name),
                 _ => None,
             },
         };
         if action.needs_card() && card.is_none() {
-            let why = match fleet.card() {
-                FleetCard::Own => "pick a card: each bot's own card cannot be assigned or copied",
-                _ => "the focused bot has no card",
+            let why = if fleet.card().is_own() {
+                "pick a card: each bot's own card cannot be assigned or copied"
+            } else {
+                "the focused bot has no card"
             };
             return reject(format!("{}: {why}", action.verb()));
         }

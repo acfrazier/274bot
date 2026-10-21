@@ -462,7 +462,7 @@ fn card_actions_are_unavailable_on_own_until_a_card_is_picked() {
             assert_eq!(command.availability(&app), Ok(()), "{action:?}");
         }
     }
-    seam.apply(&mut app, AppAction::PickFleetCard(FleetCard::Focused));
+    seam.apply(&mut app, AppAction::PickFleetCard(FleetCard::FOCUSED));
     for action in FleetAction::ALL {
         let command = Command::Fleet(action);
         assert_eq!(command.availability(&app), Ok(()), "{action:?}");
@@ -648,7 +648,7 @@ fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
     assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        AppAction::PickFleetCard(FleetCard::Pinned(ScriptChoice::loaded(
+        AppAction::PickFleetCard(FleetCard::pinned(ScriptChoice::loaded(
             CardSource::File,
             "Gatherer"
         )))
@@ -685,7 +685,7 @@ fn the_palette_opens_the_fleet_card_picker() {
     // current card (Own, the cursor's start) picks Own again.
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        AppAction::PickFleetCard(FleetCard::Own)
+        AppAction::PickFleetCard(FleetCard::OWN)
     );
 }
 
