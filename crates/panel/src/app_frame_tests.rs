@@ -26,7 +26,7 @@ use frontend_core::GameInputEvent;
 use host_play::{SlotArm, SlotStatus};
 
 use super::{frame_pumps, game_window_title, ui_frame, LiveHarness, LiveNull, PanelState};
-use crate::session::{Session, SlotIo};
+use crate::session::{PanelWindow, Session, SlotIo};
 use crate::test_support::TestDir;
 use crate::window::Gpu;
 use frontend_core::{OperatorCommand, Targets};
@@ -252,6 +252,21 @@ fn window_centre(title: &str) -> Option<[f32; 2]> {
         }
         let (pos, size) = ((*window).Pos, (*window).Size);
         Some([pos.x + size.x / 2.0, pos.y + size.y / 2.0])
+    }
+}
+
+/// Whether the docked tab of window `title` is visible in the current
+/// frame: Dear ImGui draws a docked window's contents only on the frames
+/// its tab is visible.
+fn window_tab_visible(title: &str) -> bool {
+    let Ok(name) = CString::new(title) else {
+        return false;
+    };
+    // SAFETY: called with the frame's context bound; the name is a
+    // NUL-terminated copy that outlives the call.
+    unsafe {
+        let window = sys::igFindWindowByName(name.as_ptr());
+        !window.is_null() && (*window).DockTabIsVisible()
     }
 }
 
@@ -631,6 +646,21 @@ fn frames_settle_a_quester_paths_reload(drive: Drive) {
     let Some(mut rig) = Rig::new(drive, session) else {
         return;
     };
+    // The Script prefs window is docked, and Dear ImGui builds its dock
+    // node's host window and tab bar on the rig's second frame. That frame
+    // draws the tab labels only: a docked window's contents draw only while
+    // its tab is visible, so the Quest Paths section is absent from it. A
+    // reload that settled on that frame could not draw its result, although
+    // the panel had still advanced it before the drawing. Wait for the
+    // frame that draws the window before the reload starts: every frame
+    // the reload can settle then draws the section, and the assertion below
+    // holds the product's ordering.
+    if rig.gpu.is_some() {
+        rig.frames_until("the Script prefs window", |rig| {
+            rig.text.contains(frontend_core::QUEST_PATHS_HEADING)
+                && window_tab_visible(PanelWindow::ScriptPrefs.title())
+        });
+    }
     rig.session()
         .core
         .stage_quester_reload(Some(selected_game_data()));
