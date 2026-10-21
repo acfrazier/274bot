@@ -1867,6 +1867,7 @@ impl StepPlan for InteractPlan {
             waiting: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
+            wall_fallback_tile: None,
             reach: None,
             default_dialogue: self.default_dialogue,
             dialogue_options: self.dialogue_options.clone(),
@@ -1909,6 +1910,8 @@ struct InteractRun {
     waiting: Option<&'static str>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
+    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    wall_fallback_tile: Option<WorldTile>,
     reach: Option<ActionHandle<reach::Reach>>,
     default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
@@ -1938,6 +1941,7 @@ impl InteractRun {
     fn clear_round(&mut self) {
         self.dialogue_page = None;
         self.reach = None;
+        self.wall_fallback_tile = None;
         self.started = false;
         self.round_pick = None;
         self.retargets_left = reach::RETARGET_LIMIT;
@@ -2221,9 +2225,23 @@ impl InteractRun {
                     }
                     // Dropping the handle revokes the approach walk.
                     self.walk = None;
+                    self.wall_fallback_tile = None;
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
+                    if let Some(tile) = self.wall_fallback_tile {
+                        if reach::loc_wall_route_failed(&receipt) {
+                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                                cx.tick.actions.begin::<Walk>(
+                                    reach::walk_request(tile, 1, None, cx.required_after),
+                                    &mut cx.tick.cx,
+                                ),
+                            ))?);
+                            self.wall_fallback_tile = None;
+                            return Poll::Pending;
+                        }
+                    }
+                    self.wall_fallback_tile = None;
                     walk_step_evidence(receipt)?;
                     self.walk = None;
                 }
@@ -2260,30 +2278,35 @@ impl InteractRun {
                     pick = choose(None);
                 }
                 let chosen = pick.select(self.reachable_only).map(|loc| {
+                    let request = reach::loc_walk_request(
+                        loc,
+                        cx.tick
+                            .cx
+                            .snapshot()
+                            .local_player()
+                            .map(|player| player.value.player.network),
+                        cx.required_after,
+                    );
+                    let fallback_tile = reach::loc_wall_fallback_tile(loc, &request);
                     (
                         loc.tile,
-                        reach::loc_walk_request(
-                            loc,
-                            cx.tick
-                                .cx
-                                .snapshot()
-                                .local_player()
-                                .map(|player| player.value.player.network),
-                            cx.required_after,
-                        ),
+                        request,
                         reach::loc_arrived(&cx.tick.cx, loc),
+                        fallback_tile,
                     )
                 });
-                if let Some((tile, request, arrived)) = chosen {
+                if let Some((tile, request, arrived, fallback_tile)) = chosen {
                     if self.target_tile.is_none() {
                         self.round_pick = Some(tile);
                     }
                     if !arrived {
+                        self.wall_fallback_tile = fallback_tile;
                         self.walk = Some(std::task::ready!(crate::native::defer_budget(
                             cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                         ))?);
                         return Poll::Pending;
                     }
+                    self.wall_fallback_tile = None;
                 }
             }
             if let Some(tile) = self
@@ -2867,6 +2890,7 @@ impl StepPlan for UseOnPlan {
             deadline: None,
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
+            wall_fallback_tile: None,
             interaction: None,
             round_before: None,
             round_deadline: None,
@@ -2909,6 +2933,8 @@ struct UseOnRun {
     deadline: Option<Duration>,
     settle_duration: Duration,
     walk: Option<ActionHandle<Walk>>,
+    /// The wall tile for the one allowed retry of an initial facing-side walk.
+    wall_fallback_tile: Option<WorldTile>,
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
     round_before: Option<i32>,
@@ -2943,6 +2969,7 @@ const CHASE_REWALKS: u8 = 6;
 impl UseOnRun {
     fn clear_round(&mut self) {
         self.interaction = None;
+        self.wall_fallback_tile = None;
         self.accepted = false;
         self.round_before = None;
         self.round_deadline = None;
@@ -3070,6 +3097,7 @@ impl StepRun for UseOnRun {
             {
                 // Dropping the handle revokes the stale walk; pick again below.
                 self.walk = None;
+                self.wall_fallback_tile = None;
                 self.chase = None;
                 self.anchor_walk = false;
             }
@@ -3086,6 +3114,21 @@ impl StepRun for UseOnRun {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(receipt)) => {
+                        if let Some(tile) = self.wall_fallback_tile {
+                            if reach::loc_wall_route_failed(&receipt) {
+                                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                                    cx.tick.actions.begin::<Walk>(
+                                        reach::walk_request(tile, 1, None, cx.required_after),
+                                        &mut cx.tick.cx,
+                                    ),
+                                ))?);
+                                self.wall_fallback_tile = None;
+                                self.chase = None;
+                                self.anchor_walk = false;
+                                return Poll::Pending;
+                            }
+                        }
+                        self.wall_fallback_tile = None;
                         walk_step_evidence(receipt)?;
                         self.walk = None;
                         self.chase = None;
@@ -3234,22 +3277,23 @@ impl StepRun for UseOnRun {
                                 if self.tile.is_some() && !self.anchored_stand_arrived {
                                     self.deadline = None;
                                 }
+                                let request = reach::loc_walk_request(
+                                    loc,
+                                    cx.tick
+                                        .cx
+                                        .snapshot()
+                                        .local_player()
+                                        .map(|player| player.value.player.network),
+                                    cx.required_after,
+                                );
+                                self.wall_fallback_tile =
+                                    reach::loc_wall_fallback_tile(loc, &request);
                                 self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                    cx.tick.actions.begin::<Walk>(
-                                        reach::loc_walk_request(
-                                            loc,
-                                            cx.tick
-                                                .cx
-                                                .snapshot()
-                                                .local_player()
-                                                .map(|player| player.value.player.network),
-                                            cx.required_after,
-                                        ),
-                                        &mut cx.tick.cx,
-                                    ),
+                                    cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
                                 ))?);
                                 return Poll::Pending;
                             }
+                            self.wall_fallback_tile = None;
                             if self.tile.is_some() {
                                 self.anchored_stand_arrived = true;
                             }
