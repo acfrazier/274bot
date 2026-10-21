@@ -117,6 +117,17 @@ impl WalkSendRow {
 pub struct WalkSendState {
     pub mode: WalkSendMode,
     rows: Vec<WalkSendRow>,
+    /// Moves whenever `rows` is replaced, so the label knows the
+    /// eligibility changed.
+    rows_version: u64,
+    /// The Walk button label, rebuilt in place only when the mode, the
+    /// rows or the marks moved ([`Self::sync_label`]); a draw borrows it.
+    label: String,
+    /// The mode, rows version and marks generation `label` was built from.
+    label_key: Option<(WalkSendMode, u64, u64)>,
+    /// Label rebuilds, so a test can prove a steady draw does none.
+    #[cfg(test)]
+    label_builds: u64,
 }
 
 impl Default for WalkSendState {
@@ -124,6 +135,11 @@ impl Default for WalkSendState {
         Self {
             mode: WalkSendMode::Focused,
             rows: Vec::new(),
+            rows_version: 0,
+            label: String::new(),
+            label_key: None,
+            #[cfg(test)]
+            label_builds: 0,
         }
     }
 }
@@ -133,16 +149,40 @@ impl WalkSendState {
         &self.rows
     }
 
-    /// The Walk button label: `Walk`, or `Walk N bots` in Group mode with
-    /// the `marks` of the fleet model.
-    pub fn walk_label(
-        &self,
-        marks: &frontend_core::MarkedSelection,
-    ) -> std::borrow::Cow<'static, str> {
-        match self.mode {
-            WalkSendMode::Focused => "Walk".into(),
-            WalkSendMode::Group => format!("Walk {} bots", self.checked_count(marks)).into(),
+    /// Replace the Group rows (their eligibility moved).
+    fn set_rows(&mut self, rows: Vec<WalkSendRow>) {
+        self.rows = rows;
+        self.rows_version = self.rows_version.wrapping_add(1);
+    }
+
+    /// Bring the Walk button label up to date: `Walk`, or `Walk N bots` in
+    /// Group mode with the fleet model's `marks`, whose changes move
+    /// `marks_generation`. Nothing is counted or written when the mode,
+    /// the rows and the marks are unchanged, and a rebuild reuses the
+    /// label's buffer.
+    pub fn sync_label(&mut self, marks: &frontend_core::MarkedSelection, marks_generation: u64) {
+        let key = (self.mode, self.rows_version, marks_generation);
+        if self.label_key == Some(key) {
+            return;
         }
+        self.label_key = Some(key);
+        self.label.clear();
+        match self.mode {
+            WalkSendMode::Focused => self.label.push_str("Walk"),
+            WalkSendMode::Group => {
+                use std::fmt::Write as _;
+                let _ = write!(self.label, "Walk {} bots", self.checked_count(marks));
+            }
+        }
+        #[cfg(test)]
+        {
+            self.label_builds += 1;
+        }
+    }
+
+    /// The Walk button label as of the last [`Self::sync_label`].
+    pub fn walk_label(&self) -> &str {
+        &self.label
     }
 
     /// Rows that are marked and eligible.
@@ -1077,7 +1117,16 @@ impl TuiApp {
                 status,
             });
         }
-        self.walk_send.rows = rows;
+        self.walk_send.set_rows(rows);
+    }
+
+    /// Bring the Walk button label up to date with the fleet model's
+    /// marks (nothing to do while they, the rows and the mode are
+    /// unchanged), then borrow it.
+    pub fn sync_walk_label(&mut self) -> &str {
+        self.walk_send
+            .sync_label(self.fleet_model.marks(), self.fleet_model.generation());
+        self.walk_send.walk_label()
     }
 
     /// Focused ↔ Group. Entering Group with no eligible row marked marks
@@ -1743,11 +1792,12 @@ impl TuiApp {
             return;
         }
         self.refresh_walk_permissions();
+        self.sync_walk_label();
         let title = format!(
             "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search",
             self.map.plane,
             self.map_catalogue_status,
-            self.walk_send.walk_label(self.fleet_model.marks())
+            self.walk_send.walk_label()
         );
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
@@ -1813,10 +1863,7 @@ impl TuiApp {
                     })
                     .collect::<Vec<_>>()
                     .join("  ");
-                format!(
-                    "Send: Group  {}  {rows}",
-                    self.walk_send.walk_label(self.fleet_model.marks())
-                )
+                format!("Send: Group  {}  {rows}", self.walk_send.walk_label())
             }
         };
         let crossing_enabled = self.walk_permissions.danger_this_walk(true);
