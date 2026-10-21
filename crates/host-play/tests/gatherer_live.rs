@@ -8416,6 +8416,84 @@ mod bank_conservation_tests {
         }
     }
 
+    fn unopened_bank_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        let (_, snapshot) = bank_fixture(&[]);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_close_status(bank: &str) -> script::native::ScriptStatus {
+        let mut status = bank_status("Validate", "bank closed; validating equipment", 0, 0);
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text(bank.into());
+        status
+    }
+
+    #[test]
+    fn bank_close_boundary_accepts_wear_only_without_claiming_a_bank_close() {
+        let mut slot = unopened_bank_slot();
+        slot.apply_status(&bank_close_status("—")).unwrap();
+        assert!(slot.witness.pending_bank_trip.is_none());
+        assert!(!slot.witness.bank_closed_observed);
+        assert!(!slot.witness.bank_loaded_observed);
+        assert_eq!(slot.witness.status_trips, 0);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_selected_bank_without_a_receipt() {
+        let mut slot = unopened_bank_slot();
+        assert!(slot
+            .apply_status(&bank_close_status("Draynor; Validate"))
+            .is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_a_missing_bank_field_without_a_receipt() {
+        let mut slot = unopened_bank_slot();
+        let mut status = bank_close_status("Draynor; Validate");
+        Arc::make_mut(&mut status.fields)
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .key = "not_bank";
+        assert!(slot.apply_status(&status).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_rejects_an_unverified_receipt_without_a_selected_bank() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        assert!(!slot
+            .witness
+            .pending_bank_trip
+            .as_ref()
+            .unwrap()
+            .deposit_verified);
+        assert!(slot.apply_status(&bank_close_status("—")).is_err());
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_close_boundary_credits_a_verified_bank_receipt() {
+        let mut slot = open_bank_slot(&[]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_close_status("Draynor; Validate"))
+            .unwrap();
+        assert!(slot
+            .witness
+            .pending_bank_trip
+            .as_ref()
+            .unwrap()
+            .deposit_verified);
+        assert!(slot.witness.bank_closed_observed);
+    }
+
     #[test]
     fn bank_open_boundary_accepts_an_empty_supply_deposit_without_a_deposit_stage() {
         let mut slot = open_bank_slot(&[]);
