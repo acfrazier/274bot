@@ -72,10 +72,10 @@
             },
             "obj": "white_apron",
             "qty": 1,
-            "est_gp": 100,
+            "est_gp": 2,
             "option": "Buy 1"
           },
-          "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:166 stocks white_apron for 100 gp.",
+          "comment": "white_apron has base cost 2 gp (content/scripts/_unpack/225/all.obj:437-440); Thessalia's shop_sell_multiplier is 1000 (content/scripts/areas/area_varrock/configs/varrock.npc:291-294), so its full-stock price is 2 gp (content/scripts/shop/scripts/shop.rs2:139-147,182-192).",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "white_apron" } } },
@@ -454,10 +454,10 @@
             },
             "obj": "karamja_rum",
             "qty": 1,
-            "est_gp": 100,
+            "est_gp": 30,
             "option": "Buy 1"
           },
-          "comment": "content/scripts/areas/area_karamja/configs/karamja.inv:10 stocks karamja_rum for 100 gp.",
+          "comment": "Karamjan rum has base cost 30 gp (content/scripts/quests/quest_hunt/configs/quest_hunt.obj:1-10); Zambo's shop_sell_multiplier is 1000 (content/scripts/areas/area_karamja/configs/karamja.npc:160-166), so its full-stock price is 30 gp (content/scripts/shop/scripts/shop.rs2:139-147,182-192).",
           "skip_if": {
             "Any": [
               { "Fact": { "kind": "flag", "version": 1, "args": { "quest": "hunt", "flag": "rum-shipped", "is": true } } },

@@ -61,9 +61,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - Fixed six Path errors. Demon Slayer now waits for Silverlight's delayed
   handoff. Pirate's Treasure closes its message scroll before it reads quest
-  progress and budgets Karamja rum and a white apron at their content-backed
-  100 gp shop prices. Sea Slug no longer reacquires Swamp paste after Holgart
-  takes it. Prince Ali Rescue clears only nearby guards before it talks to
+  progress and budgets Karamja rum at 30 gp and a white apron at 2 gp. Sea
+  Slug no longer reacquires Swamp paste after Holgart takes it. Prince Ali
+  Rescue clears only nearby guards before it talks to
   Keli. Gertrude's Cat includes the fence landing tile in its yard. Monk's
   Friend skips the ring-stone walk after it reaches the ladder.
 - Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
