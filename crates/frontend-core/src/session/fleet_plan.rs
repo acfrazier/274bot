@@ -22,12 +22,14 @@ use crate::OperatorSession;
 const NAMES_SHOWN: usize = 8;
 
 /// A cancelled member's reason in the result line when its owner gave
-/// none: what took it over, in the operator's words.
+/// none, in the operator's words. A member a posted row superseded names
+/// that row (`OperatorCommand::took_over_words`); a withdrawal with no
+/// recorded cause says only what is always true.
 fn cancellation_words(cause: Cancellation) -> &'static str {
     match cause {
-        Cancellation::Superseded => "a later Log in, Log out or Remove took over",
+        Cancellation::Superseded => "a later command for this bot took over",
         Cancellation::Operator => "cancelled",
-        Cancellation::ScopeInvalidated => "no longer applies",
+        Cancellation::ScopeInvalidated => "the session or slot it was for ended",
         Cancellation::Shutdown => "shutting down",
     }
 }

@@ -1052,6 +1052,20 @@ impl OperatorCommand {
         }
     }
 
+    /// What a member this row supersedes ([`Self::supersedes`]) reads as
+    /// its reason in a result: this row, in the operator's words.
+    pub const fn took_over_words(self) -> &'static str {
+        match self {
+            Self::Login => "a later Log in took over",
+            Self::Logout => "a later Log out took over",
+            Self::RelogNow => "a later Relog now took over",
+            Self::SwitchWorld(_) => "a later Switch world took over",
+            Self::Remove => "the bot was removed",
+            Self::Quit => "the app quit",
+            _ => "a later command for this bot took over",
+        }
+    }
+
     /// The current operation report kind this row replaces
     /// (`operations.rs:20-34`), if it has one today.
     pub const fn action_kind(self) -> Option<ActionKind> {
@@ -1602,6 +1616,8 @@ impl CommandBook {
                 if matches!(member.state, MemberState::Pending(_)) {
                     member.state =
                         MemberState::Settled(Settlement::Cancelled(Cancellation::Superseded));
+                    // Results name what took the member over.
+                    member.detail = Some(command.took_over_words().into());
                 }
             }
         }

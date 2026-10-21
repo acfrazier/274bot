@@ -82,8 +82,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   A bot that is queued, logging in, not logged in or already on that world
   is skipped with the reason, and a bot whose world could not be saved
   stays logged in. A server with one world offers no switch. An action
-  that a later Log in, Log out or Remove takes over reads "cancelled" in
-  the result, with the reason.
+  that a later command takes over (Log in, Log out, Relog now, another
+  Switch world, Remove) reads "cancelled" in the result and names that
+  command.
 - Panel: the MultiBox rail now contains the Fleet card picker, marks,
   filter, sort and all Fleet actions: Start, Stop, Assign, Assign &
   restart, Log in, Log out, Walk, Switch world and Copy settings to. The
