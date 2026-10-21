@@ -1471,7 +1471,7 @@ fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
         assert!(other.get(absent).is_none(), "{absent} {other}");
     }
 
-    // Closed: the overflow on the posted tile is Taken by posted name.
+    // Closed: Take the exact overflow ID at its posted tile.
     let took = call(
         &data,
         token,
@@ -1492,6 +1492,18 @@ fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
         "{took}"
     );
     assert_eq!(took["token"], json!(token), "{took}");
+    assert_eq!(
+        verb_req(&took),
+        Some(crate::shim::InteractReq::Obj {
+            x: 3222,
+            z: 3223,
+            level: 1,
+            id: Some(900),
+            name: Some("Rune platebody".into()),
+            action: "Take".into(),
+        }),
+        "the trail-end Take must survive the runtime-to-request conversion"
+    );
 
     // The row left the posted ground: the frozen line, one call later.
     let logged = call(
@@ -6600,6 +6612,18 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
         assert_eq!(taken["level"], spawn.level, "{id} {taken}");
         assert_eq!(taken["name"], "Key", "{id} {taken}");
         assert_eq!(taken["action"], TAKE, "{id} {taken}");
+        assert_eq!(
+            verb_req(&taken),
+            Some(crate::shim::InteractReq::Obj {
+                x: spawn.x,
+                z: spawn.z,
+                level: spawn.level,
+                id: Some(key_id),
+                name: Some("Key".into()),
+                action: TAKE.into(),
+            }),
+            "{id}: the keeper Take must survive the runtime-to-request conversion"
+        );
 
         // The key on the posted page ends the hunt: the original riddle
         // idles, the gate is not re-armed and no completion kind is

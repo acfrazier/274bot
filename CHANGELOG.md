@@ -44,6 +44,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Ground-item interactions keep the selected item ID through dispatch. Items
   with the same name on one tile, such as Halloween masks, no longer substitute
   for the selected type. Requests without an ID retain name-and-tile lookup.
+  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
+  retain the selected row's ID.
 - Exact ground Take actions settle from inventory and ground evidence within
   four later observed game ticks after dispatch. Lost races do not penalize
   the item tile. Native scripts can report confirmed progress and wait for
