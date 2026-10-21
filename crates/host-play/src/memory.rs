@@ -378,9 +378,14 @@ static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None
 
 /// Called from the existing frontend slot observe hook. Drives the selected
 /// benchmark's seed/proof; unseeded idle installs no seeds.
-pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
+pub(crate) fn client_frame(
+    c: &mut client::client::Client,
+    name: &str,
+    hold: bool,
+    run_state: Option<script::RunState>,
+) {
     mark_startup(StartupMark::FirstClientFrame);
-    crate::memory_diagnostics::gatherer_frame(c, name);
+    crate::memory_diagnostics::gatherer_frame(c, name, run_state);
     crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
         let seeds = SEEDS.lock().unwrap();

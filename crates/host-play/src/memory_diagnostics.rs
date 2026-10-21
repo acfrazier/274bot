@@ -29,6 +29,17 @@ struct DeniedSample {
     zone: u16,
 }
 
+#[derive(Clone, Copy)]
+struct MissingPositionSample {
+    tick: u64,
+    reason: &'static str,
+    run_state: Option<RunState>,
+    ingame: bool,
+    scene_state: i32,
+    raw_tile: Option<(i32, i32, i32)>,
+    planned_restart: Option<GathererRestart>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ChopReceipt {
     tick: u64,
@@ -77,6 +88,7 @@ struct GathererBot {
     window_end_xp: Option<i32>,
     sampled_positions: u32,
     missing_position_samples: u32,
+    first_missing_position: Option<MissingPositionSample>,
     denied_samples: u32,
     first_denied: Option<DeniedSample>,
     safe_stand_trees: Vec<SafeStandReceipt>,
@@ -365,7 +377,7 @@ fn geometry_for_combat(
 }
 
 enum SampledPosition {
-    Missing,
+    Missing(&'static str),
     Allowed,
     Denied(DeniedSample),
 }
@@ -497,8 +509,13 @@ fn sample_position(
     tick: u64,
     tile: Option<WorldTile>,
 ) -> SampledPosition {
-    let (Some(Ok(geometry)), Some(tile)) = (geometry, tile) else {
-        return SampledPosition::Missing;
+    let Some(tile) = tile else {
+        return SampledPosition::Missing("coordinates_missing");
+    };
+    let geometry = match geometry {
+        Some(Ok(geometry)) => geometry,
+        Some(Err(_)) => return SampledPosition::Missing("geometry_error"),
+        None => return SampledPosition::Missing("geometry_missing"),
     };
     let (Some(world), Some(zone_filter), Some(zone_table)) = (
         geometry.world.as_ref(),
@@ -508,10 +525,10 @@ fn sample_position(
             .as_ref()
             .and_then(|world| world.graph.zones.as_ref()),
     ) else {
-        return SampledPosition::Missing;
+        return SampledPosition::Missing("zone_data_missing");
     };
     let Some(filter) = zone_filter.view(zone_table) else {
-        return SampledPosition::Missing;
+        return SampledPosition::Missing("zone_filter_missing");
     };
     let blocking = filter.blocking_at(&world.graph.wilderness, tile).next();
     match blocking {
@@ -520,7 +537,11 @@ fn sample_position(
     }
 }
 
-pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
+pub(crate) fn gatherer_frame(
+    c: &client::client::Client,
+    name: &str,
+    run_state: Option<RunState>,
+) {
     if !GATHERER_ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -546,11 +567,7 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
         });
     }
     let geometry = combat.and_then(|level| fleet.geometries.get(&level));
-    let sampled = if should_sample {
-        sample_position(geometry, tick, tile)
-    } else {
-        SampledPosition::Missing
-    };
+    let sampled = should_sample.then(|| sample_position(geometry, tick, tile));
     let Some(bot) = fleet.bots.get_mut(name) else {
         return;
     };
@@ -571,10 +588,19 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
     if let Some(combat) = combat {
         bot.combat_level = Some(combat);
     }
-    if should_sample {
+    if let Some(sampled) = sampled {
         match sampled {
-            SampledPosition::Missing => {
+            SampledPosition::Missing(reason) => {
                 bot.missing_position_samples = bot.missing_position_samples.saturating_add(1);
+                bot.first_missing_position.get_or_insert(MissingPositionSample {
+                    tick,
+                    reason,
+                    run_state,
+                    ingame: c.ingame,
+                    scene_state: c.scene_state,
+                    raw_tile: crate::player_here_tile(c),
+                    planned_restart: bot.planned_restart,
+                });
             }
             SampledPosition::Allowed => {
                 bot.sampled_positions = bot.sampled_positions.saturating_add(1);
@@ -916,6 +942,15 @@ pub(crate) fn gatherer_verdict_json() -> Option<(GathererVerdict, Value)> {
                 "xp_delta": bot.start_xp.zip(bot.window_end_xp).map(|(start, end)| i64::from(end) - i64::from(start)),
                 "sampled_engine_ticks": bot.sampled_positions,
                 "missing_position_samples": bot.missing_position_samples,
+                "first_missing_position": bot.first_missing_position.map(|sample| json!({
+                    "tick": sample.tick,
+                    "reason": sample.reason,
+                    "run_state": sample.run_state.map(|state| format!("{state:?}")),
+                    "ingame": sample.ingame,
+                    "scene_state": sample.scene_state,
+                    "raw_tile": sample.raw_tile,
+                    "planned_restart": sample.planned_restart.map(|restart| format!("{restart:?}")),
+                })),
                 "denied_positions": bot.denied_samples,
                 "first_denied_position": first_denied,
                 "deaths": bot.deaths,

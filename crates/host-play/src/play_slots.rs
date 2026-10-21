@@ -1687,7 +1687,7 @@ fn spawn_slot_thread(
                             frame_input.host_move_owned =
                                 project_slot_frame_host_move_owned(script_state, nav_owned);
                             #[cfg(feature = "memory-profile")]
-                            memory::client_frame(c, name, hold);
+                            memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
