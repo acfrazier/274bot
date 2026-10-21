@@ -2770,9 +2770,7 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
         let slot = script_slot_or_insert(&rig.scripts, "alice");
         let mut slot = slot.lock().unwrap();
         let run = slot.native_run().expect("running Walker test card");
-        let config = script::native::PreparedConfig::new(
-            script::CompiledId("test"),
-            1,
+        let config = script::native::PreparedConfig::for_test_script(
             2,
             Arc::new(
                 serde_json::from_value(serde_json::json!({
@@ -2780,7 +2778,6 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
                 }))
                 .unwrap(),
             ),
-            (),
         );
         assert!(matches!(
             slot.configure_compiled(config, run),
