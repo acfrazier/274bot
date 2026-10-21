@@ -2742,8 +2742,7 @@ fn current_frame_idle(
                 .is_some_and(|ground| ground.count(item_id, *tile) > 0)
         });
         let in_take_settlement = takes.iter().any(|take| {
-            (take.tick..=take.tick.saturating_add(MAX_TAKE_SETTLEMENT_TICKS))
-                .contains(&frame.tick)
+            (take.tick..=take.tick.saturating_add(MAX_TAKE_SETTLEMENT_TICKS)).contains(&frame.tick)
         });
         if !has_target && !in_take_settlement {
             ensure(
@@ -5755,10 +5754,8 @@ mod tests {
     fn sync_helper_take_sends(run: &mut PlayerRunTrace) {
         let take_ticks: Vec<u64> = run.takes.iter().map(|take| take.tick).collect();
         for frame in &mut run.frames {
-            frame.status.as_mut().unwrap().take_sends = take_ticks
-                .iter()
-                .filter(|tick| **tick < frame.tick)
-                .count() as u32;
+            frame.status.as_mut().unwrap().take_sends =
+                take_ticks.iter().filter(|tick| **tick < frame.tick).count() as u32;
         }
     }
 
@@ -5772,10 +5769,7 @@ mod tests {
         let item_id = candidate.item_id;
         let tile = candidate.tile;
         let identity = trace.run.identity.clone();
-        trace
-            .run
-            .takes
-            .push(take(&identity, item_id, tile, 103));
+        trace.run.takes.push(take(&identity, item_id, tile, 103));
         sync_helper_take_sends(&mut trace.run);
         trace
     }
@@ -5834,7 +5828,12 @@ mod tests {
     #[test]
     fn cell_a_green_mask_rejects_an_unselected_mask_pickup() {
         let mut trace = a_green_mask_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 130) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 130)
+        {
             let inventory = frame.inventory.as_mut().unwrap();
             inventory.quantities.insert(BLUE_MASK_ID, 1);
             inventory.occupied_slots = Some(2);
@@ -5849,7 +5848,12 @@ mod tests {
     #[test]
     fn cell_a_green_mask_requires_blue_to_remain_posted() {
         let mut trace = a_green_mask_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 120)
+        {
             frame
                 .ground
                 .as_mut()
@@ -5866,7 +5870,12 @@ mod tests {
     #[test]
     fn cell_a_green_mask_requires_red_to_remain_posted() {
         let mut trace = a_green_mask_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 120)
+        {
             frame
                 .ground
                 .as_mut()
@@ -5882,8 +5891,7 @@ mod tests {
 
     #[test]
     fn cell_a_negative_candidates_rejects_take_of_ordinary_unselected_item() {
-        let trace =
-            negative_candidates_with_take(NegativeCandidateKind::OrdinaryUnselected);
+        let trace = negative_candidates_with_take(NegativeCandidateKind::OrdinaryUnselected);
         assert_eq!(
             check_a_negative_candidates(&trace).unwrap_err(),
             "Take dispatch used an unselected ID"
@@ -5901,8 +5909,7 @@ mod tests {
 
     #[test]
     fn cell_a_negative_candidates_rejects_take_of_selected_outside_radius_item() {
-        let trace =
-            negative_candidates_with_take(NegativeCandidateKind::SelectedOutsideRadius);
+        let trace = negative_candidates_with_take(NegativeCandidateKind::SelectedOutsideRadius);
         assert_eq!(
             check_a_negative_candidates(&trace).unwrap_err(),
             "Take dispatch targeted a tile outside the anchor radius or plane"
@@ -5912,7 +5919,12 @@ mod tests {
     #[test]
     fn cell_a_negative_candidates_rejects_a_negative_item_pickup() {
         let mut trace = a_negative_candidates_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 110) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 110)
+        {
             let inventory = frame.inventory.as_mut().unwrap();
             inventory.quantities.insert(ORDINARY_UNSELECTED_ID, 1);
             inventory.occupied_slots = Some(1);
@@ -5927,7 +5939,12 @@ mod tests {
     #[test]
     fn cell_a_negative_candidates_require_ordinary_row_to_remain_posted() {
         let mut trace = a_negative_candidates_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 120)
+        {
             frame
                 .ground
                 .as_mut()
@@ -5944,7 +5961,12 @@ mod tests {
     #[test]
     fn cell_a_negative_candidates_require_certificate_to_remain_posted() {
         let mut trace = a_negative_candidates_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 120)
+        {
             frame
                 .ground
                 .as_mut()
@@ -5961,7 +5983,12 @@ mod tests {
     #[test]
     fn cell_a_negative_candidates_require_outside_radius_row_to_remain_posted() {
         let mut trace = a_negative_candidates_fixture();
-        for frame in trace.run.frames.iter_mut().filter(|frame| frame.tick >= 120) {
+        for frame in trace
+            .run
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 120)
+        {
             frame
                 .ground
                 .as_mut()
@@ -5978,8 +6005,15 @@ mod tests {
     #[test]
     fn cell_a_negative_candidates_rejects_a_non_waiting_healthy_tail() {
         let mut trace = a_negative_candidates_fixture();
-        trace.run.frames.last_mut().unwrap().status.as_mut().unwrap().phase =
-            StatusPhase::Working;
+        trace
+            .run
+            .frames
+            .last_mut()
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap()
+            .phase = StatusPhase::Working;
         assert_eq!(
             check_a_negative_candidates(&trace).unwrap_err(),
             "idle tail left Waiting status"
@@ -6000,10 +6034,8 @@ mod tests {
             .map(|take| take.tick)
             .collect();
         for frame in &mut trace.frames {
-            frame.status.as_mut().unwrap().take_sends = take_ticks
-                .iter()
-                .filter(|tick| **tick < frame.tick)
-                .count() as u32;
+            frame.status.as_mut().unwrap().take_sends =
+                take_ticks.iter().filter(|tick| **tick < frame.tick).count() as u32;
         }
     }
 
@@ -6124,11 +6156,7 @@ mod tests {
     #[test]
     fn cell_b_duplicate_rejects_exclusion_before_refusal() {
         let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
-        for frame in trace
-            .frames
-            .iter_mut()
-            .filter(|frame| frame.tick >= 50)
-        {
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
             frame
                 .status
                 .as_mut()
@@ -6233,11 +6261,7 @@ mod tests {
     #[test]
     fn cell_b_duplicate_rejects_early_refusal_counter() {
         let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
-        for frame in trace
-            .frames
-            .iter_mut()
-            .filter(|frame| frame.tick >= 50)
-        {
+        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
             frame.status.as_mut().unwrap().duplicate_refusals = 1;
         }
         assert_eq!(
@@ -6249,7 +6273,14 @@ mod tests {
     #[test]
     fn cell_b_duplicate_rejects_an_extra_refusal_count() {
         let mut trace = b_single_item_fixture(SCYTHE_ID, CellKind::BScytheDuplicate);
-        trace.frames.last_mut().unwrap().status.as_mut().unwrap().duplicate_refusals = 2;
+        trace
+            .frames
+            .last_mut()
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap()
+            .duplicate_refusals = 2;
         assert_eq!(
             check_b_duplicate_untradeable(&trace, SCYTHE_ID).unwrap_err(),
             "native duplicate refusal count is not one"
@@ -6289,7 +6320,12 @@ mod tests {
     fn cell_b_yoyo_rejects_an_invented_id_exclusion() {
         let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
         for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 50) {
-            frame.status.as_mut().unwrap().id_exclusions.insert(YO_YO_ID);
+            frame
+                .status
+                .as_mut()
+                .unwrap()
+                .id_exclusions
+                .insert(YO_YO_ID);
         }
         assert_eq!(
             check_b_yoyo_repeat(&trace).unwrap_err(),
@@ -6331,7 +6367,11 @@ mod tests {
     #[test]
     fn cell_b_yoyo_rejects_fewer_than_two_landed_items() {
         let mut trace = b_single_item_fixture(YO_YO_ID, CellKind::BYoYoRepeat);
-        for frame in trace.frames.iter_mut().filter(|frame| frame.tick > RESPAWN_OUTPUT_TICK_GAP) {
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick > RESPAWN_OUTPUT_TICK_GAP)
+        {
             let inventory = frame.inventory.as_mut().unwrap();
             inventory.quantities.insert(YO_YO_ID, 1);
             inventory.occupied_slots = Some(1);
