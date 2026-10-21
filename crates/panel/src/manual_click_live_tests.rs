@@ -1534,8 +1534,8 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let id = CompiledCardId::lookup("Gatherer").unwrap();
     let target_uid = session.core.profile(&target).unwrap().uid();
     session
-        .fleet_selection
-        .set_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
+        .fleet_model
+        .set_mark_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
@@ -1549,10 +1549,11 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     ));
     session.core.flush_writes();
     session.poll_scripts();
-    session.fleet_prepare_apply_settings();
+    session.core.stage_plan_card(ScriptChoice::compiled(id));
+    session.plan_fleet_action(frontend_core::FleetAction::CopySettings);
     let first_scope = session.scripts.prepared_settings_sync().unwrap();
     assert_eq!(first_scope.targets(), std::slice::from_ref(&target));
-    session.apply_settings_sync();
+    session.confirm_fleet_plan();
     session.core.flush_writes();
     session.poll_scripts();
     assert_eq!(
@@ -1656,8 +1657,9 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         std::thread::sleep(Duration::from_millis(20));
     };
     assert_eq!(source_restarted.text_field("skill"), Some("Mining"));
-    session.fleet_prepare_apply_settings();
-    session.apply_settings_sync();
+    session.core.stage_plan_card(ScriptChoice::compiled(id));
+    session.plan_fleet_action(frontend_core::FleetAction::CopySettings);
+    session.confirm_fleet_plan();
     session.core.flush_writes();
     session.poll_scripts();
 

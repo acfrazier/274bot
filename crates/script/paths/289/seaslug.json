@@ -18,7 +18,7 @@
       }
     ],
     "items": [
-      { "obj": "swamppaste", "qty": 1, "kind": "acquirable", "acquire": "acquire:paste" },
+      { "obj": "swamppaste", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "torch_unlit", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "torch_lit", "qty": 1, "kind": "acquirable", "acquire": null },
       { "obj": "damp_sticks", "qty": 1, "kind": "acquirable", "acquire": null },
@@ -183,6 +183,7 @@
                 "leash": 6,
                 "prefer": ["Okay, lets do it.", "Okay, let's do it.", "Will you take me there?"]
               },
+              "comment": "Holgart consumes Swamp paste and repairs the boat at this handoff (content/scripts/areas/area_ardougne_east/scripts/holgart_ardougne.rs2:42-45).",
               "skip_if": { "Any": [] },
               "settle": {
                 "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "seaslug", "any": ["seaslug:3"] } }

@@ -397,7 +397,7 @@ pub struct TuiSession {
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<ScriptChoice>,
     /// Shared script coordination (card library and catalog, assignment,
-    /// per-profile parameters, Start/Stop all, reload, Apply to all): the
+    /// per-profile parameters, Start/Stop fleet, reload, Apply to all): the
     /// same owner the panel uses.
     scripts: frontend_core::Scripts,
     /// First-run rs2b0t clone-root folder browser.
@@ -425,6 +425,9 @@ pub struct TuiSession {
     copied_view: Option<u64>,
     copied_meter: Option<u64>,
     copied_capacity: Option<u64>,
+    /// The fleet result last shown on the message line: its command and its
+    /// text, so a result is copied there only when it changed.
+    shown_result: Option<(Option<api::identity::RequestId>, String)>,
     persist_ui: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
@@ -450,7 +453,6 @@ impl TuiSession {
 #[cfg(test)]
 pub(crate) mod seam {
     use super::*;
-    use crate::fleet::FleetState;
     use crossterm::event::KeyEvent;
 
     static QUESTER_PATHS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -533,10 +535,10 @@ pub(crate) mod seam {
             self.apply(app, action);
         }
 
-        /// Commit `text` as the fleet filter of a bare fleet table
+        /// Commit `text` as the fleet filter of a bare fleet model
         /// (`SetFleetFilter`).
-        pub(crate) fn filter(&mut self, state: &mut FleetState, text: &str) {
-            let staged = state.filter.staged_mut();
+        pub(crate) fn filter(&mut self, model: &mut frontend_core::FleetModel, text: &str) {
+            let staged = model.staged_filter_mut();
             staged.clear();
             staged.push_str(text);
             let mut walk_cleared = false;
@@ -544,7 +546,7 @@ pub(crate) mod seam {
             let mut surface = TuiSurface {
                 walk_cleared: &mut walk_cleared,
                 map_desk: &mut desk,
-                models: frontend_core::Models::none().with_fleet_filter(&mut state.filter),
+                models: frontend_core::Models::none().with_fleet(model),
                 frame_hook: None,
             };
             self.session
@@ -660,6 +662,7 @@ impl TuiSession {
             copied_rows: None,
             copied_view: None,
             copied_meter: None,
+            shown_result: None,
             copied_capacity: None,
             persist_ui: true,
             background_bots_acked: background_ack,
@@ -886,8 +889,7 @@ impl TuiSession {
                     .with_scripts(&mut self.scripts)
                     .with_import(&mut self.profile_import)
                     .with_loadouts(&mut self.loadouts)
-                    .with_marks(&mut app.table.selection)
-                    .with_fleet_filter(&mut app.table.filter)
+                    .with_fleet(&mut app.fleet_model)
                     .with_quester(&mut app.quester_paths_controller)
                     .with_walk_globals(&mut app.walk_permissions)
                     .with_form_save(&mut app.settings_save),
@@ -965,18 +967,11 @@ impl TuiSession {
         }
     }
 
-    /// Log out every member and every other running slot.
-    fn logout_all(&mut self) {
-        // Nobody to log out is not an error.
-        let _ = self.submit(OperatorCommand::Logout, Targets::Everyone);
-    }
-
     /// Settings-popup `r`: Relog-now for a memory-mode switch. Confirms
     /// first when running script work would be interrupted or a queued Start
     /// would be cancelled; otherwise relogs directly.
     fn memory_relog_request(&mut self, app: &mut TuiApp, name: &str) {
-        let script_work =
-            self.core.memory_relog_warning(name) || self.scripts.start_queue_place(name).is_some();
+        let script_work = self.core.memory_relog_warning(name) || self.scripts.start_waiting(name);
         if script_work {
             app.confirm(ConfirmKind::MemoryRelog(name.to_string()));
         } else {
@@ -1032,6 +1027,7 @@ impl TuiSession {
     /// Load every vault profile and log in every member (Load+login all). A
     /// loaded, logged-out member is re-armed and a terminal worker
     /// recreated. Returns how many were newly loaded.
+    #[cfg(feature = "memory-profile")]
     fn load_and_login_all(&mut self) -> usize {
         let last = self.last_focused.clone();
         self.core.set_focus_hint(last.as_deref());
@@ -2056,170 +2052,115 @@ impl TuiSession {
         }
     }
 
-    fn script_start_all(&mut self, app: &mut TuiApp) {
-        let root = self.start_catalog_root();
-        match frontend_core::combined_bulk_scope(&app.table.selection) {
-            frontend_core::BulkScope::Marked => {
-                if let Some(selection) = app.script_sel.as_ref().map(ScriptChoice::duplicate) {
-                    self.scripts.stage_browse_pick(selection);
-                } else {
-                    self.scripts.stage_browse_pick_clear();
-                }
-                if let Err(error) =
-                    self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
-                {
-                    app.error = Some(error);
-                    return;
-                }
-                self.scripts.stage_start_catalog_root(root);
-                match self.submit_raw_with(app, OperatorCommand::StartScript, Targets::Marked) {
-                    Ok(mut submitted) => {
-                        app.error = submitted.take_bulk().map(|report| report.summary());
-                    }
-                    Err(error) => app.error = Some(error),
-                }
-                self.apply_script_notice(app);
-            }
-            frontend_core::BulkScope::All => {
-                self.scripts.stage_start_catalog_root(root);
-                if let Err(error) =
-                    self.submit_with(app, OperatorCommand::StartScript, Targets::Everyone)
-                {
-                    app.error = Some(error);
-                }
-                self.apply_script_notice(app);
-            }
+    /// A fleet action: core freezes it (`PlanFleetAction`: `target` alone
+    /// when one profile is named, else the marked profiles, hidden ones
+    /// too, else the loaded shown rows; the card; the skips). A plan that
+    /// needs no confirmation runs at once; otherwise the confirm overlay
+    /// shows core's prompt. A refusal shows its reason on the message
+    /// line.
+    fn plan_fleet_action(
+        &mut self,
+        app: &mut TuiApp,
+        action: frontend_core::FleetAction,
+        target: Option<&str>,
+    ) {
+        if let Some(name) = target {
+            self.core.stage_plan_target(name);
         }
-    }
-
-    /// Save the selected script as the assignment of every marked bot; the
-    /// one bulk report names each bot that could not take it.
-    fn script_assign_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
-            app.error = Some(frontend_core::ASSIGN_NO_CARD.into());
-            return;
-        };
-        self.scripts.stage_browse_pick(card);
-        if let Err(error) =
-            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
-        {
-            app.error = Some(error);
-            return;
-        }
-        self.scripts
-            .stage_start_catalog_root(self.start_catalog_root());
-        match self.submit_raw_with(app, OperatorCommand::AssignScript, Targets::Marked) {
-            Ok(mut submitted) => {
-                app.error = submitted.take_bulk().map(|report| report.summary());
-            }
-            Err(error) => app.error = Some(error),
-        }
-        self.apply_script_notice(app);
-    }
-
-    /// Assign the selected script to every marked bot and start it there
-    /// through the paced Start permit; the running Start report follows.
-    fn script_restart_marked(&mut self, app: &mut TuiApp) {
-        let Some(card) = app.script_sel.as_ref().map(ScriptChoice::duplicate) else {
-            app.error = Some(frontend_core::ASSIGN_RESTART_NO_CARD.into());
-            return;
-        };
-        self.scripts.stage_browse_pick(card);
-        if let Err(error) =
-            self.submit_with(app, OperatorCommand::PickBrowseCard, Targets::Application)
-        {
-            app.error = Some(error);
-            return;
-        }
-        self.scripts
-            .stage_start_catalog_root(self.start_catalog_root());
-        match self.submit_raw_with(app, OperatorCommand::AssignAndRestart, Targets::Marked) {
-            Ok(mut submitted) => {
-                app.error = submitted.take_bulk().map(|report| report.summary());
-            }
-            Err(error) => app.error = Some(error),
-        }
-        self.apply_script_notice(app);
-    }
-
-    /// Freeze the focused bot's settings for the selected script against
-    /// the marked bots (the same core command as the panel's Fleet window)
-    /// and ask to confirm the frozen scope; nothing is written before that.
-    fn prepare_apply_settings_marked(&mut self, app: &mut TuiApp) {
-        let (Some(source), Some(card)) = (
-            app.focused_name(),
-            app.script_sel.as_ref().map(ScriptChoice::duplicate),
-        ) else {
-            app.error = Some("Apply to marked: focus a bot and select a script".into());
-            return;
-        };
-        let kind = if card.compiled_id().is_some() {
-            frontend_core::command::CardKind::Native
-        } else {
-            frontend_core::command::CardKind::Script
-        };
-        self.scripts.stage_settings_sync_prepare(&source, &card);
-        match self.submit_with(
-            app,
-            OperatorCommand::ApplySettingsToMarked(kind),
-            Targets::Marked,
+        if matches!(
+            action,
+            frontend_core::FleetAction::Start
+                | frontend_core::FleetAction::Assign
+                | frontend_core::FleetAction::AssignRestart
         ) {
-            Ok(_) => match self.scripts.prepared_settings_sync() {
-                Some(scope) => app.confirm(ConfirmKind::ApplyMarked(scope.prompt().to_string())),
-                None => app.error = Some("Apply to marked: no prepared settings".into()),
-            },
-            Err(error) => app.error = Some(error),
+            // The plan freezes the catalog root for the row that runs it.
+            let root = self.start_catalog_root();
+            self.scripts.stage_start_catalog_root(root);
+        }
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::PlanFleetAction(action),
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+            return;
         }
         self.apply_script_notice(app);
+        let Some(plan) = self.core.fleet_plan() else {
+            app.error = Some(format!("{}: no plan was made", action.verb()));
+            return;
+        };
+        if plan.needs_confirm() {
+            let prompt = plan.prompt().to_owned();
+            app.confirm(ConfirmKind::FleetPlan { action, prompt });
+        } else {
+            self.run_fleet_plan(app);
+        }
     }
 
-    /// Log in every marked bot, loading the ones not loaded yet (`Login`
-    /// over the marks).
-    fn login_marked(&mut self, app: &mut TuiApp) {
-        self.submit_marked(app, OperatorCommand::Login);
+    /// Open the world picker over the bound server's public worlds, as
+    /// the core cached them when the play started (nothing is fetched or
+    /// read here). `profile` is the bot it moves (`W` over the fleet row
+    /// under the cursor), or `None` for the marked rows. A server with
+    /// one world has no switching: the message line says so, as core's
+    /// plan refusal would.
+    fn pick_world(&mut self, app: &mut TuiApp, profile: Option<String>) {
+        let Some(worlds) = self
+            .core
+            .switch_world_choices()
+            .filter(|worlds| worlds.len() > 0)
+        else {
+            app.error = Some("Switch world: this server has one world".into());
+            return;
+        };
+        let current = profile
+            .as_deref()
+            .and_then(|name| app.fleet_model.rows().iter().find(|row| row.name() == name))
+            .and_then(|row| row.world());
+        app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+            profile, current, worlds,
+        )));
     }
 
-    /// Log out every marked bot that is logged in or logging in (`Logout`
-    /// over the marks).
-    fn logout_marked(&mut self, app: &mut TuiApp) {
-        self.submit_marked(app, OperatorCommand::Logout);
-    }
-
-    /// Submit `command` over the marked rows and show the per-row report's
-    /// summary; a refused command or a failed member shows its reason.
-    fn submit_marked(&mut self, app: &mut TuiApp, command: OperatorCommand) {
-        let outcome = self.submit_with(app, command, Targets::Marked);
+    /// Run the waiting fleet plan (`Targets::Plan`). The plan's frozen
+    /// targets and card decide everything: marks made or changed since
+    /// the plan do not join it. The one result view reports the outcome.
+    /// An Assign changes the focused bot's heading when it was a target, so
+    /// the Script pane re-reads it (a pending Browse pick stays).
+    fn run_fleet_plan(&mut self, app: &mut TuiApp) {
+        let Some(plan) = self.core.fleet_plan() else {
+            app.error = Some("fleet: no plan is waiting".into());
+            return;
+        };
+        let command = plan.command();
+        let assigns = matches!(
+            plan.action(),
+            frontend_core::FleetAction::Assign | frontend_core::FleetAction::AssignRestart
+        );
+        match self.submit_raw_with(app, command, Targets::Plan) {
+            Ok(_) => {
+                // A new result replaces the last one, even with the same
+                // text and no command record (two emptied plans).
+                self.shown_result = None;
+                self.project_fleet_result(app);
+                if assigns {
+                    app.script_sel = app
+                        .focused_name()
+                        .and_then(|name| self.scripts.heading(&self.core, &name));
+                }
+            }
+            Err(error) => app.error = Some(error),
+        }
+        app.reload_confirm = self.scripts.reload_awaiting_confirm();
         self.apply_script_notice(app);
-        app.error = Some(match outcome {
-            Err(error) => error,
-            Ok(mut submitted) => submitted.take_bulk().map_or_else(
-                || format!("{command:?}: produced no result"),
-                |report| report.summary(),
-            ),
-        });
     }
 
-    fn script_stop_all(&mut self, app: &mut TuiApp) {
-        match frontend_core::combined_bulk_scope(&app.table.selection) {
-            frontend_core::BulkScope::Marked => {
-                match self.submit_raw_with(app, OperatorCommand::StopScript, Targets::Marked) {
-                    Ok(mut submitted) => {
-                        app.error = submitted.take_bulk().map(|report| report.summary());
-                    }
-                    Err(error) => app.error = Some(error),
-                }
-                app.reload_confirm = self.scripts.reload_awaiting_confirm();
-                self.apply_script_notice(app);
-            }
-            frontend_core::BulkScope::All => {
-                if let Err(error) =
-                    self.submit_with(app, OperatorCommand::StopScript, Targets::Everyone)
-                {
-                    app.error = Some(error);
-                }
-                app.reload_confirm = self.scripts.reload_awaiting_confirm();
-                self.apply_script_notice(app);
-            }
+    /// Drop the waiting fleet plan without running it (`CancelFleetPlan`).
+    fn cancel_fleet_plan(&mut self, app: &mut TuiApp) {
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::CancelFleetPlan, Targets::Application)
+        {
+            app.error = Some(error);
         }
     }
 
@@ -2880,7 +2821,6 @@ impl TuiSession {
                     .iter()
                     .map(|name| self.core.profile_identity_or_synthetic(name)),
             );
-            app.table.selection.retain(app.profile_ids.iter().copied());
         }
         let restart_generation = self.scripts.restart_generation();
         if restart_generation != app.restart_badge_generation || names_changed || ids_changed {
@@ -2988,6 +2928,11 @@ impl TuiSession {
         self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
         app.script_cards = self.scripts.browse_cards().map(BrowseCard::from).collect();
+        app.script_card_choices = self
+            .scripts
+            .browse_cards()
+            .map(frontend_core::scripts::BrowseCard::selection)
+            .collect();
         let present = categories_present(&app.script_cards);
         let order = resolve_category_order(&self.script_category_order, &present);
         if order != self.script_category_order {
@@ -3131,7 +3076,7 @@ impl TuiSession {
             if self.core.has_play() {
                 app.script_state = self.core.script_state(name);
             }
-            app.script_queued = self.scripts.start_queue_place(name).is_some();
+            app.script_queued = self.scripts.start_waiting(name);
         } else {
             app.script_queued = false;
             if app.map_active {
@@ -3366,14 +3311,17 @@ impl TuiSession {
         }
     }
 
-    /// Copy the core's shared projection into the app: fleet rows and
-    /// their counts, the selected slot's detail and the resource meter, each
-    /// only when it moved since the last copy (and into the app's own
-    /// buffers).
+    /// Follow the core's shared projection: refresh the fleet model (one
+    /// cheap check per loop; it rebuilds only when the rows or the vault's
+    /// profiles moved), then copy the fleet counts, the selected slot's
+    /// detail and the resource meter, each only when it moved since the
+    /// last copy (and into the app's own buffers).
     fn copy_projection(&mut self, app: &mut TuiApp) {
+        app.fleet_model.refresh(&self.core);
+        app.fleet_model.sync_card_label(&self.scripts, &self.core);
+        self.project_fleet_result(app);
         let view = self.core.fleet_view();
         if self.copied_rows.replace(view.rows_generation()) != Some(view.rows_generation()) {
-            view.copy_rows_into(&mut app.fleet);
             app.counts = view.counts();
         }
         if self.copied_view.replace(view.generation()) != Some(view.generation()) {
@@ -3426,10 +3374,75 @@ impl TuiSession {
         }
     }
 
+    /// Mark, unmark or invert the shown rows, or mark the shown rows in a
+    /// status (`MarkFleet`). Core decides which rows; hidden marks stay.
+    fn mark_fleet(&mut self, app: &mut TuiApp, op: frontend_core::MarkOp) {
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::MarkFleet(op), Targets::Application)
+        {
+            app.error = Some(error);
+        }
+    }
+
+    /// Make `card` the card the fleet actions use (`SetFleetCard`). The
+    /// core changes nothing else: no Browse pick, form, assignment or run.
+    fn pick_fleet_card(&mut self, app: &mut TuiApp, card: frontend_core::FleetCard) {
+        app.fleet_model.stage_card(card);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::SetFleetCard, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+        // Show the new card now, not on the next pump.
+        app.fleet_model.sync_card_label(&self.scripts, &self.core);
+    }
+
+    /// Show the latest fleet result on the message line, once: the text is
+    /// copied only when core changed it (a settling action rewrites it in
+    /// place as its members finish).
+    fn project_fleet_result(&mut self, app: &mut TuiApp) {
+        let Some(result) = self.core.fleet_result() else {
+            return;
+        };
+        let (request, text) = (result.request(), result.text());
+        if text.is_empty()
+            || self
+                .shown_result
+                .as_ref()
+                .is_some_and(|(shown, shown_text)| *shown == request && shown_text == text)
+        {
+            return;
+        }
+        match &mut self.shown_result {
+            Some((shown, shown_text)) => {
+                *shown = request;
+                shown_text.clear();
+                shown_text.push_str(text);
+            }
+            None => self.shown_result = Some((request, text.to_owned())),
+        }
+        app.error = Some(text.to_owned());
+    }
+
+    /// Reorder the saved Load order (`ReorderProfiles`): stage the op, then
+    /// submit it with the fleet model lent. The core refuses it unless the
+    /// model shows Load order. The cursor follows its profile by identity.
+    fn reorder_profiles(&mut self, app: &mut TuiApp, op: frontend_core::ReorderOp) {
+        self.core.stage_reorder(op);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ReorderProfiles, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+        // Follow the new order now, so a repeated key sees it.
+        app.fleet_model.refresh(&self.core);
+        app.table.sync(&app.fleet_model);
+    }
+
     /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
     /// shown rows follow the text.
     fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
-        let staged = app.table.filter.staged_mut();
+        let staged = app.fleet_model.staged_filter_mut();
         match edit {
             crate::fleet::FilterEdit::Push(c) => staged.push(c),
             crate::fleet::FilterEdit::Pop => {
@@ -3442,8 +3455,7 @@ impl TuiSession {
         {
             app.error = Some(error);
         }
-        app.table
-            .sync_with_ids(&app.names, &app.profile_ids, &app.fleet);
+        app.table.sync(&app.fleet_model);
     }
 
     /// Save the rows the log view shows (`SaveLog`). The write runs off the
@@ -3982,15 +3994,16 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::SetMark(name, on) => session.set_mark(app, &name, on),
         AppAction::MarkAll(identities) => session.mark_all(app, identities),
         AppAction::ClearMarks => session.clear_marks(app),
+        AppAction::MarkFleet(op) => session.mark_fleet(app, op),
+        AppAction::PickFleetCard(card) => session.pick_fleet_card(app, card),
+        AppAction::ReorderProfiles(op) => session.reorder_profiles(app, op),
         AppAction::FleetFilter(edit) => session.set_fleet_filter(app, edit),
         AppAction::SaveLog => session.save_log(app),
         AppAction::SetSessionLog(on) => session.set_session_log(app, on),
         AppAction::MapWilderness(on) => session.set_special_areas(app, on),
         AppAction::Chat(action) => session.chat_send(app, action),
-        AppAction::SpawnAll => multibox_key(session, app),
         AppAction::Login => session.login(app),
         AppAction::Logout => session.logout(app),
-        AppAction::LogoutAll => session.logout_all(),
         AppAction::MemoryRelog(name) => session.memory_relog_request(app, &name),
         AppAction::MemoryRelogNow(name) => session.memory_relog_now(app, &name),
         AppAction::Remove(name) => session.remove(app, &name),
@@ -4025,13 +4038,15 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => session.open_params(app),
-        AppAction::ScriptStartAll => session.script_start_all(app),
-        AppAction::ScriptStopAll => session.script_stop_all(app),
-        AppAction::ScriptAssignMarked => session.script_assign_marked(app),
-        AppAction::ScriptRestartMarked => session.script_restart_marked(app),
-        AppAction::ScriptApplyMarkedPrepare => session.prepare_apply_settings_marked(app),
-        AppAction::LoginMarked => session.login_marked(app),
-        AppAction::LogoutMarked => session.logout_marked(app),
+        AppAction::PlanFleet(action) => session.plan_fleet_action(app, action, None),
+        AppAction::PickWorld(profile) => session.pick_world(app, profile),
+        AppAction::PlanSwitchWorld(profile, world) => session.plan_fleet_action(
+            app,
+            frontend_core::FleetAction::SwitchWorld(world),
+            profile.as_deref(),
+        ),
+        AppAction::RunFleetPlan => session.run_fleet_plan(app),
+        AppAction::CancelFleetPlan => session.cancel_fleet_plan(app),
         AppAction::ScriptReload => session.script_reload(app),
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),
@@ -4111,15 +4126,6 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::None => {}
     }
-}
-
-/// Load every profile and log every member in (confirmed in the app).
-fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
-    let loaded = session.load_and_login_all();
-    app.error = session
-        .error
-        .take()
-        .or_else(|| (loaded > 0).then(|| format!("loaded {loaded} member(s)")));
 }
 
 /// Apply the operator's mouse-capture choice to the live terminal. Off lets

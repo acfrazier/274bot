@@ -23,6 +23,7 @@ pub mod capacity;
 pub mod command;
 pub mod driver;
 pub mod fleet;
+pub mod fleet_plan;
 pub mod frames;
 pub mod group_walk;
 pub mod launch;
@@ -42,6 +43,7 @@ pub mod process_status;
 pub mod profile_draft;
 pub mod profile_editor;
 pub mod profile_form;
+pub mod profile_order;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
@@ -64,9 +66,11 @@ pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
 pub use fleet::{
-    contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
-    state_label, Fleet, FleetFilter,
+    contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetCard,
+    FleetFilter, FleetMarkCounts, FleetModel, MarkOp, MarkPredicate, ShownMarks,
+    FOCUSED_CARD_LABEL, NOT_LOADED, OWN_CARD_LABEL,
 };
+pub use fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 pub use group_walk::{MarkedWalk, WalkInputs};
 pub use map_bake::{
     load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
@@ -90,8 +94,8 @@ pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRe
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
+pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
-pub use profiles::fresh_uid;
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

@@ -650,7 +650,7 @@ fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
     rig.observe(2, start);
     rig.pump(start);
     assert!(
-        matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Failed),
+        matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::NoPath),
         "the impossible anchor estimate must fail promptly rather than livelock"
     );
     let generation = rig.navs.lock().unwrap()[ALICE].route_generation;
