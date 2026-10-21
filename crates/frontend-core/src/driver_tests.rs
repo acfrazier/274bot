@@ -3826,6 +3826,14 @@ fn removing_a_switching_bot_cancels_it() {
         "{:?}",
         terminal(&d, run, "alice")
     );
+    // Review F4 r3: the reason says only what is known when it settles.
+    // Remove logs the bot out first; that logout row, not a Log out
+    // command, withdrew the switch's login.
+    d.poll();
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (a logout was requested)"
+    );
 }
 
 /// A relog that lands on another world, or a world the host refuses at
