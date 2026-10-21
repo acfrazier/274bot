@@ -404,6 +404,41 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+/// The unlock's auto-login of the last focused profile with MultiBox off:
+/// the bot runs and is a fleet member, so a loaded script starts on it.
+/// (Before, the unlock opened its slot without loading it, and Start
+/// refused with `no slot: <name>`; found in the F4 rs2b2t live session.)
+#[test]
+fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
+    IsolatedStores::ensure_thread();
+    let dir = tmp("unlock-focus");
+    let vault_path = dir.join("v.vault");
+    let mut vault = VaultFixture::create(&vault_path, "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(1).auto_login(true));
+    vault.put(FixtureProfile::new("bob", "pw").uid(2));
+    drop(vault);
+    let mut s = Session::new();
+    s.persist_ui = false;
+    s.core.set_spawn_workers(false);
+    assert!(!s.multibox);
+    assert!(s.unlock_at(&vault_path, "test-passphrase-01"));
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    assert!(s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    assert_eq!(s.core.members(), ["alice".to_string()]);
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let path = write_bot(&dir, "unlock-focus.ts", BOT_TS);
+    let card = s.scripts.load_card(&path).unwrap();
+    let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());
+    start_sel(&mut s, "alice", sel).expect("a loaded script starts on the unlock's bot");
+}
+
 #[test]
 fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -438,9 +473,10 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
             .script_runtime_generation("alice"),
         Some(0)
     );
+    // A non-member is a profile that is not loaded; the words say so.
     assert_eq!(
         start_sel(&mut s, "missing", sel.duplicate()).unwrap_err(),
-        "no slot: missing"
+        "missing is not loaded"
     );
     assert_eq!(
         s.scripts

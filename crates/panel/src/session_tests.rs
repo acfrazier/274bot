@@ -2772,13 +2772,36 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
     assert!(session.core.fleet().contains("bob"));
 }
 
+/// MultiBox off, the unlock focuses and auto-logs in the last focused
+/// profile: it runs, so it is a fleet member (the Fleet window lists it
+/// loaded) without joining a rail, since there is none.
 #[test]
-fn single_mode_unlock_still_selects_without_joining_the_rail() {
+fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
     let (mut session, path) = multibox_unlock_fixture();
     assert!(session.unlock_at(&path, "test-passphrase-01"));
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
-    assert!(session.core.members().is_empty(), "no MultiBox, no rail");
+    assert!(!session.multibox, "no MultiBox, no rail");
+    assert_eq!(session.core.members(), ["alice".to_string()]);
+    // The views project the members at the next poll.
+    session.core.poll();
+    session.fleet_model.refresh(&session.core);
+    let alice = session
+        .fleet_model
+        .rows()
+        .iter()
+        .find(|row| row.name() == "alice")
+        .expect("alice row");
+    assert!(
+        alice.loaded(),
+        "the Fleet window lists the running bot as loaded"
+    );
+    // A chooser pick of another profile opens its slot the same way.
+    session.pick_profile("bob");
+    assert_eq!(
+        session.core.members(),
+        ["alice".to_string(), "bob".to_string()]
+    );
 }
 
 #[test]
