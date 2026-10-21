@@ -380,6 +380,7 @@ static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None
 /// benchmark's seed/proof; unseeded idle installs no seeds.
 pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: bool) {
     mark_startup(StartupMark::FirstClientFrame);
+    crate::memory_diagnostics::gatherer_frame(c, name);
     crate::memory_diagnostics::frame(c, name, hold);
     let seed = {
         let seeds = SEEDS.lock().unwrap();
@@ -400,8 +401,11 @@ fn seed_frame(seed: &mut Seed, c: &mut client::client::Client, hold: bool) {
             duel.gate.observe(duel.slot, tile);
         }
     }
-    if seed.runner.on_start_script() && !seed.started {
-        return;
+    if seed.runner.on_start_script() {
+        crate::memory_diagnostics::gatherer_anchor(name, c);
+        if !seed.started {
+            return;
+        }
     }
     seed.runner.tick_with_hold(c, hold);
 }
@@ -497,6 +501,43 @@ fn qualify_contentious_moss_fleet(
         .ok_or("moss fleet qualification is missing its post-return Strength XP watch")?;
     step.name = "watch the local player target a Moss giant after the startup bank return";
     step.wait.arm = scenario::Proof::LocalTargetingNpcName { name: "Moss giant" };
+    Ok(())
+}
+
+const GATHERER_FLEET_BUDGET_TICKS: u32 = 300;
+
+/// Replace the per-account XP gate only for the contested Draynor fleet. The
+/// collector in `memory_diagnostics` supplies the stricter host oracle.
+fn qualify_gatherer_fleet(scenario: &mut scenario::Scenario, n: usize) -> Result<(), String> {
+    if n <= 1 || scenario.name != "gatherer" {
+        return Ok(());
+    }
+    let step = scenario.steps.iter_mut().find(|step| {
+        step.name == "watch the compiled Gatherer produce fresh Woodcutting XP"
+            && step.wait.arm == scenario::Proof::FreshStatXpGain { id: 8, min: 1 }
+    });
+    let step = step.ok_or("Gatherer fleet qualification is missing its post-Start XP watch")?;
+    let first_tick = Arc::new(Mutex::new(None));
+    let ready_tick = Arc::clone(&first_tick);
+    step.name = "watch Gatherer fleet safety and contention evidence";
+    // The runner counts the step-transition tick against its 300-tick wait,
+    // while this closure first sees the following snapshot. The collector
+    // still requires its exact start+300 endpoint before qualification.
+    step.kind = scenario::StepKind::Await {
+        evidence: "gatherer_fleet_safety_and_contention",
+        ready: Box::new(move |snapshot| {
+            let tick = snapshot.tick();
+            let mut first = ready_tick.lock().unwrap();
+            let start = *first.get_or_insert(tick);
+            tick >= start
+                && tick - start >= GATHERER_FLEET_BUDGET_TICKS.saturating_sub(1)
+        }),
+    };
+    step.wait = scenario::Wait {
+        arm: scenario::Proof::ScriptRunning,
+        budget_ticks: GATHERER_FLEET_BUDGET_TICKS,
+    };
+    scenario.proof = scenario::Proof::ScriptRunning;
     Ok(())
 }
 
@@ -1152,11 +1193,16 @@ fn seed_runner(
     }
 }
 
-struct ScriptCard {
-    card: script::JsCard,
-    bag: serde_json::Map<String, serde_json::Value>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<api::loadout::Loadout>,
+enum ScriptCard {
+    Catalog {
+        card: script::JsCard,
+        bag: serde_json::Map<String, serde_json::Value>,
+        siblings: Vec<(String, String)>,
+        loadouts: Vec<api::loadout::Loadout>,
+    },
+    CompiledGatherer {
+        bag: serde_json::Map<String, serde_json::Value>,
+    },
 }
 
 fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
@@ -1256,7 +1302,8 @@ impl Run {
     /// card, then install seed runners via [`SeedNav::LoadDefault`]. Prefer
     /// [`prepare_with_seed_nav`] from panel/TUI so seeds share `Play::world`.
     /// Idle modes need no card or RS2B0T. SeededIdle runs the Thiever setup
-    /// only. Active/lifecycle runs require RS2B0T.
+    /// only. Active catalog cards require RS2B0T; multi-bot Gatherer uses the
+    /// embedded compiled card.
     pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
         Self::prepare_with_seed_nav(config, frontend, SeedNav::LoadDefault)
     }
@@ -1349,39 +1396,45 @@ impl Run {
             let card_name = benchmark.settings.start_script.ok_or_else(|| {
                 format!("BOT_MEMORY_SCENARIO {scenario_name} has no catalog script")
             })?;
-            let root = std::env::var_os("RS2B0T")
-                .map(PathBuf::from)
-                .ok_or("RS2B0T is required for the active memory benchmark")?;
-            let mut library = script::JsLibrary::new(dir.join("scripts.json"));
-            library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
-            library.ensure_js(script::ScriptSource::Catalog, card_name)?;
-            let card = library
-                .get(script::ScriptSource::Catalog, card_name)
-                .cloned()
-                .ok_or_else(|| format!("missing catalog card {card_name}"))?;
             let inject = scenario::settings_inject_map(benchmark.settings.script_settings_inject);
-            let bag = script::settings_store::merge_bag(
-                &card.settings_schema,
-                &serde_json::Map::new(),
-                inject.as_ref(),
-            );
-            let siblings = script::resolve_sibling_modules(
-                &card.path,
-                &card.origin,
-                library.cache(),
-                script::CacheMeta {
-                    kind: card.kind,
-                    source: card.source,
-                    shape: None,
-                    api_family: Some(card.api_family.as_str().into()),
-                },
-            )?;
-            Some(ScriptCard {
-                card,
-                bag,
-                siblings,
-                loadouts: scenario_loadouts(&benchmark.settings),
-            })
+            if scenario_name == "gatherer" && config.n > 1 {
+                Some(ScriptCard::CompiledGatherer {
+                    bag: inject.unwrap_or_default(),
+                })
+            } else {
+                let root = std::env::var_os("RS2B0T")
+                    .map(PathBuf::from)
+                    .ok_or("RS2B0T is required for the active memory benchmark")?;
+                let mut library = script::JsLibrary::new(dir.join("scripts.json"));
+                library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
+                library.ensure_js(script::ScriptSource::Catalog, card_name)?;
+                let card = library
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| format!("missing catalog card {card_name}"))?;
+                let bag = script::settings_store::merge_bag(
+                    &card.settings_schema,
+                    &serde_json::Map::new(),
+                    inject.as_ref(),
+                );
+                let siblings = script::resolve_sibling_modules(
+                    &card.path,
+                    &card.origin,
+                    library.cache(),
+                    script::CacheMeta {
+                        kind: card.kind,
+                        source: card.source,
+                        shape: None,
+                        api_family: Some(card.api_family.as_str().into()),
+                    },
+                )?;
+                Some(ScriptCard::Catalog {
+                    card,
+                    bag,
+                    siblings,
+                    loadouts: scenario_loadouts(&benchmark.settings),
+                })
+            }
         } else {
             None
         };
@@ -1476,6 +1529,16 @@ impl Run {
         let mut seeds = HashMap::new();
         let duel_gate = (self.scenario_name.as_deref() == Some("duel_arena"))
             .then(|| DuelPairGate::new(self.config.n));
+        let gatherer_fleet = self.config.n > 1 && self.scenario_name.as_deref() == Some("gatherer");
+        crate::memory_diagnostics::clear_gatherer_fleet();
+        if gatherer_fleet {
+            crate::memory_diagnostics::configure_gatherer_fleet(
+                &self.names,
+                GATHERER_FLEET_BUDGET_TICKS,
+                12,
+                seed_world.clone(),
+            );
+        }
         for (slot, name) in self.names.iter().enumerate() {
             let mut scenario = if self.config.workload == Workload::SeededIdle {
                 seeded_idle_scenario()
@@ -1493,6 +1556,7 @@ impl Run {
             };
             widen_fleet_post_start_waits(&mut scenario, self.config.n);
             qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
+            qualify_gatherer_fleet(&mut scenario, self.config.n)?;
             qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
             scenario.settings.terminal_shot = None;
             let mut seed = seed_runner(scenario, name, seed_world.clone(), map_members);
@@ -1513,10 +1577,41 @@ impl Run {
         self.card.is_some()
     }
 
+    fn is_gatherer_fleet(&self) -> bool {
+        self.config.n > 1 && self.scenario_name.as_deref() == Some("gatherer")
+    }
+
     /// `false` keeps the seed's Start pending while a settings copy owns admission.
     fn start_script(&self, play: &Play, name: &str) -> Result<bool, String> {
         let Some(card) = &self.card else {
             return Ok(true);
+        };
+        let ScriptCard::Catalog {
+            card,
+            bag: card_bag,
+            siblings,
+            loadouts,
+        } = card
+        else {
+            let ScriptCard::CompiledGatherer { bag } = card else {
+                unreachable!("script card variant was matched above");
+            };
+            // Avoid cloning the small settings bag while a settings copy
+            // holds admission. The dispatcher rechecks the lock after this
+            // hint, so a racing hold remains fail-closed.
+            let start_hold = play
+                .script_start_hold
+                .lock()
+                .map_err(|_| "script start hold unavailable".to_string())?;
+            if start_hold.upgrade().is_some() {
+                return Ok(false);
+            }
+            drop(start_hold);
+            return match play.script_start_typed(name, script::gatherer::CARD.id, bag.clone()) {
+                Ok(()) => Ok(true),
+                Err(script::StartLoadError::Waiting(_)) => Ok(false),
+                Err(error) => Err(format!("gatherer_native_start_failed:{name}:{error}")),
+            };
         };
         // This fixture-owned loadout path starts the slot directly. Take the
         // same hold lock as dispatch_start and retain it through the slot call,
@@ -1531,7 +1626,7 @@ impl Run {
         if self.scenario_name.as_deref() == Some("thiever")
             && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
         {
-            let mut bag = card.bag.clone();
+            let mut bag = card_bag.clone();
             bag.insert("banking".into(), serde_json::json!("Auto"));
             bag.insert("loadout".into(), serde_json::json!("Memory food"));
             bag.insert("foodWithdraw".into(), serde_json::json!(22));
@@ -1539,9 +1634,9 @@ impl Run {
             let slot = crate::script_slot_or_insert(&play.scripts, name);
             let mut slot = slot.lock().unwrap();
             slot.start_load_with_loadouts_and_game_data(
-                card.card.js.clone(),
-                card.card.shape,
-                card.siblings.clone(),
+                card.js.clone(),
+                card.shape,
+                siblings.clone(),
                 &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
                 play.game_data(),
                 play.named_banks(),
@@ -1555,14 +1650,14 @@ impl Run {
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
         slot.start_load_with_loadouts_and_game_data(
-            card.card.js.clone(),
-            card.card.shape,
-            card.siblings.clone(),
-            &card.loadouts,
+            card.js.clone(),
+            card.shape,
+            siblings.clone(),
+            loadouts,
             play.game_data(),
             play.named_banks(),
         )?;
-        slot.post_settings_bag(&card.bag);
+        slot.post_settings_bag(card_bag);
         drop(slot);
         play.wake(name);
         Ok(true)
@@ -1596,6 +1691,25 @@ impl Run {
             now,
         );
 
+        let gatherer_fleet = self.is_gatherer_fleet();
+        if gatherer_fleet && self.qualification_complete.is_none() {
+            if let Some(selected) = play.game_data() {
+                if let Some(catalog) = api::gather_methods::cached(&selected) {
+                    crate::memory_diagnostics::gatherer_catalog(catalog);
+                }
+            }
+            for name in &self.names {
+                let native_status = play.script_native_status(name);
+                crate::memory_diagnostics::gatherer_native_status(
+                    name,
+                    play.script_state(name),
+                    native_status.as_deref(),
+                );
+                if let Some(error) = play.script_last_error(name) {
+                    crate::memory_diagnostics::gatherer_script_error(name, &error);
+                }
+            }
+        }
         let mut seeded = 0usize;
         let mut proved = 0usize;
         if self.config.workload != Workload::Idle {
@@ -1629,7 +1743,11 @@ impl Run {
                 }
                 match status {
                     scenario::RunnerStatus::Failed(msg) => {
-                        let failure = format!("benchmark seed/proof failed for {name}: {msg}");
+                        let failure = if gatherer_fleet {
+                            format!("gatherer_missing_evidence:scenario_runner:{name}:{msg}")
+                        } else {
+                            format!("benchmark seed/proof failed for {name}: {msg}")
+                        };
                         if self.diagnostics {
                             self.write_diagnostics(play, Some(&failure))?;
                         }
@@ -1654,18 +1772,44 @@ impl Run {
                                     }
                                 };
                             if permitted && self.start_script(play, name)? {
-                                seed_arc.lock().unwrap().started = true;
+                                let mut seed = seed_arc.lock().unwrap();
+                                seed.started = true;
+                                if gatherer_fleet {
+                                    seed.runner.observe_script_running();
+                                    crate::memory_diagnostics::gatherer_started(name);
+                                }
                             }
                         }
                     }
                     _ => {}
                 }
                 if let Some(error) = play.script_last_error(name) {
-                    let failure = format!("{name}: {error}");
+                    let failure = if gatherer_fleet {
+                        format!("gatherer_native_failure:{name}:{error}")
+                    } else {
+                        format!("{name}: {error}")
+                    };
                     if self.diagnostics {
                         self.write_diagnostics(play, Some(&failure))?;
                     }
                     return Err(failure);
+                }
+            }
+        }
+        if gatherer_fleet && self.qualification_complete.is_none() {
+            match crate::memory_diagnostics::gatherer_verdict_current() {
+                Some(crate::memory_diagnostics::GathererVerdict::Pending) => proved = 0,
+                Some(crate::memory_diagnostics::GathererVerdict::Pass { .. }) => {
+                    proved = self.config.n;
+                }
+                Some(crate::memory_diagnostics::GathererVerdict::Fail(error)) => {
+                    if self.diagnostics {
+                        self.write_diagnostics(play, Some(&error))?;
+                    }
+                    return Err(error);
+                }
+                None => {
+                    return Err("gatherer_missing_evidence:collector_unavailable".into());
                 }
             }
         }
@@ -1705,6 +1849,9 @@ impl Run {
             Duration::from_secs(1800)
         };
         if self.qualification_complete.is_none() && self.started.elapsed() > qualify_bound {
+            if gatherer_fleet {
+                return Err("gatherer_missing_evidence:qualification_timeout".into());
+            }
             return Err(format!(
                 "blocked: ready={ready} seeded={seeded} proved={proved} wanted={} ever_ready={}",
                 self.config.n,
@@ -1814,7 +1961,10 @@ impl Run {
             value["diagnostic_sidecar"] = self.diagnostics.into();
             value["benchmark_scenario"] = self.scenario_name.clone().into();
             value["contention_qualification"] = (self.config.n > 1
-                && self.scenario_name.as_deref() == Some("moss_giant_bank_start"))
+                && matches!(
+                    self.scenario_name.as_deref(),
+                    Some("moss_giant_bank_start" | "gatherer")
+                ))
             .into();
             value["all_bots_ingame_scene2_s"] = self
                 .all_ingame
@@ -1983,6 +2133,11 @@ impl Run {
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
+        if self.is_gatherer_fleet() {
+            if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json() {
+                value["gatherer_fleet_qualification"] = summary;
+            }
+        }
         write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
 
@@ -2020,6 +2175,11 @@ impl Run {
         });
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
+        }
+        if self.is_gatherer_fleet() {
+            if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json() {
+                value["gatherer_fleet_qualification"] = summary;
+            }
         }
         if let Err(write_error) = write_row(&mut self.qualification_output, &value) {
             eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
@@ -2767,6 +2927,134 @@ mod tests {
             .shared_world()
             .expect("world");
         assert!(Arc::ptr_eq(&world, &shared));
+    }
+
+    #[test]
+    fn native_gatherer_fleet_start_and_qualification_use_the_existing_seam() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_DIAGNOSTICS",
+        ]);
+        std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
+        let run = Run::prepare_unseeded(unit_config(10, Workload::Active), "unit")
+            .expect("native Gatherer preparation without RS2B0T");
+        assert!(matches!(
+            &run.card,
+            Some(ScriptCard::CompiledGatherer { .. })
+        ));
+
+        let mut scenario = scenario::get("gatherer").expect("Gatherer scenario");
+        qualify_gatherer_fleet(&mut scenario, 10).expect("fleet qualification");
+        let watch = scenario
+            .steps
+            .iter()
+            .find(|step| step.name == "watch Gatherer fleet safety and contention evidence")
+            .expect("fleet evidence watch");
+        assert!(matches!(&watch.kind, scenario::StepKind::Await { .. }));
+        assert_eq!(watch.wait.budget_ticks, GATHERER_FLEET_BUDGET_TICKS);
+        assert_eq!(watch.wait.arm, scenario::Proof::ScriptRunning);
+        assert_eq!(scenario.proof, scenario::Proof::ScriptRunning);
+
+        run.bind_seed_nav(SeedNav::FromPlay {
+            world: None,
+            obj_names: None,
+            map_members: false,
+        })
+        .expect("bind Gatherer fleet");
+
+        assert!(!run.diagnostics);
+        assert_eq!(
+            crate::memory_diagnostics::gatherer_verdict_current(),
+            Some(crate::memory_diagnostics::GathererVerdict::Pending)
+        );
+
+        let seeds = SEEDS.lock().unwrap();
+        let seeds = seeds.as_ref().expect("seeds installed");
+        assert_eq!(seeds.len(), 10);
+        for name in &run.names {
+            let seed = seeds.get(name).expect("named seed").lock().unwrap();
+            assert!(
+                seed.step_names
+                    .contains(&"watch Gatherer fleet safety and contention evidence"),
+                "N>1 Gatherer must use the fleet qualification instead of the per-bot XP gate"
+            );
+        }
+        crate::memory_diagnostics::clear_gatherer_fleet();
+    }
+
+    #[test]
+    fn gatherer_fleet_qualifier_replaces_xp_at_bind_seed_nav_seam() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_DIAGNOSTICS",
+        ]);
+        let mut run = Run::prepare_unseeded(unit_config(10, Workload::SeededIdle), "unit")
+            .expect("unseeded prepare");
+        run.config.workload = Workload::Active;
+        run.scenario_name = Some("gatherer".to_owned());
+        run.bind_seed_nav(SeedNav::FromPlay {
+            world: None,
+            obj_names: None,
+            map_members: false,
+        })
+        .expect("bind Gatherer fleet");
+
+        let seeds = SEEDS.lock().unwrap();
+        let seeds = seeds.as_ref().expect("seeds installed");
+        for name in &run.names {
+            let seed = seeds.get(name).expect("named seed").lock().unwrap();
+            assert!(
+                seed.step_names
+                    .contains(&"watch Gatherer fleet safety and contention evidence"),
+                "the N>1 Gatherer seam still requires the old per-bot XP proof"
+            );
+        }
+        crate::memory_diagnostics::clear_gatherer_fleet();
+    }
+
+    #[test]
+    fn single_gatherer_bind_keeps_its_fresh_xp_gate() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_DIAGNOSTICS",
+        ]);
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::SeededIdle), "unit")
+            .expect("unseeded prepare");
+        run.config.workload = Workload::Active;
+        run.scenario_name = Some("gatherer".to_owned());
+        run.bind_seed_nav(SeedNav::FromPlay {
+            world: None,
+            obj_names: None,
+            map_members: false,
+        })
+        .expect("bind single Gatherer");
+
+        let seeds = SEEDS.lock().unwrap();
+        let seed = seeds
+            .as_ref()
+            .expect("seeds installed")
+            .get(&run.names[0])
+            .expect("named seed")
+            .lock()
+            .unwrap();
+        assert!(seed
+            .step_names
+            .contains(&"watch the compiled Gatherer produce fresh Woodcutting XP"));
+        let mut single_scenario = scenario::get("gatherer").expect("single Gatherer scenario");
+        qualify_gatherer_fleet(&mut single_scenario, 1).expect("single qualifier");
+        assert!(single_scenario.steps.iter().any(|step| {
+            step.name == "watch the compiled Gatherer produce fresh Woodcutting XP"
+                && step.wait.arm == scenario::Proof::FreshStatXpGain { id: 8, min: 1 }
+        }));
     }
 
     #[test]
