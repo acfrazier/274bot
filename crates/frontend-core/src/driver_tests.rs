@@ -1150,7 +1150,7 @@ fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
 fn filtered_moves_and_marked_to_top_keep_the_other_profiles_in_order() {
     let mut d = driver("order-filtered", &["alice", "bob", "carol", "dave"]);
     d.poll();
-    d.models_mut().fleet_mut().staged_filter_mut().push_str("c");
+    d.models_mut().fleet_mut().staged_filter_mut().push('c');
     d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
         .expect("filter");
     assert_eq!(shown_names(&d), ["alice", "carol"], "bob and dave hidden");
