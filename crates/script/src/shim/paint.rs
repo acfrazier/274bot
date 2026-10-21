@@ -1,7 +1,8 @@
 /// Paint button id of the host's Pause/Resume control. The standard
 /// paint-controls helper (`ScriptRunner.paintControls`) advertises it; the
 /// operator front ends own its label and command, and it never reaches the
-/// script's click mailbox. `script_runner.js` writes the same literal.
+/// script's click mailbox. `HOST_CONTROLS` in `_kernel.js` writes the same
+/// literal.
 pub const HOST_PAUSE_CONTROL_ID: &str = "__rs2b0t.pause";
 
 /// Paint button id of the host's Stop control (see

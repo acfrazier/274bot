@@ -510,7 +510,7 @@
     "selector": "loopReadyOrDetached",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script/src/shim/script_runner.js:28",
+    "runtime": "crates/script/src/shim/script_runner.js:22",
     "async": false
   },
   {
@@ -519,7 +519,7 @@
     "selector": "stopReasonOf",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script/src/shim/script_runner.js:32",
+    "runtime": "crates/script/src/shim/script_runner.js:26",
     "async": false
   },
   {
