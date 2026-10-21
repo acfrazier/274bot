@@ -2,12 +2,13 @@
 //! Closed barriers open once; already-open passages use the shared native walk.
 
 use crate::gatherer::WorkArea;
-use crate::ground_take::{FailureLedger, GroundKey, GroundRefusal, TakeOutcome, TakeSettlement};
+use crate::ground_take::FailureLedger;
 use crate::native::{
     defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest,
 };
 use crate::reach_route as route;
 use crate::shim::InteractReq;
+use api::ground_take::{GroundKey, GroundRefusal, TakeOutcome, TakeSettlement};
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
 use std::sync::Arc;
