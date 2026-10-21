@@ -56,6 +56,11 @@ pub enum Targets<'a> {
     /// ([`crate::MarkedSelection`]), by name; a mark whose profile is gone
     /// names no member.
     Marked,
+    /// The waiting fleet plan's frozen targets
+    /// ([`crate::OperatorSession::fleet_plan`]), with its card. The command
+    /// must be the plan's [`crate::FleetPlan::command`]; submitting it
+    /// takes the plan.
+    Plan,
 }
 
 /// Why [`OperatorSession::submit`] opened no command.
@@ -343,9 +348,19 @@ pub(super) struct CommandDesk {
     /// The next Select also brings the member's worker up (the panel's
     /// chooser pick).
     select_opens_slot: bool,
+    /// The fleet plan waiting for Confirm or Cancel.
+    pub(super) fleet_plan: Option<crate::fleet_plan::FleetPlan>,
+    /// The plan of the planned command being dispatched.
+    pub(super) planned: Option<crate::fleet_plan::FleetPlan>,
+    /// The latest fleet action's result view.
+    pub(super) fleet_result: Option<crate::fleet_plan::FleetResult>,
 }
 
 impl CommandDesk {
+    pub(super) fn book(&self) -> &CommandBook {
+        &self.book
+    }
+
     pub(super) fn stage_vault(&mut self, staged: super::vault_rows::StagedVault) {
         self.vault = Some(staged);
     }
@@ -563,11 +578,42 @@ impl<Io> OperatorSession<Io> {
         if matches!(command, OperatorCommand::SwitchWorld(_)) {
             return Err(SubmitError::NoEntryPoint(command));
         }
-        {
-            let models = surface.models();
-            self.resolve_targets(command, targets, models.marks())?;
+        // A planned command runs over the plan's frozen marks, never the
+        // lent ones.
+        let plan = if matches!(targets, Targets::Plan) {
+            Some(self.take_plan_for(command)?)
+        } else {
+            None
+        };
+        let targets = if plan.is_some() {
+            Targets::Marked
+        } else {
+            targets
+        };
+        let resolved = match plan.as_ref() {
+            Some(plan) => self.resolve_targets(command, targets, Some(&plan.marks)),
+            None => {
+                let models = surface.models();
+                self.resolve_targets(command, targets, models.marks())
+            }
+        };
+        if let Err(error) = resolved {
+            // Nothing ran: the plan stays for another try or a Cancel.
+            if let Some(plan) = plan {
+                self.commands.fleet_plan = Some(plan);
+            }
+            return Err(error);
         }
-        let request = self.open_command(command)?;
+        let request = match self.open_command(command) {
+            Ok(request) => request,
+            Err(error) => {
+                if let Some(plan) = plan {
+                    self.commands.fleet_plan = Some(plan);
+                }
+                return Err(error);
+            }
+        };
+        self.commands.planned = plan;
         let mut submitted = Submitted {
             request,
             operation: None,
@@ -581,6 +627,7 @@ impl<Io> OperatorSession<Io> {
         self.dispatch(command, targets, now, surface, &mut submitted);
         self.commands.recording = false;
         self.record_posts(request, command);
+        let ran_plan = self.commands.planned.take();
         if let Some(op) = submitted.operation {
             if command.settles() == Settles::Owner {
                 self.own_members(request, command, op);
@@ -597,6 +644,9 @@ impl<Io> OperatorSession<Io> {
         );
         self.drain_watched();
         self.settle_owned();
+        if let Some(plan) = ran_plan {
+            self.open_fleet_result(request, plan);
+        }
         Ok(submitted)
     }
 
@@ -655,7 +705,7 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             (SubjectKind::Profile, Targets::Everyone) => self.everyone(command, &mut names),
-            (SubjectKind::Profile, Targets::Marked) => {
+            (SubjectKind::Profile, Targets::Marked | Targets::Plan) => {
                 if let Some(marks) = marks {
                     for (name, identity) in crate::selection::profile_rows(self) {
                         if marks.contains(identity) && !names.contains(&name) {
@@ -1381,6 +1431,22 @@ impl<Io> OperatorSession<Io> {
                 let row = super::fleet::FleetRow::Reorder;
                 self.fleet_row(row, request, application_admitted, surface, submitted)
             }
+            OperatorCommand::SetFleetCard => {
+                let row = super::fleet::FleetRow::Card;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::MarkFleet(op) => {
+                let row = super::fleet::FleetRow::MarkOp(op);
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::PlanFleetAction(action) => {
+                let row = super::fleet::FleetRow::Plan(action);
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::CancelFleetPlan => {
+                let row = super::fleet::FleetRow::CancelPlan;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
             OperatorCommand::SetMultiBox(on) => {
                 let row = super::fleet::FleetRow::MultiBox(on);
                 self.fleet_row(row, request, application_admitted, surface, submitted)
@@ -1774,7 +1840,11 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks());
+        let planned = self.planned_marks();
+        let mut rows = match planned.as_ref() {
+            Some(marks) => self.gone_marks(Some(marks)),
+            None => self.gone_marks(surface.models().marks()),
+        };
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());
@@ -1840,7 +1910,11 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks());
+        let planned = self.planned_marks();
+        let mut rows = match planned.as_ref() {
+            Some(marks) => self.gone_marks(Some(marks)),
+            None => self.gone_marks(surface.models().marks()),
+        };
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());

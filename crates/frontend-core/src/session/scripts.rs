@@ -99,8 +99,14 @@ impl<Io> OperatorSession<Io> {
         }
 
         let names = self.admitted_names(request);
+        // A planned command runs over its plan's frozen marks and card.
+        let planned_marks = self.planned_marks();
+        let planned_card = self.planned_card();
         let mut models = surface.models();
-        let marks = models.fleet.as_deref().map(crate::FleetModel::marks);
+        let marks = match planned_marks.as_ref() {
+            Some(marks) => Some(marks),
+            None => models.fleet.as_deref().map(crate::FleetModel::marks),
+        };
         let Some(scripts) = models.scripts.as_deref_mut() else {
             for name in names {
                 self.settle_member(
@@ -115,6 +121,10 @@ impl<Io> OperatorSession<Io> {
         };
 
         if let ScriptRow::ApplySettingsToMarked(kind) = row {
+            if planned_marks.is_some() {
+                // A planned copy applies the scope its plan prepared.
+                scripts.stage_settings_sync_apply();
+            }
             for (name, applied) in
                 dispatch_settings_sync(self, scripts, kind, targets, &names, marks)
             {
@@ -124,7 +134,8 @@ impl<Io> OperatorSession<Io> {
         }
 
         if row == ScriptRow::Start && matches!(targets, Targets::Everyone | Targets::Marked) {
-            let results = dispatch_start_group(self, scripts, targets, request, &names, marks);
+            let results =
+                dispatch_start_group(self, scripts, targets, request, &names, marks, planned_card);
             let marked_target = matches!(targets, Targets::Marked);
             let mut bulk_rows = Vec::new();
             for (name, applied) in results {
@@ -155,13 +166,19 @@ impl<Io> OperatorSession<Io> {
         };
         let assignment = marked_assignment_label(row).map(|_| {
             (
-                scripts.browse_selection().map(ScriptChoice::duplicate),
+                match &planned_card {
+                    Some(card) => card.as_ref().map(ScriptChoice::duplicate),
+                    None => scripts.browse_selection().map(ScriptChoice::duplicate),
+                },
                 scripts.take_staged_start_catalog_root(),
             )
         });
         let mut bulk_rows = Vec::new();
         for name in names {
-            let applied = if let Some((selection, root)) = &assignment {
+            let saving = planned_marks.is_some() && self.profile_write_pending(&name);
+            let applied = if saving {
+                Applied::Skipped(SkipReason::ProfileSaving)
+            } else if let Some((selection, root)) = &assignment {
                 match selection {
                     Some(selection) => assign_profile(
                         self,
@@ -605,6 +622,7 @@ fn dispatch_start_group<Io>(
     request: RequestId,
     names: &[String],
     marks: Option<&MarkedSelection>,
+    planned_card: Option<Option<ScriptChoice>>,
 ) -> Vec<(String, Applied)> {
     let root = scripts.take_staged_start_catalog_root();
     let accepted = match targets {
@@ -616,7 +634,10 @@ fn dispatch_start_group<Io>(
                     .map(|name| (name.clone(), Applied::Rejected(Rejection::NoModel, None)))
                     .collect();
             };
-            let selection = scripts.browse_selection().map(ScriptChoice::duplicate);
+            let selection = match planned_card {
+                Some(card) => card,
+                None => scripts.browse_selection().map(ScriptChoice::duplicate),
+            };
             crate::selection::start_marked(
                 marks,
                 core,
@@ -625,7 +646,11 @@ fn dispatch_start_group<Io>(
                 root.as_deref(),
             )
         }
-        Targets::Application | Targets::Profile(_) | Targets::Profiles(_) | Targets::Selected => {
+        Targets::Application
+        | Targets::Profile(_)
+        | Targets::Profiles(_)
+        | Targets::Selected
+        | Targets::Plan => {
             return names
                 .iter()
                 .map(|name| {

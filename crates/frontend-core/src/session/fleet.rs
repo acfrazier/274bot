@@ -19,6 +19,10 @@ pub(crate) enum FleetRow {
     ClearMarks,
     Reorder,
     MultiBox(bool),
+    Card,
+    MarkOp(crate::fleet::MarkOp),
+    Plan(crate::fleet_plan::FleetAction),
+    CancelPlan,
 }
 
 impl FleetRow {
@@ -31,6 +35,10 @@ impl FleetRow {
             Self::ClearMarks => OperatorCommand::ClearMarks,
             Self::Reorder => OperatorCommand::ReorderProfiles,
             Self::MultiBox(on) => OperatorCommand::SetMultiBox(on),
+            Self::Card => OperatorCommand::SetFleetCard,
+            Self::MarkOp(op) => OperatorCommand::MarkFleet(op),
+            Self::Plan(action) => OperatorCommand::PlanFleetAction(action),
+            Self::CancelPlan => OperatorCommand::CancelFleetPlan,
         }
     }
 }
@@ -192,6 +200,25 @@ impl<Io> OperatorSession<Io> {
                 None => no_model("marks"),
             },
             FleetRow::Reorder => self.reorder_profiles(request, surface),
+            FleetRow::Card => match surface.models().fleet.as_deref_mut() {
+                Some(fleet) => match fleet.commit_card() {
+                    Some(_) => Applied::Done,
+                    None => Applied::Rejected(
+                        Rejection::NotStaged,
+                        Some("fleet card: nothing staged".into()),
+                    ),
+                },
+                None => no_model("fleet card"),
+            },
+            FleetRow::MarkOp(op) => match surface.models().fleet.as_deref_mut() {
+                Some(fleet) => {
+                    fleet.apply_mark_op(op);
+                    Applied::Done
+                }
+                None => no_model("marks"),
+            },
+            FleetRow::Plan(action) => self.plan_fleet_action(action, surface),
+            FleetRow::CancelPlan => self.cancel_fleet_plan(surface),
             FleetRow::MultiBox(true) => {
                 self.seed_running();
                 Applied::Done

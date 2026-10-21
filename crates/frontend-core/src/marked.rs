@@ -715,3 +715,56 @@ pub fn prepare_apply_settings_marked<'a, Io>(
 #[cfg(test)]
 #[path = "marked_tests.rs"]
 mod tests;
+
+/// Prepare copying `source`'s settings for `card` to the frozen loaded
+/// shown rows of a no-marks fleet copy (`shown`). As the wall-wide copy, an
+/// unassigned bot is skipped, never assigned.
+pub fn prepare_apply_settings_shown<'a, Io>(
+    shown: &MarkedSelection,
+    core: &OperatorSession<Io>,
+    scripts: &'a mut Scripts,
+    source: &str,
+    card: &ScriptChoice,
+) -> Result<&'a SyncScope, String> {
+    let card = card.as_script();
+    const LABEL: &str = "Copy settings";
+    scripts.clear_prepared_settings_sync();
+    match card {
+        script::ScriptSel::Compiled(id) => {
+            scripts.prepare_compiled_settings_sync(
+                core,
+                source,
+                CompiledCardId::from_script(*id),
+                None,
+            )?;
+        }
+        script::ScriptSel::Loaded(card_source, lookup) => {
+            let (name, path) = scripts
+                .library()
+                .get(*card_source, lookup)
+                .map(|card| (card.name.clone(), card.path.clone()))
+                .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;
+            scripts.prepare_settings_sync(
+                core,
+                source,
+                crate::scripts::CardSource::from_script(*card_source),
+                &name,
+                &path,
+            );
+        }
+    }
+    let Resolved { names, .. } = resolve(shown, core);
+    scripts.restrict_prepared_settings_sync_to_shown(&names);
+    let empty = scripts
+        .prepared_settings_sync()
+        .is_some_and(|scope| scope.targets.is_empty());
+    if empty {
+        scripts.clear_prepared_settings_sync();
+        return Err(format!(
+            "{LABEL}: no shown bot on this card to copy {source}'s settings to"
+        ));
+    }
+    scripts
+        .prepared_settings_sync()
+        .ok_or_else(|| format!("{LABEL}: nothing prepared"))
+}

@@ -271,6 +271,18 @@ impl SyncScope {
         self.refresh_marked_prompt();
     }
 
+    /// Keep only `shown` (the frozen loaded shown rows of a no-marks
+    /// fleet copy). Unlike [`Self::restrict_to_marked`], an unassigned
+    /// member stays skipped: the no-marks scope never assigns the card.
+    fn restrict_to_shown(&mut self, shown: &[String]) {
+        let others = self.targets.len() + self.skipped.len();
+        self.targets.retain(|target| shown.contains(target));
+        self.skipped.retain(|(member, _)| shown.contains(member));
+        self.unmarked = Some(others - self.targets.len() - self.skipped.len());
+        self.refresh_excluded();
+        self.refresh_marked_prompt();
+    }
+
     fn refresh_excluded(&mut self) {
         if self.excluded_fields.is_empty() {
             self.excluded.clear();
@@ -1065,6 +1077,14 @@ impl Scripts {
     pub(crate) fn restrict_prepared_settings_sync(&mut self, marked: &[String], gone: Vec<String>) {
         if let Some(scope) = self.sync.prepared.as_mut() {
             scope.restrict_to_marked(marked, gone);
+        }
+    }
+
+    /// Restrict the prepared scope to the frozen shown rows of a no-marks
+    /// fleet copy (unassigned members stay skipped).
+    pub(crate) fn restrict_prepared_settings_sync_to_shown(&mut self, shown: &[String]) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.restrict_to_shown(shown);
         }
     }
 

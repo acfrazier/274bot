@@ -1703,6 +1703,19 @@ impl Scripts {
             .map(ScriptChoice::from_script)
     }
 
+    /// The label of [`Self::heading`], borrowed (no copy): the pending
+    /// Browse selection's label, else the assignment's display name.
+    pub fn heading_label<'a, Io>(
+        &'a self,
+        core: &'a OperatorSession<Io>,
+        profile: &str,
+    ) -> Option<&'a str> {
+        if let Some(sel) = self.pending_browse.get(profile) {
+            return Some(sel.label());
+        }
+        Self::assignment_name(core, profile)
+    }
+
     /// Whether `profile`'s Browse selection differs from its assignment.
     pub fn heading_is_pending<Io>(&self, core: &OperatorSession<Io>, profile: &str) -> bool {
         let Some(pending) = self.pending_browse.get(profile) else {

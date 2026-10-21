@@ -23,6 +23,7 @@ pub mod capacity;
 pub mod command;
 pub mod driver;
 pub mod fleet;
+pub mod fleet_plan;
 pub mod frames;
 pub mod group_walk;
 pub mod launch;
@@ -65,9 +66,11 @@ pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
 pub use fleet::{
-    contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetFilter,
-    FleetMarkCounts, FleetModel, NOT_LOADED,
+    contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetCard,
+    FleetFilter, FleetMarkCounts, FleetModel, MarkOp, MarkPredicate, ShownMarks,
+    FOCUSED_CARD_LABEL, NOT_LOADED, OWN_CARD_LABEL,
 };
+pub use fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 pub use group_walk::{MarkedWalk, WalkInputs};
 pub use map_bake::{
     load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,

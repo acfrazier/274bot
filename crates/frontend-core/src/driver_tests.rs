@@ -1367,3 +1367,272 @@ fn a_superseded_order_write_settles_and_the_newest_order_wins() {
         before
     );
 }
+
+// ---- F3: the fleet card, marks over the shown rows and frozen plans ----
+
+fn gatherer() -> crate::scripts::ScriptChoice {
+    crate::scripts::ScriptChoice::compiled(
+        crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
+    )
+}
+
+fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
+    d.models_mut().fleet_mut().stage_card(card);
+    let set = d
+        .submit(OperatorCommand::SetFleetCard, Targets::Application)
+        .expect("card");
+    assert_eq!(terminal_app(d, set.request()), Some(done()));
+}
+
+fn plan(d: &mut HeadlessDriver, action: crate::FleetAction) -> Option<Terminal> {
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(action),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    terminal_app(d, planned.request())
+}
+
+fn mark(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+}
+
+fn assignment(d: &HeadlessDriver, name: &str) -> Option<String> {
+    crate::scripts::Scripts::assignment_name(d.session(), name).map(str::to_owned)
+}
+
+fn plan_names(d: &HeadlessDriver) -> Vec<String> {
+    d.session()
+        .fleet_plan()
+        .expect("a plan waits")
+        .target_names()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Run the waiting plan (Confirm) and let its writes land.
+fn run_plan(d: &mut HeadlessDriver) -> RequestId {
+    let command = d.session().fleet_plan().expect("a plan waits").command();
+    let run = d.submit(command, Targets::Plan).expect("run admitted");
+    settle(d, run.request());
+    d.session_mut().flush_writes();
+    d.poll();
+    run.request()
+}
+
+fn load(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        let load = d
+            .submit(OperatorCommand::Load, Targets::Profile(name))
+            .expect("load");
+        settle(d, load.request());
+    }
+    d.poll();
+}
+
+/// Picking a fleet card changes which card the buttons use and nothing
+/// else: no Browse pick, no pending heading, no assignment.
+#[test]
+fn picking_a_fleet_card_changes_no_pick_assignment_or_run() {
+    let mut d = driver("f3-pick", &["alice", "bob"]);
+    d.poll();
+    assert_eq!(d.models().fleet().card(), &crate::FleetCard::Own);
+    assert_eq!(d.sync_card_label(), crate::OWN_CARD_LABEL);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(d.sync_card_label(), "Gatherer");
+    assert!(d.models().scripts().browse_selection().is_none());
+    assert!(d.models().scripts().pending_browse("alice").is_none());
+    assert_eq!(assignment(&d, "alice"), None);
+    assert_eq!(assignment(&d, "bob"), None);
+    set_card(&mut d, crate::FleetCard::Focused);
+    assert_eq!(d.sync_card_label(), "Focused bot's card: none");
+}
+
+/// The writing actions need a card: each bot's own card refuses them, and
+/// an own-card Start with no assignment has no bot to act on.
+#[test]
+fn own_card_refuses_assign_and_a_start_with_no_assignment() {
+    let mut d = driver("f3-own", &["alice"]);
+    d.poll();
+    mark(&mut d, &["alice"]);
+    for action in [
+        crate::FleetAction::Assign,
+        crate::FleetAction::AssignRestart,
+        crate::FleetAction::CopySettings,
+    ] {
+        assert!(
+            matches!(plan(&mut d, action), Some(Settlement::Failed(_))),
+            "{action:?} needs a card"
+        );
+    }
+    let start = plan(&mut d, crate::FleetAction::Start);
+    assert!(matches!(start, Some(Settlement::Failed(_))), "{start:?}");
+    assert!(d.session().fleet_plan().is_none());
+}
+
+/// A marked Assign runs at once over the frozen marks: a profile marked
+/// after the plan does not join it, and the one result settles with the
+/// targets done.
+#[test]
+fn a_marked_plan_freezes_its_targets_and_reports_once() {
+    let mut d = driver("f3-frozen", &["alice", "bob", "carol"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(
+        !waiting.needs_confirm(),
+        "a safe marked Assign is one click"
+    );
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Assign Gatherer to 2 marked bots: alice, bob."),
+        "{}",
+        waiting.prompt()
+    );
+    assert_eq!(plan_names(&d), ["alice", "bob"]);
+    // Marked after the plan, before it runs: not in it.
+    mark(&mut d, &["carol"]);
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "carol"), None, "a later mark never joins");
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 2, "{}", result.text());
+    assert!(
+        result.text().starts_with("Assign: done 2: alice, bob"),
+        "{}",
+        result.text()
+    );
+}
+
+/// With no marks the plan covers the loaded shown rows only and asks
+/// first; Cancel drops it and writes nothing.
+#[test]
+fn a_no_marks_plan_covers_loaded_shown_rows_and_cancel_writes_nothing() {
+    let mut d = driver("f3-all", &["alice", "bob", "carol"]);
+    load(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(waiting.needs_confirm(), "all asks first");
+    assert_eq!(waiting.scope(), crate::PlanScope::AllShown);
+    assert_eq!(plan_names(&d), ["alice", "bob"], "carol is not loaded");
+    let cancel = d
+        .submit(OperatorCommand::CancelFleetPlan, Targets::Application)
+        .expect("cancel");
+    assert_eq!(terminal_app(&d, cancel.request()), Some(done()));
+    assert!(d.session().fleet_plan().is_none());
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(assignment(&d, "alice"), None);
+    assert!(
+        d.submit(OperatorCommand::AssignScript, Targets::Plan)
+            .is_err(),
+        "no plan, nothing runs"
+    );
+}
+
+/// A newer plan replaces the waiting one, and its prompt says so.
+#[test]
+fn a_new_plan_supersedes_the_waiting_one_with_a_notice() {
+    let mut d = driver("f3-supersede", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Login), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert_eq!(waiting.action(), crate::FleetAction::Login);
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Replaces the waiting Assign plan. "),
+        "{}",
+        waiting.prompt()
+    );
+    assert!(
+        d.submit(OperatorCommand::AssignScript, Targets::Plan)
+            .is_err(),
+        "the replaced plan cannot run"
+    );
+}
+
+/// Delete and recreate a profile with the same name after the plan: the
+/// plan does not act on the new identity and names the old one as gone.
+#[test]
+fn a_recreated_profile_with_the_same_name_is_not_in_the_old_plan() {
+    let mut d = driver("f3-recreate", &["alice", "bob"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    d.session_mut()
+        .vault_mut()
+        .expect("vault")
+        .upsert(Profile {
+            username: "alice".into(),
+            password: "pw".into(),
+            uid: 99,
+            settings: ProfileSettings::default(),
+        })
+        .expect("new alice");
+    d.poll();
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice"), None, "the new alice is untouched");
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    let result = d.session().fleet_result().expect("result");
+    assert!(
+        result.text().contains("alice (profile no longer exists)"),
+        "{}",
+        result.text()
+    );
+}
+
+/// Mark operations act on the shown rows; a hidden mark stays.
+#[test]
+fn mark_operations_cover_the_shown_rows_and_keep_hidden_marks() {
+    use crate::{MarkOp, MarkPredicate, ShownMarks};
+    let mut d = driver("f3-marks", &["alice", "bob", "carol", "dave"]);
+    load(&mut d, &["alice", "bob"]);
+    let mark_op = |d: &mut HeadlessDriver, op: MarkOp| {
+        let s = d
+            .submit(OperatorCommand::MarkFleet(op), Targets::Application)
+            .expect("mark op");
+        assert_eq!(terminal_app(d, s.request()), Some(done()));
+    };
+    let marked = |d: &HeadlessDriver| -> Vec<String> {
+        let fleet = d.models().fleet();
+        fleet
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| fleet.is_marked(*index))
+            .map(|(_, row)| row.name().to_owned())
+            .collect()
+    };
+    mark_op(&mut d, MarkOp::Where(MarkPredicate::NotLoaded));
+    assert_eq!(marked(&d), ["carol", "dave"]);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::Some);
+    mark_op(&mut d, MarkOp::InvertShown);
+    assert_eq!(marked(&d), ["alice", "bob"]);
+    mark_op(&mut d, MarkOp::Shown);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::All);
+    d.models_mut().fleet_mut().staged_filter_mut().push('a');
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    mark_op(&mut d, MarkOp::UnmarkShown);
+    assert_eq!(marked(&d), ["bob"], "bob is hidden and keeps his mark");
+    assert_eq!(d.models().fleet().counts().hidden_marked(), 1);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::None);
+}

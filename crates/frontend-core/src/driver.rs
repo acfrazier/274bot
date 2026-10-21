@@ -246,6 +246,15 @@ impl HeadlessDriver {
         &mut self.session
     }
 
+    /// Bring the fleet card label up to date
+    /// ([`FleetModel::sync_card_label`]) and copy it.
+    pub fn sync_card_label(&mut self) -> String {
+        self.models
+            .fleet
+            .sync_card_label(&self.models.scripts, &self.session)
+            .to_owned()
+    }
+
     /// The driver's operator models, for reads.
     pub fn models(&self) -> &DriverModels {
         &self.models
