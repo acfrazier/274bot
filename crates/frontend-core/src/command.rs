@@ -1053,16 +1053,19 @@ impl OperatorCommand {
     }
 
     /// What a member this row supersedes ([`Self::supersedes`]) reads as
-    /// its reason in a result: this row, in the operator's words.
-    pub const fn took_over_words(self) -> &'static str {
+    /// its reason in a result: what the book knows when this row is
+    /// posted, in the operator's words. A posted Remove or Quit is still
+    /// pending (each settles when the slot retires), so it reads as
+    /// requested, not as done. `None` for a row that supersedes nothing.
+    pub const fn took_over_words(self) -> Option<&'static str> {
         match self {
-            Self::Login => "a later Log in took over",
-            Self::Logout => "a later Log out took over",
-            Self::RelogNow => "a later Relog now took over",
-            Self::SwitchWorld(_) => "a later Switch world took over",
-            Self::Remove => "the bot was removed",
-            Self::Quit => "the app quit",
-            _ => "a later command for this bot took over",
+            Self::Login => Some("a later Log in took over"),
+            Self::Logout => Some("a later Log out took over"),
+            Self::RelogNow => Some("a later Relog now took over"),
+            Self::SwitchWorld(_) => Some("a later Switch world took over"),
+            Self::Remove => Some("Remove was requested"),
+            Self::Quit => Some("Quit was requested"),
+            _ => None,
         }
     }
 
@@ -1617,7 +1620,7 @@ impl CommandBook {
                     member.state =
                         MemberState::Settled(Settlement::Cancelled(Cancellation::Superseded));
                     // Results name what took the member over.
-                    member.detail = Some(command.took_over_words().into());
+                    member.detail = command.took_over_words().map(Box::from);
                 }
             }
         }
@@ -1753,6 +1756,27 @@ impl CommandBook {
         settled
     }
 
+    /// Why a login the slot no longer wants was withdrawn, in the
+    /// operator's words, from the snapshot's park reason alone: a lifecycle
+    /// fact (the repeat guard, a saved logged-out hold) or a logout row the
+    /// slot's mailbox applied, which this book did not post (a row it posts
+    /// settles the members it supersedes when posted). A logout row comes
+    /// from more than the Log out command (Remove logs the bot out first)
+    /// and may still be under way, so it reads as requested and names no
+    /// command. `None` when the snapshot names no cause (the result then
+    /// says only "cancelled") and for a world error, which fails the member
+    /// instead.
+    pub(crate) const fn withdrawn_words(reason: Option<ParkReason>) -> Option<&'static str> {
+        match reason {
+            Some(ParkReason::RepeatGuard) => {
+                Some("the automatic login guard stopped repeated logins")
+            }
+            Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
+            Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
+            Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
+        }
+    }
+
     /// Apply the slot's mailbox snapshot, read after its events were
     /// observed. First the resolution fence: a pending login-wanting member
     /// posted to `slot` whose resolved attempt the mailbox no longer asks
@@ -1764,8 +1788,10 @@ impl CommandBook {
     /// Switch world) posted to `slot` whose want a later generation
     /// withdrew settles: a world error as `Failed(WorldRejected)`, a latch
     /// or withdrawal as `Cancelled(Superseded)` (today `arm.login_latched()`
-    /// cancels the pending Log in, `session.rs:1641-1644`). Members posted to
-    /// another slot are untouched. Returns how many settled.
+    /// cancels the pending Log in, `session.rs:1641-1644`), with the
+    /// snapshot's park reason as its detail ([`Self::withdrawn_words`]).
+    /// Members posted to another slot are untouched. Returns how many
+    /// settled.
     pub fn observe_intent(&mut self, slot: SlotKey, snapshot: &IntentSnapshot) -> usize {
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in report.members.iter_mut().filter(|m| m.on_slot(slot)) {
@@ -1785,6 +1811,9 @@ impl CommandBook {
             }
             _ => Settlement::Cancelled(Cancellation::Superseded),
         };
+        // A row this book posted settled the members it superseded when it
+        // was posted; what is left was withdrawn by the slot's own latch.
+        let detail = Self::withdrawn_words(snapshot.park_reason());
         let mut settled = 0;
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in &mut report.members {
@@ -1795,6 +1824,7 @@ impl CommandBook {
                 {
                     if posted == slot && generation < snapshot.generation() {
                         member.state = MemberState::Settled(terminal());
+                        member.detail = detail.map(Box::from);
                         settled += 1;
                     }
                 }

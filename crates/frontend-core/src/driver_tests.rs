@@ -3732,6 +3732,34 @@ fn a_log_in_during_the_switch_cancels_it_in_words() {
     );
 }
 
+/// Review F4 r3 (Sol 2): the old session drops and the repeat guard
+/// latches the switch's login off, with no second command: the result
+/// names the guard, not a command.
+#[test]
+fn a_switch_the_repeat_guard_stops_names_the_guard_not_a_command() {
+    let mut d = world_driver("f4-guard", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    let arm = arm_of(&d, "alice");
+    assert!(arm.wants_logout(), "the relog is posted");
+    arm.exit_and_trip_repeat_guard_for_test();
+    // One poll settles the member from the slot; the next refreshes the
+    // result, as the next frame does.
+    d.poll();
+    d.poll();
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::Superseded
+        ))
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (the automatic login guard stopped repeated logins)"
+    );
+}
+
 /// Review F4 r2 (Sol): every command that can take a posted switch over
 /// is named for what it is, never as another command: Relog now and
 /// another Switch world supersede it and are named; Quit ends the slot,
@@ -3797,6 +3825,14 @@ fn removing_a_switching_bot_cancels_it() {
         matches!(terminal(&d, run, "alice"), Some(Settlement::Cancelled(_))),
         "{:?}",
         terminal(&d, run, "alice")
+    );
+    // Review F4 r3: the reason says only what is known when it settles.
+    // Remove logs the bot out first; that logout row, not a Log out
+    // command, withdrew the switch's login.
+    d.poll();
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (a logout was requested)"
     );
 }
 

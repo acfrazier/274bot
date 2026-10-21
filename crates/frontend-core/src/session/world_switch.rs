@@ -14,7 +14,8 @@
 //! boundary, not this owner, decides that).
 
 use api::identity::{Cancellation, RequestId, SessionKey, Settlement};
-use api::lifecycle::{Intent, WorldChoice};
+use api::lifecycle::{Intent, ParkReason, WorldChoice};
+use host_play::LoginLatchReason;
 
 use super::commands::Applied;
 use crate::command::{CommandFailure, Completion, FailureKind, Rejection, SkipReason, Subject};
@@ -227,11 +228,14 @@ impl<Io> OperatorSession<Io> {
     /// admitted on). The book is asked first, so a refused member never
     /// reaches the slot's mailbox.
     fn post_world_switch(&mut self, switch: &mut WorldSwitch) -> bool {
+        // No arm: the slot was stopped, removed or reaped, or play closed.
+        // No detail: the result reads "the session or slot it was for
+        // ended", which holds for each.
         let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&switch.name)) else {
             self.settle_switch(
                 switch,
                 Settlement::Cancelled(Cancellation::ScopeInvalidated),
-                Some("the bot was removed"),
+                None,
             );
             return false;
         };
@@ -251,11 +255,13 @@ impl<Io> OperatorSession<Io> {
             return false;
         }
         let previous = arm.session_key();
+        // `None` only for a closed mailbox: the slot's lifetime ended
+        // (Remove, stop or shutdown came first).
         let Some(receipt) = arm.post_intent(Intent::SwitchWorld(switch.world)) else {
             self.settle_switch(
                 switch,
                 Settlement::Cancelled(Cancellation::ScopeInvalidated),
-                Some("the bot was removed"),
+                None,
             );
             return false;
         };
@@ -284,7 +290,7 @@ impl<Io> OperatorSession<Io> {
             self.settle_switch(
                 switch,
                 Settlement::Cancelled(Cancellation::ScopeInvalidated),
-                Some("the bot was removed"),
+                None,
             );
             return false;
         };
@@ -336,12 +342,22 @@ impl<Io> OperatorSession<Io> {
                 ),
             )
         } else if !arm.login_wanted() && arm.session_key().is_none_or(|key| Some(key) == previous) {
-            // No login is owed and no new session began: a Log out took
-            // the slot before it reconnected. (A new session that is not
-            // ready yet owes no login either; it settles above once ready.)
+            // No login is owed and no new session began. A command the book
+            // posted (Log in, Log out, Relog now, another switch) settled the
+            // member when its post was recorded, so the login was withdrawn
+            // by the slot's latch or by a row posted outside the book (the
+            // logout Remove posts first): name the latch, as the book does
+            // (`CommandBook::withdrawn_words`), or say only "cancelled"
+            // when there is none. (A new session that is not ready yet owes
+            // no login either; it settles above once ready.)
+            let latch = arm.login_latch_reason().map(|reason| match reason {
+                LoginLatchReason::OperatorLogout => ParkReason::OperatorLogout,
+                LoginLatchReason::PersistedLogout => ParkReason::PersistedLogout,
+                LoginLatchReason::RepeatedUnexpectedLogouts { .. } => ParkReason::RepeatGuard,
+            });
             (
                 Settlement::Cancelled(Cancellation::Superseded),
-                Some("logged out before it reconnected".to_owned()),
+                crate::command::CommandBook::withdrawn_words(latch).map(str::to_owned),
             )
         } else {
             return true;

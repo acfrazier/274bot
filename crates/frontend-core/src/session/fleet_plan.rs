@@ -23,12 +23,13 @@ const NAMES_SHOWN: usize = 8;
 
 /// A cancelled member's reason in the result line when its owner gave
 /// none, in the operator's words. A member a posted row superseded names
-/// that row (`OperatorCommand::took_over_words`); a withdrawal with no
-/// recorded cause says only what is always true.
+/// that row (`OperatorCommand::took_over_words`) and a login the slot's own
+/// latch withdrew names the latch (`CommandBook::observe_intent`); with no
+/// recorded cause a superseded member says only "cancelled", since neither
+/// a later command nor any other cause is known.
 fn cancellation_words(cause: Cancellation) -> &'static str {
     match cause {
-        Cancellation::Superseded => "a later command for this bot took over",
-        Cancellation::Operator => "cancelled",
+        Cancellation::Superseded | Cancellation::Operator => "cancelled",
         Cancellation::ScopeInvalidated => "the session or slot it was for ended",
         Cancellation::Shutdown => "shutting down",
     }
@@ -771,7 +772,7 @@ fn no_model(what: &str) -> Applied {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, prompt_text};
+    use super::{cancellation_words, classify, prompt_text};
     use crate::bulk::{BulkOutcome, BulkRow};
     use crate::fleet_plan::{FleetAction, PlanScope};
     use crate::scripts::ScriptRunState as RunState;
@@ -823,6 +824,15 @@ mod tests {
             classify(FleetAction::Login, &unloaded, true, None, &core),
             Ok(false)
         );
+    }
+
+    /// Review F4 r3 (Sol 2): a cancelled member with no recorded cause
+    /// names no command; a superseded one reads only "cancelled".
+    #[test]
+    fn a_cancellation_without_a_recorded_cause_names_no_command() {
+        use api::identity::Cancellation;
+        assert_eq!(cancellation_words(Cancellation::Superseded), "cancelled");
+        assert_eq!(cancellation_words(Cancellation::Operator), "cancelled");
     }
 
     #[test]
