@@ -1453,15 +1453,15 @@ fn load(d: &mut HeadlessDriver, names: &[&str]) {
 fn picking_a_fleet_card_changes_no_pick_assignment_or_run() {
     let mut d = driver("f3-pick", &["alice", "bob"]);
     d.poll();
-    assert_eq!(d.models().fleet().card(), &crate::FleetCard::Own);
+    assert_eq!(d.models().fleet().card(), &crate::FleetCard::OWN);
     assert_eq!(d.sync_card_label(), crate::OWN_CARD_LABEL);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(d.sync_card_label(), "Gatherer");
     assert!(d.models().scripts().browse_selection().is_none());
     assert!(d.models().scripts().pending_browse("alice").is_none());
     assert_eq!(assignment(&d, "alice"), None);
     assert_eq!(assignment(&d, "bob"), None);
-    set_card(&mut d, crate::FleetCard::Focused);
+    set_card(&mut d, crate::FleetCard::FOCUSED);
     assert_eq!(d.sync_card_label(), "Focused bot's card: none");
 }
 
@@ -1495,7 +1495,7 @@ fn a_marked_plan_freezes_its_targets_and_reports_once() {
     let mut d = driver("f3-frozen", &["alice", "bob", "carol"]);
     d.poll();
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     let waiting = d.session().fleet_plan().expect("plan");
     assert!(
@@ -1532,7 +1532,7 @@ fn a_marked_plan_freezes_its_targets_and_reports_once() {
 fn a_no_marks_plan_covers_loaded_shown_rows_and_cancel_writes_nothing() {
     let mut d = driver("f3-all", &["alice", "bob", "carol"]);
     load(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     let waiting = d.session().fleet_plan().expect("plan");
     assert!(waiting.needs_confirm(), "all asks first");
@@ -1558,7 +1558,7 @@ fn a_no_marks_plan_covers_loaded_shown_rows_and_cancel_writes_nothing() {
 fn a_new_plan_supersedes_the_waiting_one_with_a_notice() {
     let mut d = driver("f3-supersede", &["alice", "bob"]);
     load(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     assert_eq!(plan(&mut d, crate::FleetAction::Login), Some(done()));
     let waiting = d.session().fleet_plan().expect("plan");
@@ -1584,7 +1584,7 @@ fn a_recreated_profile_with_the_same_name_is_not_in_the_old_plan() {
     let mut d = driver("f3-recreate", &["alice", "bob"]);
     d.poll();
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     let delete = d
         .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
@@ -1776,7 +1776,7 @@ fn a_copy_settings_plan_asks_first_and_cancel_releases_its_scope() {
         .expect("select");
     settle(&mut d, select.request());
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
     assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
@@ -1831,7 +1831,7 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
         .expect("select");
     settle(&mut d, select.request());
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
     let _ = d.models_mut().scripts.take_notice();
@@ -1884,7 +1884,7 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
     let mut d = driver("f3-rename-card", &["alice", "bob", "carol"]);
     d.poll();
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     let mut renamed = d
         .session()
@@ -1900,7 +1900,7 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
     d.poll();
     set_card(
         &mut d,
-        crate::FleetCard::Pinned(crate::scripts::ScriptChoice::compiled(
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
             crate::scripts::CompiledCardId::QUESTER,
         )),
     );
@@ -1923,7 +1923,7 @@ fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pendi
     let mut d = driver("f3-saving", &["alice", "bob"]);
     d.poll();
     mark(&mut d, &["alice", "bob"]);
-    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     let gate = d.session().write_gate();
     let held = gate.lock().expect("gate");
     let mut renamed = d

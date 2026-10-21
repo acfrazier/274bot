@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 /// stage it and submit `SetFleetCard`, nothing else.
 fn pin_fleet_card(s: &mut Session, choice: ScriptChoice) {
     s.fleet_model
-        .stage_card(frontend_core::FleetCard::Pinned(choice));
+        .stage_card(frontend_core::FleetCard::pinned(choice));
     s.submit(OperatorCommand::SetFleetCard, Targets::Application);
 }
 

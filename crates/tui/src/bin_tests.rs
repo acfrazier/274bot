@@ -4498,7 +4498,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     dispatch(
         &mut session,
         &mut app,
-        AppAction::PickFleetCard(frontend_core::FleetCard::Focused),
+        AppAction::PickFleetCard(frontend_core::FleetCard::FOCUSED),
     );
     assert_eq!(command.availability(&app), Ok(()));
     // bob and carol take it; erin is marked but on another card; dave is not
@@ -4632,7 +4632,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     dispatch(
         &mut session,
         &mut app,
-        AppAction::PickFleetCard(frontend_core::FleetCard::Focused),
+        AppAction::PickFleetCard(frontend_core::FleetCard::FOCUSED),
     );
     let action = app.run_command(crate::commands::Command::Fleet(
         frontend_core::FleetAction::CopySettings,
@@ -4958,7 +4958,7 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     dispatch(
         &mut session,
         &mut app,
-        AppAction::PickFleetCard(frontend_core::FleetCard::Pinned(card_choice)),
+        AppAction::PickFleetCard(frontend_core::FleetCard::pinned(card_choice)),
     );
     let action = app.run_command(crate::commands::Command::Fleet(
         frontend_core::FleetAction::Assign,
@@ -5258,7 +5258,7 @@ fn press_key(session: &mut TuiSession, app: &mut TuiApp, key: crossterm::event::
 fn pick_fleet_card_with_keys(session: &mut TuiSession, app: &mut TuiApp, card: &ScriptChoice) {
     use crate::test_support::{ch, key};
     press_key(session, app, ch('c'));
-    let want = frontend_core::FleetCard::Pinned(card.duplicate());
+    let want = frontend_core::FleetCard::pinned(card.duplicate());
     for _ in 0..200 {
         let Some(crate::overlay::Modal::FleetCard(picker)) = &app.modal else {
             panic!("the picker is open");
@@ -5317,7 +5317,7 @@ fn c_picks_a_fleet_card_with_keys_and_esc_keeps_it_without_touching_the_browse_p
     assert!(app.modal.is_none());
     assert_eq!(
         app.fleet_model.card(),
-        &frontend_core::FleetCard::Pinned(target.duplicate()),
+        &frontend_core::FleetCard::pinned(target.duplicate()),
         "Enter pinned the card"
     );
     let shown = screen_text(&mut app, 120, 40);
@@ -5367,7 +5367,7 @@ fn c_picks_a_fleet_card_with_keys_and_esc_keeps_it_without_touching_the_browse_p
     assert!(app.modal.is_none());
     assert_eq!(
         app.fleet_model.card(),
-        &frontend_core::FleetCard::Pinned(target.duplicate()),
+        &frontend_core::FleetCard::pinned(target.duplicate()),
         "Esc left the card"
     );
     unchanged(&session, &app);
@@ -5378,7 +5378,7 @@ fn c_picks_a_fleet_card_with_keys_and_esc_keeps_it_without_touching_the_browse_p
     press_key(&mut session, &mut app, key(KeyCode::Down));
     press_key(&mut session, &mut app, key(KeyCode::Enter));
     session.pump(&mut app);
-    assert_eq!(app.fleet_model.card(), &frontend_core::FleetCard::Focused);
+    assert_eq!(app.fleet_model.card(), &frontend_core::FleetCard::FOCUSED);
     let shown = screen_text(&mut app, 120, 40);
     // The 34-cell pane wraps the long label at its spaces.
     assert!(shown.contains("card: Focused bot's card:"), "{shown}");
@@ -5604,7 +5604,7 @@ fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
     dispatch(
         &mut session,
         &mut app,
-        AppAction::PickFleetCard(frontend_core::FleetCard::Pinned(pinned)),
+        AppAction::PickFleetCard(frontend_core::FleetCard::pinned(pinned)),
     );
     let assigned = |session: &mut TuiSession, name: &str| {
         session.core.flush_writes();

@@ -439,17 +439,17 @@ fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
     if matches(OWN_CARD_LABEL) {
         entry(
             OWN_CARD_LABEL,
-            matches!(current, FleetCard::Own),
+            current.is_own(),
             &mut picked,
-            FleetCard::Own,
+            FleetCard::OWN,
         );
     }
     if matches(FOCUSED_CARD_LABEL) {
         entry(
             FOCUSED_CARD_LABEL,
-            matches!(current, FleetCard::Focused),
+            current.is_focused(),
             &mut picked,
-            FleetCard::Focused,
+            FleetCard::FOCUSED,
         );
     }
     ui.separator();
@@ -475,12 +475,12 @@ fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
             any = true;
             let _id = ui.push_id(index);
             let choice = card.selection();
-            let selected = matches!(current, FleetCard::Pinned(pinned) if *pinned == choice);
+            let selected = current.pinned_card() == Some(&choice);
             entry(
                 card.name(),
                 selected,
                 &mut picked,
-                FleetCard::Pinned(choice),
+                FleetCard::pinned(choice),
             );
         }
     }
@@ -599,7 +599,7 @@ fn marks_row(ui: &Ui, session: &mut Session) {
 /// action (see [`Session::plan_fleet_action`]).
 fn action_bar(ui: &Ui, session: &mut Session) {
     let labels = &session.fleet_labels;
-    let own = matches!(session.fleet_model.card(), FleetCard::Own);
+    let own = session.fleet_model.card().is_own();
     let marked = labels.marked > 0;
     let nothing = labels.scope == 0;
     let mut planned = None;
@@ -1186,7 +1186,7 @@ mod tests {
         let card = session.scripts.load_card(&path).unwrap();
         session
             .fleet_model
-            .stage_card(FleetCard::Pinned(card.choice()));
+            .stage_card(FleetCard::pinned(card.choice()));
         session.submit(OperatorCommand::SetFleetCard, Targets::Application);
         session.plan_fleet_action(FleetAction::Assign);
         session.core.flush_writes();

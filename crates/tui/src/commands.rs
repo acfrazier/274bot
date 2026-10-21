@@ -6,7 +6,7 @@
 //! focus, so no letter leaks into another pane or a text field.
 
 use frontend_core::scripts::ScriptRunState;
-use frontend_core::{FleetAction, FleetCard, MarkPredicate};
+use frontend_core::{FleetAction, MarkPredicate};
 
 use crate::app::{TuiApp, WalkSendMode};
 use crate::layout::Screen;
@@ -489,10 +489,9 @@ impl Command {
             Command::ClearMarks => (!app.fleet_model.marks().is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
-            Command::Fleet(action) => (!action.needs_card()
-                || !matches!(app.fleet_model.card(), FleetCard::Own))
-            .then_some(())
-            .ok_or("pick a card first"),
+            Command::Fleet(action) => (!action.needs_card() || !app.fleet_model.card().is_own())
+                .then_some(())
+                .ok_or("pick a card first"),
             Command::MoveProfileUp | Command::MoveProfileDown => {
                 load_order()?;
                 let (delta, reason) = if self == Command::MoveProfileUp {

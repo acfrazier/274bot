@@ -466,34 +466,69 @@ impl FleetFilter {
 
 /// The card the fleet buttons use (Start, Assign, Assign & restart and
 /// Copy settings). Choosing one changes nothing else: no assignment, no
-/// Browse pick, no profile form, no Start.
+/// Browse pick, no profile form, no Start. [`Self::OWN`] (the default)
+/// is each bot's own saved assignment (Start only; the writing actions
+/// need a card), [`Self::FOCUSED`] the focused bot's card (its pending
+/// Browse pick, else its assignment) followed as the focus moves, and
+/// [`Self::pinned`] one card, fixed whatever the focus.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub enum FleetCard {
-    /// Each bot's own saved assignment (Start only; the writing actions
-    /// need a card).
+pub struct FleetCard(CardChoice);
+
+/// What a [`FleetCard`] holds.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) enum CardChoice {
     #[default]
     Own,
-    /// The focused bot's card (its pending Browse pick, else its
-    /// assignment), followed as the focus moves.
     Focused,
-    /// One card, fixed whatever the focus.
     Pinned(crate::scripts::ScriptChoice),
 }
 
 impl FleetCard {
+    /// Each bot's own saved assignment.
+    pub const OWN: Self = Self(CardChoice::Own);
+    /// The focused bot's card.
+    pub const FOCUSED: Self = Self(CardChoice::Focused);
+
+    /// One card, fixed whatever the focus.
+    pub fn pinned(card: crate::scripts::ScriptChoice) -> Self {
+        Self(CardChoice::Pinned(card))
+    }
+
+    /// Whether this is each bot's own card.
+    pub fn is_own(&self) -> bool {
+        matches!(self.0, CardChoice::Own)
+    }
+
+    /// Whether this follows the focused bot's card.
+    pub fn is_focused(&self) -> bool {
+        matches!(self.0, CardChoice::Focused)
+    }
+
+    /// The pinned card, when one is pinned.
+    pub fn pinned_card(&self) -> Option<&crate::scripts::ScriptChoice> {
+        match &self.0 {
+            CardChoice::Pinned(card) => Some(card),
+            CardChoice::Own | CardChoice::Focused => None,
+        }
+    }
+
+    pub(crate) fn choice(&self) -> &CardChoice {
+        &self.0
+    }
+
     /// The same choice, copied.
     pub fn duplicate(&self) -> Self {
-        match self {
-            Self::Own => Self::Own,
-            Self::Focused => Self::Focused,
-            Self::Pinned(card) => Self::Pinned(card.duplicate()),
-        }
+        Self(match &self.0 {
+            CardChoice::Own => CardChoice::Own,
+            CardChoice::Focused => CardChoice::Focused,
+            CardChoice::Pinned(card) => CardChoice::Pinned(card.duplicate()),
+        })
     }
 }
 
-/// The label text of [`FleetCard::Own`].
+/// The label text of [`FleetCard::OWN`].
 pub const OWN_CARD_LABEL: &str = "Each bot's own card";
-/// The label prefix of [`FleetCard::Focused`].
+/// The label prefix of [`FleetCard::FOCUSED`].
 pub const FOCUSED_CARD_LABEL: &str = "Focused bot's card";
 
 /// The fleet card's label and the inputs it was built from.
@@ -513,14 +548,14 @@ impl CardLabel {
         heading: Option<&str>,
         pending: bool,
     ) {
-        let kind = match card {
-            FleetCard::Own => 0,
-            FleetCard::Focused => 1,
-            FleetCard::Pinned(_) => 2,
+        let kind = match card.choice() {
+            CardChoice::Own => 0,
+            CardChoice::Focused => 1,
+            CardChoice::Pinned(_) => 2,
         };
         let focused = focused.unwrap_or("");
-        let heading_text = match card {
-            FleetCard::Pinned(choice) => choice.label(),
+        let heading_text = match card.choice() {
+            CardChoice::Pinned(choice) => choice.label(),
             _ => heading.unwrap_or(""),
         };
         if let Some((k, f, h, p)) = &self.key {
@@ -529,9 +564,9 @@ impl CardLabel {
             }
         }
         self.text.clear();
-        match card {
-            FleetCard::Own => self.text.push_str(OWN_CARD_LABEL),
-            FleetCard::Focused => {
+        match card.choice() {
+            CardChoice::Own => self.text.push_str(OWN_CARD_LABEL),
+            CardChoice::Focused => {
                 self.text.push_str(FOCUSED_CARD_LABEL);
                 self.text.push_str(": ");
                 self.text.push_str(heading.unwrap_or("none"));
@@ -539,7 +574,7 @@ impl CardLabel {
                     self.text.push_str(" (pending)");
                 }
             }
-            FleetCard::Pinned(choice) => self.text.push_str(choice.label()),
+            CardChoice::Pinned(choice) => self.text.push_str(choice.label()),
         }
         match &mut self.key {
             Some((k, f, h, p)) => {
@@ -767,7 +802,7 @@ impl FleetModel {
             scratch: Vec::new(),
             placed: Vec::new(),
             rows_generation: 0,
-            card: FleetCard::Own,
+            card: FleetCard::OWN,
             staged_card: None,
             card_label: CardLabel::default(),
         }
@@ -892,8 +927,8 @@ impl FleetModel {
         core: &crate::OperatorSession<Io>,
     ) -> &str {
         let focused = core.selected();
-        let (heading, pending) = match (&self.card, focused) {
-            (FleetCard::Focused, Some(name)) => (
+        let (heading, pending) = match (self.card.choice(), focused) {
+            (CardChoice::Focused, Some(name)) => (
                 scripts.heading_label(core, name),
                 scripts.heading_is_pending(core, name),
             ),
