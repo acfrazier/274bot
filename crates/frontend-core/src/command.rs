@@ -1562,6 +1562,18 @@ impl CommandBook {
         self.settled.iter().chain(&self.pending)
     }
 
+    /// Whether [`Self::posted`] would record a post of `request`'s intent
+    /// row to `slot` for `subject`. An owner that posts the row itself asks
+    /// first, so a refused member never reaches the slot's mailbox.
+    pub fn may_post(
+        &self,
+        request: RequestId,
+        subject: Subject,
+        slot: SlotKey,
+    ) -> Result<(), CommandError> {
+        self.postable(request, subject, slot).map(|_| ())
+    }
+
     /// Record the receipt of posting the command's intent row to `slot` for
     /// `subject`, and supersede that member's older pending commands this
     /// one replaces ([`OperatorCommand::supersedes`]). Only a Pending
