@@ -585,8 +585,9 @@ loaded after the plan does not join it, and a bot that changed state is
 skipped with its new reason.
 
 Each run ends in one **result line** under the plan row: failures first,
-then cancellations (a bot a later command took over; the reason names it,
-such as `a later Relog now took over`),
+then cancellations (each with its reason when one is known, such as
+`a later Relog now took over` or `the automatic login guard stopped
+repeated logins`; otherwise `cancelled`),
 then skips, then done, with counts. It reads as pending until every member
 has really finished (a paced Start counts its queued bots until they
 start or fail). The full text is in a tooltip, and the core logs one line

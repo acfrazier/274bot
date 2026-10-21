@@ -1571,6 +1571,21 @@ impl SlotArm {
         };
         lifecycle.login_succeeded(command, kind);
     }
+
+    /// The session drops and the repeat guard latches automatic logins off,
+    /// as the slot reports after repeated unexpected logouts: no command is
+    /// posted.
+    pub fn exit_and_trip_repeat_guard_for_test(&self) {
+        self.observe_session_exit(SessionEndCause::ConnectionLost, false);
+        self.lifecycle
+            .lock()
+            .mailbox
+            .observe(LifecycleFact::RepeatGuardTripped {
+                count: UNEXPECTED_LOGOUT_THRESHOLD as u8,
+                window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+            })
+            .expect("test repeat-guard generation exhausted");
+    }
 }
 
 #[cfg(test)]

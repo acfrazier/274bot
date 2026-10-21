@@ -1709,6 +1709,15 @@ fn a_withdrawn_login_settles_by_why_it_was_withdrawn() {
         .unwrap();
     assert_eq!(f.book.observe_intent(slot, &mailbox.snapshot()), 1);
     assert_eq!(f.terminal(again, ALICE), Some(&SUPERSEDED));
+    assert_eq!(
+        f.member(again, ALICE).detail(),
+        Some("the automatic login guard stopped repeated logins")
+    );
+    assert_eq!(
+        f.member(login, ALICE).detail(),
+        None,
+        "a world error fails, without words"
+    );
 
     // A Log in posted after the latch rearms: the snapshot no longer
     // withdraws it.
@@ -1737,6 +1746,117 @@ fn a_withdrawn_snapshot_settles_only_its_own_slots_members() {
     assert_eq!(f.book.observe_intent(latched, &latched_box.snapshot()), 1);
     assert_eq!(f.terminal(withdrawn, ALICE), Some(&SUPERSEDED));
     assert_eq!(f.terminal(kept, BOB), None);
+}
+
+/// Review F4 r3 (Sol 1): every row that can supersede a pending Switch
+/// world records, when it is posted, only what the book knows then. A
+/// posted Quit is still pending (it settles when the slot retires), so it
+/// reads as requested.
+#[test]
+fn a_superseded_member_records_what_the_book_knows_when_the_row_is_posted() {
+    for (replacement, words) in [
+        (OperatorCommand::Login, "a later Log in took over"),
+        (OperatorCommand::Logout, "a later Log out took over"),
+        (OperatorCommand::RelogNow, "a later Relog now took over"),
+        (
+            OperatorCommand::SwitchWorld(3),
+            "a later Switch world took over",
+        ),
+        (OperatorCommand::Remove, "the bot was removed"),
+        (OperatorCommand::Quit, "Quit was requested"),
+    ] {
+        let mut f = Fixture::new();
+        let slot = f.slot();
+        let mut mailbox = online(false);
+        let switch = f.dispatch(OperatorCommand::SwitchWorld(2), ALICE, slot, &mut mailbox);
+        let later = f.dispatch(replacement, ALICE, slot, &mut mailbox);
+        assert_eq!(
+            f.terminal(switch, ALICE),
+            Some(&SUPERSEDED),
+            "{replacement:?}"
+        );
+        assert_eq!(
+            f.member(switch, ALICE).detail(),
+            Some(words),
+            "{replacement:?}"
+        );
+        assert_eq!(replacement.took_over_words(), Some(words));
+        if replacement == OperatorCommand::Quit {
+            assert_eq!(
+                f.terminal(later, ALICE),
+                None,
+                "the Quit itself is still pending"
+            );
+        }
+    }
+    // A row that supersedes nothing has no words to record.
+    for command in OperatorCommand::ALL {
+        if command.took_over_words().is_none() {
+            for older in OperatorCommand::ALL {
+                assert!(!command.supersedes(older), "{command:?} over {older:?}");
+            }
+        }
+    }
+}
+
+/// Review F4 r3 (Sol 2): a login the slot's own latch withdraws, with no
+/// second command opened or posted, names the latch; a withdrawal with no
+/// known cause records nothing (the result says only "cancelled").
+#[test]
+fn a_login_withdrawn_without_a_later_command_names_why() {
+    // The switch's login half is owed after the old session exits, then
+    // the repeat guard latches it off.
+    let mut f = Fixture::new();
+    let slot = f.slot();
+    let mut mailbox = online(false);
+    let switch = f.dispatch(OperatorCommand::SwitchWorld(2), ALICE, slot, &mut mailbox);
+    mailbox
+        .observe(LifecycleFact::SessionExited {
+            clean: true,
+            resumable: false,
+        })
+        .unwrap();
+    assert_eq!(
+        f.book.observe_intent(slot, &mailbox.snapshot()),
+        0,
+        "the login is owed"
+    );
+    mailbox
+        .observe(LifecycleFact::RepeatGuardTripped {
+            count: 3,
+            window_seconds: 60,
+        })
+        .unwrap();
+    assert_eq!(f.book.observe_intent(slot, &mailbox.snapshot()), 1);
+    assert_eq!(f.book.reports().count(), 1, "no second command");
+    assert_eq!(f.terminal(switch, ALICE), Some(&SUPERSEDED));
+    assert_eq!(
+        f.member(switch, ALICE).detail(),
+        Some("the automatic login guard stopped repeated logins")
+    );
+
+    // Rows the mailbox applied that this book did not post.
+    for (row, words) in [
+        (Intent::Logout, Some("a Log out turned login off")),
+        (
+            Intent::HoldLoggedOut,
+            Some("the bot is set to stay logged out"),
+        ),
+        (Intent::WithdrawLogin, None),
+    ] {
+        let mut f = Fixture::new();
+        let slot = f.slot();
+        let mut mailbox = IntentMailbox::new(false, WorldChoice::World(5));
+        let login = f.dispatch(OperatorCommand::Login, ALICE, slot, &mut mailbox);
+        mailbox.post(row).unwrap();
+        assert_eq!(
+            f.book.observe_intent(slot, &mailbox.snapshot()),
+            1,
+            "{row:?}"
+        );
+        assert_eq!(f.terminal(login, ALICE), Some(&SUPERSEDED), "{row:?}");
+        assert_eq!(f.member(login, ALICE).detail(), words, "{row:?}");
+    }
 }
 
 // --- Retirement and terminal precedence ---
