@@ -30,6 +30,9 @@ pub enum Command {
     FilterFleet,
     MarkAllShown,
     ClearMarks,
+    MoveProfileUp,
+    MoveProfileDown,
+    MoveMarkedToTop,
     LoadLoginAll,
     ImportProfiles,
     LogoutAll,
@@ -191,6 +194,9 @@ impl Command {
         Command::FilterFleet,
         Command::MarkAllShown,
         Command::ClearMarks,
+        Command::MoveProfileUp,
+        Command::MoveProfileDown,
+        Command::MoveMarkedToTop,
         Command::LoadLoginAll,
         Command::LogoutAll,
         Command::ImportProfiles,
@@ -245,6 +251,9 @@ impl Command {
             | Command::FilterFleet
             | Command::MarkAllShown
             | Command::ClearMarks
+            | Command::MoveProfileUp
+            | Command::MoveProfileDown
+            | Command::MoveMarkedToTop
             | Command::LoadLoginAll
             | Command::LogoutAll
             | Command::ImportProfiles => Group::Fleet,
@@ -297,6 +306,9 @@ impl Command {
             Command::FilterFleet => "Filter fleet",
             Command::MarkAllShown => "Select all shown rows",
             Command::ClearMarks => "Clear row selection",
+            Command::MoveProfileUp => "Move profile up",
+            Command::MoveProfileDown => "Move profile down",
+            Command::MoveMarkedToTop => "Move marked to top",
             Command::LoadLoginAll => "Load + log in all…",
             Command::LogoutAll => "Log out all…",
             Command::ImportProfiles => "Import rs2b0t profiles…",
@@ -363,6 +375,8 @@ impl Command {
             Command::Show(screen) => screen.key(),
             Command::FocusNext => "Tab",
             Command::FocusPrev => "S-Tab",
+            Command::MoveProfileUp => "Alt-Up",
+            Command::MoveProfileDown => "Alt-Down",
             Command::FilterFleet => "/",
             _ => return None,
         })
@@ -461,6 +475,11 @@ impl Command {
                 .then_some(())
                 .ok_or("no bots loaded")
         };
+        let load_order = || {
+            (app.fleet_model.order() == frontend_core::FleetOrder::LoadOrder)
+                .then_some(())
+                .ok_or("choose Load order to reorder")
+        };
         match self {
             Command::ShowMessage => app.error.as_ref().map(|_| ()).ok_or("no message"),
             Command::MarkAllShown => (!app.fleet_model.shown().is_empty())
@@ -469,6 +488,24 @@ impl Command {
             Command::ClearMarks => (!app.fleet_model.marks().is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
+            Command::MoveProfileUp | Command::MoveProfileDown => {
+                load_order()?;
+                let (delta, reason) = if self == Command::MoveProfileUp {
+                    (-1, "no shown row above the cursor")
+                } else {
+                    (1, "no shown row below the cursor")
+                };
+                app.table
+                    .reorder_step(&app.fleet_model, delta)
+                    .map(|_| ())
+                    .ok_or(reason)
+            }
+            Command::MoveMarkedToTop => {
+                load_order()?;
+                (!app.fleet_model.marks().is_empty())
+                    .then_some(())
+                    .ok_or("mark fleet rows first (Space)")
+            }
             Command::Login | Command::Logout | Command::Remove => bot(),
             Command::ManualWalk => {
                 bot()?;

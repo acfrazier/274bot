@@ -11,12 +11,13 @@
 use std::cell::RefCell;
 
 use dear_imgui_rs::{
-    Condition, TableColumnFlags, TableFlags, TableOptions, TableSizingPolicy, Ui, WindowFlags,
+    Condition, DragDropTargetFlags, SelectableFlags, StyleColor, TableColumnFlags, TableFlags,
+    TableOptions, TableSizingPolicy, Ui, WindowFlags,
 };
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
-    marked_availability, marked_startable, FleetOrder, MarkedAction, MarkedBlock, OperatorCommand,
-    Scripts, Targets,
+    marked_availability, marked_startable, FleetModel, FleetOrder, MarkedAction, MarkedBlock,
+    OperatorCommand, Placement, ProfileIdentity, ReorderOp, Scripts, Targets,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
@@ -35,6 +36,63 @@ thread_local! {
     static CELL: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
+/// The drag-and-drop payload type of a profile dragged to reorder the saved
+/// Load order. The payload is the profile's [`ProfileIdentity::raw`].
+const PROFILE_DND: &str = "274bot-profile";
+
+/// Make the last item a drag source for the profile `identity`; the drag
+/// tooltip shows `name`. Returns whether this item is being dragged now.
+/// Call it only while the fleet shows Load order.
+pub(crate) fn profile_drag_source(ui: &Ui, identity: ProfileIdentity, name: &str) -> bool {
+    match ui
+        .drag_drop_source_config(PROFILE_DND)
+        .begin_payload(identity.raw())
+    {
+        Some(_tip) => {
+            ui.text(name);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Make the last item a drop target for a dragged profile. Returns the
+/// dropped profile's [`ProfileIdentity::raw`] on the frame the button is
+/// released over it. Call it only while the fleet shows Load order.
+pub(crate) fn profile_drop_target(ui: &Ui) -> Option<u64> {
+    let target = ui.drag_drop_target()?;
+    match target.accept_payload::<u64, _>(PROFILE_DND, DragDropTargetFlags::NONE) {
+        Some(Ok(payload)) if payload.delivery => Some(payload.data),
+        _ => None,
+    }
+}
+
+/// The move a drop of profile `moving` (a [`ProfileIdentity::raw`]) onto the
+/// model row `target` asks for: after the target when the moving profile is
+/// above it in the shown rows, else before it. `None` when nothing would
+/// move (the same row, or a profile the filter now hides).
+pub(crate) fn drop_op(model: &FleetModel, moving: u64, target: usize) -> Option<ReorderOp> {
+    let moving_index = model
+        .identities()
+        .iter()
+        .position(|identity| identity.raw() == moving)?;
+    if moving_index == target {
+        return None;
+    }
+    let from = model.shown().iter().position(|&i| i == moving_index)?;
+    let to = model.shown().iter().position(|&i| i == target)?;
+    let target = model.identity(target)?;
+    let placement = if from < to {
+        Placement::After(target)
+    } else {
+        Placement::Before(target)
+    };
+    Some(ReorderOp::Move {
+        moving: model.identity(moving_index)?,
+        to: placement,
+    })
+}
+
 /// What a test sees of the Fleet window after one frame.
 #[cfg(test)]
 #[derive(Debug, Default, Clone)]
@@ -49,6 +107,11 @@ pub(crate) struct FleetLayout {
     pub sort_choices: Vec<[f32; 4]>,
     /// Left and right edge of each table cell drawn, row by row.
     pub cells: Vec<[f32; 2]>,
+    /// The Profile name cell of each shown row, in row order, as
+    /// `[min_x, min_y, max_x, max_y]`.
+    pub names: Vec<[f32; 4]>,
+    /// The Move marked to top button's `[min_x, min_y, max_x, max_y]`.
+    pub move_to_top: [f32; 4],
 }
 
 #[cfg(test)]
@@ -84,6 +147,23 @@ fn record_cell(ui: &Ui) {
     });
 }
 
+/// Record the rect of the name text that starts at `at`.
+#[cfg(test)]
+fn record_name(ui: &Ui, at: [f32; 2], name: &str) {
+    let size = [label_width(ui, name), ui.current_font_size()];
+    LAYOUT.with_borrow_mut(|layout| {
+        layout
+            .names
+            .push([at[0], at[1], at[0] + size[0], at[1] + size[1]])
+    });
+}
+
+#[cfg(test)]
+fn record_move_to_top(ui: &Ui) {
+    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+    LAYOUT.with_borrow_mut(|layout| layout.move_to_top = [min[0], min[1], max[0], max[1]]);
+}
+
 #[cfg(test)]
 fn record_window_layout(ui: &Ui) {
     LAYOUT.with_borrow_mut(|layout| layout.scroll_max_x = ui.scroll_max_x());
@@ -100,6 +180,7 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
 const ASSIGN_LABEL: &str = "Assign selected card";
 const ASSIGN_RESTART_LABEL: &str = "Assign & restart";
 const APPLY_SETTINGS_LABEL: &str = "Apply focused bot's settings to marked";
+const MOVE_TO_TOP_LABEL: &str = "Move marked to top";
 
 /// The action bar's count-bearing button labels. None ends in an ellipsis: a
 /// button that opens a window or a confirmation still names the action plainly.
@@ -128,7 +209,7 @@ impl ActionLabels {
 
     /// Every label of the bar, including the fixed ones.
     #[cfg(test)]
-    fn all(&self) -> [&str; 8] {
+    fn all(&self) -> [&str; 9] {
         [
             &self.start,
             &self.stop,
@@ -137,6 +218,7 @@ impl ActionLabels {
             &self.log_in,
             &self.log_out,
             &self.walk,
+            MOVE_TO_TOP_LABEL,
             APPLY_SETTINGS_LABEL,
         ]
     }
@@ -244,6 +326,25 @@ fn action_bar(ui: &Ui, session: &mut Session) {
             "open the WalkTo picker for the marked bots: pick a tile and every bot \
              walks there from where it stands",
         );
+    }
+    continue_line_if_fits(ui, button_width(ui, MOVE_TO_TOP_LABEL));
+    {
+        let load_order = session.fleet_model.order() == FleetOrder::LoadOrder;
+        let ready = load_order && count > 0;
+        let _disabled = (!ready).then(|| ui.begin_disabled());
+        if ui.button(MOVE_TO_TOP_LABEL) {
+            session.reorder_profiles(ReorderOp::MarkedToTop);
+        }
+        #[cfg(test)]
+        record_move_to_top(ui);
+        ui.set_item_tooltip(if !load_order {
+            "choose Load order to reorder"
+        } else if count == 0 {
+            "mark profiles first"
+        } else {
+            "move the marked profiles to the top of the saved Load order, \
+             keeping their relative order"
+        });
     }
     apply_settings_row(ui, session, count);
     if let Some(report) = session.fleet_report.as_deref() {
@@ -418,6 +519,9 @@ fn table(ui: &Ui, session: &mut Session) {
     let needs_last_line = columns.contains(&FleetColumn::LastLog);
     let table_id = format!("##fleet-table-{}", columns.len());
     let mut mark_click: Option<(usize, bool)> = None;
+    let mut dropped: Option<(u64, usize)> = None;
+    // Dragging reorders the saved Load order, so only that view offers it.
+    let reorder = session.fleet_model.order() == FleetOrder::LoadOrder;
     // Every column stretches with the window, so the table is never wider
     // than the window and has no horizontal scroll; only the Mark column keeps
     // a fixed width. The weights follow the width each column wants.
@@ -473,10 +577,37 @@ fn table(ui: &Ui, session: &mut Session) {
             ui.table_next_column();
             #[cfg(test)]
             record_cell(ui);
-            if row.loaded() {
+            if reorder {
+                // The name is the drag handle and the whole row the drop
+                // target (a selectable spanning every column; the Mark
+                // checkbox, submitted first, keeps its own clicks).
+                #[cfg(test)]
+                let name_at = ui.cursor_screen_pos();
+                {
+                    let _dim = (!row.loaded()).then(|| {
+                        ui.push_style_color(
+                            StyleColor::Text,
+                            ui.style_color(StyleColor::TextDisabled),
+                        )
+                    });
+                    ui.selectable_config(row.name())
+                        .flags(SelectableFlags::SPAN_ALL_COLUMNS | SelectableFlags::ALLOW_OVERLAP)
+                        .build();
+                    profile_drag_source(ui, marked_id, row.name());
+                    if let Some(moving) = profile_drop_target(ui) {
+                        dropped = Some((moving, index));
+                    }
+                }
+                #[cfg(test)]
+                record_name(ui, name_at, row.name());
+            } else if row.loaded() {
                 ui.text(row.name());
+                #[cfg(test)]
+                record_name(ui, ui.item_rect_min(), row.name());
             } else {
                 ui.text_disabled(row.name());
+                #[cfg(test)]
+                record_name(ui, ui.item_rect_min(), row.name());
             }
             if session.scripts.has_restart_badge(row.name()) {
                 ui.same_line();
@@ -547,6 +678,11 @@ fn table(ui: &Ui, session: &mut Session) {
             .map(|row| row.name().to_string());
         if let Some(name) = name {
             session.submit(OperatorCommand::SetMark(marked), Targets::Profile(&name));
+        }
+    }
+    if let Some((moving, target)) = dropped {
+        if let Some(op) = drop_op(&session.fleet_model, moving, target) {
+            session.reorder_profiles(op);
         }
     }
 }

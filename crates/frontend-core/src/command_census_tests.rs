@@ -221,11 +221,6 @@ const CORE: &[(&str, Decision)] = &[
         "prefs.rs::UiPreferences::update",
         Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
     ),
-    // profiles.rs
-    (
-        "profiles.rs::fresh_uid",
-        Excluded("derives the next profile UID from the vault; identity calculation only"),
-    ),
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
@@ -659,6 +654,7 @@ const CORE: &[(&str, Decision)] = &[
     ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
+    ("session/fleet.rs::OperatorSession::stage_reorder", Staged(C::ReorderProfiles)),
     ("session/prefs.rs::OperatorSession::stage_notice", Staged(C::AcknowledgeNotice)),
     ("session/prefs.rs::OperatorSession::stage_log_save", Staged(C::SaveLog)),
     ("session/prefs.rs::OperatorSession::stage_quester_paths", Staged(C::SetQuesterPaths)),

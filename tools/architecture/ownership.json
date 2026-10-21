@@ -479,6 +479,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/profile_saves.rs",
       "owner": "T3"
     },

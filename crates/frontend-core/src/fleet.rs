@@ -60,6 +60,20 @@ impl Fleet {
         true
     }
 
+    /// Order the members by `rank` (the saved Load order), keeping the
+    /// relative order of equal ranks; a member without a rank goes after
+    /// every ranked one.
+    pub(crate) fn sort_by_rank(&mut self, rank: impl Fn(&str) -> Option<usize>) {
+        if self
+            .members
+            .windows(2)
+            .all(|pair| rank_key(&rank, &pair[0]) <= rank_key(&rank, &pair[1]))
+        {
+            return;
+        }
+        self.members.sort_by_key(|name| rank_key(&rank, name));
+    }
+
     /// Drop a member; the session stops its slot separately.
     pub fn remove(&mut self, name: &str) {
         self.members.retain(|n| n != name);
@@ -95,6 +109,11 @@ impl Fleet {
     pub fn should_auto_login(&self, name: &str, auto_login: bool) -> bool {
         auto_login && !self.latch.contains(name)
     }
+}
+
+/// The sort key of a member: its rank, unranked last.
+fn rank_key(rank: &impl Fn(&str) -> Option<usize>, name: &str) -> usize {
+    rank(name).unwrap_or(usize::MAX)
 }
 
 /// ASCII case-insensitive substring test without allocating.
@@ -495,9 +514,9 @@ impl FleetMarkCounts {
     }
 }
 
-/// The fleet view model: one row per profile identity (every loaded slot,
-/// in load order, then every vault profile that is not loaded, in vault
-/// order), the marks, the filter and order, and the shown rows. Each front
+/// The fleet view model: one row per profile identity, in the saved Load
+/// order (loaded and not loaded together; a loaded slot without a vault
+/// row last), the marks, the filter and order, and the shown rows. Each front
 /// end holds one and lends it to [`crate::OperatorSession::submit`] through
 /// [`crate::Models::with_fleet`]; its mutators are crate-private, so marks,
 /// filter and order change only through commands.
@@ -528,6 +547,8 @@ pub struct FleetModel {
     generation: u64,
     /// Reused sorted identity buffer for de-duplication and mark pruning.
     scratch: Vec<ProfileIdentity>,
+    /// Reused flags: which projected rows a rebuild has placed.
+    placed: Vec<bool>,
     /// Moves whenever the universe was rebuilt (row contents may have
     /// changed), never for a filter, order or mark change.
     rows_generation: u64,
@@ -553,6 +574,7 @@ impl FleetModel {
             seen: None,
             generation: 0,
             scratch: Vec::new(),
+            placed: Vec::new(),
             rows_generation: 0,
         }
     }
@@ -660,19 +682,57 @@ impl FleetModel {
             return false;
         }
         self.seen = Some(seen);
+        let projected = view.rows();
+        let mut placed = std::mem::take(&mut self.placed);
+        placed.clear();
+        placed.resize(projected.len(), false);
         let mut len = 0;
-        for row in view.rows() {
-            let identity = session.profile_identity_or_synthetic(row.name());
-            self.put_row(len, identity, |dest| dest.copy_from(row), || row.snapshot());
-            len += 1;
+        // The saved Load order: a loaded profile takes its projected row,
+        // the others an unloaded row. The members follow the same order,
+        // so the projected row is usually the next one.
+        let mut hint = 0;
+        for name in session.profile_order().names() {
+            let loaded = match projected.get(hint) {
+                Some(row) if row.name() == name.as_str() => Some(hint),
+                _ => projected.iter().position(|row| row.name() == name.as_str()),
+            };
+            if let Some(index) = loaded.filter(|&index| !placed[index]) {
+                placed[index] = true;
+                hint = index + 1;
+                let row = &projected[index];
+                let identity = session.profile_identity_or_synthetic(name);
+                self.put_row(len, identity, |dest| dest.copy_from(row), || row.snapshot());
+                len += 1;
+            } else if let Some(profile) = session.profile(name) {
+                let identity = ProfileIdentity::uid(profile.uid());
+                self.put_row(
+                    len,
+                    identity,
+                    |dest| dest.reset_unloaded(name),
+                    || FleetRow::for_profile(name.as_str()),
+                );
+                len += 1;
+            }
         }
+        // A loaded slot the order lacks (no vault row): last, in load
+        // order.
+        for (index, row) in projected.iter().enumerate() {
+            if !placed[index] {
+                let identity = session.profile_identity_or_synthetic(row.name());
+                self.put_row(len, identity, |dest| dest.copy_from(row), || row.snapshot());
+                len += 1;
+            }
+        }
+        self.placed = placed;
+        // A vault profile the order does not hold yet (the session
+        // reconciles at its next poll).
         self.scratch.clear();
         self.scratch.extend_from_slice(&self.ids[..len]);
         self.scratch.sort_unstable();
-        let loaded = len;
+        let ordered = len;
         for profile in session.profiles() {
             let identity = ProfileIdentity::uid(profile.uid());
-            if self.scratch[..loaded].binary_search(&identity).is_ok() {
+            if self.scratch[..ordered].binary_search(&identity).is_ok() {
                 continue;
             }
             let name = profile.username();
