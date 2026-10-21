@@ -1941,12 +1941,17 @@ fn trip_position(frame: &mut GameSnapshot, here: WorldTile) {
     frame.seed_world(world);
 }
 
+#[track_caller]
 fn assert_resource_return(
     selected: &Arc<api::game_data::SelectedGameData>,
     request: &script::native::WalkRequest,
     anchor: WorldTile,
 ) {
-    assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+    assert_eq!(
+        request.arrival,
+        nav::contract::ArrivalKind::Area,
+        "resource return from {anchor:?}: {request:?}",
+    );
     assert_eq!(request.radius, 1);
     assert_eq!(request.target.level, anchor.level);
     let region = api::gather_methods::SceneRegionInput {
