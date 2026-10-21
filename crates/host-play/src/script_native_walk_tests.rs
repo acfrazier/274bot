@@ -653,13 +653,18 @@ fn add_selection_zone(
     carve: Option<nav::router::AvoidRect>,
 ) {
     let carves = carve.map_or_else(Vec::new, |carve| vec![(0, carve)]);
+    let vislevel = if zone.class == nav::zones::ZoneClass::LevelRule {
+        zone.cap / 2
+    } else {
+        0
+    };
     let table = nav::zones::ZoneTable::from_parts(
         vec![zone],
         vec![nav::zones::ZoneKind::new(
             "test-danger",
             "Test danger",
             -1,
-            0,
+            vislevel,
             false,
             false,
         )],
@@ -2785,7 +2790,8 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
         ));
         assert_eq!(slot.native_walk_permissions(), Some(current));
         drop(slot);
-        rig.shared.lock().target = Some(query_tile);
+        // Cross the queried barrier rather than end inside the router's
+        // deliberate destination-completion exception.
         rig.observe(1);
         assert!(rig.wait_for_route(5_000, || {
             rig.navs
