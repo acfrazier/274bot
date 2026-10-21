@@ -1,5 +1,7 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{reach, walk_step_evidence, NoArgs};
+use crate::acquire::run::AcquireRun;
+use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, OpenGate};
 use crate::combat::RaisedPrayers;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
@@ -7,7 +9,6 @@ use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
 use crate::native_shop::{BuyMachine, BuyRequest};
-use crate::quester::bank_run::BankRun;
 use crate::quester::compile::{
     CompileContext, CompileError, CompiledCarry, FamilyReceipt, PredicateContext, PredicatePlan,
     StepContext, StepOutcome, StepPlan, StepRun,
@@ -394,14 +395,15 @@ impl StepPlan for BankPlan {
         {
             return Ok(Box::new(KnownScan));
         }
+        let request = AcquireRequest::bank_actions(
+            self.bank,
+            self.bank_required,
+            Arc::clone(&self.actions),
+            self.partial_ok,
+            cx.required_after,
+        );
         Ok(Box::new(BankStepRun {
-            run: BankRun::new(
-                self.bank,
-                self.bank_required,
-                Arc::clone(&self.actions),
-                self.partial_ok,
-                cx,
-            ),
+            run: AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx),
         }))
     }
     fn settle_timeout(&self) -> Duration {
@@ -416,25 +418,37 @@ impl StepRun for KnownScan {
         Poll::Ready(Ok(StepOutcome {
             progress: None,
             evidence: cx.tick.cx.evidence(),
-            receipt: Some(Arc::new(BankReceipt { complete: true }) as Arc<dyn FamilyReceipt>),
+            receipt: Some(Arc::new(BankReceipt {
+                complete: true,
+                deposited: 0,
+            }) as Arc<dyn FamilyReceipt>),
         }))
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {}
 }
 
 struct BankStepRun {
-    run: BankRun,
+    run: AcquireRun,
 }
 impl StepRun for BankStepRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        match self.run.poll(cx) {
+        match self.run.poll(cx.tick, OpenGate::Open) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Ready(Ok(receipt)) => Poll::Ready(Ok(StepOutcome {
-                progress: None,
-                evidence: cx.tick.cx.evidence(),
-                receipt: Some(Arc::new(receipt) as Arc<dyn FamilyReceipt>),
-            })),
+            Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
+                let bank = receipt.last_bank.unwrap_or(BankReceipt {
+                    complete: receipt.complete,
+                    deposited: receipt.deposited,
+                });
+                Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: Some(Arc::new(bank) as Arc<dyn FamilyReceipt>),
+                }))
+            }
+            Poll::Ready(Ok(AcquireOutcome::ChildDue { .. })) => Poll::Ready(Err(
+                ActionError::Unavailable(Arc::from("authored bank stage requested a child")),
+            )),
         }
     }
     fn cancel(&mut self, actions: &mut NativeActions) {
@@ -1131,12 +1145,17 @@ impl LoadoutPlan {
         }
         Ok(LoadoutRun {
             bank: (!bank_actions.is_empty()).then(|| {
-                BankRun::new(
-                    self.bank,
-                    self.bank_required,
-                    Arc::from(bank_actions),
-                    false,
-                    cx,
+                AcquireRun::new(
+                    AcquireRequest::bank_actions(
+                        self.bank,
+                        self.bank_required,
+                        Arc::from(bank_actions),
+                        false,
+                        cx.required_after,
+                    ),
+                    AcquirePlan::authored(),
+                    cx.banks,
+                    &cx.tick.cx,
                 )
             }),
             worn: Arc::from(worn),
@@ -1213,7 +1232,7 @@ impl StepRun for LoadoutObservationWait {
 }
 
 struct LoadoutRun {
-    bank: Option<BankRun>,
+    bank: Option<AcquireRun>,
     worn: Arc<[Arc<[BankItem]>]>,
     worn_index: usize,
     equipment: Option<ActionHandle<EquipmentMachine>>,
@@ -1258,12 +1277,21 @@ impl StepRun for LoadoutRun {
             }
         }
         if let Some(bank) = &mut self.bank {
-            match bank.poll(cx) {
+            match bank.poll(cx.tick, OpenGate::Open) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(receipt)) => {
+                Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
+                    let receipt = receipt.last_bank.unwrap_or(BankReceipt {
+                        complete: receipt.complete,
+                        deposited: receipt.deposited,
+                    });
                     self.receipt = Some(Arc::new(receipt) as Arc<dyn FamilyReceipt>);
                     self.bank = None;
+                }
+                Poll::Ready(Ok(AcquireOutcome::ChildDue { .. })) => {
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                        "authored bank stage requested a child",
+                    ))));
                 }
             }
         }
