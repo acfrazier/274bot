@@ -1953,6 +1953,7 @@ mod tests {
                 active_now: Duration::from_millis(tick.saturating_mul(600)),
                 wall_now: Instant::now(),
                 ledger,
+                pending_note_progress: None,
                 budget: &mut budget,
                 eligible,
             },

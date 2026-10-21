@@ -2870,3 +2870,188 @@ fn host_world_members_reaches_the_native_snapshot_view() {
         [Truth::True, Truth::False, Truth::Unknown]
     );
 }
+#[test]
+fn compiled_evidence_wait_consumes_native_progress_but_not_watchdog_hard_stall() {
+    struct WaitingProgress {
+        waits: Arc<AtomicU64>,
+    }
+
+    impl Script for WaitingProgress {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            tick.note_progress();
+            Ok(ScriptFlow::Continue)
+        }
+
+        fn waits_for_evidence(&self) -> bool {
+            self.waits.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+    }
+
+    let snapshot = gatherer_snapshot();
+    let here = (1, 1, 0);
+    let waits = Arc::new(AtomicU64::new(0));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    slot.start_test_script(
+        Box::new(WaitingProgress {
+            waits: Arc::clone(&waits),
+        }),
+        Some(selected()),
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    assert_eq!(
+        slot.feed_watchdog(started, Some(here), &[], false, true, &[]),
+        WatchdogAction::None
+    );
+    let before_progress = slot.watchdog.gameplay_stamp();
+    let mut driver = NullDriver::default();
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut driver,
+        tick: 1,
+        here: Some(here),
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(&snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+
+    let run = slot.native_run().expect("compiled run remains active");
+    assert_eq!(slot.evidence_wait_run, Some(run));
+    assert_eq!(slot.native_runtime.pending_note_progress, Some(run));
+    assert_eq!(
+        slot.watchdog.gameplay_stamp(),
+        before_progress,
+        "the note is pending until the watchdog consumes it"
+    );
+    assert_eq!(waits.load(Ordering::Relaxed), 1);
+
+    let consumed_at = Instant::now() + Duration::from_secs(1);
+    slot.note_game_packet_tick(consumed_at);
+    assert_eq!(
+        slot.feed_watchdog(consumed_at, Some(here), &[], false, true, &[]),
+        WatchdogAction::None
+    );
+    assert_eq!(slot.native_runtime.pending_note_progress, None);
+    assert_eq!(slot.watchdog.gameplay_stamp(), Some(consumed_at));
+
+    let wedge_at = consumed_at + crate::watchdog::WEDGE;
+    slot.note_game_packet_tick(wedge_at);
+    assert_eq!(
+        slot.feed_watchdog(wedge_at, Some(here), &[], false, true, &[]),
+        WatchdogAction::None,
+        "the admitted evidence wait suspends only the gameplay wedge"
+    );
+    assert_eq!(slot.watchdog.gameplay_stamp(), Some(consumed_at));
+
+    let stall_at = consumed_at + crate::watchdog::HARD_STALL;
+    slot.note_game_packet_tick(stall_at);
+    assert_eq!(
+        slot.feed_watchdog(stall_at, Some(here), &[], false, true, &[]),
+        WatchdogAction::Restart {
+            reason: crate::watchdog::RestartReason::Stall,
+        },
+        "the wait never hides the scheduler hard stall"
+    );
+    slot.stop();
+    assert_eq!(slot.evidence_wait_run, None);
+    assert_eq!(slot.native_runtime.pending_note_progress, None);
+    assert_eq!(
+        slot.feed_watchdog(
+            stall_at + Duration::from_secs(1),
+            Some(here),
+            &[],
+            false,
+            true,
+            &[]
+        ),
+        WatchdogAction::None,
+        "Stop retires the cached wait and pending native progress"
+    );
+}
+
+#[test]
+fn compiled_evidence_wait_requires_a_ready_live_observation() {
+    struct Waiter(Arc<AtomicU64>);
+    impl Script for Waiter {
+        fn tick(&mut self, _tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            Ok(ScriptFlow::Continue)
+        }
+
+        fn waits_for_evidence(&self) -> bool {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+    }
+
+    let calls = Arc::new(AtomicU64::new(0));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    slot.start_test_script(Box::new(Waiter(Arc::clone(&calls))), Some(selected()))
+        .unwrap();
+    let mut driver = NullDriver::default();
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut driver,
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert_eq!(slot.evidence_wait_run, None);
+    let mut rebuilding = gatherer_snapshot();
+    rebuilding.seed_ingame(1);
+    slot.on_game_tick(&mut ScriptCtx {
+        driver: &mut driver,
+        tick: 2,
+        here: Some((1, 1, 0)),
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: Some(&rebuilding),
+        obj_names: None,
+        compiled: crate::CompiledTick::default(),
+    });
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        0,
+        "a rebuild is not a ready observation"
+    );
+    assert_eq!(slot.evidence_wait_run, None);
+}
+
+#[cfg(all(feature = "load", feature = "test-hooks"))]
+#[test]
+fn native_interact_note_progress_remains_rejected() {
+    use crate::shim::InteractReq;
+
+    struct EmitsNote;
+    impl Script for EmitsNote {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            tick.queue_test_interaction(InteractReq::NoteProgress);
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    slot.start_test_script(Box::new(EmitsNote), Some(selected()))
+        .unwrap();
+    tick(&mut slot);
+    slot.dispatch_seat_rows();
+    let lifecycle = slot.drain_lifecycle();
+    assert!(
+        !lifecycle.contains(&InteractReq::NoteProgress),
+        "native callers use NativeTick::note_progress, never the emitted lifecycle row"
+    );
+    assert!(slot.native_runtime.pending_note_progress.is_none());
+}

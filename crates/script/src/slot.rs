@@ -528,6 +528,9 @@ pub struct SlotScript {
     /// no state service for this slot.
     local_state: Option<Arc<crate::local_state::SlotState>>,
     pair_evidence: Option<api::quest_progress::EvidenceStamp>,
+    /// The latest compiled run that declared itself safely waiting for
+    /// fresh world evidence, captured from a ready poll only.
+    evidence_wait_run: Option<api::selected::RunKey>,
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
     incarnation: u64,
@@ -678,6 +681,7 @@ impl SlotScript {
             quest_pairs: None,
             local_state: None,
             pair_evidence: None,
+            evidence_wait_run: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
             incarnation: 0,
             world_members: api::selected::Truth::Unknown,
@@ -763,12 +767,22 @@ impl SlotScript {
     pub fn align_seat_session(&mut self, ready: Option<api::identity::SessionKey>) {
         let Some(session) = ready.filter(|key| key.slot().incarnation().get() == self.incarnation)
         else {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             self.seat_session_held = true;
             if let Some(seat) = &mut self.seat {
                 seat.hold(true);
             }
             return;
         };
+        if self
+            .compiled
+            .as_ref()
+            .is_some_and(|run| run.run.session != session.epoch())
+        {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
+        }
         if let Some(run) = self.compiled.as_mut() {
             if run.run.session != session.epoch() {
                 run.rekey_session(session.epoch());
@@ -819,6 +833,8 @@ impl SlotScript {
             seat.hold(held || self.seat_session_held);
         }
         if held {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             self.discard_seat_gameplay_delivery();
         } else {
             self.flush_held_walk_terminal();
@@ -844,6 +860,10 @@ impl SlotScript {
     /// before T1.3b.
     pub fn seat_host_hold(&mut self, held: bool) {
         self.seat_host_held = held;
+        if held {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
+        }
     }
 
     fn flush_held_walk_terminal(&mut self) {
@@ -1546,6 +1566,8 @@ impl SlotScript {
     /// ([`ProgressWatchdog::defer_recovery`]).
     pub fn pause(&mut self) {
         self.want_run = false;
+        self.evidence_wait_run = None;
+        self.native_runtime.clear_note_progress();
         self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
@@ -1687,6 +1709,7 @@ impl SlotScript {
         #[cfg(feature = "load")]
         self.bank_runtime_boundary();
         self.native_runtime.revoke();
+        self.evidence_wait_run = None;
         self.retained = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -1744,6 +1767,8 @@ impl SlotScript {
     /// after a panic — `is_up` must not resurrect or wipe an error).
     pub fn on_is_up(&mut self, up: bool) {
         if !up {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             self.native_input.sync_live(false);
             #[cfg(feature = "load")]
             self.discard_mouse_interacts();
@@ -1791,6 +1816,7 @@ impl SlotScript {
 
     fn session_boundary(&mut self, reconnect: bool) -> bool {
         self.native_runtime.revoke();
+        self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
         #[cfg(feature = "load")]
@@ -2116,6 +2142,17 @@ impl SlotScript {
                 .as_ref()
                 .zip(self.native_run())
                 .is_some_and(|(pairs, run)| pairs.held(run))
+    }
+    fn foreground_action_active(&self) -> bool {
+        #[cfg(feature = "load")]
+        if !self.compiled_interacts.is_empty() || !self.seat_interact_delivery.is_empty() {
+            return true;
+        }
+        !self.seat_delivery.is_empty()
+            || !self.seat_native_delivery.is_empty()
+            || self.native_runtime.ledger.as_ref().is_some_and(|ledger| {
+                !ledger.outbox.is_empty() || ledger.owner.as_ref().is_some_and(|owner| owner.live())
+            })
     }
 
     pub fn sync_native_input_gate(&self) {
@@ -2595,6 +2632,11 @@ impl SlotScript {
         let stamps = &mut self.compiled_interact_outcome_seqs;
         debug_assert_eq!(reqs.len(), stamps.len());
         for (req, observed_walk_outcome_seq) in reqs.drain(..).zip(stamps.drain(..)) {
+            if matches!(&req, crate::shim::InteractReq::NoteProgress) {
+                self.pending_logs
+                    .push("seat compiled interaction refused: NoteProgress is host-owned".into());
+                continue;
+            }
             let (class, release) = seat_interact_class(&req, owner);
             let walk = seat_walk_id(&req, owner);
             let reserved_policy = matches!(req, crate::shim::InteractReq::RunPolicyOverride { .. });
@@ -3797,6 +3839,8 @@ impl SlotScript {
         lifecycle: &[crate::shim::InteractReq],
     ) -> WatchdogAction {
         if !self.load_active() && self.compiled.is_none() {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             return WatchdogAction::None;
         }
         let frozen = frozen
@@ -3807,6 +3851,19 @@ impl SlotScript {
                     .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
             });
         let freeze_action = self.watchdog.set_frozen(frozen, now);
+        if frozen
+            || !running
+            || self.state != RunState::Running
+            || !self.want_run
+            || here.is_none()
+            || self.guardian_held
+            || self.seat_host_held
+            || self.seat_session_held
+            || !self.dispatch_open()
+        {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
+        }
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
@@ -3822,6 +3879,14 @@ impl SlotScript {
             }
         }
         let previous_gameplay = self.watchdog.gameplay_stamp();
+        if self
+            .native_run()
+            .is_some_and(|run| self.native_runtime.take_note_progress(run))
+        {
+            self.watchdog.stamp_note_progress(now);
+        } else {
+            self.native_runtime.clear_note_progress();
+        }
         use crate::shim::InteractReq;
         let mut anchor_reply = None;
         for op in lifecycle {
@@ -3861,14 +3926,31 @@ impl SlotScript {
                 pairs.gameplay_progress(evidence.run, evidence, now);
             }
         }
+        let current_run = self.native_run();
         let pair_wait = self
             .quest_pairs
             .as_ref()
-            .zip(self.native_run())
+            .zip(current_run)
             .is_some_and(|(pairs, run)| pairs.waiting(run));
-        let action = self
-            .watchdog
-            .observe_with_pair_wait(now, running && self.want_run, pair_wait);
+        let evidence_wait = current_run.is_some_and(|run| self.evidence_wait_run == Some(run))
+            && running
+            && !frozen
+            && !self.watchdog.frozen()
+            && self.dispatch_open()
+            && here.is_some()
+            && !self.guardian_held
+            && !self.seat_host_held
+            && !self.seat_session_held
+            && !self.foreground_action_active()
+            && !self.has_native_actions();
+        if !evidence_wait {
+            self.evidence_wait_run = None;
+        }
+        let action = self.watchdog.observe_with_pair_wait(
+            now,
+            running && self.want_run,
+            pair_wait || evidence_wait,
+        );
         if action == WatchdogAction::RequestAnchor {
             if let Some(run) = &self.compiled {
                 let anchor = match catch_unwind(AssertUnwindSafe(|| run.script.recovery_anchor())) {
@@ -4068,6 +4150,8 @@ impl SlotScript {
     pub fn on_snapshot_change(&mut self, ctx: &mut ScriptCtx<'_>) {
         self.observe_lifecycle();
         if self.state != RunState::Running || !self.want_run || ctx.compiled.hold {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             return;
         }
         #[cfg(feature = "load")]
@@ -4101,6 +4185,8 @@ impl SlotScript {
     pub fn on_game_tick(&mut self, ctx: &mut ScriptCtx<'_>) {
         self.observe_lifecycle();
         if self.state != RunState::Running || !self.want_run {
+            self.evidence_wait_run = None;
+            self.native_runtime.clear_note_progress();
             return;
         }
         #[cfg(feature = "load")]
@@ -4134,9 +4220,21 @@ impl SlotScript {
     /// `Runtime::frame_context` observes the tick idempotently, so a wake can
     /// consume evidence but cannot replenish an already-spent event budget.
     fn poll_compiled_frame(&mut self, ctx: &mut ScriptCtx<'_>) {
+        self.evidence_wait_run = None;
+        let dispatch_open = self.dispatch_open();
         let Some(run) = self.compiled.as_mut() else {
+            self.native_runtime.clear_note_progress();
             return;
         };
+        if !dispatch_open
+            || self.watchdog.frozen()
+            || ctx.compiled.hold
+            || self.guardian_held
+            || self.seat_host_held
+            || self.seat_session_held
+        {
+            self.native_runtime.clear_note_progress();
+        }
         // Park this slot's interact queue in the ctx for the tick: the verbs
         // the card dispatches then land on the same drain the isolate's
         // forwarded requests ride.
@@ -4201,6 +4299,45 @@ impl SlotScript {
         self.capture_native_seat_rows();
         #[cfg(feature = "load")]
         self.capture_compiled_seat_interacts();
+        let ready_observation = ctx.here.is_some()
+            && ctx.snapshot.is_some_and(|snapshot| {
+                snapshot.ingame()
+                    && snapshot.scene_state() == 2
+                    && !crate::native::death::hitpoints_zero(Some(snapshot.stats()))
+            });
+        if !ready_observation {
+            self.native_runtime.clear_note_progress();
+        }
+        let wait_is_safe = matches!(&result, Ok(ScriptFlow::Continue))
+            && ready_observation
+            && !ctx.compiled.hold
+            && !self.watchdog.frozen()
+            && self.dispatch_open()
+            && !self.guardian_held
+            && !self.seat_host_held
+            && !self.seat_session_held
+            && !self.foreground_action_active()
+            && !self.has_native_actions();
+        if wait_is_safe {
+            let (run_key, waits) = {
+                let run = self.compiled.as_ref().expect("compiled run retained");
+                (
+                    run.run,
+                    catch_unwind(AssertUnwindSafe(|| run.script.waits_for_evidence())),
+                )
+            };
+            match waits {
+                Ok(true) => self.evidence_wait_run = Some(run_key),
+                Ok(false) => {}
+                Err(payload) => {
+                    self.fail_compiled(ScriptFailure {
+                        code: "evidence-wait-panic".into(),
+                        message: panic_message(&payload).into(),
+                    });
+                    return;
+                }
+            }
+        }
         match result {
             Ok(ScriptFlow::Continue | ScriptFlow::Complete)
                 if self.compiled.as_ref().is_some_and(|run| {

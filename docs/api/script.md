@@ -104,6 +104,16 @@ authority. Watchdog, reconnect and fleet polling cannot restart that run; the
 operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
+Native cards can return `Script::waits_for_evidence()` after foreground work
+retires. The slot suspends gameplay-idle recovery and wedge accounting, not
+scheduler-stall checks, missing-packet warnings or session handling.
+This is not a frozen or Blocked state. The card clears its wait before
+evaluation and on Pause, hold, Stop, death or invalid scene/session evidence.
+`NativeTick::note_progress()` records confirmed content progress for the current
+run/session. The slot consumes it once through the existing watchdog path.
+It emits no packet and spends no interaction budget. Clicks and idle ticks
+are not progress.
+
 The typed action-machine facility drives real machines: `NativeActions::begin`
 and `poll` admit and advance each family's operations. Ordinary admission allows
 one interaction event per observed tick. Disposal may admit up to five interaction
@@ -725,6 +735,21 @@ step while a page is open and is not extended for dialogue draining.
 If the clicked loc disappears or transforms, reach completes only after acceptance
 of that exact dispatched interaction. It does not select a replacement. Authored
 settlement predicates still prove the quest effect.
+
+Exact native ground collection uses the same chooser with borrowed selected
+IDs, an exact same-plane square and the current active-zone clip.
+It ranks legal stands by route steps, then by item ID, plane, x and z.
+Reach walks to that stand before Take. It never substitutes another tile.
+A queued Take has no outcome deadline until the host dispatches it.
+The bound is four later observed `PLAYER_INFO` ticks, including one missed
+server input phase. Wall time and evidence-only polls do not advance it.
+An exact-ID pack increase proves success and counts landed units.
+Ground removal alone waits for one later player update before a zero-count
+lost race. A decrease with identical copies remaining waits through the bound.
+Lost races never add a failed-key penalty. An unchanged row and pack at the
+bound can avoid that exact ID/tile/plane for ten ticks. The third true failure
+excludes the key for the run. Capacity and duplicate refusals remain typed.
+Exact-ground reach refusals never enter the legacy door fallback.
 
 `use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
 "source": "content provenance"}`. The optional tile selects an exact ground
