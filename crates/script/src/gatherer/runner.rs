@@ -456,6 +456,15 @@ impl Gatherer {
             Ok(AcquireVerdict::Satisfied) => false,
             Ok(AcquireVerdict::Plan(plan)) => {
                 let return_to_work = plan.scan || plan.withdrawal_count > 0;
+                eprintln!(
+                    "[DEBUG-m1-return] admission scan={} withdrawals={} prior_return={:?}",
+                    plan.scan,
+                    plan.withdrawal_count,
+                    match self.trip {
+                        TripStep::Supply { return_to_work, .. } => Some(return_to_work),
+                        _ => None,
+                    },
+                );
                 if return_to_work {
                     let Some(inventory) = snapshot.inventory() else {
                         return false;
@@ -1596,6 +1605,13 @@ impl Gatherer {
                         self.active = Active::Acquire(run);
                     }
                     Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
+                        eprintln!(
+                            "[DEBUG-m1-return] done return={:?}",
+                            match self.trip {
+                                TripStep::Supply { return_to_work, .. } => Some(return_to_work),
+                                _ => None,
+                            },
+                        );
                         self.retained.deposited =
                             self.retained.deposited.saturating_add(receipt.deposited);
                         if receipt.deposited > 0 && self.retained.recovery == RecoveryState::Idle {
