@@ -1268,10 +1268,26 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
         "further-egg arm is not loosened"
     );
-    let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
-    assert_eq!(
-        newt.settings.deadline, SCRIPT_GOLD_DEADLINE,
-        "newt deadline stays 180s"
+}
+
+#[test]
+fn herblore_newt_deadline_covers_measured_route_with_headroom() {
+    // B2's completed HerbloreSecondaries cycle needed 412 game ticks.
+    // Use that measured cycle as a conservative budget for the newt branch.
+    let measured_cycle = Duration::from_millis(412 * 600);
+    let scenario = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("newt Start");
+    for step in &scenario.steps[start + 1..] {
+        assert_eq!(step.wait.budget_ticks, 150, "{}", step.name);
+    }
+    let runner = runner::ScenarioRunner::new(scenario);
+    assert!(
+        runner.deadline() >= measured_cycle + measured_cycle / 2,
+        "newt needs the measured cycle plus 50% headroom, not the short gold deadline"
     );
 }
 
@@ -2970,6 +2986,86 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
 }
 
 #[test]
+fn fire_giant_bank_uses_tier40_rune_short_trip_without_seeding_earned_loot() {
+    let scenario = get("fire_giant_bank").expect("fire_giant_bank registered");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("FireGiant starts after preparation");
+    let prepare = scenario.steps[..start]
+        .iter()
+        .find(|step| step.name.starts_with("prepare melee stats"))
+        .expect("combat preparation stays on the safe tile");
+    let StepKind::Perform { send } = &prepare.kind else {
+        panic!("combat preparation is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    for stat in ["attack", "strength", "hitpoints", "defence"] {
+        assert!(
+            emitted_has(&client, &format!("setstat {stat} {COMBAT_ATTACK_LEVEL}")),
+            "{stat} uses the existing tier-40 profile, not level 99"
+        );
+    }
+    for alias in [
+        "rune_scimitar",
+        "rune_chainbody",
+        "rune_platelegs",
+        "rune_full_helm",
+    ] {
+        assert!(emitted_has(&client, &format!("give {alias} 1")));
+    }
+    let tele = scenario.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("hostile teleport follows the equipped kit");
+    for id in [RUNE_SCIMITAR_ID, RUNE_CHAINBODY_ID, 1079, 1163] {
+        assert!(scenario.steps[..tele]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id }));
+    }
+    let food = scenario.steps[..tele]
+        .iter()
+        .find(|step| step.name == "stock prepared trip food after wearing the combat kit")
+        .expect("short-trip food is stocked after the kit is worn");
+    let StepKind::Perform { send } = &food.kind else {
+        panic!("food stock is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "give lobster 8"));
+    assert!(!emitted_has(&client, "give lobster 12"));
+    for arm in [
+        Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 8,
+        },
+        Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        },
+    ] {
+        assert!(scenario.steps[..start]
+            .iter()
+            .any(|step| step.wait.arm == arm));
+    }
+    assert!(scenario.steps[start + 1..].iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
+    }));
+    assert_eq!(scenario.settings.deadline, Duration::from_millis(746_100));
+    assert!(scenario.steps[start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks == 1500));
+}
+
+#[test]
 fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets() {
     const DEFENCE: i32 = 1;
     let start_idx = |scenario: &Scenario| {
@@ -3512,7 +3608,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
-        ("fire_giant_bank", "adamant_scimitar"),
+        ("fire_giant_bank", "rune_scimitar"),
     ] {
         let written = seed(name);
         assert!(
@@ -8247,7 +8343,7 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
 
     let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
     assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
-    assert_eq!(buy.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(buy.settings.deadline, HERBLORE_NEWT_DEADLINE);
     let inject = settings_inject_map(buy.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("secondary"),
@@ -9891,7 +9987,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "flax_aio",
         "flax_aio_pick",
         "flax_aio_spin",
-        "herblore_secondaries_newt",
         "chaos_druid",
         "moss_giant",
         "hill_giant",

@@ -140,19 +140,25 @@ pub(crate) fn fire_giant_approach_scenario() -> Scenario {
     scenario
 }
 
-/// FireGiant barrel exit then Ardougne West restock and re-entry. The in-room
-/// core leaves this trip unqualified.
+/// FireGiant barrel exit then Ardougne West restock and re-entry at level 40.
+/// The ordinary trip measured 829 game ticks at 600ms per tick (497.4s).
+/// A 50% headroom gives this cell a separate 746.1s deadline. The prepared
+/// bank case keeps its 600s deadline.
+/// Use the existing Rune kit: the defence-1, unarmoured seed retreated before
+/// earning Big bones. The prepared bank case instead uses level 99.
 pub(crate) fn fire_giant_bank_scenario() -> Scenario {
-    let mut scenario = combat_bank_scenario(
+    let mut scenario = combat_bank_scenario_with_preparation(
         "fire_giant_bank",
         "FireGiant",
         FIRE_GIANT_ROOM,
         10,
         "lobster",
         LOBSTER_ID,
-        FIRE_GIANT_FOOD,
-        "adamant_scimitar",
-        COMBAT_SCIMITAR_ID,
+        // Level-40 Rune kills need 250-360 ticks, across two 200-tick Fight
+        // bursts. Four food banked before the first kill; stock both bursts.
+        8,
+        "rune_scimitar",
+        RUNE_SCIMITAR_ID,
         &[
             ("glarials_amulet_waterfall_quest", GLARIALS_AMULET_ID, 1),
             ("rope", ROPE_ID, 1),
@@ -213,9 +219,19 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
                 },
             ),
         ],
+        Some(PreparedCombatPlan {
+            level: COMBAT_ATTACK_LEVEL,
+            extra_give: TIER40_RUNE_ARMOUR_GIVE,
+            wear: TIER40_RUNE_ARMOUR_WEAR,
+        }),
     );
     insert_waterfall_quest(&mut scenario);
     insert_setstat_drain_before_hostile_tele(&mut scenario);
+    apply_combat_qualification_budget(
+        &mut scenario,
+        FIRE_GIANT_BANK_ORDINARY_DEADLINE,
+        BANK_QUALIFICATION_WATCH_TICKS,
+    );
     scenario
 }
 
@@ -243,7 +259,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
-        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        FIRE_GIANT_BANK_PREPARED_DEADLINE,
         BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
@@ -327,7 +343,7 @@ pub(crate) fn fire_giant_camelot_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
-        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        FIRE_GIANT_BANK_PREPARED_DEADLINE,
         BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
@@ -478,9 +494,12 @@ pub(crate) const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
 /// Camelot escape restocks Air/Law after food; `foodWithdraw` 25 fills 28/28 and
 /// re-triggers frozen `BankRun.isFull()`. Barrel prepared keeps the shared 25.
 pub(crate) const FIRE_GIANT_CAMELOT_PREPARED_RESTOCK: i32 = 24;
-/// FireGiant's one-food trigger plus barrel exit, bank leg, Waterfall re-entry
-/// and fresh post-return XP is estimated at 259.4s before margin.
-const FIRE_GIANT_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
+/// The complete prepared trip measured 622 game ticks at 600ms (373.2s).
+/// Its 600s deadline leaves 378 nominal ticks for setup and route variation.
+const FIRE_GIANT_BANK_PREPARED_DEADLINE: Duration = Duration::from_secs(600);
+/// The ordinary trip measured 829 game ticks at 600ms (497.4s).
+/// A 50% headroom gives its deadline of 746.1s.
+const FIRE_GIANT_BANK_ORDINARY_DEADLINE: Duration = Duration::from_millis(746_100);
 pub(crate) const GLARIALS_AMULET_ID: i32 = 295;
 pub(crate) const ROPE_ID: i32 = 954;
 pub(crate) const FIRE_GIANT_ROOM: WorldTile = WorldTile {

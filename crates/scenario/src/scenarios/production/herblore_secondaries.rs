@@ -587,7 +587,7 @@ pub(crate) fn herblore_secondaries_newt_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: HERBLORE_NEWT_DEADLINE,
             start_script: Some("HerbloreSecondaries"),
             script_settings_inject: Some(HERBLORE_NEWT_INJECT),
             fixture_loadouts: Some(HERBLORE_EGGS_FIXTURE_LOADOUTS),

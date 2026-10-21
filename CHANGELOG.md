@@ -11,6 +11,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - `Bank.withdrawLoad` now returns false when the bank has no matching item,
   even when the pack is full. Release 0.2.4 returned true.
 
+### Banking
+
+- Banking now opens a closed chest before it tries the bank action. This
+  lets ClueSolver open the Duel Arena reward bank.
+
 ### Panel
 
 - On Linux, the panel now follows the system's choice of graphics chip
@@ -107,6 +112,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tick.
 - Game-tick counts now advance only for applied `PLAYER_INFO` packets;
   unrelated player-family invalidations no longer inflate scenario receipts.
+
 #### Gatherer
 
 - Fixed: the Gatherer searches distance 0 through 7 from two observed tiles.
@@ -122,6 +128,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   appears in that time, if one later tick confirms a missing head, or after
   the ground head's 200-tick lifetime. A full pack with nothing to drop
   returns to the bank at once.
+
+- The Eye of newt scenario check now allows the measured banking cycle at
+  the normal game speed, with 50% headroom. Its old three-minute deadline
+  stopped the check during the return from Draynor.
+- The Duel Arena clue check now recognises all obstacle-fight pens and their
+  boundary tiles. A valid duel no longer misses the handshake witness when
+  its players start at the east edge or in another obstacle pen.
+- The FireGiant bank check now prepares a level-40 Rune kit and eight Lobsters,
+  with time for the full trip at normal game speed. It still requires earned
+  loot in the bank, a return to the dungeon, and further combat.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
