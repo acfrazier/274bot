@@ -66,6 +66,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
 
+#### Gatherer
+
+- Fixed: the Gatherer now picks up the exact axe or pickaxe head that flew
+  off, even when another head is nearby. It waits for the head using game
+  ticks, then goes to the bank if the head is gone or its 200-tick lifetime
+  ends, instead of giving up after a wall-clock timeout.
+
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
 ### Toolchain

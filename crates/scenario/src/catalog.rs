@@ -191,6 +191,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::guardian_skill_lost_axe_scenario,
     ),
     Entry::new(
+        "guardian_skill_lost_axe_same_kind_head",
+        scenarios::guardian_skill_lost_axe_same_kind_head_scenario,
+    ),
+    Entry::new(
         "guardian_skill_shade",
         scenarios::guardian_skill_shade_scenario,
     ),
