@@ -104,6 +104,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Duel Arena clue check now recognises all obstacle-fight pens and their
   boundary tiles. A valid duel no longer misses the handshake witness when
   its players start at the east edge or in another obstacle pen.
+- The FireGiant bank check now prepares a level-40 Rune kit and eight Lobsters,
+  with time for the full trip at normal game speed. It still requires earned
+  loot in the bank, a return to the dungeon, and further combat.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
