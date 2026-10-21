@@ -141,6 +141,9 @@ pub(crate) fn fire_giant_approach_scenario() -> Scenario {
 }
 
 /// FireGiant barrel exit then Ardougne West restock and re-entry at level 40.
+/// The ordinary trip measured 829 game ticks at 600ms per tick (497.4s).
+/// A 50% headroom gives this cell a separate 746.1s deadline. The prepared
+/// bank case keeps its 600s deadline.
 /// Use the existing Rune kit: the defence-1, unarmoured seed retreated before
 /// earning Big bones. The prepared bank case instead uses level 99.
 pub(crate) fn fire_giant_bank_scenario() -> Scenario {
@@ -226,7 +229,7 @@ pub(crate) fn fire_giant_bank_scenario() -> Scenario {
     insert_setstat_drain_before_hostile_tele(&mut scenario);
     apply_combat_qualification_budget(
         &mut scenario,
-        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        FIRE_GIANT_BANK_ORDINARY_DEADLINE,
         BANK_QUALIFICATION_WATCH_TICKS,
     );
     scenario
@@ -256,7 +259,7 @@ pub(crate) fn fire_giant_bank_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
-        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        FIRE_GIANT_BANK_PREPARED_DEADLINE,
         BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
@@ -340,7 +343,7 @@ pub(crate) fn fire_giant_camelot_prepared_scenario() -> Scenario {
         "lobster",
         40,
         BANK_PRESSURE_PREPARED_LEVEL,
-        FIRE_GIANT_BANK_QUALIFICATION_DEADLINE,
+        FIRE_GIANT_BANK_PREPARED_DEADLINE,
         BANK_QUALIFICATION_WATCH_TICKS,
         &[
             (
@@ -492,8 +495,11 @@ pub(crate) const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
 /// re-triggers frozen `BankRun.isFull()`. Barrel prepared keeps the shared 25.
 pub(crate) const FIRE_GIANT_CAMELOT_PREPARED_RESTOCK: i32 = 24;
 /// The complete prepared trip measured 622 game ticks at 600ms (373.2s).
-/// A 600s deadline leaves 378 nominal ticks for setup and route variation.
-const FIRE_GIANT_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
+/// Its 600s deadline leaves 378 nominal ticks for setup and route variation.
+const FIRE_GIANT_BANK_PREPARED_DEADLINE: Duration = Duration::from_secs(600);
+/// The ordinary trip measured 829 game ticks at 600ms (497.4s).
+/// A 50% headroom gives its deadline of 746.1s.
+const FIRE_GIANT_BANK_ORDINARY_DEADLINE: Duration = Duration::from_millis(746_100);
 pub(crate) const GLARIALS_AMULET_ID: i32 = 295;
 pub(crate) const ROPE_ID: i32 = 954;
 pub(crate) const FIRE_GIANT_ROOM: WorldTile = WorldTile {

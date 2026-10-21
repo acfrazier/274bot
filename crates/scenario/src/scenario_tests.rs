@@ -3059,7 +3059,7 @@ fn fire_giant_bank_uses_tier40_rune_short_trip_without_seeding_earned_loot() {
                 count: 1,
             }
     }));
-    assert_eq!(scenario.settings.deadline, Duration::from_secs(600));
+    assert_eq!(scenario.settings.deadline, Duration::from_millis(746_100));
     assert!(scenario.steps[start + 1..]
         .iter()
         .all(|step| step.wait.budget_ticks == 1500));
