@@ -5919,6 +5919,188 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
     );
 }
 
+/// One Fleet window frame with the pointer at `at`, then the session sync
+/// the product runs once per frame.
+fn fleet_reorder_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    at: [f32; 2],
+    down: bool,
+) -> crate::fleet::FleetLayout {
+    let layout = fleet_frame(ctx, session, [760.0, 460.0], at, down);
+    session.pump_status();
+    layout
+}
+
+/// Press on `from`, drag over several frames, release on `to`, and settle:
+/// the layout of the last frame.
+fn fleet_drag(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    from: [f32; 2],
+    to: [f32; 2],
+) -> crate::fleet::FleetLayout {
+    fleet_reorder_frame(ctx, session, from, false);
+    fleet_reorder_frame(ctx, session, from, true);
+    for step in 1..=4 {
+        let t = step as f32 / 4.0;
+        let at = [
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+        ];
+        fleet_reorder_frame(ctx, session, at, true);
+    }
+    fleet_reorder_frame(ctx, session, to, true);
+    fleet_reorder_frame(ctx, session, to, false);
+    fleet_reorder_frame(ctx, session, to, false)
+}
+
+/// Settle a Fleet window of four profiles and return its layout.
+fn fleet_reorder_setup(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> crate::fleet::FleetLayout {
+    let mut layout = crate::fleet::FleetLayout::default();
+    for _ in 0..4 {
+        layout = fleet_reorder_frame(ctx, session, [900.0, 600.0], false);
+    }
+    layout
+}
+
+fn saved_order(session: &crate::session::Session) -> Vec<String> {
+    session.core.profile_order().names().to_vec()
+}
+
+/// Dragging a Fleet row's name onto another row moves it in the saved Load
+/// order. A filter hides a marked profile between them: it keeps its place
+/// relative to the others and keeps its mark.
+#[test]
+fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["ax", "bob", "cx", "dx"]);
+    session.persist_ui = false;
+    session.pump_status();
+    assert_eq!(saved_order(&session), ["ax", "bob", "cx", "dx"]);
+    let bob = session.core.profile_identity("bob").unwrap();
+    session.fleet_model.set_mark_for_test(bob, true);
+    // "x" matches ax, cx and dx, and no status text; not bob.
+    session.fleet_model.set_filter_for_test("x");
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    assert_eq!(layout.names.len(), 3, "bob is hidden by the filter");
+    let before = crate::session::reorders_submitted();
+
+    // ax (first shown row) onto dx (last shown row).
+    fleet_drag(
+        &mut ctx,
+        &mut session,
+        rect_centre(layout.names[0]),
+        rect_centre(layout.names[2]),
+    );
+    assert_eq!(crate::session::reorders_submitted(), before + 1);
+    assert_eq!(
+        saved_order(&session),
+        ["bob", "cx", "dx", "ax"],
+        "ax lands after dx; bob keeps its place before cx and dx"
+    );
+    assert!(
+        session.fleet_model.marks().contains(bob),
+        "bob stays marked"
+    );
+    assert!(session.error.is_none(), "{:?}", session.error);
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    assert_eq!(layout.names.len(), 3);
+
+    // And back up: dx (now second shown) onto cx (first shown) goes
+    // before it.
+    fleet_drag(
+        &mut ctx,
+        &mut session,
+        rect_centre(layout.names[1]),
+        rect_centre(layout.names[0]),
+    );
+    assert_eq!(saved_order(&session), ["bob", "dx", "cx", "ax"]);
+}
+
+/// With the sort set to Name the same drag does nothing and the button is
+/// disabled: no reorder is submitted and the saved order stays.
+#[test]
+fn fleet_row_drag_and_move_marked_do_nothing_outside_load_order() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob", "carol", "dave"]);
+    session.persist_ui = false;
+    session.pump_status();
+    let dave = session.core.profile_identity("dave").unwrap();
+    session.fleet_model.set_mark_for_test(dave, true);
+    session
+        .fleet_model
+        .set_order_for_test(frontend_core::FleetOrder::Name);
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    assert_eq!(layout.names.len(), 4);
+    let before = crate::session::reorders_submitted();
+
+    fleet_drag(
+        &mut ctx,
+        &mut session,
+        rect_centre(layout.names[0]),
+        rect_centre(layout.names[3]),
+    );
+    let button = rect_centre(layout.move_to_top);
+    for down in [false, true, false, false] {
+        fleet_reorder_frame(&mut ctx, &mut session, button, down);
+    }
+    assert_eq!(
+        crate::session::reorders_submitted(),
+        before,
+        "no reorder is submitted"
+    );
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+    assert!(session.error.is_none(), "{:?}", session.error);
+}
+
+/// `Move marked to top` moves the marked profiles to the top in their
+/// relative order; with nothing marked the button is disabled.
+#[test]
+fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob", "carol", "dave"]);
+    session.persist_ui = false;
+    session.pump_status();
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    let button = rect_centre(layout.move_to_top);
+    let click = |ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session| {
+        for down in [false, true, false, false] {
+            fleet_reorder_frame(ctx, session, button, down);
+        }
+    };
+    let before = crate::session::reorders_submitted();
+    click(&mut ctx, &mut session);
+    assert_eq!(
+        crate::session::reorders_submitted(),
+        before,
+        "nothing marked: the button is disabled"
+    );
+
+    for name in ["dave", "carol"] {
+        let identity = session.core.profile_identity(name).unwrap();
+        session.fleet_model.set_mark_for_test(identity, true);
+    }
+    fleet_reorder_setup(&mut ctx, &mut session);
+    click(&mut ctx, &mut session);
+    assert_eq!(crate::session::reorders_submitted(), before + 1);
+    assert_eq!(
+        saved_order(&session),
+        ["carol", "dave", "alice", "bob"],
+        "the marked profiles go to the top, carol before dave as they were"
+    );
+    assert!(session.error.is_none(), "{:?}", session.error);
+}
+
 /// The Send window opens inside the screen and, for a short list, shows every
 /// name; a list longer than the screen scrolls inside a window that still
 /// fits.

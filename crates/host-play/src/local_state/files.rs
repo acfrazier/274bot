@@ -45,7 +45,7 @@ use api::identity::DurableTimestamp;
 use api::loadout::{parse_loadout, Loadout};
 use api::local_state::{
     DomainIdentity, FailureReason, LeaseSnapshot, LoadoutEdit, LoadoutOp, LocalStateDomain,
-    PreferenceRow,
+    PreferenceChange, PreferenceRow,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -841,28 +841,44 @@ pub(super) fn preference_document(rows: &[PreferenceRow]) -> Option<Map<String, 
     Some(document)
 }
 
-/// Apply one preferences write to `document`: key `<member>` sets that
-/// member to `value` (JSON text); key `<member>.<nested>` sets one member
-/// of the object `<member>`, creating it when absent. `None` (nothing
-/// changed) when `value` is not JSON or `<member>` is not an object.
+/// Apply one preferences write's `changes` to `document`, in order: key
+/// `<member>` sets or removes that member; key `<member>.<nested>` sets or
+/// removes one member of the object `<member>` (a set creates the object
+/// when absent). `None` when a value is not JSON or `<member>` is not an
+/// object: `document` is then partly changed and must be dropped, so the
+/// write applies every change or none.
 pub(super) fn apply_preferences_edit(
     document: &mut Map<String, Value>,
-    key: &str,
-    value: &str,
+    changes: &[PreferenceChange],
 ) -> Option<()> {
-    let value: Value = serde_json::from_str(value).ok()?;
-    match key.split_once('.') {
-        Some((name, member)) => {
-            let Value::Object(members) = document
-                .entry(name.to_string())
-                .or_insert_with(|| Value::Object(Map::new()))
-            else {
-                return None;
-            };
-            members.insert(member.to_string(), value);
-        }
-        None => {
-            document.insert(key.to_string(), value);
+    for change in changes {
+        let value = match change.value() {
+            Some(value) => Some(serde_json::from_str::<Value>(value).ok()?),
+            None => None,
+        };
+        match (change.key().split_once('.'), value) {
+            (Some((name, member)), Some(value)) => {
+                let Value::Object(members) = document
+                    .entry(name.to_string())
+                    .or_insert_with(|| Value::Object(Map::new()))
+                else {
+                    return None;
+                };
+                members.insert(member.to_string(), value);
+            }
+            (Some((name, member)), None) => match document.get_mut(name) {
+                None => {}
+                Some(Value::Object(members)) => {
+                    members.shift_remove(member);
+                }
+                Some(_) => return None,
+            },
+            (None, Some(value)) => {
+                document.insert(change.key().to_string(), value);
+            }
+            (None, None) => {
+                document.shift_remove(change.key());
+            }
         }
     }
     Some(())

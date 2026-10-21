@@ -42,6 +42,7 @@ pub mod process_status;
 pub mod profile_draft;
 pub mod profile_editor;
 pub mod profile_form;
+pub mod profile_order;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
@@ -90,8 +91,8 @@ pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRe
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
+pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
-pub use profiles::fresh_uid;
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

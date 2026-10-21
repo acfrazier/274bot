@@ -370,6 +370,30 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|Placement",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "Placement",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: Copy placement of a reorder (before or after a profile identity)."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|ProfileOrder",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "ProfileOrder",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: the saved Load order (profile names), owned by the operator session."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|ReorderOp",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "ReorderOp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: Copy staged reorder operation by profile identity."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/profile_saves.rs|SaveRecord",
       "path": "crates/frontend-core/src/profile_saves.rs",
       "symbol": "SaveRecord",

@@ -1497,7 +1497,10 @@ automatic jail rule, other route gates and existing banking remain hard.
 All shared preference reads and writes, including the TUI log pane, go
 through the process local-state service's preferences domain: one writer
 thread per process, and the `panel-ui.json.lock` advisory lock held across
-each write so another process takes its turn. Both frontends refresh a
+each write so another process takes its turn. One save is one file
+replacement: every member it changes or removes (each member of an object
+too long for one row, such as the saved Load order) lands together, or
+none does. Both frontends refresh a
 shared durable walk-permission projection for danger controls and inherited
 script rows (re-read from the file at most once a second), and manual
 admission reads it again. An absent file or a valid old file without the new

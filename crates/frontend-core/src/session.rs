@@ -674,6 +674,24 @@ pub struct OperatorSession<Io> {
     /// write, or a vault opened or replaced. The fleet model rebuilds its
     /// profile universe only then.
     profiles_generation: u64,
+    /// The saved Load order, reconciled with the vault.
+    profile_order: crate::profile_order::ProfileOrder,
+    /// The preferences hold a saved order (the operator reordered, or a
+    /// rename kept a place): reconcile changes are written back.
+    order_saved: bool,
+    /// The last saved Load order known durable: a reorder whose write
+    /// fails goes back to it.
+    durable_order: crate::profile_order::ProfileOrder,
+    /// The number of the last reorder write begun, and of the newest one
+    /// known durable: writes can be polled out of order, so an older
+    /// write that lands after a newer one never replaces the durable order.
+    order_write_seq: u64,
+    durable_order_seq: u64,
+    /// The profiles generation the order was last reconciled at.
+    order_reconciled_at: Option<u64>,
+    /// Order writes that are not commands (a rename or a reconcile), still
+    /// queued on the writer thread; a failure is logged.
+    order_writes: Vec<host_play::local_state::QueuedUpdate>,
     /// Operator commands: the book and their settlement state.
     commands: commands::CommandDesk,
     /// Load all's preferred selection when nothing is selected.
@@ -752,6 +770,13 @@ impl<Io> OperatorSession<Io> {
             capacity_due: None,
             capacity_generation: 0,
             profiles_generation: 0,
+            profile_order: crate::profile_order::ProfileOrder::default(),
+            order_saved: false,
+            durable_order: crate::profile_order::ProfileOrder::default(),
+            order_write_seq: 0,
+            durable_order_seq: 0,
+            order_reconciled_at: None,
+            order_writes: Vec::new(),
             commands: commands::CommandDesk::default(),
             focus_hint: None,
         }
@@ -1200,18 +1225,163 @@ impl<Io> OperatorSession<Io> {
             .unwrap_or_else(|| crate::selection::ProfileIdentity::synthetic(name))
     }
 
+    /// Every profile name: the vault's in the saved Load order, then any
+    /// live slot without a vault row.
     pub fn profile_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .vault
-            .as_ref()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
+        let mut names: Vec<String> = Vec::new();
+        if let Some(vault) = self.vault.as_ref() {
+            names.extend(
+                self.profile_order
+                    .names()
+                    .iter()
+                    .filter(|name| vault.get(name).is_some())
+                    .cloned(),
+            );
+            for profile in vault.profiles() {
+                if !names.contains(&profile.username) {
+                    names.push(profile.username.clone());
+                }
+            }
+        }
         for s in &self.statuses {
             if !names.contains(&s.username) {
                 names.push(s.username.clone());
             }
         }
         names
+    }
+
+    /// The saved Load order.
+    pub fn profile_order(&self) -> &crate::profile_order::ProfileOrder {
+        &self.profile_order
+    }
+
+    /// `name`'s place in the saved Load order; `None` for a name it does
+    /// not hold (sorted after every ordered name).
+    pub(crate) fn order_rank(&self, name: &str) -> Option<usize> {
+        self.profile_order.position(name)
+    }
+
+    /// Adopt the saved Load order from `preferences` (startup) and
+    /// reconcile it with the vault.
+    pub(crate) fn adopt_profile_order(&mut self, preferences: &crate::UiPreferences) {
+        let value = preferences.value(crate::profile_order::PROFILE_ORDER_KEY);
+        self.order_saved = value.is_some();
+        self.profile_order
+            .replace(crate::profile_order::ProfileOrder::from_value(
+                value.as_ref(),
+            ));
+        self.durable_order.assign_from(&self.profile_order);
+        self.order_reconciled_at = None;
+        self.reconcile_profile_order();
+    }
+
+    /// Make the saved order match the vault (seed, append, drop) and the
+    /// fleet members follow it. Moves the profiles generation when the
+    /// order changed, so the fleet views rebuild. A profile the vault
+    /// lacks stays stored while a write of it is queued (its deletion is
+    /// not durable, and a failure puts it back in its place); otherwise it
+    /// is dropped, and the saved order is written.
+    pub(crate) fn reconcile_profile_order(&mut self) {
+        if self.order_reconciled_at == Some(self.profiles_generation) {
+            return;
+        }
+        let before = self.profile_order.names().len();
+        let changed = match self.vault.as_ref() {
+            Some(vault) => {
+                let rows = || {
+                    vault
+                        .profiles()
+                        .map(|profile| (profile.uid, profile.username.as_str()))
+                };
+                let durable = &self.durable;
+                let pending = |uid: i32| {
+                    durable
+                        .values()
+                        .any(|profile| profile.as_ref().is_some_and(|p| p.uid == uid))
+                };
+                // The durable copy follows the vault too, so a failed
+                // write's revert shows current names.
+                self.durable_order.reconcile(rows(), pending);
+                self.profile_order.reconcile(rows(), pending)
+            }
+            None => false,
+        };
+        if changed || self.profile_order.names().len() != before {
+            self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        }
+        if changed && self.order_saved {
+            self.persist_profile_order_quietly();
+        }
+        self.order_reconciled_at = Some(self.profiles_generation);
+        self.sort_members_by_order();
+    }
+
+    /// After profile writes settle: a held deletion may be durable now, so
+    /// reconcile again (dropping it from the saved order).
+    fn reconcile_after_writes(&mut self) {
+        if self.profile_order.holds_deleted() {
+            self.order_reconciled_at = None;
+            self.reconcile_profile_order();
+        }
+    }
+
+    /// The uid for a new profile: above every uid the vault holds and
+    /// every uid the saved order has held, so a new profile never takes a
+    /// deleted profile's place. Shared by every path that creates a
+    /// profile.
+    pub fn fresh_uid(&self) -> i32 {
+        let vault = self.vault.as_ref().map(crate::profiles::next_vault_uid);
+        let order = self
+            .profile_order
+            .max_uid()
+            .max(self.durable_order.max_uid())
+            .saturating_add(1);
+        vault.unwrap_or(crate::profiles::FIRST_UID).max(order)
+    }
+
+    /// Order the fleet members by the saved order (stable: a member the
+    /// order lacks keeps its place after the ordered ones). A login
+    /// already queued keeps its queue place.
+    pub(crate) fn sort_members_by_order(&mut self) {
+        let order = &self.profile_order;
+        self.fleet.sort_by_rank(|name| order.position(name));
+    }
+
+    /// Write the saved order outside a command (a rename, a reconcile). A
+    /// queued write is polled by [`Self::poll`]; a failure is logged.
+    fn persist_profile_order_quietly(&mut self) {
+        let Some(preferences) = self.preferences() else {
+            return;
+        };
+        match preferences.begin_set(
+            crate::profile_order::PROFILE_ORDER_KEY,
+            self.profile_order.to_value(),
+        ) {
+            Ok(host_play::local_state::Update::Durable) => {
+                self.order_write_seq += 1;
+                self.durable_order_seq = self.order_write_seq;
+                self.durable_order.assign_from(&self.profile_order);
+            }
+            Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
+            Err(error) => order_write_failed(&error),
+        }
+    }
+
+    /// Poll the order writes that are not commands.
+    fn poll_order_writes(&mut self) {
+        let mut index = 0;
+        while index < self.order_writes.len() {
+            match self.order_writes[index].poll() {
+                None => index += 1,
+                Some(outcome) => {
+                    self.order_writes.swap_remove(index);
+                    if let Err(error) = outcome {
+                        order_write_failed(&error);
+                    }
+                }
+            }
+        }
     }
 
     /// Live slots other than the selected one.
@@ -1443,6 +1613,9 @@ impl<Io> OperatorSession<Io> {
         }
         let cancelled_removal = self.cancel_removal(name);
         let added = self.fleet.add(name);
+        if added {
+            self.sort_members_by_order();
+        }
         let auto_login = self
             .durable_profile(name)
             .map(|p| p.settings.auto_login)
@@ -1888,6 +2061,7 @@ impl<Io> OperatorSession<Io> {
             self.cancel_removal(name);
         }
         self.fleet.seed_running(&running);
+        self.sort_members_by_order();
     }
 
     /// Remove a member and return immediately. A connected slot gets a
@@ -1996,6 +2170,10 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        // The saved Load order follows the vault before anything reads it
+        // (both halves of a split poll reach here).
+        self.reconcile_profile_order();
+        self.poll_order_writes();
         self.transitions.clear();
         self.op_changes.clear();
         self.take_preparations(false);
@@ -2857,7 +3035,7 @@ impl<Io> OperatorSession<Io> {
             uid: existing
                 .as_ref()
                 .map(|p| p.uid)
-                .unwrap_or_else(|| crate::fresh_uid(vault)),
+                .unwrap_or_else(|| self.fresh_uid()),
             username: username.to_string(),
             password: draft.password_secret().clone(),
             settings: existing
@@ -3016,15 +3194,25 @@ impl<Io> OperatorSession<Io> {
     /// [`Self::poll`] instead.
     pub fn flush_writes(&mut self) {
         self.take_preparations(true);
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.take_native_deliveries(true);
     }
 
     fn take_writes(&mut self) {
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::try_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.release_abandoned_copy_writes();
     }
@@ -3433,6 +3621,15 @@ fn record_transitions(
             }
         }
     }
+}
+
+/// Log a saved Load order write that failed outside a command.
+fn order_write_failed(error: &std::io::Error) {
+    host_log!(
+        Category::Lifecycle,
+        Level::Warn,
+        "profile order: the saved Load order was not written: {error}"
+    );
 }
 
 #[cfg(test)]
