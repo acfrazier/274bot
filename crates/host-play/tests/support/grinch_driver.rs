@@ -4093,11 +4093,12 @@ fn required_server_cycle_window<'a>(
                                     == Some(frame.actor.player_name.as_str())
                         })
                         .and_then(|active| active["player_info_sequence"].as_u64())?;
-                    (actor_sequence > frame.player_info_sequence).then_some((cycle, actor_sequence))
+                    (actor_sequence >= frame.player_info_sequence)
+                        .then_some((cycle, actor_sequence))
                 });
                 if let Some((cycle, sequence)) = advanced_cycle {
                     return Err(format!(
-                        "captured PLAYER_INFO for {} (account {}) sequence {} lacks its GRINCH_CLIENT_OUTPUT row after completed server cycle {} recorded later sequence {}",
+                        "captured PLAYER_INFO for {} (account {}) sequence {} lacks its GRINCH_CLIENT_OUTPUT row after completed server cycle {} recorded sequence {}",
                         frame.actor.player_name,
                         frame.actor.account_id,
                         frame.player_info_sequence,
@@ -8719,6 +8720,27 @@ mod tests {
                         })
                     })
         }));
+        assert!(!logs
+            .server_lines
+            .iter()
+            .any(|line| line.contains("Server shutdown complete")));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn server_log_fence_names_missing_final_output_without_a_later_player_info() {
+        let (mut runtime, _, _) = stderr_clock_fixture();
+        let frame = runtime.actors.remove(0).frames.remove(0);
+        let sequence = frame.player_info_sequence;
+        let mut logs = ObservedLogs::default();
+        logs.ingest_server_text(&format!(
+            "{}{}",
+            cycle_log_row(&frame, sequence, sequence),
+            debug_profile_log_row(sequence)
+        ));
+        let error = required_server_cycle_window(std::iter::once(&frame), &logs).unwrap_err();
+        assert!(error.contains("lacks its GRINCH_CLIENT_OUTPUT row after completed server cycle"));
+        assert!(logs.client_outputs.is_empty());
         assert!(!logs
             .server_lines
             .iter()
