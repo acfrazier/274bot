@@ -25,6 +25,7 @@ use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use vault::{Profile, ProfileSettings};
 
 use super::grinch_oracle as oracle;
@@ -3291,11 +3292,149 @@ fn bank_open_matches_candidate(candidate: &BankCandidate, tile: Option<Tile>) ->
 }
 
 #[derive(Clone)]
+struct PreloginAccountStore {
+    profile: String,
+    database_usernames: BTreeSet<[u8; 32]>,
+    profile_saves: BTreeSet<[u8; 32]>,
+}
+
+fn account_name_fingerprint(name: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for byte in name.bytes() {
+        hasher.update([byte.to_ascii_lowercase()]);
+    }
+    let digest = hasher.finalize();
+    let mut fingerprint = [0; 32];
+    fingerprint.copy_from_slice(&digest);
+    fingerprint
+}
+
+fn parse_sha256_fingerprints(
+    evidence: &Value,
+    field: &str,
+) -> Result<BTreeSet<[u8; 32]>, String> {
+    let rows = evidence
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("pre-login account-store evidence lacks {field}"))?;
+    let mut fingerprints = BTreeSet::new();
+    for row in rows {
+        let encoded = row
+            .as_str()
+            .ok_or_else(|| format!("pre-login account-store {field} contains a non-string"))?;
+        let bytes = encoded.as_bytes();
+        if bytes.len() != 64 {
+            return Err(format!(
+                "pre-login account-store {field} contains a malformed SHA-256"
+            ));
+        }
+        let mut fingerprint = [0; 32];
+        for (index, pair) in bytes.chunks_exact(2).enumerate() {
+            let high = match pair[0] {
+                b'0'..=b'9' => pair[0] - b'0',
+                b'a'..=b'f' => pair[0] - b'a' + 10,
+                _ => {
+                    return Err(format!(
+                        "pre-login account-store {field} contains a malformed SHA-256"
+                    ))
+                }
+            };
+            let low = match pair[1] {
+                b'0'..=b'9' => pair[1] - b'0',
+                b'a'..=b'f' => pair[1] - b'a' + 10,
+                _ => {
+                    return Err(format!(
+                        "pre-login account-store {field} contains a malformed SHA-256"
+                    ))
+                }
+            };
+            fingerprint[index] = (high << 4) | low;
+        }
+        if !fingerprints.insert(fingerprint) {
+            return Err(format!(
+                "pre-login account-store {field} contains a duplicate SHA-256"
+            ));
+        }
+    }
+    Ok(fingerprints)
+}
+
+fn parse_prelogin_account_store(manifest: &Value) -> Result<PreloginAccountStore, String> {
+    let evidence = manifest
+        .get("scratch")
+        .and_then(|scratch| scratch.get("account_store_prelogin"))
+        .ok_or("scratch manifest lacks pre-login account-store evidence")?;
+    if evidence["captured_before_server_start"].as_bool() != Some(true) {
+        return Err("scratch account-store evidence was not captured before server start".into());
+    }
+    if evidence["database_path"].as_str() != Some("db.sqlite")
+        || evidence["account_table"].as_str() != Some("account")
+    {
+        return Err("scratch account-store evidence does not identify db.sqlite.account".into());
+    }
+    if evidence["username_hash_scheme"].as_str() != Some("sha256-utf8-ascii-lowercase")
+        || evidence["save_suffix"].as_str() != Some(".sav")
+    {
+        return Err("scratch account-store evidence uses an unsupported username fingerprint".into());
+    }
+    let profile = evidence["profile"]
+        .as_str()
+        .ok_or("scratch account-store evidence lacks its player-save profile")?;
+    if profile.is_empty()
+        || profile == "."
+        || profile == ".."
+        || profile.contains('/')
+        || profile.contains('\\')
+    {
+        return Err("scratch account-store evidence has an invalid player-save profile".into());
+    }
+    let save_directory = format!("data/players/{profile}");
+    if evidence["save_directory"].as_str() != Some(save_directory.as_str()) {
+        return Err("scratch account-store evidence has an inconsistent player-save directory".into());
+    }
+    Ok(PreloginAccountStore {
+        profile: profile.to_owned(),
+        database_usernames: parse_sha256_fingerprints(
+            evidence,
+            "database_username_sha256",
+        )?,
+        profile_saves: parse_sha256_fingerprints(evidence, "profile_save_name_sha256")?,
+    })
+}
+
+fn validate_fresh_account_names(
+    store: &PreloginAccountStore,
+    names: &[String],
+) -> Result<BTreeSet<String>, String> {
+    let mut fresh = BTreeSet::new();
+    for name in names {
+        let fingerprint = account_name_fingerprint(name);
+        if store.database_usernames.contains(&fingerprint) {
+            return Err(format!(
+                "pre-login db.sqlite account table already contains minted account {name}"
+            ));
+        }
+        if store.profile_saves.contains(&fingerprint) {
+            return Err(format!(
+                "pre-login player save already exists for minted account {name} at data/players/{}/{name}.sav",
+                store.profile
+            ));
+        }
+        if !fresh.insert(name.clone()) {
+            return Err("live account minting returned duplicate names".into());
+        }
+    }
+    Ok(fresh)
+}
+
+#[derive(Clone)]
 struct SessionData {
     runtime: RuntimeReport,
     logs: ObservedLogs,
     host_rows: Vec<ObservedLogRecord>,
     engine: EngineEvidence,
+    fresh_accounts: BTreeSet<String>,
+    account_store_prelogin: Value,
     setup_config: Value,
     bank_candidates: Vec<BankCandidate>,
     evidence_manifest_path: PathBuf,
@@ -3326,6 +3465,10 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
             inputs.evidence_manifest.display()
         )
     })?;
+    let engine_manifest: Value = serde_json::from_slice(&raw_engine)
+        .map_err(|error| format!("parse raw engine evidence for account-store snapshot: {error}"))?;
+    let account_store = parse_prelogin_account_store(&engine_manifest)?;
+    let account_store_prelogin = engine_manifest["scratch"]["account_store_prelogin"].clone();
     let engine: EngineEvidence = serde_json::from_slice(&raw_engine)
         .map_err(|error| format!("parse typed engine evidence: {error}"))?;
     if case.is_b() != engine.scratch.content_patch.is_some() {
@@ -3335,6 +3478,14 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
     let _home = script::IsolatedEnv::enter(&format!("grinch-s4-{}", case.slug()));
     let (profile, template) = selected_profile(inputs, temp.path())?;
     let setup_config = verify_selected_endpoint(inputs, &profile)?;
+    if let Some(configured_profile) = setup_config["node"]["profile"].as_str() {
+        if configured_profile != account_store.profile {
+            return Err(
+                "pre-login account-store profile differs from the selected /setup/config profile"
+                    .into(),
+            );
+        }
+    }
     let world = template
         .world()
         .ok_or("selected template has no navigation world")?;
@@ -3370,6 +3521,7 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
     if names.len() != actor_count || names.iter().collect::<BTreeSet<_>>().len() != actor_count {
         return Err("live account minting did not return distinct fresh names".into());
     }
+    let fresh_accounts = validate_fresh_account_names(&account_store, &names)?;
     let credentials = host_play::mint_live_entries(&names);
     if credentials.len() != actor_count {
         return Err("live account credential minting was incomplete".into());
@@ -3721,6 +3873,8 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
         logs,
         host_rows,
         engine,
+        fresh_accounts,
+        account_store_prelogin,
         setup_config,
         bank_candidates: active_route,
         evidence_manifest_path: inputs.evidence_manifest.clone(),
@@ -3900,21 +4054,83 @@ fn required_server_cycle_window<'a>(
             .or_insert(Some(output.cycle));
     }
     let mut window: Option<(u64, u64)> = None;
+    let mut missing_frame = None;
+    let mut debug_ordinals: Option<HashMap<u64, u64>> = None;
     for frame in frames {
         let cycle = match outputs.get(&(&frame.actor, frame.player_info_sequence)) {
             Some(Some(cycle)) => *cycle,
             Some(None) => {
                 return Err("captured PLAYER_INFO maps to duplicate server output rows".into())
             }
-            None => return Ok(None),
+            None => {
+                let debug_rows = debug_ordinals.get_or_insert_with(|| {
+                    logs.debug_ticks
+                        .iter()
+                        .map(|row| (row.cycle, row.server_line_ordinal))
+                        .collect()
+                });
+                let advanced_cycle = logs.cycles.iter().find_map(|event| {
+                    let cycle = event.payload["cycle"].as_u64()?;
+                    let debug_ordinal = *debug_rows.get(&cycle)?;
+                    if event.server_line_ordinal == 0
+                        || debug_ordinal <= event.server_line_ordinal
+                    {
+                        return None;
+                    }
+                    let has_client_output = event.payload["phase_order"]
+                        .as_array()?
+                        .iter()
+                        .any(|phase| phase.as_str() == Some("client_output"));
+                    if !has_client_output {
+                        return None;
+                    }
+                    let actor_sequence = event.payload["active_actors"]
+                        .as_array()?
+                        .iter()
+                        .find(|active| {
+                            active["active"].as_bool() == Some(true)
+                                && active["actor"]["account_id"].as_str()
+                                    == Some(frame.actor.account_id.as_str())
+                                && active["actor"]["player_name"].as_str()
+                                    == Some(frame.actor.player_name.as_str())
+                        })
+                        .and_then(|active| active["player_info_sequence"].as_u64())?;
+                    (actor_sequence > frame.player_info_sequence)
+                        .then_some((cycle, actor_sequence))
+                });
+                if let Some((cycle, sequence)) = advanced_cycle {
+                    return Err(format!(
+                        "captured PLAYER_INFO for {} (account {}) sequence {} lacks its GRINCH_CLIENT_OUTPUT row after completed server cycle {} recorded later sequence {}",
+                        frame.actor.player_name,
+                        frame.actor.account_id,
+                        frame.player_info_sequence,
+                        cycle,
+                        sequence
+                    ));
+                }
+                missing_frame.get_or_insert(frame);
+                continue;
+            }
         };
         window = Some(window.map_or((cycle, cycle), |(first, last)| {
             (first.min(cycle), last.max(cycle))
         }));
     }
+    if let Some(frame) = missing_frame {
+        if logs
+            .server_lines
+            .iter()
+            .any(|line| line.contains("Server shutdown complete"))
+        {
+            return Err(format!(
+                "scratch server shut down before required GRINCH_CLIENT_OUTPUT row for captured PLAYER_INFO sequence {} (account {}, player {})",
+                frame.player_info_sequence, frame.actor.account_id, frame.actor.player_name
+            ));
+        }
+        return Ok(None);
+    }
     Ok(window)
 }
-
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn required_debug_profile_window<'a>(
     frames: impl Iterator<Item = &'a RawFrame>,
@@ -5188,12 +5404,10 @@ fn player_run_parts(
         .iter()
         .map(|actor| actor.account.as_str())
         .collect::<BTreeSet<_>>();
-    let fresh = main.account.starts_with("gr25")
-        && accounts.len() == runtime.actors.len()
-        && runtime
-            .actors
+    let fresh = accounts.len() == runtime.actors.len()
+        && accounts
             .iter()
-            .all(|actor| actor.account.starts_with("gr25"));
+            .all(|account| session.fresh_accounts.contains(*account));
     let identity = RunIdentity {
         actor: first.actor.clone(),
         run_id: key.run_id(&main.account),
@@ -5598,6 +5812,7 @@ fn negative_drop_trace(
 
 fn project_competitor_frames(
     report: &ActorReport,
+    fresh_accounts: &BTreeSet<String>,
     mut first_cycle: u64,
     last_cycle: u64,
     active_before_grinch_start: bool,
@@ -5641,7 +5856,7 @@ fn project_competitor_frames(
             .clone()
             .ok_or("competitor's first retained frame lacks its real client session")?,
         start_tick: first.tick,
-        fresh_account: report.account.starts_with("gr25"),
+        fresh_account: fresh_accounts.contains(&report.account),
         active_before_grinch_start,
     };
     Ok((identity, frames))
@@ -5720,7 +5935,13 @@ fn build_static_trace(
                     })
             });
         let (participant, participant_frames) =
-            project_competitor_frames(report, first_cycle, last_cycle, active_before)?;
+            project_competitor_frames(
+                report,
+                &session.fresh_accounts,
+                first_cycle,
+                last_cycle,
+                active_before,
+            )?;
         (Some(participant), participant_frames)
     } else {
         (None, Vec::new())
@@ -7317,6 +7538,7 @@ fn session_meta_json(
         "run_identity":identity,
         "engine_evidence_manifest_path":session.evidence_manifest_path,
         "engine_evidence_at_capture":session.engine,
+        "account_store_prelogin_at_capture":session.account_store_prelogin,
         "host_log_artifact_path":session.host_log_path,
         "stderr_capture_artifact_path":session.stderr_log_path,
         "stderr_capture_prefix_bytes":session.stderr_capture_prefix_bytes,
@@ -7883,9 +8105,21 @@ fn finalize_variant(dir: &Path, case: Case) -> Result<(Value, Result<(), String>
             manifest_path.display()
         )
     })?;
-    let final_engine: EngineEvidence = serde_json::from_slice(&final_bytes).map_err(|error| {
+    let final_manifest: Value = serde_json::from_slice(&final_bytes).map_err(|error| {
         format!(
             "parse final scratch manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    if final_manifest["scratch"]["account_store_prelogin"] != meta["account_store_prelogin_at_capture"] {
+        return Err(format!(
+            "{} pre-login account-store evidence changed after capture",
+            case.slug()
+        ));
+    }
+    let final_engine: EngineEvidence = serde_json::from_value(final_manifest).map_err(|error| {
+        format!(
+            "parse typed final scratch manifest {}: {error}",
             manifest_path.display()
         )
     })?;
@@ -8019,6 +8253,58 @@ pub fn replay_cell_b() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fingerprint_hex(name: &str) -> String {
+        use std::fmt::Write as _;
+
+        let fingerprint = account_name_fingerprint(name);
+        let mut encoded = String::with_capacity(64);
+        for byte in fingerprint {
+            write!(&mut encoded, "{byte:02x}").unwrap();
+        }
+        encoded
+    }
+
+    #[test]
+    fn fresh_account_authority_checks_database_and_profile_saves() {
+        let manifest = |database_username_sha256: Vec<String>,
+                        profile_save_name_sha256: Vec<String>| {
+            json!({
+                "scratch": {
+                    "account_store_prelogin": {
+                        "captured_before_server_start": true,
+                        "database_path": "db.sqlite",
+                        "account_table": "account",
+                        "profile": "main",
+                        "save_directory": "data/players/main",
+                        "save_suffix": ".sav",
+                        "username_hash_scheme": "sha256-utf8-ascii-lowercase",
+                        "database_username_sha256": database_username_sha256,
+                        "profile_save_name_sha256": profile_save_name_sha256
+                    }
+                }
+            })
+        };
+        let name = "gr25fresh".to_owned();
+        let empty_store = parse_prelogin_account_store(&manifest(Vec::new(), Vec::new())).unwrap();
+        assert_eq!(
+            validate_fresh_account_names(&empty_store, std::slice::from_ref(&name)).unwrap(),
+            BTreeSet::from([name.clone()])
+        );
+
+        let existing = fingerprint_hex("GR25FRESH");
+        let database_store =
+            parse_prelogin_account_store(&manifest(vec![existing.clone()], Vec::new())).unwrap();
+        assert!(validate_fresh_account_names(&database_store, std::slice::from_ref(&name))
+            .unwrap_err()
+            .contains("db.sqlite account table"));
+
+        let save_store =
+            parse_prelogin_account_store(&manifest(Vec::new(), vec![existing])).unwrap();
+        assert!(validate_fresh_account_names(&save_store, std::slice::from_ref(&name))
+            .unwrap_err()
+            .contains("data/players/main/gr25fresh.sav"));
+    }
 
     fn bank_packet_callback_fixture() -> (Vec<BankCallbackObservation>, BankClickEvent) {
         let prior = BankCallbackObservation {
@@ -8315,6 +8601,144 @@ mod tests {
             "scratch server shut down before its last required debugProfile tick row"
         );
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn cycle_log_row(frame: &RawFrame, cycle: u64, sequence: u64) -> String {
+        format!(
+            "GRINCH_CYCLE {}\n",
+            json!({
+                "cycle":cycle,
+                "object_turn":cycle,
+                "phase_order":["player_processing","object_lifecycle","client_output"],
+                "active_actors":[{
+                    "actor":frame.actor,
+                    "active":true,
+                    "player_info_sequence":sequence,
+                    "tile":{"x":frame.position.x,"z":frame.position.z,"plane":frame.position.plane}
+                }],
+                "player_processing_order":[frame.actor.account_id]
+            })
+        )
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn client_output_log_row(frame: &RawFrame, cycle: u64, sequence: u64) -> String {
+        format!(
+            "GRINCH_CLIENT_OUTPUT {}\n",
+            json!({
+                "cycle":cycle,
+                "actor":frame.actor,
+                "player_info_sequence":sequence
+            })
+        )
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn debug_profile_log_row(cycle: u64) -> String {
+        format!("10/21/2026 4:59:56 AM\t INFO\t tick {cycle}: 18/600 ms, 345 MB heap\n")
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn finish_after_server_log_append(
+        frame: &RawFrame,
+        initial: &str,
+        appended: &str,
+    ) -> (Result<(), String>, ObservedLogs) {
+        let temp = TempRoot::new().unwrap();
+        let path = temp.path().join("server.log");
+        fs::write(&path, initial).unwrap();
+        let writer_path = path.clone();
+        let appended = appended.to_owned();
+        let writer = thread::spawn(move || {
+            let mut output = fs::OpenOptions::new()
+                .append(true)
+                .open(writer_path)
+                .unwrap();
+            output.write_all(appended.as_bytes()).unwrap();
+        });
+        let mut logs = ObservedLogs::default();
+        let mut offset = 0;
+        let mut pending = String::new();
+        let result = finish_required_server_log(
+            &path,
+            std::iter::once(frame),
+            &mut logs,
+            &mut offset,
+            &mut pending,
+        );
+        writer.join().expect("server log append worker panicked");
+        (result, logs)
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn server_log_fence_accepts_a_required_output_that_arrives_after_cycle_evidence() {
+        let (mut runtime, _, _) = stderr_clock_fixture();
+        let frame = runtime.actors.remove(0).frames.remove(0);
+        let cycle = frame.player_info_sequence;
+        let initial = cycle_log_row(&frame, cycle, frame.player_info_sequence);
+        let appended = format!(
+            "{}{}",
+            client_output_log_row(&frame, cycle, frame.player_info_sequence),
+            debug_profile_log_row(cycle)
+        );
+        let (result, _) = finish_after_server_log_append(&frame, &initial, &appended);
+        result.expect("the required output row may be appended asynchronously");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn server_log_fence_names_missing_output_after_a_live_server_advance() {
+        let (mut runtime, _, _) = stderr_clock_fixture();
+        let frame = runtime.actors.remove(0).frames.remove(0);
+        let initial = cycle_log_row(
+            &frame,
+            frame.player_info_sequence,
+            frame.player_info_sequence,
+        );
+        let next_sequence = frame.player_info_sequence + 1;
+        let appended = format!(
+            "{}{}",
+            cycle_log_row(&frame, next_sequence, next_sequence),
+            debug_profile_log_row(next_sequence)
+        );
+        let (result, logs) = finish_after_server_log_append(&frame, &initial, &appended);
+        assert!(result
+            .unwrap_err()
+            .contains("lacks its GRINCH_CLIENT_OUTPUT row after completed server cycle"));
+        assert!(logs.cycles.iter().any(|cycle| {
+            cycle.payload["cycle"].as_u64() == Some(next_sequence)
+                && cycle.payload["active_actors"]
+                    .as_array()
+                    .is_some_and(|actors| {
+                        actors.iter().any(|active| {
+                            active["active"].as_bool() == Some(true)
+                                && active["actor"]["account_id"].as_str()
+                                    == Some(frame.actor.account_id.as_str())
+                                && active["player_info_sequence"].as_u64()
+                                    == Some(next_sequence)
+                        })
+                    })
+        }));
+        assert!(!logs
+            .server_lines
+            .iter()
+            .any(|line| line.contains("Server shutdown complete")));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn server_log_fence_names_missing_output_on_shutdown() {
+        let (mut runtime, _, _) = stderr_clock_fixture();
+        let frame = runtime.actors.remove(0).frames.remove(0);
+        let (result, _) = finish_after_server_log_append(
+            &frame,
+            "",
+            "10/21/2026 4:59:56 AM\t INFO\t Server shutdown complete\n",
+        );
+        assert!(result
+            .unwrap_err()
+            .contains("shut down before required GRINCH_CLIENT_OUTPUT row"));
+    }
+
 
     fn required_cycle_ledger_fixture() -> (ObservedLogs, Vec<ServerCycle>) {
         let mut logs = ObservedLogs::default();
@@ -9274,11 +9698,17 @@ mod tests {
         report.frames = vec![owner, first, last];
         report
     }
+    fn fixture_fresh_accounts(report: &ActorReport) -> BTreeSet<String> {
+        BTreeSet::from([report.account.clone()])
+    }
+
 
     #[test]
     fn competitor_projection_r5_receipt_keeps_earliest_real_send_owner() {
         let report = r5_competitor_send_owner_report();
-        let (identity, frames) = project_competitor_frames(&report, 81, 82, true).unwrap();
+        let fresh_accounts = fixture_fresh_accounts(&report);
+        let (identity, frames) =
+            project_competitor_frames(&report, &fresh_accounts, 81, 82, true).unwrap();
         assert_eq!(identity.start_tick, 31);
         assert_eq!(frames.len(), 3);
         assert_eq!(frames[0].server_cycle, Some(80));
@@ -9292,7 +9722,8 @@ mod tests {
     fn competitor_projection_rejects_cropped_send_owner() {
         let mut report = r5_competitor_send_owner_report();
         report.frames.remove(0);
-        assert!(project_competitor_frames(&report, 81, 82, true)
+        let fresh_accounts = fixture_fresh_accounts(&report);
+        assert!(project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
             .unwrap_err()
             .contains("competitor send-owning PLAYER_INFO frame is missing"));
     }
@@ -9301,7 +9732,8 @@ mod tests {
     fn competitor_projection_rejects_changed_send_owner_identity() {
         let mut report = r5_competitor_send_owner_report();
         report.frames[0].player_info_sequence += 1;
-        assert!(project_competitor_frames(&report, 81, 82, true)
+        let fresh_accounts = fixture_fresh_accounts(&report);
+        assert!(project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
             .unwrap_err()
             .contains("competitor send-owning PLAYER_INFO identity changed"));
     }
@@ -9330,10 +9762,13 @@ mod tests {
         last.player_info_sequence = 41;
         last.server_cycle = Some(82);
         report.frames = vec![early, first, last];
-        let (identity, frames) = project_competitor_frames(report, 81, 82, true).unwrap();
+        let fresh_accounts = fixture_fresh_accounts(report);
+        let (identity, frames) =
+            project_competitor_frames(report, &fresh_accounts, 81, 82, true).unwrap();
         assert_eq!(identity.start_tick, 32);
         assert_eq!(identity.session_id, "client:receiver:session:2");
         assert!(identity.active_before_grinch_start);
+        assert!(identity.fresh_account);
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].tick, identity.start_tick);
         assert_eq!(
@@ -9345,13 +9780,17 @@ mod tests {
         assert_eq!(report.frames[0].tick, 1);
         assert_eq!(report.frames[0].client_session_generation, 1);
         assert!(
-            !project_competitor_frames(report, 81, 82, false)
+            !project_competitor_frames(report, &fresh_accounts, 81, 82, false)
                 .unwrap()
                 .0
                 .active_before_grinch_start
         );
-        assert!(project_competitor_frames(report, 200, 201, true)
+        assert!(!project_competitor_frames(report, &fresh_accounts, 200, 201, true)
             .unwrap_err()
             .contains("competitor lacks PLAYER_INFO frames in the main cycle window"));
+        assert!(!project_competitor_frames(report, &BTreeSet::new(), 81, 82, true)
+            .unwrap()
+            .0
+            .fresh_account);
     }
 }
