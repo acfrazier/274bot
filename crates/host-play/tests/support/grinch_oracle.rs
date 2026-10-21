@@ -22,8 +22,11 @@ pub const BUNNY_EARS_ID: i32 = 1037;
 pub const YO_YO_ID: i32 = 4079;
 pub const ORDINARY_UNSELECTED_ID: i32 = 995;
 pub const EASTER_EGG_CERTIFICATE_ID: i32 = 1962;
-pub const RAW_RESPAWN_RATE: u32 = 502;
-pub const PUMPKIN_RESPAWN_CYCLE_GAP: u64 = 500;
+pub const RAW_RESPAWN_RATE: u32 = 100;
+pub const PUMPKIN_RESPAWN_CYCLE_GAP: u64 = 98;
+const RESPAWN_OUTPUT_TICK_GAP: u64 = PUMPKIN_RESPAWN_CYCLE_GAP + 1;
+const B_RESPAWN_ITEM_IDS: [i32; 4] = [PUMPKIN_ID, SCYTHE_ID, BUNNY_EARS_ID, YO_YO_ID];
+const ATTESTED_PACK_PATHS: [&str; 3] = ["server/obj.dat", "server/npc.dat", "client/config"];
 pub const MAX_TAKE_SETTLEMENT_TICKS: u64 = 4;
 pub const TRADEABLE_IDS: [i32; 15] = [
     1961,
@@ -301,6 +304,8 @@ pub struct ContentPatch {
     pub preserved_existing_map_rows: bool,
     pub real_map_packer_used: bool,
     pub real_config_packer_used: bool,
+    pub attested_pack_hashes_before: BTreeMap<String, String>,
+    pub attested_pack_hashes_after: BTreeMap<String, String>,
     pub raw_respawn_rates: BTreeMap<i32, u32>,
     pub static_spawns: Vec<StaticSpawn>,
 }
@@ -2201,6 +2206,37 @@ fn require_respawn_patch(scratch: &ScratchAuthority) -> Result<&ContentPatch, St
             && patch.real_config_packer_used,
         "scratch content patch did not preserve rows and use both real packers",
     )?;
+    let expected_rates: BTreeMap<i32, u32> = B_RESPAWN_ITEM_IDS
+        .into_iter()
+        .map(|item_id| (item_id, RAW_RESPAWN_RATE))
+        .collect();
+    ensure(
+        patch.raw_respawn_rates == expected_rates,
+        "scratch pack evidence lacks the four actual default rates decoded by ObjType",
+    )?;
+    ensure(
+        patch.attested_pack_hashes_before.len() == ATTESTED_PACK_PATHS.len()
+            && patch.attested_pack_hashes_after.len() == ATTESTED_PACK_PATHS.len(),
+        "scratch map-only patch lacks hashes for every attested pack",
+    )?;
+    for path in ATTESTED_PACK_PATHS {
+        let before = patch
+            .attested_pack_hashes_before
+            .get(path)
+            .ok_or_else(|| format!("missing pre-patch hash for attested pack {path}"))?;
+        let after = patch
+            .attested_pack_hashes_after
+            .get(path)
+            .ok_or_else(|| format!("missing post-patch hash for attested pack {path}"))?;
+        ensure(
+            is_sha256(before) && is_sha256(after),
+            format!("attested pack {path} has an invalid SHA-256"),
+        )?;
+        ensure(
+            before == after,
+            format!("map-only scratch patch changed attested pack {path}"),
+        )?;
+    }
     Ok(patch)
 }
 
@@ -2396,7 +2432,7 @@ fn verify_spawn_patch(
     let patch = require_respawn_patch(&trace.engine.scratch)?;
     ensure(
         patch.raw_respawn_rates.get(&item_id) == Some(&RAW_RESPAWN_RATE),
-        format!("scratch item {item_id} does not use raw respawnrate=502"),
+        format!("scratch item {item_id} lacks its decoded default respawn rate of 100"),
     )?;
     let actual: BTreeMap<(i32, Tile), u32> = patch
         .static_spawns
@@ -2501,9 +2537,12 @@ fn require_respawn_gap(
     fresh_frame: &PlayerFrame,
 ) -> OracleResult {
     let scaled_turns = ((4000_u64 - u64::from(p)) * u64::from(RAW_RESPAWN_RATE)) / 4000;
+    let expected_cycle_gap = scaled_turns.saturating_sub(1);
     ensure(
-        scaled_turns == 501,
-        "raw 502 does not scale to the required 501 lifecycle turns",
+        scaled_turns == 99 && expected_cycle_gap == PUMPKIN_RESPAWN_CYCLE_GAP,
+        format!(
+            "decoded default rate does not scale to 99 lifecycle turns and 98 output cycles for P={p}"
+        ),
     )?;
     let take_cycle = previous_take
         .server_cycle
@@ -2518,9 +2557,9 @@ fn require_respawn_gap(
         "fresh row did not use the declared post-lifecycle client-output phase",
     )?;
     ensure(
-        fresh_cycle.saturating_sub(take_cycle) == PUMPKIN_RESPAWN_CYCLE_GAP,
+        fresh_cycle.saturating_sub(take_cycle) == expected_cycle_gap,
         format!(
-            "respawn gap was {}, expected exactly 500 server cycles",
+            "respawn gap was {}, expected exactly {expected_cycle_gap} server cycles",
             fresh_cycle.saturating_sub(take_cycle)
         ),
     )
@@ -4458,6 +4497,11 @@ mod tests {
             .first()
             .map(|spawn| format!("{}-{}-{}", spawn.item_id, spawn.tile.x, spawn.tile.z))
             .unwrap_or_else(|| "empty".into());
+        let attested_pack_hashes = BTreeMap::from([
+            ("server/obj.dat".to_string(), "b".repeat(64)),
+            ("server/npc.dat".to_string(), "c".repeat(64)),
+            ("client/config".to_string(), "d".repeat(64)),
+        ]);
         ScratchAuthority {
             request_id: format!("request-{item}-{suffix}"),
             scratch_id: format!("scratch-{item}-{suffix}"),
@@ -4478,7 +4522,12 @@ mod tests {
                 preserved_existing_map_rows: true,
                 real_map_packer_used: true,
                 real_config_packer_used: true,
-                raw_respawn_rates: BTreeMap::from([(item, RAW_RESPAWN_RATE)]),
+                attested_pack_hashes_before: attested_pack_hashes.clone(),
+                attested_pack_hashes_after: attested_pack_hashes,
+                raw_respawn_rates: B_RESPAWN_ITEM_IDS
+                    .into_iter()
+                    .map(|item_id| (item_id, RAW_RESPAWN_RATE))
+                    .collect(),
                 static_spawns: spawns,
             }),
             start_count: 1,
@@ -4635,7 +4684,11 @@ mod tests {
         };
         let actor = trace.identity.actor.clone();
         let order = vec![actor.account_id.clone()];
-        let appearances = [(anchor, [0_u64, 501, 1002]), (nearby, [0_u64, 502, 1003])];
+        let respawn_tick = RESPAWN_OUTPUT_TICK_GAP;
+        let appearances = [
+            (anchor, [0, respawn_tick, 2 * respawn_tick]),
+            (nearby, [0, respawn_tick + 1, 2 * respawn_tick + 1]),
+        ];
         for (tile, ticks) in appearances {
             for (index, tick) in ticks.into_iter().enumerate() {
                 let take_tick = if tile == nearby && index == 0 {
@@ -4652,7 +4705,7 @@ mod tests {
                 ));
             }
         }
-        for tick in 0..=1044 {
+        for tick in 0..=(2 * RESPAWN_OUTPUT_TICK_GAP + 42) {
             let cycle_id = 1000 + tick;
             let mut rows = vec![(PUMPKIN_ID, outside, 1)];
             for (tile, tile_appearances) in appearances {
@@ -4718,7 +4771,14 @@ mod tests {
             fresh_account: participant.fresh_account,
         };
         trace.competitor = Some(participant);
-        let appearances = [0_u64, 501, 1002, 1503, 2004];
+        let respawn_tick = RESPAWN_OUTPUT_TICK_GAP;
+        let appearances = [
+            0,
+            respawn_tick,
+            2 * respawn_tick,
+            3 * respawn_tick,
+            4 * respawn_tick,
+        ];
         for (index, tick) in appearances.iter().copied().enumerate() {
             trace.takes.push(scratch_take(
                 &main_actor,
@@ -4742,7 +4802,7 @@ mod tests {
             competitor_actor.account_id.clone(),
             main_actor.account_id.clone(),
         ];
-        for tick in 0..=2045 {
+        for tick in 0..=(4 * respawn_tick + 41) {
             let cycle_id = 1000 + tick;
             let rows = if appearances.contains(&tick) {
                 vec![(PUMPKIN_ID, anchor, 1)]
@@ -4807,12 +4867,15 @@ mod tests {
         };
         let mut trace = empty_scratch_trace(kind, item_id, anchor, anchor, set([item_id]));
         let actor = trace.identity.actor.clone();
-        trace
-            .takes
-            .push(scratch_take(&actor, item_id, anchor, 0, 1001));
-        trace
-            .takes
-            .push(scratch_take(&actor, item_id, anchor, 501, 1502));
+        let respawn_tick = RESPAWN_OUTPUT_TICK_GAP;
+        trace.takes.push(scratch_take(&actor, item_id, anchor, 0, 1001));
+        trace.takes.push(scratch_take(
+            &actor,
+            item_id,
+            anchor,
+            respawn_tick,
+            1001 + respawn_tick,
+        ));
         let duplicate = item_id != YO_YO_ID;
         if duplicate {
             let refusal_kind = if item_id == SCYTHE_ID {
@@ -4824,24 +4887,25 @@ mod tests {
                 request_key: trace.takes[1].request_key.clone(),
                 item_id,
                 tile: anchor,
-                tick: 502,
+                tick: respawn_tick + 1,
                 kind: refusal_kind,
             });
         }
         let order = vec![actor.account_id.clone()];
-        for tick in 0..=542 {
+        for tick in 0..=(respawn_tick + 42) {
             let cycle_id = 1000 + tick;
-            let visible = tick == 0 || (tick >= 501 && (duplicate || tick == 501));
+            let visible = tick == 0
+                || (tick >= respawn_tick && (duplicate || tick == respawn_tick));
             let rows = if visible {
                 vec![(item_id, anchor, 1)]
             } else {
                 Vec::new()
             };
-            let pickups = (tick >= 1) as u32 + (!duplicate && tick >= 502) as u32;
+            let pickups = (tick >= 1) as u32 + (!duplicate && tick >= respawn_tick + 1) as u32;
             let mut native = status(&trace.identity);
             native.pickup_units = pickups;
             native.take_sends = trace.takes.iter().filter(|take| take.tick < tick).count() as u32;
-            if duplicate && tick >= 502 {
+            if duplicate && tick >= respawn_tick + 1 {
                 native.duplicate_refusals = 1;
                 native.id_exclusions.insert(item_id);
             }
@@ -5094,6 +5158,20 @@ mod tests {
     }
 
     #[test]
+    fn cell_b_rejects_map_patch_that_changes_an_attested_pack() {
+        let mut trace = b_pumpkin_fixture();
+        trace
+            .engine
+            .scratch
+            .content_patch
+            .as_mut()
+            .unwrap()
+            .attested_pack_hashes_after
+            .insert("server/obj.dat".into(), "e".repeat(64));
+        assert!(check_b_pumpkin_respawns(&trace).is_err());
+    }
+
+    #[test]
     fn cell_b_same_tick_later_take_does_not_claim_an_earlier_inventory_delta() {
         check_b_pumpkin_respawns(&b_pumpkin_fixture())
             .expect("sequential identical-ID Takes retain their causal inventory deltas");
@@ -5108,7 +5186,8 @@ mod tests {
             .iter_mut()
             .find(|take| take.tile == anchor && take.tick == 0)
             .unwrap();
-        first_take.server_cycle = Some(1002);
+        let first_take_cycle = first_take.server_cycle.unwrap();
+        first_take.server_cycle = Some(first_take_cycle + 1);
         assert!(check_b_pumpkin_respawns(&trace).is_err());
     }
 
@@ -5117,7 +5196,9 @@ mod tests {
         let mut trace = b_pumpkin_fixture();
         let anchor = trace.identity.anchor;
         trace.takes.retain(|take| {
-            !(take.item_id == PUMPKIN_ID && take.tile == anchor && take.tick == 501)
+            !(take.item_id == PUMPKIN_ID
+                && take.tile == anchor
+                && take.tick == RESPAWN_OUTPUT_TICK_GAP)
         });
         let take_ticks: Vec<u64> = trace.takes.iter().map(|take| take.tick).collect();
         for frame in &mut trace.frames {
@@ -5135,7 +5216,7 @@ mod tests {
             tile: trace.identity.anchor,
         };
         for frame in &mut trace.frames {
-            if frame.tick >= 1004 {
+            if frame.tick >= 2 * RESPAWN_OUTPUT_TICK_GAP + 2 {
                 frame
                     .status
                     .as_mut()
@@ -5150,7 +5231,11 @@ mod tests {
     #[test]
     fn cell_b_rejects_race_derived_avoidance_entry() {
         let mut trace = b_contested_fixture();
-        for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 1004) {
+        for frame in trace
+            .frames
+            .iter_mut()
+            .filter(|frame| frame.tick >= 2 * RESPAWN_OUTPUT_TICK_GAP + 2)
+        {
             frame.status.as_mut().unwrap().avoidance_entries = 1;
         }
         assert!(check_b_contested_pumpkin(&trace).is_err());
@@ -5160,13 +5245,15 @@ mod tests {
     fn cell_b_rejects_fresh_take_delayed_beyond_20_ticks() {
         let mut trace = b_contested_fixture();
         let main_actor = trace.identity.actor.clone();
+        let delayed_appearance_tick = 3 * RESPAWN_OUTPUT_TICK_GAP;
+        let delayed_take_tick = delayed_appearance_tick + 21;
         let delayed = trace
             .takes
             .iter_mut()
-            .find(|take| take.actor == main_actor && take.tick == 1503)
+            .find(|take| take.actor == main_actor && take.tick == delayed_appearance_tick)
             .unwrap();
-        delayed.tick = 1524;
-        delayed.server_cycle = Some(2525);
+        delayed.tick = delayed_take_tick;
+        delayed.server_cycle = Some(1001 + delayed_take_tick);
         let main_take_ticks: Vec<u64> = trace
             .takes
             .iter()
@@ -5174,11 +5261,9 @@ mod tests {
             .map(|take| take.tick)
             .collect();
         let tile = trace.identity.anchor;
-        for frame in trace
-            .frames
-            .iter_mut()
-            .filter(|frame| (1504..=1524).contains(&frame.tick))
-        {
+        for frame in trace.frames.iter_mut().filter(|frame| {
+            ((delayed_appearance_tick + 1)..=delayed_take_tick).contains(&frame.tick)
+        }) {
             frame.ground.as_mut().unwrap().rows.push(GroundRow {
                 item_id: PUMPKIN_ID,
                 tile,
@@ -5186,7 +5271,8 @@ mod tests {
             });
         }
         for frame in &mut trace.frames {
-            let pickups = (frame.tick >= 1525) as u32 + (frame.tick >= 2005) as u32;
+            let pickups = (frame.tick >= delayed_take_tick + 1) as u32
+                + (frame.tick >= 4 * RESPAWN_OUTPUT_TICK_GAP + 1) as u32;
             let inventory = frame.inventory.as_mut().unwrap();
             inventory
                 .quantities
