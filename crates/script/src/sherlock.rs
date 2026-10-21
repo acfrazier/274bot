@@ -1661,15 +1661,18 @@ mod tests {
                 here: self.here,
                 snapshot: Some(&self.snapshot),
                 obj_names: self.names.as_ref(),
-                compiled: crate::CompiledTick { walk_danger: None, selected,
-                reach: None,
-                reach_flood: self.reach_flood.as_ref(),
-                bank_memory: None,
-                collision: None,
-                hold: self.hold,
-                world_members: api::selected::Truth::Unknown,
-                interacts: Some(Vec::new()),
-                service_gate: None, },
+                compiled: crate::CompiledTick {
+                    walk_danger: None,
+                    selected,
+                    reach: None,
+                    reach_flood: self.reach_flood.as_ref(),
+                    bank_memory: None,
+                    collision: None,
+                    hold: self.hold,
+                    world_members: api::selected::Truth::Unknown,
+                    interacts: Some(Vec::new()),
+                    service_gate: None,
+                },
             }
         }
     }
@@ -1936,26 +1939,29 @@ mod tests {
         let host = frame.ctx(&mut driver, Some(selected));
         let snapshot = api::snapshot::SnapshotView::new(host.snapshot, evidence);
         let eligible = !host.compiled.hold;
-        let mut native = NativeTick { walk_danger: None, state: None,
-        service_authority: None,
-        prompt_port: None,
-        actions: &mut actions,
-        cx: crate::native::ActionContext {
-            evidence,
-            observed_walk_outcome_seq: 0,
-            pin: &pin,
-            snapshot,
-            retained: &mut retained,
-            action_id: 0,
-            active_now: Duration::from_millis(tick.saturating_mul(600)),
-            wall_now: Instant::now(),
-            ledger,
-            budget: &mut budget,
-            eligible,
-        },
-        output: &mut output,
-        pairs: None,
-        frame: host, };
+        let mut native = NativeTick {
+            walk_danger: None,
+            state: None,
+            service_authority: None,
+            prompt_port: None,
+            actions: &mut actions,
+            cx: crate::native::ActionContext {
+                evidence,
+                observed_walk_outcome_seq: 0,
+                pin: &pin,
+                snapshot,
+                retained: &mut retained,
+                action_id: 0,
+                active_now: Duration::from_millis(tick.saturating_mul(600)),
+                wall_now: Instant::now(),
+                ledger,
+                budget: &mut budget,
+                eligible,
+            },
+            output: &mut output,
+            pairs: None,
+            frame: host,
+        };
         let flow = script.tick(&mut native).expect("Sherlock native tick");
         let interacts = native.frame.compiled.interacts.take().unwrap_or_default();
         (flow, interacts)

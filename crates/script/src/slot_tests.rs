@@ -1618,15 +1618,18 @@ fn compiled_ctx<'a>(
         inv: None,
         snapshot: None,
         obj_names: None,
-        compiled: crate::CompiledTick { walk_danger: None, selected,
-        reach: None,
-        reach_flood: None,
-        bank_memory: None,
-        collision: None,
-        hold: false,
-        world_members: api::selected::Truth::Unknown,
-        interacts: None,
-        service_gate: None, },
+        compiled: crate::CompiledTick {
+            walk_danger: None,
+            selected,
+            reach: None,
+            reach_flood: None,
+            bank_memory: None,
+            collision: None,
+            hold: false,
+            world_members: api::selected::Truth::Unknown,
+            interacts: None,
+            service_gate: None,
+        },
     }
 }
 

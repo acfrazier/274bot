@@ -144,11 +144,14 @@ fn catherby_return_plan(
         &gatherer.prepared.methods,
         gatherer.settings(),
         area,
-        ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
-        now: 1,
-        skill_stat,
-        avoided: &gatherer.avoid,
-        collision: None, },
+        ReturnObservation {
+            walk_danger: Some(&crate::native::AllowWalkDanger),
+            here,
+            now: 1,
+            skill_stat,
+            avoided: &gatherer.avoid,
+            collision: None,
+        },
     ) else {
         panic!("the fixture has a return stand in each work-area quadrant");
     };
