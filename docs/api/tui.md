@@ -70,7 +70,7 @@ label in its border. Everything is plain text as well as colour.
 
 | Pane | What it shows |
 | --- | --- |
-| Fleet | loaded members: `[x]` row selection, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · selected K of M`; Load+login all / Logout all buttons |
+| Fleet | every profile, loaded first (load order) then the profiles that are not loaded (dim, state `not loaded`): `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login all / Logout all buttons. The panel's Fleet window, rail and Grid read the same rows, filter, order and marks |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world), the status pane's script, phase and reason rows (the same rows as the panel's Status card) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start all / Stop all over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
@@ -98,7 +98,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 
 | Pane | Keys |
 | --- | --- |
-| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot; `Space` selects the row for group actions; `/` filters by name, `wN` / `world:N` or state; `m` Load+login all…; `U` Log out all… |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `m` Load+login all…; `U` Log out all… |
 | rs2b0t import (palette **Import rs2b0t profiles…**) | type the path of rs2b0t's `rs2b0t-profiles.json`, `Enter` previews; in the preview `o` switches Skip/Overwrite for existing profiles, `u` (when the file has accounts the 289 client cannot log in with) imports those too or leaves them out, `Enter`/`y` imports, `Esc` goes back; in the report `d` asks to delete the export file (`y` deletes, `n` keeps; offered only once every chosen account is confirmed saved), `Esc` closes. See [vault.md](vault.md#importing-profiles-from-rs2b0t) |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
@@ -113,7 +113,8 @@ members they cover. If the fleet changes before you confirm, the dialog
 shows the new scope instead of running.
 
 **Marked rows.** The `[x]` marks are the one selection every fleet command
-reads. With rows marked, **Load+login all** and **Logout all** log in / out
+reads, including the Map's group send. A mark stays when the filter hides
+its row or the bot is unloaded; deleting the profile drops it. With rows marked, **Load+login all** and **Logout all** log in / out
 the marked bots only (loading unloaded ones first), **Start all** / **Stop
 all** start / stop them, and the palette adds **Assign script to marked…**
 (saves the Browse pick as their assignment without starting; running bots are

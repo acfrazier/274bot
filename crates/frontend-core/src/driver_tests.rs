@@ -667,17 +667,17 @@ fn marks_and_the_fleet_filter_change_only_through_their_rows() {
         .submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
         .expect("mark");
     assert_eq!(terminal(&d, mark.request(), "alice"), Some(done()));
-    assert!(d.models().marks().contains(alice));
+    assert!(d.models().fleet().marks().contains(alice));
     d.session_mut().stage_mark_all([alice, bob]);
     d.submit(OperatorCommand::MarkAll, Targets::Application)
         .expect("mark all");
-    assert_eq!(d.models().marks().len(), 2);
+    assert_eq!(d.models().fleet().marks().len(), 2);
     d.models_mut()
-        .fleet_filter_mut()
-        .staged_mut()
+        .fleet_mut()
+        .staged_filter_mut()
         .push_str("bob");
     assert_eq!(
-        d.models().fleet_filter().text(),
+        d.models().fleet().filter().text(),
         "",
         "a staged edit is not shown yet"
     );
@@ -685,10 +685,10 @@ fn marks_and_the_fleet_filter_change_only_through_their_rows() {
         .submit(OperatorCommand::SetFleetFilter, Targets::Application)
         .expect("filter");
     assert_eq!(terminal_app(&d, filter.request()), Some(done()));
-    assert_eq!(d.models().fleet_filter().text(), "bob");
+    assert_eq!(d.models().fleet().filter().text(), "bob");
     d.submit(OperatorCommand::ClearMarks, Targets::Application)
         .expect("clear");
-    assert!(d.models().marks().is_empty());
+    assert!(d.models().fleet().marks().is_empty());
 }
 
 #[test]
@@ -809,4 +809,237 @@ fn start_script_with_nothing_assigned_is_refused_with_its_reason() {
         crate::scripts::ScriptRunState::Idle,
         "no script runs"
     );
+}
+
+/// The names of the fleet model's shown rows, in their order.
+fn shown_names(d: &HeadlessDriver) -> Vec<String> {
+    d.models()
+        .fleet()
+        .shown_rows()
+        .map(|(_, row)| row.name().to_string())
+        .collect()
+}
+
+/// Every vault profile and every loaded slot is one row: the loaded ones
+/// in load order, then the rest in vault order. Loaded is its own flag,
+/// not the phase: a loaded bot that is offline is still loaded.
+#[test]
+fn the_fleet_universe_is_every_profile_once_with_an_explicit_loaded_flag() {
+    let mut d = driver("fleet-universe", &["alice", "bob", "carol"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("bob"))
+        .expect("load bob");
+    d.poll();
+    let fleet = d.models().fleet();
+    let rows: Vec<(&str, bool)> = fleet
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.loaded()))
+        .collect();
+    assert_eq!(rows, [("bob", true), ("alice", false), ("carol", false)]);
+    let bob = &fleet.rows()[0];
+    assert_eq!(bob.phase(), crate::Phase::Offline, "loaded, not logged in");
+    assert_eq!(
+        fleet.identities(),
+        [
+            d.session().profile_identity_or_synthetic("bob"),
+            d.session().profile_identity_or_synthetic("alice"),
+            d.session().profile_identity_or_synthetic("carol"),
+        ],
+        "one row per identity: the loaded vault profile is not listed twice"
+    );
+    assert_eq!(fleet.counts().shown_loaded(), 1);
+    assert_eq!(fleet.counts().shown_unloaded(), 2);
+}
+
+/// An empty vault has no rows; a loaded slot without a vault row (an
+/// orphan) is one row; with the vault locked, only loaded slots remain.
+#[test]
+fn empty_locked_and_orphan_universes_have_one_row_per_identity() {
+    let mut d = driver("fleet-empty", &[]);
+    d.poll();
+    assert!(d.models().fleet().rows().is_empty());
+
+    let mut d = driver("fleet-orphan", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load alice");
+    d.poll();
+    assert!(d
+        .session_mut()
+        .vault_mut()
+        .expect("vault")
+        .remove("alice")
+        .expect("remove alice's vault row"));
+    d.poll();
+    let names: Vec<(&str, bool)> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.loaded()))
+        .collect();
+    assert_eq!(
+        names,
+        [("alice", true), ("bob", false)],
+        "orphan stays one row"
+    );
+    assert_eq!(
+        d.models().fleet().identity(0),
+        Some(crate::ProfileIdentity::synthetic("alice"))
+    );
+
+    crate::test_support::session::clear_vault(d.session_mut());
+    d.poll();
+    let names: Vec<&str> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(
+        names,
+        ["alice"],
+        "a locked vault lists the loaded slots only"
+    );
+}
+
+/// A filter hides rows; it never drops a mark, and the counts say how many
+/// marks it hides. The order is shared by every surface that reads the
+/// model.
+#[test]
+fn a_filter_hides_rows_but_keeps_their_marks_and_counts_them() {
+    let mut d = driver("fleet-filter-marks", &["alice", "bob", "carol"]);
+    d.poll();
+    for name in ["alice", "carol"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    d.models_mut()
+        .fleet_mut()
+        .staged_filter_mut()
+        .push_str("bob");
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    assert_eq!(shown_names(&d), ["bob"]);
+    let counts = d.models().fleet().counts();
+    assert_eq!(counts.marked(), 2, "filtering drops no mark");
+    assert_eq!(counts.shown_marked(), 0);
+    assert_eq!(counts.hidden_marked(), 2);
+
+    d.models_mut().fleet_mut().staged_filter_mut().clear();
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("clear filter");
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::Name),
+        Targets::Application,
+    )
+    .expect("sort");
+    assert_eq!(shown_names(&d), ["alice", "bob", "carol"]);
+    assert_eq!(d.models().fleet().counts().shown_marked(), 2);
+}
+
+/// Unloading a marked profile keeps its mark (the row stays, not loaded);
+/// deleting the profile drops the row and the mark.
+#[test]
+fn unloading_keeps_a_mark_and_deleting_the_profile_drops_it() {
+    let mut d = driver("fleet-unload-delete", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load alice");
+    d.poll();
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    d.submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
+        .expect("mark");
+    let remove = d
+        .submit(OperatorCommand::Remove, Targets::Profile("alice"))
+        .expect("remove");
+    settle(&mut d, remove.request());
+    assert!(d.session().members().is_empty(), "alice left the fleet");
+    let fleet = d.models().fleet();
+    let index = fleet.index_of(alice).expect("alice keeps her row");
+    assert!(!fleet.rows()[index].loaded());
+    assert!(fleet.marks().contains(alice), "unloading keeps the mark");
+
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    let fleet = d.models().fleet();
+    assert_eq!(
+        fleet.index_of(alice),
+        None,
+        "the deleted profile has no row"
+    );
+    assert!(!fleet.marks().contains(alice), "deleting drops the mark");
+    assert_eq!(fleet.counts().marked(), 0);
+}
+
+/// A durable rename keeps the profile's identity, so its mark, and the
+/// universe is rebuilt once for it without any front end asking.
+#[test]
+fn a_rename_keeps_the_mark_and_rebuilds_the_universe_once() {
+    let mut d = driver("fleet-rename", &["alice", "bob"]);
+    d.poll();
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    d.submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
+        .expect("mark");
+    let before = d.models().fleet().rows_generation();
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    let fleet = d.models().fleet();
+    assert_eq!(
+        fleet.rows_generation(),
+        before + 1,
+        "one rebuild for one rename"
+    );
+    let index = fleet.index_of(alice).expect("same identity");
+    assert_eq!(fleet.rows()[index].name(), "alicia");
+    assert!(fleet.marks().contains(alice));
+}
+
+/// A steady frame recomputes nothing: refreshing with nothing changed
+/// neither rebuilds the universe nor moves the generation.
+#[test]
+fn a_steady_refresh_rebuilds_and_recounts_nothing() {
+    let mut d = driver("fleet-steady", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load");
+    d.poll();
+    let (rebuilds, generation) = (
+        d.models().fleet().rows_generation(),
+        d.models().fleet().generation(),
+    );
+    for _ in 0..10 {
+        d.poll();
+    }
+    assert_eq!(d.models().fleet().rows_generation(), rebuilds);
+    assert_eq!(d.models().fleet().generation(), generation);
+}
+
+/// A deleted profile's member settles from its vault write. Its name no
+/// longer resolves to its identity once the row is staged away, so the
+/// owner keeps the identity it had at dispatch.
+#[test]
+fn delete_profile_settles_done_when_its_write_lands() {
+    let mut d = driver("delete-settles", &["alice", "bob"]);
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    let terminal = d
+        .report(delete.request())
+        .and_then(|report| report.member(Subject::Profile(alice)))
+        .and_then(|member| member.terminal())
+        .cloned();
+    assert_eq!(terminal, Some(done()));
 }

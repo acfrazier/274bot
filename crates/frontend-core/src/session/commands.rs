@@ -555,7 +555,7 @@ impl<Io> OperatorSession<Io> {
         }
         {
             let models = surface.models();
-            self.resolve_targets(command, targets, models.marks.as_deref())?;
+            self.resolve_targets(command, targets, models.marks())?;
         }
         let request = self.open_command(command)?;
         let mut submitted = Submitted {
@@ -1226,11 +1226,11 @@ impl<Io> OperatorSession<Io> {
                     let identity = self.profile_identity_or_synthetic(name);
                     match self.vault_remove(name) {
                         Ok(Some(op)) => {
-                            if let Some(marks) = models.marks.as_deref_mut() {
-                                marks.remove(identity);
+                            if let Some(fleet) = models.fleet.as_deref_mut() {
+                                fleet.remove_mark(identity);
                             }
                             submitted.operation = Some(op);
-                            self.own_member(request, command, name, op);
+                            self.own_member_as(request, command, name, identity, op);
                         }
                         Ok(None) => self.settle_name(
                             request,
@@ -1755,7 +1755,7 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let mut rows = self.gone_marks(surface.models().marks());
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());
@@ -1821,7 +1821,7 @@ impl<Io> OperatorSession<Io> {
         submitted: &mut Submitted,
     ) {
         use crate::views::Phase;
-        let mut rows = self.gone_marks(surface.models().marks.as_deref());
+        let mut rows = self.gone_marks(surface.models().marks());
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
             let phase = self.fleet_view().row(&name).map(|row| row.phase());
@@ -1980,7 +1980,22 @@ impl<Io> OperatorSession<Io> {
         name: &str,
         op: OperationId,
     ) {
-        let subject = Subject::Profile(self.profile_identity_or_synthetic(name));
+        let identity = self.profile_identity_or_synthetic(name);
+        self.own_member_as(request, command, name, identity, op);
+    }
+
+    /// [`Self::own_member`] for a member whose identity was read before
+    /// its dispatch changed the vault (a deleted profile no longer
+    /// resolves its name to its identity).
+    fn own_member_as(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        name: &str,
+        identity: crate::selection::ProfileIdentity,
+        op: OperationId,
+    ) {
+        let subject = Subject::Profile(identity);
         let pending = self
             .commands
             .book

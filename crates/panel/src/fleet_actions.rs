@@ -1,6 +1,6 @@
 //! The Fleet window's commands on the marked rows: the panel adapter over the
 //! shared [`frontend_core`] commands. Each one reads the shared marked set
-//! ([`Session::fleet_selection`]) and puts its one bulk report in
+//! (the marks of [`Session::fleet_model`]) and puts its one bulk report in
 //! [`Session::fleet_report`].
 
 use frontend_core::{OperatorCommand, Targets};
@@ -39,7 +39,7 @@ impl Session {
     /// Which marked bots an Assign & restart would interrupt, for the
     /// confirmation that names them.
     pub fn fleet_restart_scope(&self) -> frontend_core::RestartScope {
-        frontend_core::restart_scope(&self.fleet_selection, &self.core)
+        frontend_core::restart_scope(self.fleet_model.marks(), &self.core)
     }
 
     /// Assign the selected card to every marked bot and start it there,

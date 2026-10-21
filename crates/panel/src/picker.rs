@@ -1753,7 +1753,9 @@ fn picker_map_body(
     };
     let teleport = session.map_teleport_authorized();
     let spacing = ui.clone_style().item_spacing()[0];
-    session.walk_send.sync_walk_label(&session.fleet_selection);
+    session
+        .walk_send
+        .sync_walk_label(session.fleet_model.marks());
     let walk_label = session.walk_send.walk_label();
     let labels = walkto_footer_labels(teleport);
     let cluster = labels
@@ -1797,7 +1799,7 @@ fn picker_map_body(
     let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), teleport);
     let group = session.walk_send.mode == crate::session::WalkSendMode::Group;
     let walk_ready = if group {
-        can_walk && session.walk_send.checked_count(&session.fleet_selection) > 0
+        can_walk && session.walk_send.checked_count(session.fleet_model.marks()) > 0
     } else {
         can_walk
     };
@@ -1905,7 +1907,7 @@ fn draw_walk_send_window(ui: &Ui, session: &mut Session) {
                     let _id = ui.push_id(i);
                     if session.walk_send.rows()[i].status.is_eligible() {
                         let mut checked =
-                            session.walk_send.rows()[i].checked(&session.fleet_selection);
+                            session.walk_send.rows()[i].checked(session.fleet_model.marks());
                         let changed =
                             ui.checkbox(session.walk_send.rows()[i].name.as_str(), &mut checked);
                         if changed {

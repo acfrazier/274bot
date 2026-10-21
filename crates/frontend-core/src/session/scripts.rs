@@ -100,7 +100,7 @@ impl<Io> OperatorSession<Io> {
 
         let names = self.admitted_names(request);
         let mut models = surface.models();
-        let marks = models.marks.as_deref();
+        let marks = models.fleet.as_deref().map(crate::FleetModel::marks);
         let Some(scripts) = models.scripts.as_deref_mut() else {
             for name in names {
                 self.settle_member(

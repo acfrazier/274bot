@@ -2,16 +2,20 @@
 //! which of them an explicit logout parked on the title screen. Renderer
 //! state (chooser, grid, warnings) stays with each front end.
 //!
-//! The fleet view model lives here too: the one filter match, row order
-//! and visible-row computation both front ends render. A surface supplies
-//! its row universe (the panel: every vault profile; the TUI: the loaded
-//! members), its staged filter text and its [`FleetOrder`]; the shown
-//! indices are filled into a caller-kept buffer, so a frame allocates
-//! nothing once it has warmed.
+//! The fleet view model lives here too. [`FleetModel`] is the one profile
+//! universe (every vault profile and every loaded slot, one row per
+//! identity), the marks, the filter and order, the shown rows and their
+//! counts. Each front end holds one and lends it to the command seam; the
+//! Fleet table, the MultiBox rail, the Grid and the TUI all read the same
+//! rows, order and marks from it. It rebuilds its universe only when the
+//! core's rows or the vault's profiles moved, and its shown rows only when
+//! the universe, the filter, the order or the marks changed, so a steady
+//! frame computes and allocates nothing.
 
 use std::collections::HashSet;
 
 use crate::command::FleetOrder;
+use crate::selection::{MarkedSelection, ProfileIdentity};
 use crate::views::{FleetRow, Phase};
 
 /// Ordered membership plus the logout latch. The latch is the set of names
@@ -102,19 +106,37 @@ pub fn contains_ci(hay: &str, needle: &str) -> bool {
             .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-/// The row's status label; a member not projected yet is offline.
+/// The status label of a profile that is not loaded: distinct from a
+/// loaded bot's `offline`.
+pub const NOT_LOADED: &str = "not loaded";
+
+/// The row's status label; a member not projected yet is offline, and a
+/// profile that is not loaded is [`NOT_LOADED`].
 pub fn state_label(row: Option<&FleetRow>) -> &str {
-    row.map_or(Phase::Offline.label(), |row| row.brief())
+    match row {
+        Some(row) if !row.loaded() => NOT_LOADED,
+        Some(row) => row.brief(),
+        None => Phase::Offline.label(),
+    }
+}
+
+/// The label the Status order sorts by: the phase, or [`NOT_LOADED`].
+fn status_key(row: Option<&FleetRow>) -> &str {
+    match row {
+        Some(row) if !row.loaded() => NOT_LOADED,
+        Some(row) => row.phase().label(),
+        None => Phase::Offline.label(),
+    }
 }
 
 /// Whether one filter term matches: a name substring, `wN` / `world:N`,
 /// or a status substring: the phase (`ready`, `queued`, `login error`, …)
 /// or the row's label (`running`, `idle`, …). A member the core has not
-/// projected yet counts as offline.
+/// projected yet counts as offline; a profile that is not loaded matches
+/// only its [`NOT_LOADED`] status.
 fn term_matches(name: &str, row: Option<&FleetRow>, term: &str) -> bool {
-    let phase = row.map_or(Phase::Offline, |row| row.phase());
     if contains_ci(name, term)
-        || contains_ci(phase.label(), term)
+        || contains_ci(status_key(row), term)
         || contains_ci(state_label(row), term)
     {
         return true;
@@ -141,58 +163,21 @@ pub fn fleet_row_matches(name: &str, row: Option<&FleetRow>, filter: &str) -> bo
         .all(|term| term_matches(name, row, term))
 }
 
-/// Member `index`'s row in the core's fleet projection. Rows follow load
-/// order, so the common case is one comparison, not a scan; `None` for a
-/// member the core has not projected yet.
-pub fn member_row<'a>(
-    names: &[String],
-    rows: &'a [FleetRow],
-    index: usize,
-) -> Option<&'a FleetRow> {
-    let name = names.get(index)?;
-    match rows.get(index) {
-        Some(row) if row.name() == *name => Some(row),
-        _ => rows.iter().find(|row| row.name() == *name),
-    }
-}
-
 fn order_indices<'a>(
     out: &mut [usize],
     order: FleetOrder,
     name_of: impl Fn(usize) -> &'a str,
-    phase_of: impl Fn(usize) -> Phase,
+    status_of: impl Fn(usize) -> &'a str,
 ) {
     match order {
         FleetOrder::LoadOrder => {}
         FleetOrder::Name => out.sort_by(|&a, &b| name_of(a).cmp(name_of(b))),
         FleetOrder::Status => out.sort_by(|&a, &b| {
-            phase_of(a)
-                .label()
-                .cmp(phase_of(b).label())
+            status_of(a)
+                .cmp(status_of(b))
                 .then_with(|| name_of(a).cmp(name_of(b)))
         }),
     }
-}
-
-/// Fill `out` with the indices of `names` (their projected `rows`) that
-/// pass `filter`, in `order`. The buffer is cleared and reused.
-pub fn fill_visible_indices(
-    names: &[String],
-    rows: &[FleetRow],
-    filter: &str,
-    order: FleetOrder,
-    out: &mut Vec<usize>,
-) {
-    out.clear();
-    out.extend(names.iter().enumerate().filter_map(|(index, name)| {
-        fleet_row_matches(name, member_row(names, rows, index), filter).then_some(index)
-    }));
-    order_indices(
-        out,
-        order,
-        |index| names[index].as_str(),
-        |index| member_row(names, rows, index).map_or(Phase::Offline, |row| row.phase()),
-    );
 }
 
 /// Fill `out` with the indices of `rows` that pass `filter`, in `order`,
@@ -212,17 +197,75 @@ pub fn fill_visible_row_indices(
         out,
         order,
         |index| rows[index].name(),
-        |index| rows[index].phase(),
+        |index| status_key(Some(&rows[index])),
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row, Fleet,
-    };
+    use super::{fill_visible_row_indices, fleet_row_matches, Fleet};
     use crate::command::FleetOrder;
     use crate::views::{FleetRow, Phase, QueuePlace};
+
+    /// A profile that is not loaded reads `not loaded` and matches only
+    /// that status; a loaded bot that is offline still reads `offline`.
+    #[test]
+    fn an_unloaded_profile_is_not_loaded_not_offline() {
+        let loaded = FleetRow::fixture("alice", Phase::Offline, None, None);
+        let unloaded = FleetRow::for_profile("bob");
+        assert_eq!(super::state_label(Some(&loaded)), "offline");
+        assert_eq!(super::state_label(Some(&unloaded)), super::NOT_LOADED);
+        assert!(fleet_row_matches("alice", Some(&loaded), "offline"));
+        assert!(!fleet_row_matches("bob", Some(&unloaded), "offline"));
+        assert!(fleet_row_matches("bob", Some(&unloaded), "not loaded"));
+        assert!(!fleet_row_matches("alice", Some(&loaded), "not loaded"));
+        let mut world_login = String::new();
+        unloaded.write_world_login(&mut world_login);
+        assert_eq!(world_login, "not loaded");
+    }
+
+    /// The model's shown rows, counts and generation follow the filter,
+    /// order and marks, and only move when one of them changed.
+    #[test]
+    fn the_model_recounts_only_when_its_inputs_change() {
+        use super::FleetModel;
+        use crate::selection::ProfileIdentity;
+        let mut model = FleetModel::new();
+        model.set_universe_for_test(
+            vec![
+                FleetRow::fixture("carol", Phase::Ready, Some(3), None),
+                FleetRow::fixture("alice", Phase::Offline, None, None),
+                FleetRow::for_profile("bob"),
+            ],
+            &[],
+        );
+        let names = |model: &FleetModel| -> Vec<String> {
+            model
+                .shown_rows()
+                .map(|(_, row)| row.name().to_string())
+                .collect()
+        };
+        assert_eq!(names(&model), ["carol", "alice", "bob"], "load order");
+        let generation = model.generation();
+        model.set_mark(ProfileIdentity::synthetic("bob"), true);
+        assert_eq!(model.generation(), generation + 1);
+        model.set_mark(ProfileIdentity::synthetic("bob"), true);
+        assert_eq!(model.generation(), generation + 1, "no change, no move");
+        model.set_filter_for_test("w3");
+        assert_eq!(names(&model), ["carol"]);
+        assert_eq!(model.counts().hidden_marked(), 1);
+        model.set_filter_for_test("");
+        model.set_order_for_test(FleetOrder::Status);
+        assert_eq!(
+            names(&model),
+            ["bob", "alice", "carol"],
+            "not loaded < offline < ready"
+        );
+        model.set_order_for_test(FleetOrder::Name);
+        assert_eq!(names(&model), ["alice", "bob", "carol"]);
+        assert_eq!(model.counts().shown_loaded(), 2);
+        assert_eq!(model.counts().shown_unloaded(), 1);
+    }
 
     #[test]
     fn remove_drops_only_that_member() {
@@ -288,28 +331,6 @@ mod tests {
         );
         fill_visible_row_indices(&rows, "ready", FleetOrder::Name, &mut shown);
         assert_eq!(names(&shown), ["amy", "zoe"], "filter composes with order");
-    }
-
-    #[test]
-    fn visible_indices_over_names_reuse_the_buffer() {
-        let members = ["alice".to_string(), "bob".to_string(), "carol".to_string()];
-        let rows = [ready("alice", 2), ready("carol", 1)];
-        let mut shown = vec![99usize];
-        fill_visible_indices(&members, &rows, "", FleetOrder::LoadOrder, &mut shown);
-        assert_eq!(shown, [0, 1, 2], "unprojected bob still shows");
-        assert_eq!(
-            member_row(&members, &rows, 2).map(|r| r.name()),
-            Some("carol")
-        );
-        assert_eq!(member_row(&members, &rows, 1), None);
-        fill_visible_indices(
-            &members,
-            &rows,
-            "offline",
-            FleetOrder::LoadOrder,
-            &mut shown,
-        );
-        assert_eq!(shown, [1], "buffer cleared between fills");
     }
 
     #[test]
@@ -421,5 +442,418 @@ impl FleetFilter {
 
     pub(crate) fn set_order(&mut self, order: FleetOrder) -> bool {
         std::mem::replace(&mut self.order, order) != order
+    }
+}
+
+/// Mark and row counts over the fleet model's universe and shown rows,
+/// recomputed with the shown rows or the marks, never per frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FleetMarkCounts {
+    rows: usize,
+    marked: usize,
+    shown: usize,
+    shown_marked: usize,
+    shown_loaded: usize,
+    shown_unloaded: usize,
+}
+
+impl FleetMarkCounts {
+    /// Rows in the universe (every profile, loaded or not).
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Marked rows, shown or hidden by the filter.
+    pub fn marked(&self) -> usize {
+        self.marked
+    }
+
+    /// Rows the filter shows.
+    pub fn shown(&self) -> usize {
+        self.shown
+    }
+
+    /// Marked rows the filter shows.
+    pub fn shown_marked(&self) -> usize {
+        self.shown_marked
+    }
+
+    /// Marked rows the filter hides ("5 marked, 2 not shown").
+    pub fn hidden_marked(&self) -> usize {
+        self.marked - self.shown_marked
+    }
+
+    /// Shown rows of loaded profiles (rail tiles, Grid cells).
+    pub fn shown_loaded(&self) -> usize {
+        self.shown_loaded
+    }
+
+    /// Shown rows of profiles that are not loaded (the rail's folded
+    /// "not loaded" group).
+    pub fn shown_unloaded(&self) -> usize {
+        self.shown_unloaded
+    }
+}
+
+/// The fleet view model: one row per profile identity (every loaded slot,
+/// in load order, then every vault profile that is not loaded, in vault
+/// order), the marks, the filter and order, and the shown rows. Each front
+/// end holds one and lends it to [`crate::OperatorSession::submit`] through
+/// [`crate::Models::with_fleet`]; its mutators are crate-private, so marks,
+/// filter and order change only through commands.
+///
+/// [`Self::refresh`] follows the core: it rebuilds the universe only when
+/// the projected rows or the vault's profiles moved. The shown rows and the
+/// counts are recomputed only when the universe, the filter, the order or
+/// the marks changed. [`Self::generation`] moves whenever anything a front
+/// end shows from here changed, so a label cache keyed on it rebuilds only
+/// then.
+///
+/// Marks are dropped only when their profile leaves the universe (its
+/// vault row was deleted, or an unsaved loaded slot was removed); a filter
+/// never drops a mark, and unloading a vault profile keeps it.
+#[derive(Debug)]
+pub struct FleetModel {
+    marks: MarkedSelection,
+    filter: FleetFilter,
+    rows: Vec<FleetRow>,
+    ids: Vec<ProfileIdentity>,
+    shown: Vec<usize>,
+    /// Parallel to `rows`: whether the row is shown.
+    shown_flags: Vec<bool>,
+    counts: FleetMarkCounts,
+    /// The core's rows generation and profiles generation the universe was
+    /// built from.
+    seen: Option<(u64, u64)>,
+    generation: u64,
+    /// Reused sorted identity buffer for de-duplication and mark pruning.
+    scratch: Vec<ProfileIdentity>,
+    /// Moves whenever the universe was rebuilt (row contents may have
+    /// changed), never for a filter, order or mark change.
+    rows_generation: u64,
+}
+
+impl Default for FleetModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FleetModel {
+    /// An empty model in load order with no filter and no marks.
+    pub fn new() -> Self {
+        Self {
+            marks: MarkedSelection::default(),
+            filter: FleetFilter::new(FleetOrder::LoadOrder),
+            rows: Vec::new(),
+            ids: Vec::new(),
+            shown: Vec::new(),
+            shown_flags: Vec::new(),
+            counts: FleetMarkCounts::default(),
+            seen: None,
+            generation: 0,
+            scratch: Vec::new(),
+            rows_generation: 0,
+        }
+    }
+
+    /// Every profile's row, in the universe's order (see the type docs).
+    /// Index it with [`Self::shown`].
+    pub fn rows(&self) -> &[FleetRow] {
+        &self.rows
+    }
+
+    /// The identities parallel to [`Self::rows`].
+    pub fn identities(&self) -> &[ProfileIdentity] {
+        &self.ids
+    }
+
+    /// Row `index`'s identity.
+    pub fn identity(&self, index: usize) -> Option<ProfileIdentity> {
+        self.ids.get(index).copied()
+    }
+
+    /// The row index of `identity`.
+    pub fn index_of(&self, identity: ProfileIdentity) -> Option<usize> {
+        self.ids.iter().position(|id| *id == identity)
+    }
+
+    /// The row index of the profile called `name`.
+    pub fn index_of_name(&self, name: &str) -> Option<usize> {
+        self.rows.iter().position(|row| row.name() == name)
+    }
+
+    /// The indices of the rows the filter shows, in the order.
+    pub fn shown(&self) -> &[usize] {
+        &self.shown
+    }
+
+    /// Whether row `index` is shown.
+    pub fn is_shown(&self, index: usize) -> bool {
+        self.shown_flags.get(index).copied().unwrap_or(false)
+    }
+
+    /// The shown rows with their indices, in the order.
+    pub fn shown_rows(&self) -> impl Iterator<Item = (usize, &FleetRow)> + '_ {
+        self.shown.iter().map(|&index| (index, &self.rows[index]))
+    }
+
+    /// The identities of the shown rows: the rows "mark all shown" marks.
+    pub fn shown_identities(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
+        self.shown.iter().map(|&index| self.ids[index])
+    }
+
+    /// The marks.
+    pub fn marks(&self) -> &MarkedSelection {
+        &self.marks
+    }
+
+    /// Whether row `index` is marked.
+    pub fn is_marked(&self, index: usize) -> bool {
+        self.ids
+            .get(index)
+            .is_some_and(|identity| self.marks.contains(*identity))
+    }
+
+    /// Mark and row counts.
+    pub fn counts(&self) -> FleetMarkCounts {
+        self.counts
+    }
+
+    /// The filter text and order.
+    pub fn filter(&self) -> &FleetFilter {
+        &self.filter
+    }
+
+    /// The staged filter text, for a text field to edit; the shown rows
+    /// follow it only when [`crate::OperatorCommand::SetFleetFilter`]
+    /// commits it.
+    pub fn staged_filter_mut(&mut self) -> &mut String {
+        self.filter.staged_mut()
+    }
+
+    /// The row order.
+    pub fn order(&self) -> FleetOrder {
+        self.filter.order()
+    }
+
+    /// Moves whenever the rows, the shown rows, the marks, the filter or
+    /// the order changed.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Moves whenever the universe was rebuilt, so a cache of per-row
+    /// labels rebuilds only then (not for a filter, order or mark change).
+    pub fn rows_generation(&self) -> u64 {
+        self.rows_generation
+    }
+
+    /// Follow the core: rebuild the universe when the projected rows or the
+    /// vault's profiles moved since the last call. Returns whether it did.
+    /// Cheap when nothing moved (two integer comparisons), so a front end
+    /// calls it once per frame.
+    pub fn refresh<Io>(&mut self, session: &crate::OperatorSession<Io>) -> bool {
+        let view = session.fleet_view();
+        let seen = (view.rows_generation(), session.profiles_generation());
+        if self.seen == Some(seen) {
+            return false;
+        }
+        self.seen = Some(seen);
+        let mut len = 0;
+        for row in view.rows() {
+            let identity = session.profile_identity_or_synthetic(row.name());
+            self.put_row(len, identity, |dest| dest.copy_from(row), || row.snapshot());
+            len += 1;
+        }
+        self.scratch.clear();
+        self.scratch.extend_from_slice(&self.ids[..len]);
+        self.scratch.sort_unstable();
+        let loaded = len;
+        for profile in session.profiles() {
+            let identity = ProfileIdentity::uid(profile.uid());
+            if self.scratch[..loaded].binary_search(&identity).is_ok() {
+                continue;
+            }
+            let name = profile.username();
+            self.put_row(
+                len,
+                identity,
+                |dest| dest.reset_unloaded(name),
+                || FleetRow::for_profile(name),
+            );
+            len += 1;
+        }
+        self.rows.truncate(len);
+        self.ids.truncate(len);
+        self.universe_changed();
+        true
+    }
+
+    /// Write row `index` of the rebuilt universe, reusing the old row's
+    /// buffers when there is one.
+    fn put_row(
+        &mut self,
+        index: usize,
+        identity: ProfileIdentity,
+        reuse: impl FnOnce(&mut FleetRow),
+        fresh: impl FnOnce() -> FleetRow,
+    ) {
+        match self.rows.get_mut(index) {
+            Some(dest) => {
+                reuse(dest);
+                self.ids[index] = identity;
+            }
+            None => {
+                self.rows.push(fresh());
+                self.ids.push(identity);
+            }
+        }
+    }
+
+    /// The universe was rebuilt: drop marks of identities that left it,
+    /// then recompute the shown rows.
+    fn universe_changed(&mut self) {
+        self.rows_generation = self.rows_generation.wrapping_add(1);
+        if !self.marks.is_empty() {
+            self.scratch.clear();
+            self.scratch.extend_from_slice(&self.ids);
+            self.scratch.sort_unstable();
+            self.marks.retain_sorted(&self.scratch);
+        }
+        self.reshow();
+    }
+
+    /// Recompute the shown rows and the counts.
+    fn reshow(&mut self) {
+        fill_visible_row_indices(
+            &self.rows,
+            self.filter.text(),
+            self.filter.order(),
+            &mut self.shown,
+        );
+        self.shown_flags.clear();
+        self.shown_flags.resize(self.rows.len(), false);
+        for &index in &self.shown {
+            self.shown_flags[index] = true;
+        }
+        self.recount();
+    }
+
+    /// Recompute the counts and move the generation.
+    fn recount(&mut self) {
+        let mut counts = FleetMarkCounts {
+            rows: self.rows.len(),
+            shown: self.shown.len(),
+            ..FleetMarkCounts::default()
+        };
+        for (index, row) in self.rows.iter().enumerate() {
+            let shown = self.shown_flags[index];
+            let marked = self.marks.contains(self.ids[index]);
+            counts.marked += usize::from(marked);
+            counts.shown_marked += usize::from(marked && shown);
+            counts.shown_loaded += usize::from(shown && row.loaded());
+            counts.shown_unloaded += usize::from(shown && !row.loaded());
+        }
+        self.counts = counts;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    pub(crate) fn set_mark(&mut self, identity: ProfileIdentity, marked: bool) {
+        if self.marks.contains(identity) != marked {
+            self.marks.set(identity, marked);
+            self.recount();
+        }
+    }
+
+    pub(crate) fn mark_all(&mut self, identities: impl IntoIterator<Item = ProfileIdentity>) {
+        let before = self.marks.len();
+        self.marks.mark_all(identities);
+        if self.marks.len() != before {
+            self.recount();
+        }
+    }
+
+    pub(crate) fn clear_marks(&mut self) {
+        if !self.marks.is_empty() {
+            self.marks.clear();
+            self.recount();
+        }
+    }
+
+    /// Drop a deleted profile's mark. Returns whether a mark was removed.
+    pub(crate) fn remove_mark(&mut self, identity: ProfileIdentity) -> bool {
+        let removed = self.marks.remove(identity);
+        if removed {
+            self.recount();
+        }
+        removed
+    }
+
+    /// Commit the staged filter text: `false` when it was already the
+    /// filter.
+    pub(crate) fn commit_filter(&mut self) -> bool {
+        let changed = self.filter.commit();
+        if changed {
+            self.reshow();
+        }
+        changed
+    }
+
+    pub(crate) fn set_order(&mut self, order: FleetOrder) -> bool {
+        let changed = self.filter.set_order(order);
+        if changed {
+            self.reshow();
+        }
+        changed
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FleetModel {
+    /// Fixture seam: replace the universe with `rows` (and their `ids`,
+    /// parallel; a missing id is the name's fixture identity) without a
+    /// session, as a refresh would.
+    pub fn set_universe_for_test(&mut self, rows: Vec<FleetRow>, ids: &[ProfileIdentity]) {
+        self.ids = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                ids.get(index)
+                    .copied()
+                    .unwrap_or_else(|| ProfileIdentity::synthetic(row.name()))
+            })
+            .collect();
+        self.rows = rows;
+        self.seen = None;
+        self.universe_changed();
+    }
+
+    /// Fixture seam: mark or unmark `identity` without a command.
+    pub fn set_mark_for_test(&mut self, identity: ProfileIdentity, marked: bool) {
+        self.set_mark(identity, marked);
+    }
+
+    /// Fixture seam: mark every identity of `identities` without a command.
+    pub fn mark_all_for_test(&mut self, identities: impl IntoIterator<Item = ProfileIdentity>) {
+        self.mark_all(identities);
+    }
+
+    /// Fixture seam: drop every mark without a command.
+    pub fn clear_marks_for_test(&mut self) {
+        self.clear_marks();
+    }
+
+    /// Fixture seam: set the filter text and commit it without a command.
+    pub fn set_filter_for_test(&mut self, text: &str) {
+        let staged = self.filter.staged_mut();
+        staged.clear();
+        staged.push_str(text);
+        self.commit_filter();
+    }
+
+    /// Fixture seam: set the order without a command.
+    pub fn set_order_for_test(&mut self, order: FleetOrder) {
+        self.set_order(order);
     }
 }

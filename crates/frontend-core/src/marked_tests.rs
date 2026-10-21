@@ -336,7 +336,7 @@ fn push_ready(f: &Fixture, name: &str) {
 /// them; the per-row report the window shows.
 fn marked_row(f: &mut Fixture, command: crate::OperatorCommand, uids: &[i32]) -> crate::BulkReport {
     struct Lend<'a> {
-        marks: &'a mut MarkedSelection,
+        fleet: &'a mut crate::FleetModel,
         scripts: &'a mut Scripts,
     }
     impl crate::SlotSurface for Lend<'_> {
@@ -354,14 +354,15 @@ fn marked_row(f: &mut Fixture, command: crate::OperatorCommand, uids: &[i32]) ->
         fn released(&mut self, _name: &str) {}
         fn models(&mut self) -> crate::Models<'_> {
             crate::Models::none()
-                .with_marks(self.marks)
+                .with_fleet(self.fleet)
                 .with_scripts(self.scripts)
         }
         fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
     }
-    let mut selection = marks(uids);
+    let mut fleet = crate::FleetModel::new();
+    fleet.mark_all(uids.iter().copied().map(ProfileIdentity::uid));
     let mut lend = Lend {
-        marks: &mut selection,
+        fleet: &mut fleet,
         scripts: &mut f.scripts,
     };
     let mut submitted = f

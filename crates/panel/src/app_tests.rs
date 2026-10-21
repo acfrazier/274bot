@@ -5781,6 +5781,7 @@ fn fleet_test_session(names: &[&str]) -> (crate::session::Session, TestDir) {
         vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
     frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.fleet_model.refresh(&session.core);
     session.fleet_open = true;
     (session, dir)
 }
@@ -5890,31 +5891,30 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
         combo[2]
     );
 
-    // Open it, then pick "Status" (the second entry).
+    // Open it, then pick "Status" (the third entry, after the default
+    // Load order and Name).
     for pressed in [false, true, false] {
         fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), pressed);
     }
     let mut choices = Vec::new();
     for _ in 0..8 {
         choices = fleet_frame(&mut ctx, &mut session, size, rect_centre(combo), false).sort_choices;
-        if choices.len() == frontend_core::FleetOrder::PANEL_CHOICES.len() {
+        if choices.len() == frontend_core::FleetOrder::CHOICES.len() {
             break;
         }
     }
+    assert_eq!(choices.len(), frontend_core::FleetOrder::CHOICES.len());
     assert_eq!(
-        choices.len(),
-        frontend_core::FleetOrder::PANEL_CHOICES.len()
+        session.fleet_model.order(),
+        frontend_core::FleetOrder::LoadOrder,
+        "Load order is the default"
     );
-    assert_eq!(
-        session.fleet_filter.order(),
-        frontend_core::FleetOrder::Name
-    );
-    let status = rect_centre(choices[1]);
+    let status = rect_centre(choices[2]);
     for pressed in [false, false, true, false] {
         fleet_frame(&mut ctx, &mut session, size, status, pressed);
     }
     assert_eq!(
-        session.fleet_filter.order(),
+        session.fleet_model.order(),
         frontend_core::FleetOrder::Status
     );
 }

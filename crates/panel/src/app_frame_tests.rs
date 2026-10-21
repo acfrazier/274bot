@@ -749,3 +749,96 @@ fn captured_input_is_submitted_once_per_frame(drive: Drive) {
 }
 
 scenario!(captured_input, captured_input_is_submitted_once_per_frame);
+
+/// The rail caps a frame drew (`name: brief`), in their drawn order.
+fn drawn_caps<'a>(text: &str, names: &[&'a str]) -> Vec<&'a str> {
+    let mut caps: Vec<(usize, &str)> = names
+        .iter()
+        .filter_map(|name| text.find(&format!("{name}: ")).map(|at| (at, *name)))
+        .collect();
+    caps.sort_unstable();
+    caps.into_iter().map(|(_, name)| name).collect()
+}
+
+/// One fleet model behind every panel surface: the real frame draws the
+/// MultiBox rail, the Grid and the Fleet window from the same rows, filter
+/// and order. A profile that is not loaded is listed (folded) in the rail,
+/// never as a tile; the Fleet window's filter hides the same tiles in the
+/// rail and the Grid, and a filtered-out mark survives.
+#[test]
+fn the_rail_grid_and_fleet_window_draw_one_filtered_order() {
+    let (mut session, _dir) = session_with_play("fleet-one-order", &["carol", "alice", "bob"]);
+    frontend_core::test_support::session::vault_upsert(
+        &mut session.core,
+        FixtureProfile::new("dave", "pw").uid(9),
+    );
+    session.multibox = true;
+    session.fleet_open = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    let names = ["alice", "bob", "carol", "dave"];
+    // The docked rail lays out over the first frames.
+    rig.frames_until("the rail caps", |rig| {
+        !drawn_caps(&rig.text, &names).is_empty()
+    });
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["carol", "alice", "bob"],
+        "load order, and no tile for the profile that is not loaded:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Not loaded (1)"),
+        "the folded group names the profile count:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("not loaded"),
+        "the Fleet window lists dave as not loaded:\n{}",
+        rig.text
+    );
+
+    let alice = rig.session().core.profile_identity("alice").unwrap();
+    rig.session().fleet_model.set_mark_for_test(alice, true);
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("bob");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the rail shows the Fleet window's filter:\n{}",
+        rig.text
+    );
+    assert!(rig.session().fleet_model.marks().contains(alice));
+    assert_eq!(rig.session().fleet_model.counts().hidden_marked(), 1);
+
+    rig.session().wall.grid = true;
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the Grid shows the same filtered cells:\n{}",
+        rig.text
+    );
+
+    rig.session().fleet_model.staged_filter_mut().clear();
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.session().submit(
+        OperatorCommand::SetFleetSort(frontend_core::FleetOrder::Name),
+        Targets::Application,
+    );
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["alice", "bob", "carol"],
+        "the Grid follows the Fleet window's sort:\n{}",
+        rig.text
+    );
+}

@@ -22,14 +22,13 @@ use std::path::{Path, PathBuf};
 use api::identity::RequestId;
 
 use crate::command::{CommandReport, DrawSwitch, OperatorCommand};
-use crate::fleet::FleetFilter;
+use crate::fleet::FleetModel;
 use crate::launch::{InstancePermit, PlayConfig, PlayLaunch};
 use crate::models::Models;
 use crate::profile_editor::ProfileEditor;
 use crate::quester_paths::QuesterPathsController;
 use crate::rs2b0t_import::ProfileImport;
 use crate::scripts::{LoadoutForm, Scripts};
-use crate::selection::MarkedSelection;
 use crate::session::prefs::DrawPolicy;
 use crate::session::{OperatorSession, SubmitError, Submitted, Targets};
 use crate::surface::{SlotAttach, SlotSurface, SpawnProfile};
@@ -38,8 +37,7 @@ use crate::walk_permissions::WalkGlobalsView;
 /// The operator models a headless driver holds, as a front end does.
 pub struct DriverModels {
     scripts: Scripts,
-    marks: MarkedSelection,
-    fleet_filter: FleetFilter,
+    fleet: FleetModel,
     editor: ProfileEditor,
     import: ProfileImport,
     loadouts: LoadoutForm,
@@ -55,19 +53,14 @@ impl DriverModels {
         &self.scripts
     }
 
-    /// The fleet marks.
-    pub fn marks(&self) -> &MarkedSelection {
-        &self.marks
+    /// The fleet model: its rows, marks, filter and order.
+    pub fn fleet(&self) -> &FleetModel {
+        &self.fleet
     }
 
-    /// The fleet filter and order.
-    pub fn fleet_filter(&self) -> &FleetFilter {
-        &self.fleet_filter
-    }
-
-    /// The fleet filter's staged text, for a command to commit.
-    pub fn fleet_filter_mut(&mut self) -> &mut FleetFilter {
-        &mut self.fleet_filter
+    /// The fleet model, for staging the filter text a command commits.
+    pub fn fleet_mut(&mut self) -> &mut FleetModel {
+        &mut self.fleet
     }
 
     /// The profile form.
@@ -114,8 +107,7 @@ impl DriverModels {
     fn lend(&mut self) -> Models<'_> {
         Models::none()
             .with_scripts(&mut self.scripts)
-            .with_marks(&mut self.marks)
-            .with_fleet_filter(&mut self.fleet_filter)
+            .with_fleet(&mut self.fleet)
             .with_editor(&mut self.editor)
             .with_import(&mut self.import)
             .with_loadouts(&mut self.loadouts)
@@ -182,8 +174,7 @@ impl HeadlessDriver {
         let (scripts, _library_error) = Scripts::open_default();
         let models = DriverModels {
             scripts,
-            marks: MarkedSelection::default(),
-            fleet_filter: FleetFilter::new(crate::FleetOrder::LoadOrder),
+            fleet: FleetModel::new(),
             editor: ProfileEditor::new(),
             import: ProfileImport::new(),
             loadouts: LoadoutForm::operator_of(&session),
@@ -224,7 +215,9 @@ impl HeadlessDriver {
         let mut surface = DriverSurface {
             models: &mut self.models,
         };
-        self.session.submit(command, targets, &mut surface)
+        let submitted = self.session.submit(command, targets, &mut surface);
+        self.models.fleet.refresh(&self.session);
+        submitted
     }
 
     /// One headless tick: [`OperatorSession::poll`]. A queued Nav or
@@ -232,6 +225,7 @@ impl HeadlessDriver {
     /// model, as a write durable at submission does.
     pub fn poll(&mut self) {
         self.session.poll();
+        self.models.fleet.refresh(&self.session);
         if let Some(view) = self.session.take_settled_walk_globals() {
             self.models.walk_globals = view;
         }

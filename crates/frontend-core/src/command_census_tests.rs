@@ -97,14 +97,6 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure filter predicate over the staged filter text; SetFleetFilter stages the text"),
     ),
     (
-        "fleet.rs::member_row",
-        Excluded("pure lookup of a member's projected row; presentation"),
-    ),
-    (
-        "fleet.rs::fill_visible_indices",
-        Excluded("pure computation of the shown rows from the staged filter text and order"),
-    ),
-    (
         "fleet.rs::fill_visible_row_indices",
         Excluded("pure computation of the shown rows from the staged filter text and order"),
     ),
@@ -571,14 +563,6 @@ const CORE: &[(&str, Decision)] = &[
     // scripts/reload.rs
     ("scripts/reload.rs::Scripts::take_reload_outcome", Excluded(RESULT)),
     // selection.rs: marks and the marked bulk commands.
-    (
-        "selection.rs::MarkedSelection::retain",
-        Excluded("projection maintenance: drops marks of rows no longer shown"),
-    ),
-    (
-        "selection.rs::MarkedSelection::retain_sorted",
-        Excluded("projection maintenance: drops marks of rows no longer shown"),
-    ),
     ("selection.rs::stop_marked", Row(C::StopScript)),
     (
         "selection.rs::profile_id_at",
@@ -697,10 +681,12 @@ const CORE: &[(&str, Decision)] = &[
     ("log_file.rs::restore_session_log", Excluded(STARTUP)),
     ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
     ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
+    ("fleet.rs::FleetModel::staged_filter_mut", Staged(C::SetFleetFilter)),
+    ("fleet.rs::FleetModel::refresh", Excluded(PROJECTION)),
     ("driver.rs::HeadlessDriver::unlock", Rows(&[C::UnlockVault, C::CreateVault], "stages the vault and the play launch, then submits UnlockVault or, for a new file, CreateVault")),
     ("driver.rs::HeadlessDriver::session_mut", Excluded(ACCESSOR)),
     ("driver.rs::HeadlessDriver::models_mut", Excluded(ACCESSOR)),
-    ("driver.rs::DriverModels::fleet_filter_mut", Excluded(ACCESSOR)),
+    ("driver.rs::DriverModels::fleet_mut", Excluded(ACCESSOR)),
     ("driver.rs::DriverModels::map_mut", Excluded(ACCESSOR)),
     // views.rs
     ("views.rs::QueuePlace::write_wait", Excluded(PROJECTION)),

@@ -1,9 +1,11 @@
-//! Fleet window: shared identity-keyed marks, the action bar over the marked
-//! rows (Start / Stop, Assign, Assign & restart, log in / out, group walk) and
-//! toggleable status columns.
+//! Fleet window: the wide table over the shared fleet model (every profile,
+//! loaded or not, in the model's order and filter), its identity-keyed marks,
+//! the action bar over the marked rows (Start / Stop, Assign, Assign &
+//! restart, log in / out, group walk) and toggleable status columns.
 //!
-//! The window is deliberately independent of the Grid/wall surfaces.  When it
-//! is closed, [`window`] returns before touching projections or formatting,
+//! The window draws the same rows, order, filter and marks as the MultiBox
+//! rail and the Grid: all three read [`Session::fleet_model`]. When it is
+//! closed, [`window`] returns before touching projections or formatting,
 //! and a hidden column reads nothing from the host.
 
 use std::cell::RefCell;
@@ -13,8 +15,8 @@ use dear_imgui_rs::{
 };
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
-    fill_visible_row_indices, marked_availability, marked_startable, FleetOrder, FleetRow,
-    MarkedAction, MarkedBlock, OperatorCommand, Scripts, Targets,
+    marked_availability, marked_startable, FleetOrder, MarkedAction, MarkedBlock, OperatorCommand,
+    Scripts, Targets,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
@@ -95,25 +97,6 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
     LAYOUT.with_borrow_mut(std::mem::take)
 }
 
-fn profile_rows(session: &Session) -> Vec<FleetRow> {
-    let projected = session.core.fleet_view().rows();
-    if !session.core.vault_open() {
-        return projected.iter().map(FleetRow::snapshot).collect();
-    }
-    session
-        .core
-        .profiles()
-        .map(|profile| {
-            let name = profile.username();
-            projected
-                .iter()
-                .find(|row| row.name() == name)
-                .map(FleetRow::snapshot)
-                .unwrap_or_else(|| FleetRow::for_profile(name))
-        })
-        .collect()
-}
-
 const ASSIGN_LABEL: &str = "Assign selected card";
 const ASSIGN_RESTART_LABEL: &str = "Assign & restart";
 const APPLY_SETTINGS_LABEL: &str = "Apply focused bot's settings to marked";
@@ -160,7 +143,7 @@ impl ActionLabels {
 }
 
 fn action_bar(ui: &Ui, session: &mut Session) {
-    let count = session.fleet_selection.len();
+    let count = session.fleet_model.marks().len();
     let has_card = session.script_sel.is_some();
     let blocked = |action: MarkedAction| marked_availability(action, count, has_card, true);
     let card_tip = |action: MarkedAction, ready: &str| match blocked(action) {
@@ -170,7 +153,7 @@ fn action_bar(ui: &Ui, session: &mut Session) {
     };
     let startable = marked_availability(MarkedAction::Start, count, has_card, true).is_ok()
         && marked_startable(
-            &session.fleet_selection,
+            session.fleet_model.marks(),
             &session.core,
             session.script_sel.as_ref(),
         );
@@ -370,12 +353,12 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
 fn sort_combo(ui: &Ui, session: &mut Session) {
     ui.text("Sort:");
     ui.set_next_item_width(-1.0);
-    let order = session.fleet_filter.order();
+    let order = session.fleet_model.order();
     let combo = ui.begin_combo("##fleet-sort", order.label());
     #[cfg(test)]
     record_sort_combo(ui);
     if let Some(_open) = combo {
-        for sort in FleetOrder::PANEL_CHOICES {
+        for sort in FleetOrder::CHOICES {
             let selected = sort == order;
             let picked = ui
                 .selectable_config(sort.label())
@@ -424,7 +407,9 @@ fn cell(ui: &Ui, write: impl FnOnce(&mut String)) {
     });
 }
 
-fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
+/// The table over the model's shown rows. A mark click is submitted after
+/// the rows are drawn (the rows are borrowed from the session's model).
+fn table(ui: &Ui, session: &mut Session) {
     let columns: Vec<FleetColumn> = FleetColumn::ALL
         .into_iter()
         .filter(|column| fleet_columns::visible(&session.ui.fleet_columns, *column))
@@ -432,6 +417,7 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
     let needs_progress = columns.iter().any(|column| column.needs_progress());
     let needs_last_line = columns.contains(&FleetColumn::LastLog);
     let table_id = format!("##fleet-table-{}", columns.len());
+    let mut mark_click: Option<(usize, bool)> = None;
     // Every column stretches with the window, so the table is never wider
     // than the window and has no horizontal scroll; only the Mark column keeps
     // a fixed width. The weights follow the width each column wants.
@@ -473,30 +459,31 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
             );
         }
         ui.table_headers_row();
-        for &index in shown {
-            let row = &rows[index];
-            let marked_id = session.core.profile_identity_or_synthetic(row.name());
-            let mut marked = session.fleet_selection.contains(marked_id);
+        let model = &session.fleet_model;
+        for (index, row) in model.shown_rows() {
+            let marked_id = model.identities()[index];
+            let mut marked = model.marks().contains(marked_id);
             ui.table_next_row();
             ui.table_next_column();
             #[cfg(test)]
             record_cell(ui);
             if ui.checkbox(format!("##fleet-mark-{}", marked_id.raw()), &mut marked) {
-                session.submit(
-                    OperatorCommand::SetMark(marked),
-                    Targets::Profile(row.name()),
-                );
+                mark_click = Some((index, marked));
             }
             ui.table_next_column();
             #[cfg(test)]
             record_cell(ui);
-            ui.text(row.name());
+            if row.loaded() {
+                ui.text(row.name());
+            } else {
+                ui.text_disabled(row.name());
+            }
             if session.scripts.has_restart_badge(row.name()) {
                 ui.same_line();
                 ui.text_colored(WARN, "[restart]");
                 ui.set_item_tooltip("saved settings need a restart to apply");
             }
-            let progress = if needs_progress {
+            let progress = if needs_progress && row.loaded() {
                 session.core.script_progress(row.name())
             } else {
                 None
@@ -552,6 +539,16 @@ fn table(ui: &Ui, session: &mut Session, rows: &[FleetRow], shown: &[usize]) {
             }
         }
     }
+    if let Some((index, marked)) = mark_click {
+        let name = session
+            .fleet_model
+            .rows()
+            .get(index)
+            .map(|row| row.name().to_string());
+        if let Some(name) = name {
+            session.submit(OperatorCommand::SetMark(marked), Targets::Profile(&name));
+        }
+    }
 }
 
 /// Draw the Fleet window only while it is open.  No projection, sorting or
@@ -574,33 +571,21 @@ pub fn window(ui: &Ui, session: &mut Session) {
             #[cfg(test)]
             record_content_edges(ui);
             if ui
-                .input_text("Filter", session.fleet_filter.staged_mut())
+                .input_text("Filter", session.fleet_model.staged_filter_mut())
                 .hint("name or status")
                 .build()
             {
                 session.submit(OperatorCommand::SetFleetFilter, Targets::Application);
             }
             sort_combo(ui, session);
-            // The surface's universe is every vault profile; marks are
-            // pruned to it at the session sync (see
-            // `Session::prune_fleet_marks`, run here as well so the
-            // counts below never lag it), then the core model decides
-            // the shown rows over it.
-            let rows = profile_rows(session);
-            session.prune_fleet_marks();
-            let mut shown = std::mem::take(&mut session.fleet_shown);
-            fill_visible_row_indices(
-                &rows,
-                session.fleet_filter.text(),
-                session.fleet_filter.order(),
-                &mut shown,
-            );
+            // The rows, their order and the shown set are the shared fleet
+            // model's, refreshed at the session sync (`pump_status`): this
+            // frame computes nothing.
             ui.separator();
             action_bar(ui, session);
             column_toggles(ui, session);
             ui.separator();
-            table(ui, session, &rows, &shown);
-            session.fleet_shown = shown;
+            table(ui, session);
             #[cfg(test)]
             record_window_layout(ui);
         });
@@ -629,9 +614,10 @@ mod tests {
         install_vault(&mut session.core, vault);
         session.fleet_open = true;
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set_for_test(bob, true);
+        session.fleet_model.set_mark_for_test(bob, true);
         let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
+            session.pump_status();
             ctx.prepare_frame(
                 dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                     .renderer_has_textures(),
@@ -660,22 +646,24 @@ mod tests {
         assert!(session.fleet_open, "drawing never closes the window");
     }
 
-    /// One Fleet-window session end to end: the window sorts and filters
-    /// the vault profiles, a mark whose profile is gone is pruned at the
-    /// window's sync, and Assign runs as the bulk action over the marks.
+    /// One Fleet-window session end to end: the window shows the shared
+    /// model's rows (every vault profile, not loaded), filters and sorts
+    /// them, a mark whose profile is deleted is dropped at the session
+    /// sync, and Assign runs as the bulk action over the marks.
     #[test]
     fn fleet_window_session_filters_sorts_marks_and_assigns() {
         let _guard = crate::test_support::imgui_context_guard();
         let dir = crate::test_support::TestDir::new("fleet-window-session");
         let mut session = crate::session::Session::new();
         let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
-        for (uid, name) in [(3, "carol"), (2, "bob"), (1, "alice")] {
+        for (uid, name) in [(3, "carol"), (2, "bob"), (1, "alice"), (4, "dave")] {
             vault.put(FixtureProfile::new(name, "pw").uid(uid));
         }
         install_vault(&mut session.core, vault);
         session.fleet_open = true;
         let mut ctx = crate::test_support::imgui_context();
         let mut frame = |session: &mut crate::session::Session| {
+            session.pump_status();
             ctx.prepare_frame(
                 dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
                     .renderer_has_textures(),
@@ -687,34 +675,40 @@ mod tests {
             ctx.render();
         };
         let shown_names = |session: &crate::session::Session| {
-            let rows = super::profile_rows(session);
             session
-                .fleet_shown
-                .iter()
-                .map(|&index| rows[index].name().to_string())
+                .fleet_model
+                .shown_rows()
+                .map(|(_, row)| row.name().to_string())
                 .collect::<Vec<_>>()
         };
-        // Sort: Name order over the vault's insertion order.
+        // Load order: nothing is loaded, so the vault's order.
         frame(&mut session);
-        assert_eq!(shown_names(&session), ["alice", "bob", "carol"]);
-        // Filter: only bob's name matches "bob" (a bare "o" would also
-        // match the offline status of every row).
-        session.fleet_filter.staged_mut().push_str("bob");
+        assert_eq!(shown_names(&session), ["alice", "bob", "carol", "dave"]);
+        session.submit(
+            frontend_core::OperatorCommand::SetFleetSort(FleetOrder::Name),
+            frontend_core::Targets::Application,
+        );
+        // Filter: only bob's name matches "bob".
+        session.fleet_model.staged_filter_mut().push_str("bob");
         session.submit(
             frontend_core::OperatorCommand::SetFleetFilter,
             frontend_core::Targets::Application,
         );
         frame(&mut session);
         assert_eq!(shown_names(&session), ["bob"]);
-        // Marks: bob's stays; a mark outside the universe is pruned.
+        // Marks: bob's stays; dave's goes with his deleted profile.
         let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set_for_test(bob, true);
-        session
-            .fleet_selection
-            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
+        let dave = session.core.profile_identity("dave").unwrap();
+        session.fleet_model.set_mark_for_test(bob, true);
+        session.fleet_model.set_mark_for_test(dave, true);
+        assert!(session.vault_remove("dave"));
         frame(&mut session);
-        assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
-        assert!(session.fleet_selection.contains(bob));
+        assert_eq!(
+            session.fleet_model.marks().len(),
+            1,
+            "the gone mark is dropped"
+        );
+        assert!(session.fleet_model.marks().contains(bob));
         // Bulk action: assign the selected card to the marked bot only.
         let path = dir.join("looper.ts");
         std::fs::write(
@@ -733,33 +727,39 @@ mod tests {
         assert!(report.contains("Assign"), "{report}");
     }
 
-    /// Marks are pruned at the per-frame session sync, not only while
-    /// the Fleet window is drawn: with the window closed, one
-    /// `pump_status` drops the mark whose profile is gone and keeps
-    /// the vault profile's mark.
+    /// Marks follow the profile universe at the per-frame session sync,
+    /// not only while the Fleet window is drawn: with the window closed,
+    /// one `pump_status` after a delete drops that profile's mark and
+    /// keeps the others.
     #[test]
     fn marks_are_pruned_at_the_session_sync_with_the_fleet_window_closed() {
         let dir = crate::test_support::TestDir::new("fleet-prune-closed");
         let mut session = crate::session::Session::new();
         let mut vault = VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
         vault.put(FixtureProfile::new("bob", "pw").uid(2));
+        vault.put(FixtureProfile::new("gone", "pw").uid(3));
         install_vault(&mut session.core, vault);
         assert!(!session.fleet_open, "the Fleet window stays closed");
-        let bob = session.core.profile_identity("bob").unwrap();
-        session.fleet_selection.set_for_test(bob, true);
-        session
-            .fleet_selection
-            .set_for_test(frontend_core::ProfileIdentity::synthetic("gone"), true);
         session.pump_status();
-        assert_eq!(session.fleet_selection.len(), 1, "the gone mark is pruned");
-        assert!(session.fleet_selection.contains(bob));
+        let bob = session.core.profile_identity("bob").unwrap();
+        let gone = session.core.profile_identity("gone").unwrap();
+        session.fleet_model.set_mark_for_test(bob, true);
+        session.fleet_model.set_mark_for_test(gone, true);
+        assert!(session.vault_remove("gone"));
+        session.pump_status();
+        assert_eq!(
+            session.fleet_model.marks().len(),
+            1,
+            "the gone mark is pruned"
+        );
+        assert!(session.fleet_model.marks().contains(bob));
     }
 
-    /// The session-sync prune binary-searches a sorted universe, so
-    /// the in-place sort in `prune_fleet_marks` is load-bearing:
-    /// vault order here is alphabetical by username, which is not
-    /// UID order, and every mark must survive the prune. A vault
-    /// swap with no Fleet frame then prunes at the next sync.
+    /// The model's prune binary-searches a sorted universe, so its
+    /// in-place sort is load-bearing: vault order here is alphabetical by
+    /// username, which is not UID order, and every mark must survive the
+    /// prune. A vault swap with no Fleet frame then prunes at the next
+    /// sync.
     #[test]
     fn prune_keeps_marks_when_vault_order_differs_from_uid_order() {
         let dir = crate::test_support::TestDir::new("fleet-prune-order");
@@ -782,24 +782,33 @@ mod tests {
         );
         for name in ["zed", "amy", "max", "bea", "kim"] {
             let id = session.core.profile_identity(name).unwrap();
-            session.fleet_selection.set_for_test(id, true);
+            session.fleet_model.set_mark_for_test(id, true);
         }
         session.pump_status();
-        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        assert_eq!(
+            session.fleet_model.marks().len(),
+            5,
+            "every vault mark is kept"
+        );
         session.pump_status();
-        assert_eq!(session.fleet_selection.len(), 5, "every vault mark is kept");
+        assert_eq!(
+            session.fleet_model.marks().len(),
+            5,
+            "every vault mark is kept"
+        );
         // Universe change without a Fleet frame: a smaller vault replaces it.
         let mut smaller = VaultFixture::create(&dir.join("vault2"), "test-passphrase-01");
         smaller.put(FixtureProfile::new("amy", "pw").uid(3));
         install_vault(&mut session.core, smaller);
         session.pump_status();
         assert_eq!(
-            session.fleet_selection.len(),
+            session.fleet_model.marks().len(),
             1,
             "only amy's mark survives the swap"
         );
         assert!(session
-            .fleet_selection
+            .fleet_model
+            .marks()
             .contains(frontend_core::ProfileIdentity::uid(3)));
     }
 
