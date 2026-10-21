@@ -74,6 +74,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Gatherer's named-site check recognizes the first walk to an unloaded
   resource. It still checks the selected site, bank deposits, return walk
   and fresh gathering progress.
+- Gatherer's bank checks distinguish equipping a held tool from closing a
+  bank. A real bank close still requires verified deposit evidence.
 - The Ardougne Thiever fight check now prepares food and attacks a real Guard
   before script Start. It no longer depends on a random stall catch.
 - The AutoFighter bank check now waits for public Bones to leave its starting

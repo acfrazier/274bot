@@ -3648,6 +3648,15 @@ impl GatherSlot {
         );
     }
 
+    fn status_claims_bank_close(&self, status: &script::native::ScriptStatus) -> bool {
+        // The acquisition completion event also follows wear-only requests.
+        // A missing bank field does not prove that no bank was involved.
+        text_field(status, "last_event") == Some("bank closed; validating equipment")
+            && (text_field(status, "bank") != Some("—")
+                || self.witness.pending_bank_trip.is_some()
+                || self.snapshot.bank_loaded())
+    }
+
     fn observe_bank_deposit(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -3708,7 +3717,7 @@ impl GatherSlot {
                 );
             result.map_err(|error| format!("{}: {error}", self.name()))?;
         }
-        if event == Some("bank closed; validating equipment") {
+        if self.status_claims_bank_close(status) {
             let receipt = self.witness.pending_bank_trip.as_ref();
             if !receipt.is_some_and(|receipt| receipt.deposit_verified) {
                 return Err(format!(
@@ -4474,7 +4483,7 @@ impl GatherSlot {
                         Some(self.witness.post_drop_gathers);
                 }
             }
-            if event == "bank closed; validating equipment" {
+            if self.status_claims_bank_close(status) {
                 self.witness.bank_closed_observed = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
