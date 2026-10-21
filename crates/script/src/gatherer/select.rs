@@ -1073,11 +1073,9 @@ fn select_with_access(
                 );
                 if class != PlacementClass::Live
                     && class != PlacementClass::Absent
-                    && !danger.allows(
-                        spot.origin,
-                        Some(spot.entity),
-                        nav::contract::ArrivalKind::Reach,
-                    )
+                    // A live scene can prove arrival at a replaced or avoided
+                    // resource too. Waiting there needs no navigation data.
+                    && !danger.allows_live(spot.origin, spot.entity, snapshot)
                 {
                     continue;
                 }
@@ -1918,6 +1916,17 @@ pub(crate) mod tests {
                 zone: "Draynor jail guards",
             }
         }
+
+        fn safe_access_goals(
+            &self,
+            _target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+            _existing: Option<&WalkGoals>,
+        ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+            Err(WalkGoalsError::Empty)
+        }
     }
 
     fn danger_tree_selection(
@@ -2450,6 +2459,21 @@ pub(crate) mod tests {
                 }
             } else {
                 WalkDanger::Allowed
+            }
+        }
+
+        fn safe_access_goals(
+            &self,
+            target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+            _existing: Option<&WalkGoals>,
+        ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+            if target == self.0 {
+                Err(WalkGoalsError::Empty)
+            } else {
+                Ok(None)
             }
         }
     }

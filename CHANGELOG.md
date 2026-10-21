@@ -121,13 +121,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   This applies to the initial approach and the return after banking. It fixes
   the Catherby failure from the Fishing Guild when the preferred stand is on
   the Water Obelisk island. A bot already on that island can still use it.
-- The Gatherer applies the card's danger permission before choosing a
-  resource. It skips resources with no access tile outside a denied danger
-  zone, including trees beside the Draynor jail. A safe access tile keeps a
-  resource eligible, but the walk uses only safe access tiles. The same rule
-  applies to finite resource steps in the Quester. If none remain, the failure
-  names the danger zone. Allowed or uncovered approaches keep their existing
-  access tiles.
+- Gatherers at Draynor no longer stop Blocked beside the jail, where guards
+  killed the idle bots. Resource selection now follows the card's danger
+  setting, or the global Nav danger setting when the card inherits it.
+  Resources remain eligible only if they have a safe access tile, and walks
+  use only safe access tiles. The same rule applies to finite resource steps
+  in the Quester. If no safe resource remains, the failure names the danger
+  zone. Without navigation data, bots can work or wait at a resource already
+  in range, but cannot walk to another resource.
 
 ### Navigation checks
 

@@ -136,21 +136,19 @@ pub trait WalkDangerQuery {
     /// Implementations must not allocate goals when no access tile is denied.
     fn safe_access_goals(
         &self,
-        _target: WorldTile,
-        _loc_id: Option<i32>,
-        _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
-        _existing: Option<&WalkGoals>,
-    ) -> Result<Option<WalkGoals>, WalkGoalsError> {
-        Ok(None)
-    }
+        target: WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+        existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError>;
 }
 
-/// Bare unit fixtures explicitly opt out of host danger policy.
-#[cfg(test)]
-pub(crate) struct AllowWalkDanger;
+/// Test fixtures with no host danger policy explicitly allow every access tile.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct AllowWalkDanger;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl WalkDangerQuery for AllowWalkDanger {
     fn check(
         &self,
@@ -160,6 +158,17 @@ impl WalkDangerQuery for AllowWalkDanger {
         _arrival: nav::contract::ArrivalKind,
     ) -> WalkDanger<'_> {
         WalkDanger::Allowed
+    }
+
+    fn safe_access_goals(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+        _existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+        Ok(None)
     }
 }
 
