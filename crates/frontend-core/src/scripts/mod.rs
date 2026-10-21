@@ -2468,6 +2468,14 @@ impl Scripts {
         kind: StartKind,
         tallied: bool,
     ) -> Result<Option<OperationId>, script::StartLoadError> {
+        // Every running bot is a fleet member (`open_slot`, `seed_running`),
+        // so a non-member is a profile that is not loaded: say so, for both
+        // card kinds, instead of the host's "no slot".
+        if !wall_member(core, profile) {
+            return Err(script::StartLoadError::Refused(format!(
+                "{profile} is not loaded"
+            )));
+        }
         match sel {
             script::ScriptSel::Compiled(id) => {
                 let bag = self
@@ -2489,11 +2497,6 @@ impl Scripts {
                 Ok(Some(op))
             }
             script::ScriptSel::Loaded(..) => {
-                if !wall_member(core, profile) {
-                    return Err(script::StartLoadError::Refused(format!(
-                        "no slot: {profile}"
-                    )));
-                }
                 if let Some(reason) = core
                     .play()
                     .and_then(host_play::Play::script_start_wait_reason)
