@@ -336,6 +336,8 @@ pub(super) struct CommandDesk {
     quester_game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// The rows the next MarkAll marks (reused buffer).
     mark_all: Vec<crate::selection::ProfileIdentity>,
+    /// The reorder the next ReorderProfiles applies.
+    reorder: Option<crate::profile_order::ReorderOp>,
     /// What the next vault row commits.
     vault: Option<super::vault_rows::StagedVault>,
     /// The next Select also brings the member's worker up (the panel's
@@ -354,6 +356,14 @@ impl CommandDesk {
 
     pub(super) fn mark_all_staging(&mut self) -> &mut Vec<crate::selection::ProfileIdentity> {
         &mut self.mark_all
+    }
+
+    pub(super) fn stage_reorder(&mut self, op: crate::profile_order::ReorderOp) {
+        self.reorder = Some(op);
+    }
+
+    pub(super) fn take_reorder(&mut self) -> Option<crate::profile_order::ReorderOp> {
+        self.reorder.take()
     }
 
     pub(super) fn stage_notice(&mut self, notice: super::prefs::Notice) {
@@ -652,7 +662,12 @@ impl<Io> OperatorSession<Io> {
                             names.push(name);
                         }
                     }
-                    names.sort();
+                    // The saved Load order, as Load all admits them; a
+                    // name the order lacks follows by name.
+                    names.sort_by(|a, b| {
+                        let rank = |name: &str| self.order_rank(name).unwrap_or(usize::MAX);
+                        rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+                    });
                 }
             }
         }
@@ -1360,6 +1375,10 @@ impl<Io> OperatorSession<Io> {
             }
             OperatorCommand::ClearMarks => {
                 let row = super::fleet::FleetRow::ClearMarks;
+                self.fleet_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::ReorderProfiles => {
+                let row = super::fleet::FleetRow::Reorder;
                 self.fleet_row(row, request, application_admitted, surface, submitted)
             }
             OperatorCommand::SetMultiBox(on) => {

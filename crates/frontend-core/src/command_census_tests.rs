@@ -659,6 +659,7 @@ const CORE: &[(&str, Decision)] = &[
     ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
+    ("session/fleet.rs::OperatorSession::stage_reorder", Staged(C::ReorderProfiles)),
     ("session/prefs.rs::OperatorSession::stage_notice", Staged(C::AcknowledgeNotice)),
     ("session/prefs.rs::OperatorSession::stage_log_save", Staged(C::SaveLog)),
     ("session/prefs.rs::OperatorSession::stage_quester_paths", Staged(C::SetQuesterPaths)),
