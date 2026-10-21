@@ -155,6 +155,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
 
+### Not in this release
+
+- A bot can't get through a door that another player closes again on every
+  tick, when that player's moves are handled before the bot's. The bot tries
+  the door until its retries run out and then stops at the door. Finding
+  another way around, changing worlds when allowed, and a clear "door held
+  shut" result are planned for 0.2.6.
+
 ### Fixed during development
 
 #### Startup and saved state
