@@ -565,6 +565,12 @@ impl Gatherer {
             ResourceReturn::InvalidGoals(error) => {
                 self.fail("return-failed", format!("observation goals: {error}"));
             }
+            ResourceReturn::Danger(failure) => {
+                self.fail(
+                    "return-failed",
+                    self.block_context(Some(here.value), &failure.to_string()),
+                );
+            }
         }
     }
 
@@ -2074,6 +2080,12 @@ impl Gatherer {
                     self.fail(
                         "resource-unavailable",
                         format!("observation goals: {error}"),
+                    );
+                }
+                Selection::Danger(failure) => {
+                    self.fail(
+                        "resource-unavailable",
+                        self.block_context(Some(here.value), &failure.to_string()),
                     );
                 }
                 Selection::Absent { absent } => {

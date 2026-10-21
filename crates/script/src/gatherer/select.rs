@@ -1,6 +1,6 @@
 use super::area::WorkArea;
 use super::settings::{method_level, GathererSettings, TargetPreference};
-use crate::native::{WalkGoals, WalkGoalsError};
+use crate::native::{WalkDanger, WalkDangerQuery, WalkGoals, WalkGoalsError};
 use api::gather_methods::{
     known_rows, AccessPolicy, GatherCatalog, GatherMethod, GatherSkill, GatherSpot,
     SceneRegionInput, TargetClass,
@@ -279,7 +279,7 @@ pub struct TargetPlan {
     pub npc_index: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
     Target(PlacementClass),
     Exhausted {
@@ -292,6 +292,7 @@ pub enum Selection {
     InvalidGoals(WalkGoalsError),
     /// Unobserved fishing cells remain, but none have a radius-one Area goal.
     NoStand,
+    Danger(DangerFailure),
 }
 
 #[derive(Debug, Clone)]
@@ -300,6 +301,93 @@ pub struct SelectedTarget {
     pub class: PlacementClass,
     /// Shared only by the one selected observation request.
     pub observation_goals: Option<WalkGoals>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DangerFailure {
+    Denied { zone: Arc<str> },
+    Unavailable,
+}
+
+impl std::fmt::Display for DangerFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Denied { zone } => write!(
+                formatter,
+                "no safe resource access: danger zone {zone} is not allowed"
+            ),
+            Self::Unavailable => formatter
+                .write_str("no navigation data is available for the resource danger check"),
+        }
+    }
+}
+
+/// A selection-local borrow. Only a terminal rejection owns its zone label.
+struct DangerCheck<'a> {
+    query: Option<&'a dyn WalkDangerQuery>,
+    rejected: Option<WalkDanger<'a>>,
+}
+
+impl<'a> DangerCheck<'a> {
+    fn new(query: Option<&'a dyn WalkDangerQuery>) -> Self {
+        Self { query, rejected: None }
+    }
+
+    fn allows(
+        &mut self,
+        tile: WorldTile,
+        entity: Option<EntityId>,
+        arrival: nav::contract::ArrivalKind,
+    ) -> bool {
+        let loc_id = match entity {
+            Some(EntityId::Loc(id)) => Some(id),
+            _ => None,
+        };
+        let decision = self.query.map_or(WalkDanger::Unavailable, |query| {
+            query.check(tile, loc_id, RESOURCE_APPROACH_RADIUS, arrival)
+        });
+        if decision == WalkDanger::Allowed {
+            true
+        } else {
+            self.rejected.get_or_insert(decision);
+            false
+        }
+    }
+
+    fn allows_live(
+        &mut self,
+        tile: WorldTile,
+        entity: EntityId,
+        snapshot: Option<api::snapshot::SnapshotView<'_>>,
+    ) -> bool {
+        resource_arrived(snapshot, entity, tile)
+            || self.allows(tile, Some(entity), nav::contract::ArrivalKind::Reach)
+    }
+
+    fn failure(&self) -> Option<DangerFailure> {
+        match self.rejected {
+            Some(WalkDanger::Denied { zone }) => Some(DangerFailure::Denied { zone: Arc::from(zone) }),
+            Some(WalkDanger::Unavailable) => Some(DangerFailure::Unavailable),
+            Some(WalkDanger::Allowed) | None => None,
+        }
+    }
+}
+
+fn resource_arrived(
+    snapshot: Option<api::snapshot::SnapshotView<'_>>,
+    entity: EntityId,
+    target: WorldTile,
+) -> bool {
+    snapshot.is_some_and(|snapshot| {
+        snapshot.local_player().is_some_and(|player| match entity {
+            EntityId::Loc(id) => snapshot.walk_loc_arrived(
+                player.value.player.network, target, i32::from(RESOURCE_APPROACH_RADIUS), id,
+            ),
+            _ => snapshot.walk_arrived(
+                player.value.player.network, target, i32::from(RESOURCE_APPROACH_RADIUS),
+            ),
+        })
+    })
 }
 
 impl SelectedTarget {
@@ -322,19 +410,7 @@ impl SelectedTarget {
         } else if self.plan.npc_index >= 0 {
             false
         } else {
-            !snapshot.local_player().is_some_and(|player| match loc_id {
-                Some(id) => snapshot.walk_loc_arrived(
-                    player.value.player.network,
-                    self.plan.tile,
-                    i32::from(RESOURCE_APPROACH_RADIUS),
-                    id,
-                ),
-                None => snapshot.walk_arrived(
-                    player.value.player.network,
-                    self.plan.tile,
-                    i32::from(RESOURCE_APPROACH_RADIUS),
-                ),
-            })
+            !resource_arrived(Some(snapshot), self.plan.entity, self.plan.tile)
         };
         needs_walk.then(|| crate::native::WalkRequest {
             target: self.plan.tile,
@@ -414,6 +490,7 @@ pub enum ResourceReturn {
     ExcludedUntil { until: u64 },
     Unavailable { reason: &'static str },
     InvalidGoals(WalkGoalsError),
+    Danger(DangerFailure),
 }
 
 impl ResourceReturn {
@@ -421,7 +498,10 @@ impl ResourceReturn {
     pub fn plan(self) -> Option<TargetPlan> {
         match self {
             Self::Ready(selected) => Some(selected.plan),
-            Self::ExcludedUntil { .. } | Self::Unavailable { .. } | Self::InvalidGoals(_) => None,
+            Self::ExcludedUntil { .. }
+            | Self::Unavailable { .. }
+            | Self::InvalidGoals(_)
+            | Self::Danger(_) => None,
         }
     }
 }
@@ -652,8 +732,8 @@ fn select_with_access(
         skill_stat,
         fishing,
         collision,
-        snapshot: _,
-        walk_danger: _,
+        snapshot,
+        walk_danger,
     } = observation;
     let preference = settings.target_preference_kind();
     let region = area.region();
@@ -663,6 +743,7 @@ fn select_with_access(
     let mut non_absent = false;
     let mut blocked_stand = false;
     let mut best_live = None;
+    let mut danger = DangerCheck::new(walk_danger);
 
     for &method_index in method_indices {
         let Some(method) = catalog.methods().get(method_index) else {
@@ -703,6 +784,9 @@ fn select_with_access(
                     let Ok(index) = i32::try_from(npc.index) else {
                         continue;
                     };
+                    if !danger.allows_live(npc.tile, spot.entity, snapshot) {
+                        continue;
+                    }
                     fishing.reset_live(method_index, spot.id.0);
                     consider_candidate(
                         &mut best_live,
@@ -742,6 +826,9 @@ fn select_with_access(
                     now,
                 ) == PlacementClass::Live
                 {
+                    if !danger.allows_live(spot.origin, spot.entity, snapshot) {
+                        continue;
+                    }
                     consider_candidate(
                         &mut best_live,
                         preference,
@@ -836,8 +923,9 @@ fn select_with_access(
                         .unobserved_cells(bounds)
                         .filter_map(|cell| {
                             let clamp = observation_stand(cell, here);
-                            legal_fishing_return_stand(cell, here, clamp, area, collision)
-                                .map(|stand| (stand, clamp))
+                            legal_fishing_return_stand(
+                                cell, here, clamp, area, collision, &mut danger,
+                            ).map(|stand| (stand, clamp))
                         })
                         .min_by_key(|(stand, clamp)| {
                             (distance(*clamp, *stand), distance(here, *stand))
@@ -886,8 +974,7 @@ fn select_with_access(
                     }
                     PlacementClass::Absent => absent = absent.saturating_add(1),
                     PlacementClass::Live => {
-                        // The live pass already considered every eligible NPC.
-                        non_absent = true;
+                        // Allowed live actors returned in the first pass.
                     }
                 }
             }
@@ -911,6 +998,16 @@ fn select_with_access(
                     avoided,
                     now,
                 );
+                if class != PlacementClass::Live
+                    && class != PlacementClass::Absent
+                    && !danger.allows(
+                        spot.origin,
+                        Some(spot.entity),
+                        nav::contract::ArrivalKind::Reach,
+                    )
+                {
+                    continue;
+                }
                 let respawn = u64::from(respawn_max(method, spot));
                 match class {
                     PlacementClass::Unloaded => {
@@ -943,7 +1040,8 @@ fn select_with_access(
                         wait_until = wait_until.max(until);
                     }
                     PlacementClass::Absent => absent = absent.saturating_add(1),
-                    PlacementClass::Live => non_absent = true,
+                    // Allowed live locs returned in the first pass.
+                    PlacementClass::Live => {}
                 }
             }
         }
@@ -989,6 +1087,15 @@ fn select_with_access(
             zone_gated,
         };
     }
+    if !non_absent {
+        if let Some(failure) = danger.failure() {
+            return SelectionResult {
+                target: None,
+                outcome: Selection::Danger(failure),
+                zone_gated,
+            };
+        }
+    }
     if blocked_stand && !non_absent {
         return SelectionResult {
             target: None,
@@ -1026,6 +1133,7 @@ pub fn resource_return_target(
     let mut best = None;
     let mut excluded_until: Option<u64> = None;
     let mut unavailable = None;
+    let mut danger = DangerCheck::new(observation.walk_danger);
     for &method_index in method_indices {
         let Some(method) = catalog.methods().get(method_index) else {
             note_unavailable(&mut unavailable, RETURN_UNAVAILABLE_METADATA);
@@ -1041,7 +1149,7 @@ pub fn resource_return_target(
                 continue;
             };
             for spot in spots {
-                match fishing_return_stand(catalog, method, spot, area, &observation) {
+                match fishing_return_stand(catalog, method, spot, area, &observation, &mut danger) {
                     ReturnStand::Ready(stand) => consider_candidate(
                         &mut best,
                         preference,
@@ -1100,6 +1208,9 @@ pub fn resource_return_target(
                         Some(excluded_until.map_or(until, |current| current.min(until)));
                     continue;
                 }
+                if !danger.allows(spot.origin, None, nav::contract::ArrivalKind::Area) {
+                    continue;
+                }
                 consider_candidate(
                     &mut best,
                     preference,
@@ -1150,6 +1261,8 @@ pub fn resource_return_target(
         })
     } else if let Some(until) = excluded_until {
         ResourceReturn::ExcludedUntil { until }
+    } else if let Some(failure) = danger.failure() {
+        ResourceReturn::Danger(failure)
     } else {
         ResourceReturn::Unavailable {
             reason: unavailable.unwrap_or(RETURN_UNAVAILABLE_METADATA),
@@ -1163,6 +1276,7 @@ fn fishing_return_stand(
     spot: &GatherSpot,
     area: WorkArea,
     observation: &ReturnObservation<'_>,
+    danger: &mut DangerCheck<'_>,
 ) -> ReturnStand {
     if !known_resource_target(method, spot.entity) {
         return ReturnStand::Metadata;
@@ -1187,7 +1301,9 @@ fn fishing_return_stand(
     };
     observation_cells(bounds)
         .filter_map(|cell| {
-            legal_fishing_return_stand(cell, spot.origin, spot.origin, area, observation.collision)
+            legal_fishing_return_stand(
+                cell, spot.origin, spot.origin, area, observation.collision, danger,
+            )
         })
         .min_by_key(|stand| {
             (
@@ -1214,9 +1330,12 @@ fn legal_fishing_return_stand(
     rank_by: WorldTile,
     area: WorkArea,
     collision: Option<nav::contract::CollisionView<'_>>,
+    danger: &mut DangerCheck<'_>,
 ) -> Option<WorldTile> {
     let preferred = observation_stand(cell, origin);
-    if has_area_arrival(collision, preferred) {
+    if has_area_arrival(collision, preferred)
+        && danger.allows(preferred, None, nav::contract::ArrivalKind::Area)
+    {
         return Some(preferred);
     }
     let min_x = cell.max_x - OBSERVATION_RADIUS;
@@ -1236,7 +1355,9 @@ fn legal_fishing_return_stand(
                 z,
                 level: cell.level,
             };
-            if !has_area_arrival(collision, stand) {
+            if !has_area_arrival(collision, stand)
+                || !danger.allows(stand, None, nav::contract::ArrivalKind::Area)
+            {
                 continue;
             }
             let key = (
@@ -1794,18 +1915,128 @@ pub(crate) mod tests {
     fn danger_denied_tree_is_not_ranked_as_a_target() {
         let result = danger_tree_selection(Some(&DenyDanger), false);
         assert!(result.target.is_none(), "a fully denied tree must be ineligible");
+        assert_eq!(
+            result.outcome,
+            Selection::Danger(DangerFailure::Denied { zone: Arc::from("Draynor jail guards") })
+        );
     }
 
     #[test]
     fn danger_without_navigation_data_refuses_a_tree_that_needs_a_walk() {
         let result = danger_tree_selection(None, false);
         assert!(result.target.is_none(), "missing danger data must not admit a nav walk");
+        assert_eq!(result.outcome, Selection::Danger(DangerFailure::Unavailable));
+        let Selection::Danger(failure) = result.outcome else { unreachable!() };
+        assert!(failure.to_string().contains("no navigation data"));
     }
 
     #[test]
     fn danger_without_navigation_data_keeps_a_tree_already_in_operating_range() {
         let result = danger_tree_selection(None, true);
         assert!(result.target.is_some(), "an arrived loc operation does not need walk admission");
+    }
+
+    struct DenyOneTile(WorldTile);
+
+    impl WalkDangerQuery for DenyOneTile {
+        fn check(
+            &self,
+            target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+        ) -> WalkDanger<'_> {
+            if target == self.0 {
+                WalkDanger::Denied { zone: "denied nearest resource" }
+            } else {
+                WalkDanger::Allowed
+            }
+        }
+    }
+
+    #[test]
+    fn danger_filter_runs_before_live_unloaded_and_return_ranking() {
+        let catalog = real_catalog();
+        let method = catalog.method("woodcutting.normal").unwrap();
+        let index = method_index(&catalog, method);
+        let here = WorldTile { x: 3113, z: 3235, level: 0 };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: here,
+            radius: 16,
+        };
+        let locs: Vec<_> = catalog.spots(method, &area.region()).unwrap()
+            .filter(|spot| known_resource_target(method, spot.entity))
+            .filter(|spot| catalog.access(method, spot) == Ok(Truth::True))
+            .map(|spot| {
+                let EntityId::Loc(id) = spot.entity else { unreachable!() };
+                loc(id, spot.origin)
+            })
+            .collect();
+        assert!(locs.iter().any(|loc| loc.tile == here));
+        assert!(locs.iter().any(|loc| loc.tile != here));
+        let deny = DenyOneTile(here);
+        for live in [true, false] {
+            let scene = scene_around(if live { here } else { WorldTile { x: 2000, ..here } });
+            let result = select(
+                &catalog,
+                &[index],
+                &GathererSettings::default(),
+                area,
+                &[AvoidedTile::EMPTY; MAX_AVOID],
+                SelectionObservation {
+                    world: &scene,
+                    locs: if live { &locs } else { &[] },
+                    npcs: &[],
+                    here,
+                    now: 1,
+                    skill_stat: 8,
+                    fishing: &mut FishingSurvey::default(),
+                    collision: None,
+                    snapshot: None,
+                    walk_danger: Some(&deny),
+                },
+            );
+            let target = result.target.expect("an allowed alternative remains");
+            assert_ne!(target.plan.tile, here);
+            assert_eq!(target.class, if live { PlacementClass::Live } else { PlacementClass::Unloaded });
+        }
+        let returned = resource_return_target(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            ReturnObservation {
+                here,
+                now: 1,
+                skill_stat: 8,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: None,
+                walk_danger: Some(&deny),
+            },
+        ).plan().expect("return ranking retains an allowed alternative");
+        assert_ne!(returned.tile, here);
+    }
+
+    #[test]
+    fn danger_filter_searches_another_fishing_stand_before_rejecting_the_cell() {
+        let here = WorldTile { x: 3000, z: 3000, level: 0 };
+        let cell = SceneRegionInput {
+            min_x: here.x, min_z: here.z,
+            max_x: here.x, max_z: here.z,
+            level: here.level,
+        };
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: here,
+            radius: 16,
+        };
+        let deny = DenyOneTile(here);
+        let mut danger = DangerCheck::new(Some(&deny));
+        let stand = legal_fishing_return_stand(cell, here, here, area, None, &mut danger)
+            .expect("the cell contains other allowed access sets");
+        assert_ne!(stand, here);
+        assert!(danger.allows(stand, None, nav::contract::ArrivalKind::Area));
     }
 
     fn target(entity: EntityId, class: TargetClass) -> GatherTarget {
@@ -2219,7 +2450,14 @@ pub(crate) mod tests {
         avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
         collision: None, };
         assert_eq!(
-            fishing_return_stand(&catalog, method, &spot, area, &observation),
+            fishing_return_stand(
+                &catalog,
+                method,
+                &spot,
+                area,
+                &observation,
+                &mut DangerCheck::new(observation.walk_danger),
+            ),
             ReturnStand::Ready(expected_return),
             "Return must not reject a spot solely because its movement spans nine cells"
         );
@@ -3430,6 +3668,8 @@ pub(crate) mod tests {
             area,
             &avoided,
             SelectionObservation {
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
                 world: &world,
                 locs: &[],
                 npcs: &[],
@@ -3455,6 +3695,8 @@ pub(crate) mod tests {
             area,
             &avoided,
             SelectionObservation {
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
                 world: &world,
                 locs: &[],
                 npcs: &actors,
@@ -3921,6 +4163,8 @@ pub(crate) mod tests {
                 area,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
                 SelectionObservation {
+                    snapshot: None,
+                    walk_danger: Some(&crate::native::AllowWalkDanger),
                     fishing,
                     collision: Some(lease.collision()),
                     world: &scene_around(ARDOUGNE_START),
@@ -4145,6 +4389,7 @@ pub(crate) mod tests {
                             clamped,
                             area,
                             Some(lease.collision()),
+                            &mut DangerCheck::new(Some(&crate::native::AllowWalkDanger)),
                         );
                         let stand = legal.unwrap_or(clamped);
                         let new_ok = area_arrival_ok(&world.collision, stand);
@@ -5531,6 +5776,8 @@ pub(crate) mod tests {
                         },
                         &[AvoidedTile::EMPTY; super::MAX_AVOID],
                         SelectionObservation {
+                            snapshot: None,
+                            walk_danger: Some(&crate::native::AllowWalkDanger),
                             world: &world_view,
                             locs: &[],
                             npcs: &[],
@@ -5598,6 +5845,12 @@ pub(crate) mod tests {
                         selected: None,
                         status: "InvalidGoals".to_owned(),
                         detail: Some(format!("{error:?}")),
+                        defect: true,
+                    },
+                    ResourceReturn::Danger(failure) => TargetPick {
+                        selected: None,
+                        status: "Danger".to_owned(),
+                        detail: Some(failure.to_string()),
                         defect: true,
                     },
                 },
