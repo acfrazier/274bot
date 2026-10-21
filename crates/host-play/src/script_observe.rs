@@ -691,6 +691,12 @@ pub(crate) fn script_observe_cached_with_channels(
             && !prayer_cleanup_hold
             && !hold
             && !slot.watchdog().holds_script_actions();
+        // Load Gather owns its own committed permissions; other native
+        // ticks use the compiled card's current permissions. Pass the
+        // same callback value to selection and route admission.
+        let walk_permissions = slot
+            .api_gather_walk_permissions()
+            .or_else(|| slot.native_walk_permissions());
         if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
@@ -903,12 +909,6 @@ pub(crate) fn script_observe_cached_with_channels(
                     None
                 };
                 let service_gate = service_gate_guard.as_deref();
-                // Load Gather owns its own committed permissions; other native
-                // ticks use the compiled card's current permissions. Pass the
-                // same callback value to selection and route admission.
-                let walk_permissions = slot
-                    .api_gather_walk_permissions()
-                    .or_else(|| slot.native_walk_permissions());
                 let walk_danger = world.as_deref().map(|world| {
                     crate::walk_permissions::SelectionDangerQuery::new(
                         navs,

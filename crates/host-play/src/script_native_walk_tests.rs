@@ -41,6 +41,13 @@ struct WalkerScript {
 }
 
 impl Script for WalkerScript {
+    fn configure(
+        &mut self,
+        _next: Arc<script::native::PreparedConfig>,
+    ) -> Result<script::native::SettingsApply, script::native::ConfigError> {
+        Ok(script::native::SettingsApply::Applied)
+    }
+
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         let mut shared = self.shared.lock();
         if std::mem::take(&mut shared.rewalk) {
@@ -2451,7 +2458,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
         nav::transport::WildernessRules::default(),
     );
     assert_eq!(
-        selection_danger(&fully_zoned, Some(&snapshot), target, Some(1276), 1, ArrivalKind::Reach),
+        selection_danger(
+            &fully_zoned,
+            Some(&snapshot),
+            target,
+            Some(1276),
+            1,
+            ArrivalKind::Reach
+        ),
         Err("Test danger".into()),
         "every legal stand around the modeled 2x2 loc is denied"
     );
@@ -2463,7 +2477,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
         nav::transport::WildernessRules::default(),
     );
     assert_eq!(
-        selection_danger(&center_only, Some(&snapshot), target, Some(1276), 1, ArrivalKind::Reach),
+        selection_danger(
+            &center_only,
+            Some(&snapshot),
+            target,
+            Some(1276),
+            1,
+            ArrivalKind::Reach
+        ),
         Ok(()),
         "a safe legal stand retains a loc whose anchor lies in a denied zone"
     );
@@ -2485,7 +2506,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
         nav::transport::WildernessRules::default(),
     );
     assert_eq!(
-        selection_danger(&carved, Some(&snapshot), target, Some(1276), 1, ArrivalKind::Reach),
+        selection_danger(
+            &carved,
+            Some(&snapshot),
+            target,
+            Some(1276),
+            1,
+            ArrivalKind::Reach
+        ),
         Ok(()),
         "one carved, legal cardinal approach keeps the resource eligible"
     );
@@ -2520,7 +2548,12 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
     let diagonal_only = selection_zone_world(
         target,
         nav::zones::Zone::hazard(all_approaches, 0, 0),
-        Some(avoid_rect(target.x - 1, target.x - 1, target.z - 1, target.z - 1)),
+        Some(avoid_rect(
+            target.x - 1,
+            target.x - 1,
+            target.z - 1,
+            target.z - 1,
+        )),
         nav::transport::WildernessRules::default(),
     );
     assert_eq!(
@@ -2611,15 +2644,7 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
         z: 20,
         level: 0,
     };
-    let rule = || {
-        nav::zones::Zone::npc(
-            target,
-            0,
-            nav::zones::ZoneClass::LevelRule,
-            10,
-            0,
-        )
-    };
+    let rule = || nav::zones::Zone::npc(target, 0, nav::zones::ZoneClass::LevelRule, 10, 0);
     let no_wilderness = selection_zone_world(
         target,
         rule(),
@@ -2629,11 +2654,25 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
     let low_combat = selection_snapshot(target, 3, 0, None);
     let high_combat = selection_snapshot(target, 51, 0, None);
     assert_eq!(
-        selection_danger(&no_wilderness, Some(&low_combat), target, None, 0, ArrivalKind::Area),
+        selection_danger(
+            &no_wilderness,
+            Some(&low_combat),
+            target,
+            None,
+            0,
+            ArrivalKind::Area
+        ),
         Err("Test danger".into())
     );
     assert_eq!(
-        selection_danger(&no_wilderness, Some(&high_combat), target, None, 0, ArrivalKind::Area),
+        selection_danger(
+            &no_wilderness,
+            Some(&high_combat),
+            target,
+            None,
+            0,
+            ArrivalKind::Area
+        ),
         Ok(()),
         "the packed combat cap makes the zone inactive above its threshold"
     );
@@ -2653,7 +2692,14 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
     };
     let wild_rule = selection_zone_world(target, rule(), None, wilderness);
     assert_eq!(
-        selection_danger(&wild_rule, Some(&high_combat), target, None, 0, ArrivalKind::Area),
+        selection_danger(
+            &wild_rule,
+            Some(&high_combat),
+            target,
+            None,
+            0,
+            ArrivalKind::Area
+        ),
         Err("Test danger".into()),
         "a high combat level does not deactivate an active wilderness zone"
     );
@@ -2721,14 +2767,28 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
             permitted,
             "the native Walk route resolver uses the same current callback card"
         );
-        // This harness's direct WalkerScript does not carry a card callback;
-        // publish its already-committed value for the route-effect integration.
-        rig.navs
-            .lock()
-            .unwrap()
-            .get_mut("alice")
-            .unwrap()
-            .native_permissions = Some(current);
+        let slot = script_slot_or_insert(&rig.scripts, "alice");
+        let mut slot = slot.lock().unwrap();
+        let run = slot.native_run().expect("running Walker test card");
+        let config = script::native::PreparedConfig::new(
+            script::CompiledId("test"),
+            1,
+            2,
+            Arc::new(
+                serde_json::from_value(serde_json::json!({
+                    "allow_danger_zones": card,
+                }))
+                .unwrap(),
+            ),
+            (),
+        );
+        assert!(matches!(
+            slot.configure_compiled(config, run),
+            script::CompiledDelivery::Applied
+        ));
+        assert_eq!(slot.native_walk_permissions(), Some(current));
+        drop(slot);
+        rig.shared.lock().target = Some(query_tile);
         rig.observe(1);
         assert!(rig.wait_for_route(5_000, || {
             rig.navs
@@ -2771,12 +2831,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         None,
     );
     assert_eq!(
-        query.check(
-            target,
-            Some(1276),
-            1,
-            nav::contract::ArrivalKind::Reach
-        ),
+        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
         WalkDanger::Denied {
             zone: "Draynor jail guards"
         },
@@ -2784,12 +2839,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
     );
 
     let table = world.graph.zones.as_ref().expect("packed zone table");
-    let filter = nav::zones::ZoneFilter::new(
-        table,
-        Some(3),
-        &[],
-        &nav::zones::ZoneExempt::NONE,
-    );
+    let filter = nav::zones::ZoneFilter::new(table, Some(3), &[], &nav::zones::ZoneExempt::NONE);
     let safe_tile = (target.x - 32..=target.x + 32)
         .flat_map(|x| {
             (target.z - 32..=target.z + 32).map(move |z| WorldTile {
@@ -2807,12 +2857,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         })
         .expect("a safe packed alternative near Draynor");
     assert_eq!(
-        query.check(
-            safe_tile,
-            None,
-            0,
-            nav::contract::ArrivalKind::Area
-        ),
+        query.check(safe_tile, None, 0, nav::contract::ArrivalKind::Area),
         WalkDanger::Allowed,
         "a safe packed alternative remains eligible"
     );

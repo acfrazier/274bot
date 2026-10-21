@@ -303,12 +303,8 @@ impl<'a> SelectionDangerQuery<'a> {
                 .snapshot
                 .and_then(|snapshot| snapshot.local_player())
                 .map(|player| player.player.combat_level);
-            match nav::zones::ZoneFilterOwned::new(
-                table.zones().len(),
-                combat,
-                &[],
-                options.zones,
-            ) {
+            match nav::zones::ZoneFilterOwned::new(table.zones().len(), combat, &[], options.zones)
+            {
                 Ok(filter) => SelectionDanger::Filtered(filter),
                 Err(_) => SelectionDanger::Unavailable,
             }
@@ -339,8 +335,12 @@ impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
         };
         let mut denied = None;
         for tile in
-            selection_access_tiles(self.world, self.snapshot, target, loc_id, radius, arrival) {
-            match filter.blocking_at(&self.world.graph.wilderness, tile).next() {
+            selection_access_tiles(self.world, self.snapshot, target, loc_id, radius, arrival)
+        {
+            match filter
+                .blocking_at(&self.world.graph.wilderness, tile)
+                .next()
+            {
                 None => return WalkDanger::Allowed,
                 Some(index) => denied = denied.or(Some(index)),
             }
@@ -567,7 +567,7 @@ mod tests {
         });
     }
 
-
+    #[test]
     fn native_admission_prefers_callback_permissions_and_keeps_mirror_fallback() {
         let previous = WalkPermissions {
             allow_danger_zones: true,
