@@ -1,30 +1,35 @@
 //! Fleet window: the wide table over the shared fleet model (every profile,
 //! loaded or not, in the model's order and filter), its identity-keyed marks,
-//! the action bar over the marked rows (Start / Stop, Assign, Assign &
-//! restart, log in / out, group walk) and toggleable status columns.
+//! the fleet card drop-down, the marks row (tri-state box, marks menu and
+//! count), the action bar (Start / Stop, Assign, Assign & restart, log in /
+//! out, Copy settings, group walk) with its plan confirmation and result
+//! line, and toggleable status columns.
 //!
 //! The window draws the same rows, order, filter and marks as the MultiBox
-//! rail and the Grid: all three read [`Session::fleet_model`]. When it is
-//! closed, [`window`] returns before touching projections or formatting,
-//! and a hidden column reads nothing from the host.
+//! rail and the Grid: all three read [`Session::fleet_model`]. Every decision
+//! (the card, the targets, the skips, whether to ask first, the prompt and
+//! the result text) is the core's; this module stages and submits through
+//! the [`Session`] plan flow. When the window is closed, [`window`] returns
+//! before touching projections or formatting, and a hidden column reads
+//! nothing from the host.
 
 use std::cell::RefCell;
 
 use dear_imgui_rs::{
     Condition, DragDropTargetFlags, SelectableFlags, StyleColor, TableColumnFlags, TableFlags,
-    TableOptions, TableSizingPolicy, Ui, WindowFlags,
+    TableOptions, TableRowFlags, TableSizingPolicy, Ui, WindowFlags,
 };
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
-    marked_availability, marked_startable, FleetModel, FleetOrder, MarkedAction, MarkedBlock,
-    OperatorCommand, Placement, ProfileIdentity, ReorderOp, Scripts, Targets,
+    contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, MarkOp, MarkPredicate,
+    OperatorCommand, Placement, ProfileIdentity, ReorderOp, Scripts, ShownMarks, Targets,
+    FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
 };
 
 use crate::fleet_columns::{self, FleetColumn};
+use crate::script_picker::{display_category, resolve_category_order};
 use crate::session::Session;
 use crate::theme::{scale_px, scale_size, WARN};
-
-const RESTART_POPUP: &str = "##fleet-restart-confirm";
 
 /// The Fleet window's smallest size at scale 1: wide enough for its longest
 /// button, so nothing runs past the edge however narrow it is dragged.
@@ -112,11 +117,63 @@ pub(crate) struct FleetLayout {
     pub names: Vec<[f32; 4]>,
     /// The Move marked to top button's `[min_x, min_y, max_x, max_y]`.
     pub move_to_top: [f32; 4],
+    /// The card drop-down's `[min_x, min_y, max_x, max_y]`.
+    pub card_combo: [f32; 4],
+    /// Each entry of the open card drop-down: its text and rect.
+    pub card_entries: Vec<(String, [f32; 4])>,
+    /// The marks row's tri-state box.
+    pub mark_box: [f32; 4],
+    /// The Mark column header's tri-state box.
+    pub header_mark_box: [f32; 4],
+    /// The marks menu button.
+    pub marks_button: [f32; 4],
+    /// Each item of the open marks menu: its text and rect.
+    pub marks_menu: Vec<(String, [f32; 4])>,
+    /// The marks row's count text.
+    pub marks_text: String,
+    /// Each fleet action button, in action-bar order.
+    pub actions: Vec<ActionRecord>,
+    /// The waiting plan's prompt, Confirm and Cancel, when one is drawn.
+    pub plan: Option<PlanRecord>,
+    /// The result line's text and rect, when one is drawn.
+    pub result: Option<(String, [f32; 4])>,
+}
+
+/// One fleet action button as a test sees it.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct ActionRecord {
+    pub action: FleetAction,
+    pub label: String,
+    pub rect: [f32; 4],
+    pub disabled: bool,
+    pub tooltip: &'static str,
+}
+
+/// The waiting plan row as a test sees it.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct PlanRecord {
+    pub prompt: String,
+    pub confirm: [f32; 4],
+    pub cancel: [f32; 4],
 }
 
 #[cfg(test)]
 std::thread_local! {
     static LAYOUT: RefCell<FleetLayout> = RefCell::new(FleetLayout::default());
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Plan rows drawn since the last [`take_plan_rows`].
+    static PLAN_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many plan rows were drawn since the last call.
+#[cfg(test)]
+pub(crate) fn take_plan_rows() -> usize {
+    PLAN_ROWS.replace(0)
 }
 
 #[cfg(test)]
@@ -164,6 +221,13 @@ fn record_move_to_top(ui: &Ui) {
     LAYOUT.with_borrow_mut(|layout| layout.move_to_top = [min[0], min[1], max[0], max[1]]);
 }
 
+/// The last item's `[min_x, min_y, max_x, max_y]`.
+#[cfg(test)]
+fn item_rect(ui: &Ui) -> [f32; 4] {
+    let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+    [min[0], min[1], max[0], max[1]]
+}
+
 #[cfg(test)]
 fn record_window_layout(ui: &Ui) {
     LAYOUT.with_borrow_mut(|layout| layout.scroll_max_x = ui.scroll_max_x());
@@ -177,150 +241,403 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
     LAYOUT.with_borrow_mut(std::mem::take)
 }
 
-const ASSIGN_LABEL: &str = "Assign selected card";
-const ASSIGN_RESTART_LABEL: &str = "Assign & restart";
-const APPLY_SETTINGS_LABEL: &str = "Apply focused bot's settings to marked";
 const MOVE_TO_TOP_LABEL: &str = "Move marked to top";
+const MARKS_MENU_POPUP: &str = "##fleet-marks-menu";
+/// The tooltip of a button that needs a card while the fleet card is each
+/// bot's own.
+const PICK_A_CARD: &str = "pick a card above";
+/// The tooltip of a fleet button with no bot to act on.
+const NOTHING_TO_ACT_ON: &str = "mark bots, or show loaded ones, first";
 
-/// The action bar's count-bearing button labels. None ends in an ellipsis: a
-/// button that opens a window or a confirmation still names the action plainly.
-struct ActionLabels {
-    start: String,
-    stop: String,
-    log_in: String,
-    log_out: String,
+/// The window's count-bearing labels (the marks count and the action
+/// buttons), rebuilt only when the fleet model's generation moves, never
+/// per frame. No label ends in an ellipsis: a button that opens a
+/// confirmation still names its action plainly. Each carries an id part
+/// after `###`, so a changed count never changes the button's identity.
+#[derive(Debug, Default)]
+pub(crate) struct FleetLabels {
+    generation: Option<u64>,
+    /// How many bots are marked, shown or not.
+    marked: usize,
+    /// How many bots an action covers: the marks, else the loaded shown rows.
+    scope: usize,
+    /// "5 marked, 2 not shown".
+    marks: String,
+    /// "Stop 5" with marks, "Stop all 12" without, in [`FleetAction::ALL`] order.
+    actions: [String; FleetAction::ALL.len()],
     walk: String,
 }
 
-impl ActionLabels {
-    fn new(count: usize, has_card: bool) -> Self {
-        Self {
-            start: if has_card {
-                format!("Start selected card on {count} marked bots")
-            } else {
-                format!("Start saved script on {count} marked bots")
-            },
-            stop: format!("Stop {count} marked bots"),
-            log_in: format!("Log in {count}"),
-            log_out: format!("Log out {count}"),
-            walk: format!("Walk {count} marked bots"),
+impl FleetLabels {
+    /// Rebuild every label when `model` changed since the last call.
+    fn sync(&mut self, model: &FleetModel) {
+        use std::fmt::Write as _;
+        if self.generation == Some(model.generation()) {
+            return;
         }
+        self.generation = Some(model.generation());
+        let counts = model.counts();
+        // The mark set itself, not the per-row count: it is right before the
+        // first session sync too, and the plan acts on it.
+        self.marked = model.marks().len();
+        self.scope = if self.marked > 0 {
+            self.marked
+        } else {
+            counts.shown_loaded()
+        };
+        self.marks.clear();
+        let _ = write!(
+            self.marks,
+            "{} marked, {} not shown",
+            self.marked,
+            counts.hidden_marked()
+        );
+        for (index, (label, action)) in self.actions.iter_mut().zip(FleetAction::ALL).enumerate() {
+            label.clear();
+            let _ = if self.marked > 0 {
+                write!(
+                    label,
+                    "{} {}###fleet-action-{index}",
+                    action.verb(),
+                    self.marked
+                )
+            } else {
+                write!(
+                    label,
+                    "{} all {}###fleet-action-{index}",
+                    action.verb(),
+                    self.scope
+                )
+            };
+        }
+        self.walk.clear();
+        let _ = write!(self.walk, "Walk {} marked bots", self.marked);
     }
 
-    /// Every label of the bar, including the fixed ones.
+    /// Every label of the bar, including the fixed one.
     #[cfg(test)]
-    fn all(&self) -> [&str; 9] {
-        [
-            &self.start,
-            &self.stop,
-            ASSIGN_LABEL,
-            ASSIGN_RESTART_LABEL,
-            &self.log_in,
-            &self.log_out,
-            &self.walk,
+    fn all(&self) -> impl Iterator<Item = &str> {
+        self.actions.iter().map(String::as_str).chain([
+            self.walk.as_str(),
             MOVE_TO_TOP_LABEL,
-            APPLY_SETTINGS_LABEL,
-        ]
+            self.marks.as_str(),
+        ])
+    }
+
+    /// The buffers of every cached label, to see that a frame kept them.
+    #[cfg(test)]
+    pub(crate) fn buffers(&self) -> Vec<*const u8> {
+        self.actions
+            .iter()
+            .map(|label| label.as_ptr())
+            .chain([self.marks.as_ptr(), self.walk.as_ptr()])
+            .collect()
     }
 }
 
-fn action_bar(ui: &Ui, session: &mut Session) {
-    let count = session.fleet_model.marks().len();
-    let has_card = session.script_sel.is_some();
-    let blocked = |action: MarkedAction| marked_availability(action, count, has_card, true);
-    let card_tip = |action: MarkedAction, ready: &str| match blocked(action) {
-        Err(MarkedBlock::NothingMarked) => "mark at least one profile".to_string(),
-        Err(MarkedBlock::NoCard) => "select a card in Scripts first".to_string(),
-        _ => ready.to_string(),
-    };
-    let startable = marked_availability(MarkedAction::Start, count, has_card, true).is_ok()
-        && marked_startable(
-            session.fleet_model.marks(),
-            &session.core,
-            session.script_sel.as_ref(),
-        );
-    let ActionLabels {
-        start: start_label,
-        stop: stop_label,
-        log_in: log_in_label,
-        log_out: log_out_label,
-        walk: walk_label,
-    } = ActionLabels::new(count, has_card);
-    {
-        let _disabled = (!startable).then(|| ui.begin_disabled());
-        if ui.button(start_label) {
-            session.fleet_start_selected();
+/// The tooltip of `action`'s button: what it does and over whom.
+fn action_tooltip(action: FleetAction, marked: bool) -> &'static str {
+    match (action, marked) {
+        (FleetAction::Start, true) => {
+            "start the fleet card on every marked bot (each bot's own card when that is picked)"
         }
-        ui.set_item_tooltip(if count == 0 {
-            "mark at least one profile"
-        } else if !startable {
-            "select a card in Scripts first"
-        } else if has_card {
-            "start the selected card on every marked profile"
+        (FleetAction::Start, false) => {
+            "start the fleet card on every loaded bot shown, after asking first"
+        }
+        (FleetAction::Stop, true) => {
+            "stop every marked bot's script; a confirmation names the running ones"
+        }
+        (FleetAction::Stop, false) => "stop every loaded bot shown, after asking first",
+        (FleetAction::Assign, true) => {
+            "save the fleet card on every marked bot without starting it, so each bot's \
+             settings can be adjusted first"
+        }
+        (FleetAction::Assign, false) => {
+            "save the fleet card on every loaded bot shown, after asking first"
+        }
+        (FleetAction::AssignRestart, true) => {
+            "save the fleet card and start it on every marked bot; running scripts are \
+             stopped first (a confirmation names them)"
+        }
+        (FleetAction::AssignRestart, false) => {
+            "save the fleet card and start it on every loaded bot shown, after asking first"
+        }
+        (FleetAction::Login, true) => "log in every marked bot, loading the ones not loaded yet",
+        (FleetAction::Login, false) => "log in every loaded bot shown, after asking first",
+        (FleetAction::Logout, true) => "log out every marked bot",
+        (FleetAction::Logout, false) => "log out every loaded bot shown, after asking first",
+        (FleetAction::CopySettings, true) => {
+            "copy the focused bot's settings for the fleet card to the marked bots on that \
+             card; a confirmation names them first"
+        }
+        (FleetAction::CopySettings, false) => {
+            "copy the focused bot's settings for the fleet card to the loaded bots shown \
+             that are on that card, after asking first"
+        }
+    }
+}
+
+/// Stage `card` as the fleet card and commit it. Nothing else changes: no
+/// Browse pick, no assignment, no profile form, no Start.
+fn pick_card(session: &mut Session, card: FleetCard) {
+    session.fleet_model.stage_card(card);
+    session.submit(OperatorCommand::SetFleetCard, Targets::Application);
+}
+
+/// The "Card:" drop-down, full width like Sort: the card the Start, Assign,
+/// Assign & restart and Copy settings buttons use. Entries are each bot's
+/// own card, the focused bot's card, then every Browse card under its
+/// category in the Browse window's category order. While it is open a
+/// search field narrows the entries.
+fn card_combo(ui: &Ui, session: &mut Session) {
+    ui.text("Card:");
+    session
+        .fleet_model
+        .sync_card_label(&session.scripts, &session.core);
+    ui.set_next_item_width(-1.0);
+    let combo = ui.begin_combo("##fleet-card", session.fleet_model.card_label());
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| layout.card_combo = item_rect(ui));
+    let Some(_open) = combo else {
+        session.fleet_card_filter = None;
+        return;
+    };
+    let mut filter = session.fleet_card_filter.take().unwrap_or_else(|| {
+        ui.set_keyboard_focus_here();
+        String::new()
+    });
+    ui.set_next_item_width(-1.0);
+    ui.input_text("##fleet-card-filter", &mut filter)
+        .hint("Filter cards")
+        .build();
+    ui.separator();
+    let picked = card_entries(ui, session, &filter);
+    session.fleet_card_filter = Some(filter);
+    if let Some(card) = picked {
+        pick_card(session, card);
+    }
+}
+
+/// The open card drop-down's entries that match `filter`; the one picked.
+fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
+    let current = session.fleet_model.card();
+    let matches = |text: &str| filter.is_empty() || contains_ci(text, filter);
+    let mut picked = None;
+    let entry = |label: &str, selected: bool, picked: &mut Option<FleetCard>, card| {
+        let clicked = ui.selectable_config(label).selected(selected).build();
+        #[cfg(test)]
+        LAYOUT.with_borrow_mut(|layout| {
+            layout.card_entries.push((label.to_owned(), item_rect(ui)));
+        });
+        if clicked {
+            *picked = Some(card);
+        }
+        if selected {
+            ui.set_item_default_focus();
+        }
+    };
+    if matches(OWN_CARD_LABEL) {
+        entry(
+            OWN_CARD_LABEL,
+            matches!(current, FleetCard::Own),
+            &mut picked,
+            FleetCard::Own,
+        );
+    }
+    if matches(FOCUSED_CARD_LABEL) {
+        entry(
+            FOCUSED_CARD_LABEL,
+            matches!(current, FleetCard::Focused),
+            &mut picked,
+            FleetCard::Focused,
+        );
+    }
+    ui.separator();
+    let mut present: Vec<String> = Vec::new();
+    for card in session.scripts.browse_cards() {
+        let category = display_category(card.category());
+        if !present.iter().any(|known| known == category) {
+            present.push(category.to_owned());
+        }
+    }
+    let order = resolve_category_order(&session.ui.script_category_order, &present);
+    let mut any = false;
+    for category in &order {
+        let mut heading = false;
+        for (index, card) in session.scripts.browse_cards().enumerate() {
+            if display_category(card.category()) != category.as_str() || !matches(card.name()) {
+                continue;
+            }
+            if !heading {
+                heading = true;
+                ui.text_disabled(category);
+            }
+            any = true;
+            let _id = ui.push_id(index);
+            let choice = card.selection();
+            let selected = matches!(current, FleetCard::Pinned(pinned) if *pinned == choice);
+            entry(
+                card.name(),
+                selected,
+                &mut picked,
+                FleetCard::Pinned(choice),
+            );
+        }
+    }
+    if !any {
+        ui.text_disabled("no matching cards");
+    }
+    picked
+}
+
+/// A check box over the shown rows that also reads "some": a dash in the
+/// box while only some shown rows are marked. Returns whether it was
+/// clicked; the caller decides what each state's click does.
+fn tri_state_box(ui: &Ui, id: &str, state: ShownMarks) -> bool {
+    let mut checked = state == ShownMarks::All;
+    let clicked = ui.checkbox(id, &mut checked);
+    if state == ShownMarks::Some {
+        let (min, max) = (ui.item_rect_min(), ui.item_rect_max());
+        let side = max[1] - min[1];
+        let (mid_y, thickness) = ((min[1] + max[1]) / 2.0, (side * 0.14).max(2.0));
+        ui.get_window_draw_list()
+            .add_rect(
+                [min[0] + side * 0.28, mid_y - thickness / 2.0],
+                [min[0] + side * 0.72, mid_y + thickness / 2.0],
+                ui.style_color(StyleColor::CheckMark),
+            )
+            .filled(true)
+            .build();
+    }
+    clicked
+}
+
+/// What a click on the tri-state box asks for: no shown row marked or some
+/// marked mark every shown row; every shown row marked unmarks them.
+fn tri_state_op(state: ShownMarks) -> MarkOp {
+    match state {
+        ShownMarks::All => MarkOp::UnmarkShown,
+        ShownMarks::None | ShownMarks::Some => MarkOp::Shown,
+    }
+}
+
+/// The tooltip of the tri-state box in `state`.
+fn tri_state_tooltip(state: ShownMarks) -> &'static str {
+    match state {
+        ShownMarks::None => "mark every shown bot",
+        ShownMarks::Some => "mark the rest of the shown bots",
+        ShownMarks::All => "unmark every shown bot",
+    }
+}
+
+/// The marks row: the tri-state box over the shown rows, the marks menu and
+/// the count ("5 marked, 2 not shown"; filtered-out marks stay).
+fn marks_row(ui: &Ui, session: &mut Session) {
+    let state = session.fleet_model.shown_marks();
+    let no_rows = session.fleet_model.counts().shown() == 0;
+    let mut op = None;
+    {
+        let _disabled = no_rows.then(|| ui.begin_disabled());
+        if tri_state_box(ui, "##fleet-mark-all", state) {
+            op = Some(tri_state_op(state));
+        }
+        #[cfg(test)]
+        LAYOUT.with_borrow_mut(|layout| layout.mark_box = item_rect(ui));
+        ui.set_item_tooltip(tri_state_tooltip(state));
+    }
+    ui.same_line();
+    if ui.button("Marks##fleet-marks-menu-button") {
+        ui.open_popup(MARKS_MENU_POPUP);
+    }
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| layout.marks_button = item_rect(ui));
+    ui.set_item_tooltip("mark or unmark the shown bots, or mark them by status");
+    if let Some(_menu) = ui.begin_popup(MARKS_MENU_POPUP) {
+        let item = |label: &str| {
+            let clicked = ui.menu_item(label);
+            #[cfg(test)]
+            LAYOUT.with_borrow_mut(|layout| {
+                layout.marks_menu.push((label.to_owned(), item_rect(ui)));
+            });
+            clicked
+        };
+        if item("Mark shown") {
+            op = Some(MarkOp::Shown);
+        }
+        if item("Unmark shown") {
+            op = Some(MarkOp::UnmarkShown);
+        }
+        if item("Invert shown") {
+            op = Some(MarkOp::InvertShown);
+        }
+        let by_status = ui.begin_menu("Mark by status");
+        #[cfg(test)]
+        LAYOUT.with_borrow_mut(|layout| {
+            layout
+                .marks_menu
+                .push(("Mark by status".to_owned(), item_rect(ui)));
+        });
+        if let Some(_status) = by_status {
+            for predicate in MarkPredicate::ALL {
+                if item(predicate.label()) {
+                    op = Some(MarkOp::Where(predicate));
+                }
+            }
+        }
+    }
+    ui.same_line();
+    ui.text(&session.fleet_labels.marks);
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| layout.marks_text = session.fleet_labels.marks.clone());
+    if let Some(op) = op {
+        session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
+    }
+}
+
+/// The action bar: one button per fleet action, naming the verb and how
+/// many bots it covers, then Walk and Move marked to top. A click plans the
+/// action (see [`Session::plan_fleet_action`]).
+fn action_bar(ui: &Ui, session: &mut Session) {
+    let labels = &session.fleet_labels;
+    let own = matches!(session.fleet_model.card(), FleetCard::Own);
+    let marked = labels.marked > 0;
+    let nothing = labels.scope == 0;
+    let mut planned = None;
+    for (index, action) in FleetAction::ALL.into_iter().enumerate() {
+        let label = labels.actions[index].as_str();
+        if index > 0 {
+            continue_line_if_fits(ui, button_width(ui, label));
+        }
+        let needs_card = action.needs_card() && own;
+        let tooltip = if needs_card {
+            PICK_A_CARD
+        } else if nothing {
+            NOTHING_TO_ACT_ON
         } else {
-            "start each marked profile's saved script"
+            action_tooltip(action, marked)
+        };
+        let _disabled = (needs_card || nothing).then(|| ui.begin_disabled());
+        if ui.button(label) {
+            planned = Some(action);
+        }
+        ui.set_item_tooltip(tooltip);
+        #[cfg(test)]
+        LAYOUT.with_borrow_mut(|layout| {
+            layout.actions.push(ActionRecord {
+                action,
+                label: label.to_owned(),
+                rect: item_rect(ui),
+                disabled: needs_card || nothing,
+                tooltip,
+            });
         });
     }
-    continue_line_if_fits(ui, button_width(ui, &stop_label));
+    let mut walk = false;
+    continue_line_if_fits(ui, button_width(ui, &labels.walk));
     {
-        let _disabled = blocked(MarkedAction::Stop)
-            .is_err()
-            .then(|| ui.begin_disabled());
-        if ui.button(stop_label) {
-            session.fleet_stop_selected();
-        }
-        ui.set_item_tooltip("stop every marked profile; ineligible rows are reported");
-    }
-    {
-        let _disabled = blocked(MarkedAction::Assign)
-            .is_err()
-            .then(|| ui.begin_disabled());
-        if ui.button(ASSIGN_LABEL) {
-            session.fleet_assign_selected();
-        }
-        ui.set_item_tooltip(card_tip(
-            MarkedAction::Assign,
-            "save the selected card on every marked profile without starting it, \
-             so each bot's settings can be adjusted first; running bots are skipped",
-        ));
-        continue_line_if_fits(ui, button_width(ui, ASSIGN_RESTART_LABEL));
-        if ui.button(ASSIGN_RESTART_LABEL) {
-            session.fleet_restart_confirm = true;
-            ui.open_popup(RESTART_POPUP);
-        }
-        ui.set_item_tooltip(card_tip(
-            MarkedAction::AssignAndRestart,
-            "save the selected card and start it on every marked profile; \
-             running scripts are stopped first (a confirmation names them)",
-        ));
-    }
-    restart_confirm(ui, session);
-    {
-        let _disabled = blocked(MarkedAction::Login)
-            .is_err()
-            .then(|| ui.begin_disabled());
-        if ui.button(log_in_label) {
-            session.fleet_login_selected();
-        }
-        ui.set_item_tooltip("log in every marked profile, loading the ones not loaded yet");
-    }
-    continue_line_if_fits(ui, button_width(ui, &log_out_label));
-    {
-        let _disabled = blocked(MarkedAction::Logout)
-            .is_err()
-            .then(|| ui.begin_disabled());
-        if ui.button(log_out_label) {
-            session.fleet_logout_selected();
-        }
-        ui.set_item_tooltip("log out every marked profile that is logged in");
-    }
-    continue_line_if_fits(ui, button_width(ui, &walk_label));
-    {
-        let _disabled = blocked(MarkedAction::Walk)
-            .is_err()
-            .then(|| ui.begin_disabled());
-        if ui.button(walk_label) {
-            session.open_walkto_for_marked();
+        let _disabled = (!marked).then(|| ui.begin_disabled());
+        if ui.button(&labels.walk) {
+            walk = true;
         }
         ui.set_item_tooltip(
             "open the WalkTo picker for the marked bots: pick a tile and every bot \
@@ -328,103 +645,86 @@ fn action_bar(ui: &Ui, session: &mut Session) {
         );
     }
     continue_line_if_fits(ui, button_width(ui, MOVE_TO_TOP_LABEL));
+    let mut move_to_top = false;
     {
         let load_order = session.fleet_model.order() == FleetOrder::LoadOrder;
-        let ready = load_order && count > 0;
+        let ready = load_order && marked;
         let _disabled = (!ready).then(|| ui.begin_disabled());
         if ui.button(MOVE_TO_TOP_LABEL) {
-            session.reorder_profiles(ReorderOp::MarkedToTop);
+            move_to_top = true;
         }
         #[cfg(test)]
         record_move_to_top(ui);
         ui.set_item_tooltip(if !load_order {
             "choose Load order to reorder"
-        } else if count == 0 {
+        } else if !marked {
             "mark profiles first"
         } else {
             "move the marked profiles to the top of the saved Load order, \
              keeping their relative order"
         });
     }
-    apply_settings_row(ui, session, count);
-    if let Some(report) = session.fleet_report.as_deref() {
-        ui.text_wrapped(report);
+    if let Some(action) = planned {
+        session.plan_fleet_action(action);
     }
-}
-/// Copy the focused bot's parameters for the selected card to the marked
-/// bots on that card: prepare, then the frozen scope names them and waits
-/// for Apply (the script window's Apply to all, narrowed to the marks).
-fn apply_settings_row(ui: &Ui, session: &mut Session, count: usize) {
-    if let Some(scope) = session.scripts.prepared_settings_sync() {
-        ui.text_wrapped(scope.prompt());
-        if ui.button("Apply##fleet-apply") {
-            if let Some(kind) = session.scripts.stage_settings_sync_apply() {
-                session.submit_script_command(
-                    OperatorCommand::ApplySettingsToMarked(kind),
-                    Targets::Everyone,
-                );
-                session.apply_script_notice();
-            } else {
-                session.error = Some("Apply to all: no prepared copy".into());
-            }
-        }
-        ui.same_line();
-        if ui.button("Cancel##fleet-apply") {
-            session
-                .submit_script_command(OperatorCommand::CancelSettingsSync, Targets::Application);
-        }
-        return;
+    if walk {
+        session.open_walkto_for_marked();
     }
-    let ready = marked_availability(
-        MarkedAction::ApplySettings,
-        count,
-        session.script_sel.is_some(),
-        session.focused_name().is_some(),
-    )
-    .is_ok();
-    let _disabled = (!ready).then(|| ui.begin_disabled());
-    if ui.button(APPLY_SETTINGS_LABEL) {
-        session.fleet_prepare_apply_settings();
-    }
-    ui.set_item_tooltip(if ready {
-        "copy the focused bot's parameters for the selected card to the marked bots \
-         on that card; a confirmation names them first"
-    } else {
-        "mark bots, select a card in Scripts and focus the bot whose settings to copy"
-    });
-    if let Some(report) = session.scripts.last_settings_sync() {
-        ui.text_wrapped(report.summary());
+    if move_to_top {
+        session.reorder_profiles(ReorderOp::MarkedToTop);
     }
 }
 
-/// The Assign & restart confirmation: it names every bot whose running
-/// script the restart stops.
-fn restart_confirm(ui: &Ui, session: &mut Session) {
-    if !session.fleet_restart_confirm {
+/// The waiting plan's confirmation row: the core's prompt, wrapped, with
+/// Confirm and Cancel. Draws nothing while no plan waits. Draw it from one
+/// window only: the Fleet window, or the Scripts window while the Fleet
+/// window is closed.
+pub(crate) fn plan_row(ui: &Ui, session: &mut Session) {
+    let Some(plan) = session.core.fleet_plan() else {
         return;
-    }
-    let mut decision = None;
-    ui.popup(RESTART_POPUP, || {
-        let scope = session.fleet_restart_scope();
-        for line in scope.prompt_lines() {
-            ui.text_wrapped(line);
-        }
-        if ui.button("Assign & restart") {
-            decision = Some(true);
-            ui.close_current_popup();
-        }
-        ui.same_line();
-        if ui.button("Cancel##fleet-restart") {
-            decision = Some(false);
-            ui.close_current_popup();
-        }
+    };
+    #[cfg(test)]
+    PLAN_ROWS.set(PLAN_ROWS.get() + 1);
+    ui.text_wrapped(plan.prompt());
+    #[cfg(test)]
+    let prompt = plan.prompt().to_owned();
+    let confirm = ui.button("Confirm##fleet-plan");
+    #[cfg(test)]
+    let confirm_rect = item_rect(ui);
+    ui.same_line();
+    let cancel = ui.button("Cancel##fleet-plan");
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| {
+        layout.plan = Some(PlanRecord {
+            prompt,
+            confirm: confirm_rect,
+            cancel: item_rect(ui),
+        });
     });
-    match decision {
-        Some(true) => session.fleet_assign_restart_selected(),
-        Some(false) => session.fleet_restart_confirm = false,
-        // Dismissed by a click outside the popup.
-        None if !ui.is_popup_open(RESTART_POPUP) => session.fleet_restart_confirm = false,
-        None => {}
+    if confirm {
+        session.confirm_fleet_plan();
+    } else if cancel {
+        session.cancel_fleet_plan();
+    }
+}
+
+/// The one result line of the latest fleet action (the core's text:
+/// failures, skips, done, pending), wrapped, with the full text in a
+/// tooltip. Draws nothing before the first action.
+pub(crate) fn result_line(ui: &Ui, session: &Session) {
+    let Some(result) = session.core.fleet_result() else {
+        return;
+    };
+    ui.text_wrapped(result.text());
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| {
+        layout.result = Some((result.text().to_owned(), item_rect(ui)));
+    });
+    if ui.is_item_hovered() {
+        ui.tooltip(|| {
+            let _wrap = ui.push_text_wrap_pos(scale_px(ui, 420.0));
+            ui.text_wrapped(result.text());
+        });
     }
 }
 
@@ -519,6 +819,7 @@ fn table(ui: &Ui, session: &mut Session) {
     let needs_last_line = columns.contains(&FleetColumn::LastLog);
     let table_id = format!("##fleet-table-{}", columns.len());
     let mut mark_click: Option<(usize, bool)> = None;
+    let mut header_op: Option<MarkOp> = None;
     let mut dropped: Option<(u64, usize)> = None;
     // Dragging reorders the saved Load order, so only that view offers it.
     let reorder = session.fleet_model.order() == FleetOrder::LoadOrder;
@@ -562,7 +863,25 @@ fn table(ui: &Ui, session: &mut Session) {
                 None,
             );
         }
-        ui.table_headers_row();
+        // The header row is drawn by hand: the Mark column's header is the
+        // tri-state box over the shown rows; the others are plain headers.
+        ui.table_next_row_with_flags(TableRowFlags::HEADERS, ui.table_get_header_row_height());
+        for column in 0..ui.table_get_column_count() {
+            if !ui.table_set_column_index(column) {
+                continue;
+            }
+            if column == 0 {
+                let state = session.fleet_model.shown_marks();
+                if tri_state_box(ui, "##fleet-mark-all-header", state) {
+                    header_op = Some(tri_state_op(state));
+                }
+                #[cfg(test)]
+                LAYOUT.with_borrow_mut(|layout| layout.header_mark_box = item_rect(ui));
+                ui.set_item_tooltip(tri_state_tooltip(state));
+            } else {
+                ui.table_header(ui.table_get_column_name(column));
+            }
+        }
         let model = &session.fleet_model;
         for (index, row) in model.shown_rows() {
             let marked_id = model.identities()[index];
@@ -670,6 +989,9 @@ fn table(ui: &Ui, session: &mut Session) {
             }
         }
     }
+    if let Some(op) = header_op {
+        session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
+    }
     if let Some((index, marked)) = mark_click {
         let name = session
             .fleet_model
@@ -718,7 +1040,12 @@ pub fn window(ui: &Ui, session: &mut Session) {
             // model's, refreshed at the session sync (`pump_status`): this
             // frame computes nothing.
             ui.separator();
+            session.fleet_labels.sync(&session.fleet_model);
+            card_combo(ui, session);
+            marks_row(ui, session);
             action_bar(ui, session);
+            plan_row(ui, session);
+            result_line(ui, session);
             column_toggles(ui, session);
             ui.separator();
             table(ui, session);
@@ -730,10 +1057,13 @@ pub fn window(ui: &Ui, session: &mut Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::ActionLabels;
+    use super::FleetLabels;
     use frontend_core::test_support::session::install_vault;
     use frontend_core::test_support::{FixtureProfile, VaultFixture};
-    use frontend_core::{fill_visible_row_indices, fleet_row_matches, FleetOrder, FleetRow, Phase};
+    use frontend_core::{
+        fill_visible_row_indices, fleet_row_matches, FleetAction, FleetCard, FleetModel,
+        FleetOrder, FleetRow, OperatorCommand, Phase, Targets,
+    };
 
     /// The open window survives frames while columns come and go (the table
     /// is rebuilt with a different column count) and with a marked row:
@@ -845,7 +1175,8 @@ mod tests {
             "the gone mark is dropped"
         );
         assert!(session.fleet_model.marks().contains(bob));
-        // Bulk action: assign the selected card to the marked bot only.
+        // Bulk action: a pinned card is assigned to the marked bot only, at
+        // once (one click: a marked Assign needs no confirmation).
         let path = dir.join("looper.ts");
         std::fs::write(
             &path,
@@ -853,13 +1184,20 @@ mod tests {
         )
         .unwrap();
         let card = session.scripts.load_card(&path).unwrap();
-        session.script_sel = Some(card.choice());
-        session.fleet_assign_selected();
+        session
+            .fleet_model
+            .stage_card(FleetCard::Pinned(card.choice()));
+        session.submit(OperatorCommand::SetFleetCard, Targets::Application);
+        session.plan_fleet_action(FleetAction::Assign);
         session.core.flush_writes();
         assert!(session.profile_assignment("bob").is_some());
         assert!(session.profile_assignment("carol").is_none());
         assert!(session.profile_assignment("alice").is_none());
-        let report = session.fleet_report.clone().expect("the assign report");
+        let report = session
+            .core
+            .fleet_result()
+            .map(|result| result.text().to_owned())
+            .expect("the assign result");
         assert!(report.contains("Assign"), "{report}");
     }
 
@@ -983,18 +1321,34 @@ mod tests {
         );
     }
 
-    /// No button of the action bar ends in an ellipsis, whatever the count.
+    /// No label of the action bar ends in an ellipsis, whatever the marks.
     #[test]
     fn action_button_labels_have_no_ellipsis() {
-        for count in [0, 1, 12] {
-            for has_card in [true, false] {
-                for label in ActionLabels::new(count, has_card).all() {
-                    assert!(
-                        !label.contains('\u{2026}') && !label.contains("..."),
-                        "{label:?}"
-                    );
-                }
+        let mut model = FleetModel::new();
+        model.set_universe_for_test(
+            vec![
+                FleetRow::fixture("bob", Phase::Ready, Some(301), None),
+                FleetRow::fixture("alice", Phase::Ready, Some(302), None),
+            ],
+            &[],
+        );
+        let mut labels = FleetLabels::default();
+        for marked in [0, 1, 2] {
+            model.clear_marks_for_test();
+            for row in 0..marked {
+                model.set_mark_for_test(model.identity(row).unwrap(), true);
+            }
+            labels.sync(&model);
+            for label in labels.all() {
+                assert!(
+                    !label.contains('\u{2026}') && !label.contains("..."),
+                    "{label:?}"
+                );
             }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "fleet_flow_tests.rs"]
+mod flow_tests;

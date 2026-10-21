@@ -168,6 +168,10 @@ const CORE: &[(&str, Decision)] = &[
     ("marked.rs::assign_marked", Row(C::AssignScript)),
     ("marked.rs::assign_and_restart_marked", Row(C::AssignAndRestart)),
     (
+        "marked.rs::prepare_apply_settings_shown",
+        Row(C::PlanFleetAction(crate::fleet_plan::FleetAction::CopySettings)),
+    ),
+    (
         "marked.rs::prepare_apply_settings_marked",
         Rows(
             &[
@@ -683,6 +687,13 @@ const CORE: &[(&str, Decision)] = &[
     ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
     ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
     ("fleet.rs::FleetModel::staged_filter_mut", Staged(C::SetFleetFilter)),
+    ("fleet.rs::FleetModel::stage_card", Staged(C::SetFleetCard)),
+    ("fleet.rs::FleetModel::sync_card_label", Excluded(PROJECTION)),
+    ("driver.rs::HeadlessDriver::sync_card_label", Excluded(PROJECTION)),
+    (
+        "session/fleet_plan.rs::OperatorSession::stage_plan_card",
+        Staged(C::PlanFleetAction(crate::fleet_plan::FleetAction::CopySettings)),
+    ),
     ("fleet.rs::FleetModel::refresh", Excluded(PROJECTION)),
     ("driver.rs::HeadlessDriver::unlock", Rows(&[C::UnlockVault, C::CreateVault], "stages the vault and the play launch, then submits UnlockVault or, for a new file, CreateVault")),
     ("driver.rs::HeadlessDriver::session_mut", Excluded(ACCESSOR)),

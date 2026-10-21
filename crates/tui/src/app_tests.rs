@@ -315,8 +315,8 @@ fn boot_draws_the_fleet_without_map_demand() {
     let all = text(&rows);
     assert!(rows[0].contains("274bot"), "title: {all}");
     assert!(
-        all.contains("no bots loaded: m loads every vault profile"),
-        "an empty fleet says how to load: {all}"
+        all.contains("no profiles: nothing to mark or log in"),
+        "an empty fleet says there is nothing to act on: {all}"
     );
     assert_eq!(
         app.map_catalogue_status,
@@ -1734,16 +1734,21 @@ fn script_commands_are_reachable_at_80x24() {
         assert_eq!(app.on_click(x, y), want, "click at {x},{y}");
     }
     for (label, want) in [
-        ("[Start all", AppAction::ScriptStartAll),
-        ("[Stop all", AppAction::ScriptStopAll),
+        (
+            "[Start all",
+            AppAction::PlanFleet(frontend_core::FleetAction::Start),
+        ),
+        (
+            "[Stop all",
+            AppAction::PlanFleet(frontend_core::FleetAction::Stop),
+        ),
     ] {
         assert_eq!(
             app.on_click(at(bulk_x, bulk, label), bulk_y),
-            AppAction::None,
-            "{label} asks first"
+            want,
+            "{label} asks core for a plan"
         );
-        assert!(matches!(app.modal, Some(Modal::Confirm(_))), "{label}");
-        assert_eq!(app.on_key(key(KeyCode::Enter)), want, "{label} confirmed");
+        assert!(app.modal.is_none(), "{label}: only core decides to ask");
     }
     let keys = [
         ('t', AppAction::ScriptStart(sel.duplicate())),
@@ -1756,11 +1761,11 @@ fn script_commands_are_reachable_at_80x24() {
         assert_eq!(app.on_key(ch(c)), want, "key {c}");
     }
     for (c, want) in [
-        ('T', AppAction::ScriptStartAll),
-        ('E', AppAction::ScriptStopAll),
+        ('T', AppAction::PlanFleet(frontend_core::FleetAction::Start)),
+        ('E', AppAction::PlanFleet(frontend_core::FleetAction::Stop)),
     ] {
-        assert_eq!(app.on_key(ch(c)), AppAction::None, "{c} asks first");
-        assert_eq!(app.on_key(ch('y')), want, "{c} confirmed");
+        assert_eq!(app.on_key(ch(c)), want, "{c} asks core for a plan");
+        assert!(app.modal.is_none(), "{c}: only core decides to ask");
     }
     // `C` cancels only a shown reload warning.
     assert_eq!(app.on_key(ch('C')), AppAction::None);

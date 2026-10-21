@@ -15,7 +15,9 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use frontend_core::views::run_state_label;
-use frontend_core::{state_label, FleetModel, Placement, ProfileIdentity, ReorderOp};
+use frontend_core::{
+    state_label, FleetModel, FleetOrder, Placement, ProfileIdentity, ReorderOp, OWN_CARD_LABEL,
+};
 
 use crate::layout::SizeClass;
 
@@ -30,6 +32,77 @@ pub enum FilterEdit {
     Pop,
     /// Clear the text.
     Clear,
+}
+
+/// Between header parts that share a row.
+const HEADER_SEP: &str = " · ";
+
+/// The fleet header and what it was built from.
+#[derive(Debug, Default)]
+struct Header {
+    /// The wrapped rows.
+    lines: Vec<String>,
+    card: String,
+    order: Option<FleetOrder>,
+    marked: usize,
+    width: usize,
+}
+
+/// Lay the header `parts` out in rows of at most `width` cells: parts
+/// share a row while they fit and move whole to the next row when they do
+/// not; a part wider than a row wraps at its spaces (a word wider than a
+/// row is cut).
+fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
+    lines.clear();
+    let width = width.max(1);
+    let sep = HEADER_SEP.chars().count();
+    let mut line = String::new();
+    let mut used = 0usize;
+    for part in &parts {
+        let part_width = part.chars().count();
+        if used > 0 && used + sep + part_width <= width {
+            line.push_str(HEADER_SEP);
+            line.push_str(part);
+            used += sep + part_width;
+            continue;
+        }
+        if used > 0 {
+            lines.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        if part_width <= width {
+            line.push_str(part);
+            used = part_width;
+            continue;
+        }
+        for word in part.split(' ') {
+            let mut word_width = word.chars().count();
+            if used > 0 && used + 1 + word_width <= width {
+                line.push(' ');
+                line.push_str(word);
+                used += 1 + word_width;
+                continue;
+            }
+            if used > 0 {
+                lines.push(std::mem::take(&mut line));
+            }
+            let mut rest = word;
+            while word_width > width {
+                let cut = rest
+                    .char_indices()
+                    .nth(width)
+                    .map_or(rest.len(), |(at, _)| at);
+                lines.push(rest[..cut].to_owned());
+                rest = &rest[cut..];
+                word_width -= width;
+            }
+            line.push_str(rest);
+            used = word_width;
+        }
+    }
+    if used > 0 {
+        lines.push(line);
+    }
 }
 
 /// Renderer-local fleet state: presentation only. The rows, marks, filter
@@ -49,9 +122,48 @@ pub struct FleetState {
     cursor_identity: Option<ProfileIdentity>,
     /// The model generation the cursor was last fitted to.
     synced: Option<u64>,
+    /// The cached header line and the inputs it was built from.
+    header: Header,
 }
 
 impl FleetState {
+    /// The header lines: `card: <card> · sort: <order> · N marked`,
+    /// wrapped to `width` cells. They are rebuilt only when the card
+    /// label, the order, the marked count or the width changed since the
+    /// last draw, so a steady draw allocates nothing.
+    fn header(&mut self, model: &FleetModel, width: usize) -> &[String] {
+        let order = model.order();
+        let marked = model.counts().marked();
+        // Before the first per-loop `sync_card_label` the card is the
+        // default one.
+        let card = match model.card_label() {
+            "" => OWN_CARD_LABEL,
+            label => label,
+        };
+        let header = &mut self.header;
+        if header.order != Some(order)
+            || header.marked != marked
+            || header.width != width
+            || header.card != card
+        {
+            header.order = Some(order);
+            header.marked = marked;
+            header.width = width;
+            header.card.clear();
+            header.card.push_str(card);
+            wrap_header(
+                [
+                    format!("card: {card}"),
+                    format!("sort: {}", order.label()),
+                    format!("{marked} marked"),
+                ],
+                width,
+                &mut header.lines,
+            );
+        }
+        &header.lines
+    }
+
     /// Fit the cursor to `model`'s shown rows: keep it on the same profile
     /// when that is still shown, else clamp it. Does nothing while the model
     /// has not moved since the last call.
@@ -197,10 +309,10 @@ fn push_fitted(out: &mut String, text: &str, width: usize) {
 }
 
 impl FleetTable<'_> {
-    /// Draw into `area` (the pane's inner rect): the filter line while a
-    /// filter is set or edited, the column header, the visible rows, then
-    /// the count line. `reserve` rows at the bottom stay free for the
-    /// caller's buttons.
+    /// Draw into `area` (the pane's inner rect): the card / sort / marks
+    /// header, the filter line while a filter is set or edited, the column
+    /// header, the visible rows, then the count line. `reserve` rows at the
+    /// bottom stay free for the caller's buttons.
     pub fn render(self, area: Rect, buf: &mut Buffer, reserve: u16) -> FleetHits {
         let Self {
             model,
@@ -218,6 +330,14 @@ impl FleetTable<'_> {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let bottom = area.y + area.height;
         let mut y = area.y;
+        for line in state.header(model, usize::from(area.width)) {
+            if y >= bottom {
+                break;
+            }
+            let mut x = area.x;
+            put(buf, &mut x, y, right, line, dim);
+            y += 1;
+        }
         let filter = model.filter();
         if state.editing || !filter.text().is_empty() {
             let mut x = area.x;
@@ -277,7 +397,7 @@ impl FleetTable<'_> {
                 &mut x,
                 y,
                 right,
-                "no bots loaded: m loads every vault profile",
+                "no profiles: nothing to mark or log in",
                 dim,
             );
         } else if rows_h > 0 && model.shown().is_empty() {

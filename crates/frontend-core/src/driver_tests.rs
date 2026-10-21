@@ -1763,3 +1763,178 @@ fn a_held_or_failed_rename_keeps_the_saved_place() {
     again.poll();
     assert_eq!(order_names(&again), saved, "after a restart");
 }
+
+/// A settings copy is planned from the focused bot with the fleet card:
+/// it asks first, names its source, holds the prepared scope until
+/// Confirm, and Cancel drops the scope and writes nothing.
+#[test]
+fn a_copy_settings_plan_asks_first_and_cancel_releases_its_scope() {
+    let mut d = driver("f3-copy", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    let copy = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::CopySettings),
+            Targets::Application,
+        )
+        .expect("plan");
+    let member = d
+        .report(copy.request())
+        .and_then(|report| report.member(Subject::Application))
+        .expect("member");
+    assert_eq!(member.terminal(), Some(&done()), "{:?}", member.detail());
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(waiting.needs_confirm(), "a copy always asks");
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Copy alice's Gatherer settings to 1 marked bot: bob."),
+        "{}",
+        waiting.prompt()
+    );
+    let scope = d
+        .models()
+        .scripts()
+        .prepared_settings_sync()
+        .expect("the frozen scope waits");
+    assert_eq!(scope.source(), "alice");
+    let cancel = d
+        .submit(OperatorCommand::CancelFleetPlan, Targets::Application)
+        .expect("cancel");
+    assert_eq!(terminal_app(&d, cancel.request()), Some(done()));
+    assert!(
+        d.models().scripts().prepared_settings_sync().is_none(),
+        "Cancel releases the prepared scope"
+    );
+    assert!(d.session().fleet_plan().is_none());
+}
+
+/// The banner never carries a second copy of a planned action's report: a
+/// planned Start and a planned Copy settings report through the plan's one
+/// result line only.
+#[test]
+fn a_planned_start_or_copy_reports_only_through_its_result() {
+    let mut d = driver("f3-banner", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    let _ = d.models_mut().scripts.take_notice();
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    run_plan(&mut d);
+    for _ in 0..3 {
+        d.poll();
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.text().starts_with("Start"), "{}", result.text());
+    let notice = d.models_mut().scripts.take_notice();
+    assert!(notice.is_none(), "a planned Start on the banner: {notice:?}");
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    run_plan(&mut d);
+    for _ in 0..3 {
+        d.poll();
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.text().starts_with("Copy"), "{}", result.text());
+    let notice = d.models_mut().scripts.take_notice();
+    assert!(notice.is_none(), "a planned copy on the banner: {notice:?}");
+}
+
+/// A rename and a card change between the plan and its Confirm neither
+/// retarget nor re-card it: the renamed bot keeps its frozen identity and
+/// takes the frozen card.
+#[test]
+fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
+    let mut d = driver("f3-rename-card", &["alice", "bob", "carol"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    renamed.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    set_card(
+        &mut d,
+        crate::FleetCard::Pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["carol"]);
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bobby").as_deref(), Some("Gatherer"), "same identity");
+    assert_eq!(assignment(&d, "carol"), None);
+}
+
+/// A bot whose profile is being saved (here, a held rename) is a named skip
+/// of the plan, never a competing write; a plan's queued writes keep its
+/// result Pending until they land.
+#[test]
+fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pending() {
+    let mut d = driver("f3-saving", &["alice", "bob"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::Pinned(gatherer()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    renamed.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    d.poll();
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    assert_eq!(plan_names(&d), ["alice"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(
+        prompt.contains("bobby (profile is being saved)"),
+        "{prompt}"
+    );
+    let command = d.session().fleet_plan().expect("plan").command();
+    let run = d.submit(command, Targets::Plan).expect("run");
+    for _ in 0..5 {
+        d.poll();
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(!result.settled(), "a queued write is Pending: {}", result.text());
+    drop(held);
+    settle(&mut d, run.request());
+    d.session_mut().flush_writes();
+    d.poll();
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 1, "{}", result.text());
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bobby"), None, "never a competing write");
+}

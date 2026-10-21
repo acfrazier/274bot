@@ -40,6 +40,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   keeps its place and removing a bot from the wall keeps its place. The
   order is saved as `profile_order` in the shared preferences; a reorder
   whose write fails is reported and the last saved order comes back.
+- Fleet: choose each bot's own card, the focused bot's card, or a pinned
+  card. Choosing a card does not start a script or change a bot's
+  assignment.
+- Fleet: action labels name their scope. With nothing marked, actions use
+  the loaded bots shown by the filter and ask first. Interruption and
+  settings-copy prompts name their targets, and each action keeps one
+  result until it settles. A plan is frozen when it is made: a bot marked,
+  loaded or made ready later does not join it, and a bot that changed is
+  skipped with its new reason. The Fleet window's mark box covers the
+  shown rows, and its menu marks the shown rows by status.
 
 ### TUI
 
@@ -53,6 +63,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The fleet table follows the saved Load order. `Alt+Up` / `Alt+Down` move
   the cursor's profile one shown row up or down, and the palette has
   **Move profile up**, **Move profile down** and **Move marked to top**.
+- The fleet pane has the same fleet card as the panel: `c` picks each
+  bot's own card, the focused bot's card or a pinned card, and the header
+  names the card, the sort and the marked count. `a` marks and `A`
+  unmarks the shown rows, and the palette marks the shown rows by status.
+  Fleet actions ask with the same prompt as the panel; with nothing marked
+  they act on the loaded bots shown by the filter. To log in profiles that
+  are not loaded, mark them first.
 
 ### Map baking
 

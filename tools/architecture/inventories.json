@@ -58,6 +58,14 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetCard",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetCard",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the fleet card choice (a pinned card owns its lookup text); not Clone."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetMarkCounts",
       "path": "crates/frontend-core/src/fleet.rs",
       "symbol": "FleetMarkCounts",
@@ -72,6 +80,70 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "Fleet/rail F1: the front end's one fleet model (profile universe, marks, filter, order), lent through Models::with_fleet."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|MarkOp",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "MarkOp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy mark operation over the shown rows."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|MarkPredicate",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "MarkPredicate",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy row status predicate."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|ShownMarks",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "ShownMarks",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy tri-state of the shown marks."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetAction",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetAction",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy fleet button action."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetPlan",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetPlan",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the frozen fleet plan held by the operator session; not Clone."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetResult",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetResult",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the one result view of the latest fleet action; not Clone."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|PlanScope",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "PlanScope",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy plan scope."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|ResultCounts",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "ResultCounts",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy result row counts."
     },
     {
       "id": "seam_type|crates/frontend-core/src/group_walk.rs|MarkedWalk",

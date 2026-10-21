@@ -219,11 +219,17 @@ pub enum AppAction {
     /// Mark or unmark `name`'s fleet row (`SetMark`): the row selection and
     /// the Walk-send group checklist.
     SetMark(String, bool),
-    /// Mark these members' fleet rows (`MarkAll`): every shown row, or the
-    /// eligible Walk-send rows.
+    /// Mark these members' fleet rows (`MarkAll`): the eligible Walk-send
+    /// rows.
     MarkAll(Vec<frontend_core::ProfileIdentity>),
     /// Clear every row mark (`ClearMarks`).
     ClearMarks,
+    /// Mark, unmark or invert the shown rows, or mark the shown rows in a
+    /// status (`MarkFleet`).
+    MarkFleet(frontend_core::MarkOp),
+    /// Make this the card the fleet actions use (`SetFleetCard`). Changes
+    /// no Browse pick, form or run.
+    PickFleetCard(frontend_core::FleetCard),
     /// Move profiles in the saved Load order (`ReorderProfiles`): the
     /// dispatcher stages the op and submits it with the fleet model lent.
     ReorderProfiles(frontend_core::ReorderOp),
@@ -237,15 +243,10 @@ pub enum AppAction {
     MapWilderness(bool),
     /// Chat modal advance: Continue / Answer on the focused slot.
     Chat(ChatAction),
-    /// MultiBox: load every vault profile and log every member in (after
-    /// the scope confirmation).
-    SpawnAll,
     /// Log in the selected member (explicit handshake).
     Login,
     /// Log out the selected member (it stays loaded, latched).
     Logout,
-    /// Log out every member (after the scope confirmation).
-    LogoutAll,
     /// Relog the settings-bound member for a memory-mode switch (the
     /// settings popup's `r` key): the binary confirms first when a
     /// running script would be interrupted.
@@ -268,21 +269,14 @@ pub enum AppAction {
     ScriptBrowse,
     /// Open the script params popup for the selected card.
     ScriptParams,
-    /// Start every wall member on its last successful assignment.
-    ScriptStartAll,
-    /// Stop every member's script (queued replacement Starts included).
-    ScriptStopAll,
-    /// Save the selected script as the assignment of every marked bot.
-    ScriptAssignMarked,
-    /// Assign the selected script to every marked bot and start it there.
-    ScriptRestartMarked,
-    /// Freeze copying the focused bot's settings for the selected script to
-    /// the marked bots, then ask to confirm the frozen scope.
-    ScriptApplyMarkedPrepare,
-    /// Log in every marked bot (loading the ones not loaded yet).
-    LoginMarked,
-    /// Log out every marked bot.
-    LogoutMarked,
+    /// Freeze a fleet action into a core plan (`PlanFleetAction`): it runs
+    /// at once when it needs no confirmation, otherwise the confirm
+    /// overlay shows the plan's prompt.
+    PlanFleet(frontend_core::FleetAction),
+    /// Confirm: run the waiting fleet plan (`Targets::Plan`).
+    RunFleetPlan,
+    /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
+    CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
     ScriptReload,
     /// Discard a prepared reload without touching any run.
@@ -542,6 +536,10 @@ pub struct TuiApp {
     pub reload_confirm: bool,
     /// Registry cards the Browse picker lists (copied from the session each pump).
     pub script_cards: Vec<BrowseCard>,
+    /// The core picker choice of each of `script_cards` (same order): what
+    /// the fleet-card picker pins. A card's choice names its identity, not
+    /// only its display name.
+    pub script_card_choices: Vec<ScriptChoice>,
     /// Persisted category order keys for Browse grouping.
     pub script_category_order: Vec<String>,
     /// The Browse picker is open.
@@ -661,6 +659,7 @@ impl TuiApp {
             browse_changed: false,
             reload_confirm: false,
             script_cards: Vec::new(),
+            script_card_choices: Vec::new(),
             script_category_order: Vec::new(),
             script_browse_open: false,
             rs2b0t_catalog_open: false,
@@ -788,19 +787,6 @@ impl TuiApp {
     pub(crate) fn focused_identity(&self) -> Option<frontend_core::ProfileIdentity> {
         self.focused
             .and_then(|index| frontend_core::profile_id_at(&self.profile_ids, &self.names, index))
-    }
-
-    /// The loaded members that are marked, in load order.
-    pub(crate) fn marked_names(&self) -> Vec<String> {
-        self.names
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                frontend_core::profile_id_at(&self.profile_ids, &self.names, *index)
-                    .is_some_and(|identity| self.fleet_model.marks().contains(identity))
-            })
-            .map(|(_, name)| name.clone())
-            .collect()
     }
 
     /// Re-sync the view from the fresh projection: the selected slot's

@@ -749,6 +749,10 @@ pub struct Scripts {
     /// The running Start all / marked-Start report (see [`start_tally`]).
     tally: Option<StartTally>,
     last_bulk_report: Option<String>,
+    /// A planned fleet action ([`crate::Targets::Plan`]) is being
+    /// dispatched: the tally or sync report it opens reports through the
+    /// plan's one result line, not the banner.
+    planned_run: bool,
     catalog_filled: bool,
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
@@ -813,6 +817,7 @@ impl Scripts {
             admit_catalog: None,
             tally: None,
             last_bulk_report: None,
+            planned_run: false,
             catalog_filled: false,
             catalog_root: None,
             async_work: reload::ScriptWorkState::default(),
@@ -2156,7 +2161,9 @@ impl Scripts {
 
     /// Open the running tally for a Start click. While a bot it holds still
     /// waits for its permit or its setup, the click folds into it (and
-    /// names it); otherwise the finished tally is replaced.
+    /// names it); otherwise the finished tally is replaced. A tally a
+    /// planned fleet action opens (the last click decides) is never put on
+    /// the banner: the plan's result line reports it.
     pub(crate) fn open_tally(&mut self, label: &'static str) {
         let open = self.tally.as_ref().is_some_and(StartTally::waiting)
             || self.starts.values().any(|pending| pending.tallied)
@@ -2165,6 +2172,16 @@ impl Scripts {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
         }
+        if let Some(tally) = self.tally.as_mut() {
+            tally.set_quiet(self.planned_run);
+        }
+    }
+
+    /// Mark the dispatch of a planned fleet action ([`crate::Targets::Plan`])
+    /// while it runs: see [`Self::open_tally`] and
+    /// [`Self::apply_settings_sync`].
+    pub(crate) fn set_planned_run(&mut self, planned: bool) {
+        self.planned_run = planned;
     }
 
     /// A click-time skip. A bot this tally already started stays started.
@@ -3287,7 +3304,8 @@ impl Scripts {
         self.credit_skipped(profile, reason);
     }
 
-    /// Show the running tally when its text changed.
+    /// Show the running tally when its text changed (never a planned
+    /// action's: its result line reports it).
     pub(crate) fn publish_bulk(&mut self) {
         let Some(tally) = self.tally.as_ref() else {
             return;
@@ -3296,8 +3314,11 @@ impl Scripts {
         if self.last_bulk_report.as_deref() == Some(report.as_str()) {
             return;
         }
+        let quiet = tally.quiet();
         self.last_bulk_report = Some(report.clone());
-        self.show(report);
+        if !quiet {
+            self.show(report);
+        }
     }
 
     pub(crate) fn publish_start_places<Io>(&mut self, core: &mut OperatorSession<Io>) {

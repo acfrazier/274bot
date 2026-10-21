@@ -443,17 +443,16 @@ Load is enabled except while a script is active.
 matching running bots and **Stops** matching paused bots. Browse’s
 **Refresh catalog** re-scans the catalog root (“Nothing changed.” when the
 scan is identical) with the same confirm/restart/stop policy when owners
-are affected. MultiBox rail **Start all / Start selected / Stop all** are
-script bulk controls (not login): Start all and Start on marked bots start
-one bot per frame instead of all at once, waiting rows show `queued k/n`,
-and Start selected with a heading card starts that card on every marked
-row. One running report (banner and fleet report) counts every bot once as
-started, queued, skipped or failed while any bot of it still waits or sets
-up, so a second click joins it instead of hiding the first click's results;
-each skipped or failed bot also gets a line in its log. Stop and Stop all
-cancel bots that are still waiting (Stop on marked rows reports them as
-cancelled); Stop all also stops running and paused wall members and live
-slots.
+are affected. MultiBox rail **Start all / Stop all** are script bulk
+controls (not login): Start all and the Fleet window's **Start** start one
+bot per frame instead of all at once, and waiting rows show `queued k/n`.
+One running report counts every bot once as started, queued, skipped or
+failed while any bot of it still waits or sets up, so a second click joins
+it instead of hiding the first click's results; Start all shows it on the
+banner, a Fleet window Start on its result line. Each skipped or failed bot
+also gets a line in its log. Stop and Stop all cancel bots that are still
+waiting (a Fleet window Stop reports them as cancelled); Stop all also
+stops running and paused wall members and live slots.
 
 Saved settings that need a restart show a `[restart]` badge and open a
 prompt. **Restart** applies only to listed bots still running the same
@@ -480,20 +479,72 @@ reorder stays pending until the file is written; if the write fails, the
 error is shown and the last saved order comes back.
 The table's columns share the
 window's width, so it never scrolls sideways, and the action rows and column
-toggles wrap at a narrow width. Its action bar runs on the marked rows only and each action
-puts one report in the window, counting every marked bot once with failures
-first: **Start selected card on N marked bots**, **Stop N marked bots**,
-**Assign selected card** (saves the card without starting; running bots are
-skipped), **Assign & restart** (a confirmation names the bots whose running
-script it stops; the Starts are paced like Start all), **Log in N** / **Log out N**,
-**Walk N marked bots** (opens the
-WalkTo picker in group mode; each marked bot walks to the chosen tile from
-its own position, and bots that are logged out, have no position or run a
-script are skipped with that reason) and **Apply focused bot's settings to
-marked** (the same command as the TUI palette: the focused bot's parameters
-for the selected card go to the marked same-card bots only, with a
-confirmation that names the skipped marked bots and counts the unmarked ones).
-Checkboxes under the buttons toggle the status columns: world and login
+toggles wrap at a narrow width.
+
+Above the action buttons the window has three controls. Every decision
+behind them (the card, the targets, what is skipped, whether to ask first,
+the prompt and the result text) is made in `frontend-core`; the window
+only stages and submits.
+
+- **Card** is a full-width drop-down that sets the fleet card, the card the
+  Start, Assign, Assign & restart and Copy settings buttons use. Its entries
+  are **Each bot's own card** (the default), **Focused bot's card: X** (it
+  follows the focus and reads `(pending)` while the focused bot's Browse
+  pick is not yet its assignment) and then every Browse card, grouped by
+  category in the Browse window's category order. A search field in the
+  open list narrows the entries. Picking a card changes only the fleet
+  card: no assignment, no Browse pick, no profile form change, and nothing
+  starts.
+- The **marks row** has a tri-state box over the shown rows, a **Marks**
+  menu and a count such as `5 marked, 2 not shown`. With no shown row
+  marked, a click on the box marks the shown rows; with some marked, it
+  marks the rest; with all marked, it unmarks them. The table's Mark column
+  header is the same box. The menu has **Mark shown**, **Unmark shown**,
+  **Invert shown** and **Mark by status** (ready, idle, running, logged out,
+  login error, not loaded). These act on the shown rows only; a mark the
+  filter hides stays.
+- The **action buttons** are **Start**, **Stop**, **Assign** (saves the card
+  without starting), **Assign & restart**, **Log in**, **Log out** and
+  **Copy settings to**, then **Walk N marked bots** (opens the WalkTo picker
+  in group mode; each marked bot walks to the chosen tile from its own
+  position, and bots that are logged out, have no position or run a script
+  are skipped with that reason) and **Move marked to top**. Each label names
+  its scope: `Stop 3` with marks, `Stop all 12` with none. With marks, an
+  action covers every marked profile, hidden marks included. With no marks
+  it covers the loaded shown bots and asks first. A button is disabled when
+  it has no bot to act on. While the fleet card is **Each bot's own card**,
+  **Assign**, **Assign & restart** and **Copy settings to** are disabled with
+  the tooltip `pick a card above`; Start then runs each bot's saved
+  assignment. The count-bearing labels are rebuilt only when the fleet
+  model changes, not every frame.
+
+A click on an action button plans the action. The core freezes the target
+bots, the card, the bots a run would interrupt and the rows it skips, and
+refuses with a reason (shown on the banner) when there is nothing to do. A
+plan that needs no confirmation runs at once. A plan asks first when it
+covers every shown bot, interrupts a running script, or copies settings.
+Then a **plan row** under the buttons shows the core's prompt, wrapped,
+with **Confirm** and **Cancel**. Cancel writes nothing. Only one plan
+waits: a newer action replaces it and its prompt starts with `Replaces the
+waiting ... plan.` A run acts on the frozen bots: a profile marked or
+loaded after the plan does not join it, and a bot that changed state is
+skipped with its new reason.
+
+Each run ends in one **result line** under the plan row: failures first,
+then skips, then done, with counts. It reads as pending until every member
+has really finished (a paced Start counts its queued bots until they
+start or fail). The full text is in a tooltip, and the core logs one line
+when it settles. The banner does not carry a second copy of it.
+
+The Scripts window's **Apply to same-card members** button copies the
+focused bot's parameters for its own card through the same plan: it stages
+that card, plans **Copy settings to**, and shows the same confirmation. The
+plan row and result line are drawn once, in the Fleet window while it is
+open and in the Scripts window while it is closed. The copy goes to the
+marked same-card bots, or with no marks to the loaded shown same-card bots;
+the prompt names the skipped bots.
+
+Checkboxes under the result line toggle the status columns: world and login
 state, card, run state (the script error on hover), runtime, last log line,
 time since the last progress (the watchdog's gameplay clock; `—` while
 paused, out of game or idle) and levels gained since the run's Start (the
