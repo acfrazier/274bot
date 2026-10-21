@@ -32,8 +32,8 @@ use vault::{Profile, ProfileSettings};
 use super::combat_proof::{self, CaptureRegistration, CombatCapture};
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const ENGINE_A_GAME_PORT: u16 = 45_594;
-const ENGINE_A_HTTP_PORT: u16 = 2_080;
+const ENGINE_A_GAME_PORT: u16 = 44_594;
+const ENGINE_A_HTTP_PORT: u16 = 1_080;
 const REFERENCE_NAV_PACK: &str =
     "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack";
 const REFERENCE_NAV_FLAGS: &str =
@@ -231,7 +231,9 @@ fn fixture(
         || api::shop_facts::vendor_by_keeper_config(data, "gerrant", feather.id).is_none()
         || api::shop_facts::vendor_by_keeper_config(data, "harry", harpoon.id).is_none()
     {
-        return Err("R289 pinned shop records do not contain the required Gerrant/Harry items".into());
+        return Err(
+            "R289 pinned shop records do not contain the required Gerrant/Harry items".into(),
+        );
     }
     let stand = match kind {
         CellKind::Explicit => *gerrant
@@ -261,12 +263,21 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
     let cache_dir = std::env::var_os("BOT_CACHE_DIR")
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
-        .ok_or_else(|| "acquire shop live cells require a per-run BOT_CACHE_DIR clone".to_owned())?;
-    let nav_pack = PathBuf::from(REFERENCE_NAV_PACK);
-    let nav_flags = PathBuf::from(REFERENCE_NAV_FLAGS);
+        .ok_or_else(|| {
+            "acquire shop live cells require a per-run BOT_CACHE_DIR clone".to_owned()
+        })?;
+    let nav_pack = std::env::var_os("GATHERER_NAV_PACK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_PACK));
+    let nav_flags = std::env::var_os("GATHERER_NAV_FLAGS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_FLAGS));
     for path in [&nav_pack, &nav_flags] {
         if !path.is_file() {
-            return Err(format!("required R289 reference navigation file is absent: {}", path.display()));
+            return Err(format!(
+                "required R289 reference navigation file is absent: {}",
+                path.display()
+            ));
         }
     }
     Ok(ProfileOptions {
@@ -382,11 +393,10 @@ impl DriverPacketTrace {
         }
         if let Some(checkpoint) = self.checkpoint.take() {
             let mut packets = Vec::new();
-            let decoded = api::interact::Driver::trace_packets(
-                client,
-                *checkpoint,
-                &mut |opcode| packets.push(opcode),
-            );
+            let decoded =
+                api::interact::Driver::trace_packets(client, *checkpoint, &mut |opcode| {
+                    packets.push(opcode)
+                });
             self.complete &= decoded;
             self.packets_by_tick
                 .entry(self.checkpoint_tick.unwrap_or(tick))
@@ -407,9 +417,9 @@ impl DriverPacketTrace {
         let rows = self
             .packets_by_tick
             .iter()
-            .map(|(tick, packets)| {
-                json!({"tick": tick, "count": packets.len(), "opcodes": packets})
-            })
+            .map(
+                |(tick, packets)| json!({"tick": tick, "count": packets.len(), "opcodes": packets}),
+            )
             .collect::<Vec<_>>();
         let max = self
             .packets_by_tick
@@ -446,14 +456,24 @@ impl LiveState {
         if self.snapshot.world().base().is_none() {
             return Some("StartScript arrived without a built world base".into());
         }
-        if self.snapshot.tile() != Some((self.fixture.stand.x, self.fixture.stand.z, self.fixture.stand.level)) {
+        if self.snapshot.tile()
+            != Some((
+                self.fixture.stand.x,
+                self.fixture.stand.z,
+                self.fixture.stand.level,
+            ))
+        {
             return Some(format!(
                 "seeded start tile {:?} did not equal selected access tile {:?}",
-                self.snapshot.tile(), self.fixture.stand
+                self.snapshot.tile(),
+                self.fixture.stand
             ));
         }
         if self.snapshot.inv_count(self.fixture.coins.id) < SEED_COINS {
-            return Some(format!("PACK coins below seed budget: {}", self.snapshot.inv_count(self.fixture.coins.id)));
+            return Some(format!(
+                "PACK coins below seed budget: {}",
+                self.snapshot.inv_count(self.fixture.coins.id)
+            ));
         }
         if self.snapshot.inv_count(self.fixture.feather.id) != SEED_FEATHERS {
             return Some(format!("seeded feathers were not exactly {SEED_FEATHERS}"));
@@ -521,7 +541,9 @@ impl LiveState {
                 return;
             }
             let Some((handle, banks)) = self.start_context.as_ref() else {
-                self.trace.lock().fail("StartScript reached before native context was installed");
+                self.trace
+                    .lock()
+                    .fail("StartScript reached before native context was installed");
                 return;
             };
             let request = AcquireShopScript::new(
@@ -531,7 +553,11 @@ impl LiveState {
                 Arc::clone(banks),
                 Arc::clone(&self.trace),
             );
-            match handle.start_test_script(&self.account, Box::new(request), Some(Arc::clone(&self.selected))) {
+            match handle.start_test_script(
+                &self.account,
+                Box::new(request),
+                Some(Arc::clone(&self.selected)),
+            ) {
                 Ok(run) => {
                     {
                         let mut trace = self.trace.lock();
@@ -550,13 +576,18 @@ impl LiveState {
                     self.runner.observe_script_running();
                 }
                 Err(error) => {
-                    self.trace.lock().fail(format!("native start_test_script failed: {error}"));
+                    self.trace
+                        .lock()
+                        .fail(format!("native start_test_script failed: {error}"));
                     return;
                 }
             }
         }
 
-        if matches!(self.runner.status(), RunnerStatus::Passed | RunnerStatus::Failed(_)) {
+        if matches!(
+            self.runner.status(),
+            RunnerStatus::Passed | RunnerStatus::Failed(_)
+        ) {
             if self.started {
                 self.packet_trace.observe(client, self.snapshot.tick());
             }
@@ -687,7 +718,11 @@ impl AcquireShopScript {
                 return Err("fresh pack unexpectedly satisfied both acquisition needs".into())
             }
             script::acquire::AcquireVerdict::Blocked(block) => {
-                return Err(format!("planner blocked {}: {}", block.code(), block.message))
+                return Err(format!(
+                    "planner blocked {}: {}",
+                    block.code(),
+                    block.message
+                ))
             }
         };
         self.trace.lock().request = Some(request_facts);
@@ -710,10 +745,12 @@ impl Script for AcquireShopScript {
             .poll(tick, OpenGate::Open)
         {
             std::task::Poll::Pending => Ok(ScriptFlow::Continue),
-            std::task::Poll::Ready(Err(error)) => Ok(self.blocked(format!("AcquireRun: {error:?}"))),
-            std::task::Poll::Ready(Ok(AcquireOutcome::ChildDue { need })) => {
-                Ok(self.blocked(format!("AcquireRun unexpectedly deferred child need {need}")))
+            std::task::Poll::Ready(Err(error)) => {
+                Ok(self.blocked(format!("AcquireRun: {error:?}")))
             }
+            std::task::Poll::Ready(Ok(AcquireOutcome::ChildDue { need })) => Ok(self.blocked(
+                format!("AcquireRun unexpectedly deferred child need {need}"),
+            )),
             std::task::Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
                 let mut trace = self.trace.lock();
                 trace.outcome = Some(json!({
@@ -769,7 +806,9 @@ fn shop_button(action: &Value, action_index: usize) -> Option<ButtonAction> {
     let chunk = debug_number(debug, "chunk")?;
     Some(ButtonAction {
         sequence: action["sequence"].as_u64()?,
-        tick: action["snapshot_tick"].as_u64().or_else(|| action["tick"].as_u64())?,
+        tick: action["snapshot_tick"]
+            .as_u64()
+            .or_else(|| action["tick"].as_u64())?,
         item_id,
         chunk,
         accepted: action["accepted"].as_bool().unwrap_or(false),
@@ -825,29 +864,50 @@ fn button_analysis(actions: &[Value], frames: &[Value]) -> (Vec<Value>, Vec<Stri
                 .or_else(|| action["tick"].as_u64())
                 .unwrap_or(0);
             if tick >= button.tick {
-                observations.push((tick, sequence, inventory_count(&action["snapshot"]["inventory"], button.item_id), "action-snapshot"));
+                observations.push((
+                    tick,
+                    sequence,
+                    inventory_count(&action["snapshot"]["inventory"], button.item_id),
+                    "action-snapshot",
+                ));
             }
         }
         observations.sort_by_key(|(tick, sequence, _, _)| (*tick, *sequence));
-        let response = observations.iter().find(|(_, _, held, _)| *held > button.before);
+        let response = observations
+            .iter()
+            .find(|(_, _, held, _)| *held > button.before);
         let target_held = button.before.saturating_add(button.chunk);
-        let resolved = observations.iter().find(|(_, _, held, _)| *held >= target_held);
+        let resolved = observations
+            .iter()
+            .find(|(_, _, held, _)| *held >= target_held);
         let transferred = resolved.map(|(_, _, held, _)| held.saturating_sub(button.before));
         let response_tick = response.map(|(tick, _, _, _)| *tick);
         let reply_edges = response_tick.map(|tick| tick.saturating_sub(button.tick));
         if !button.accepted || !button.decoded || button.wire_opcodes.is_empty() {
-            failures.push(format!("ShopButton sequence {} was not accepted with decoded packet evidence", button.sequence));
+            failures.push(format!(
+                "ShopButton sequence {} was not accepted with decoded packet evidence",
+                button.sequence
+            ));
         }
         if let Some(transferred) = transferred {
             reconciled += 1;
             if transferred != button.chunk {
-                failures.push(format!("ShopButton sequence {} requested {} but observed transfer was {}", button.sequence, button.chunk, transferred));
+                failures.push(format!(
+                    "ShopButton sequence {} requested {} but observed transfer was {}",
+                    button.sequence, button.chunk, transferred
+                ));
             }
         } else {
-            failures.push(format!("ShopButton sequence {} had no observed held-count resolution", button.sequence));
+            failures.push(format!(
+                "ShopButton sequence {} had no observed held-count resolution",
+                button.sequence
+            ));
         }
         if reply_edges.is_none() {
-            failures.push(format!("ShopButton sequence {} had no observed reply edge", button.sequence));
+            failures.push(format!(
+                "ShopButton sequence {} had no observed reply edge",
+                button.sequence
+            ));
         }
         if let Some(edges) = reply_edges {
             if edges > script::acquire::buy::BUY_REPLY_TICKS {
@@ -856,15 +916,23 @@ fn button_analysis(actions: &[Value], frames: &[Value]) -> (Vec<Value>, Vec<Stri
         }
         if let Some(next) = next {
             let next_action = &actions[next.action_index];
-            let held_before_next = inventory_count(&next_action["snapshot"]["inventory"], button.item_id);
+            let held_before_next =
+                inventory_count(&next_action["snapshot"]["inventory"], button.item_id);
             if held_before_next < target_held {
                 failures.push(format!("ShopButton sequence {} was followed by another button before its {}-unit transfer was observed", button.sequence, button.chunk));
             }
             if resolved.is_some_and(|(tick, _, _, _)| *tick > next.tick) {
-                failures.push(format!("ShopButton sequence {} resolved after the next button tick", button.sequence));
+                failures.push(format!(
+                    "ShopButton sequence {} resolved after the next button tick",
+                    button.sequence
+                ));
             }
         }
-        let wire = button.wire_opcodes.iter().map(|opcode| json!(opcode)).collect::<Vec<_>>();
+        let wire = button
+            .wire_opcodes
+            .iter()
+            .map(|opcode| json!(opcode))
+            .collect::<Vec<_>>();
         rows.push(json!({
             "sequence": button.sequence,
             "tick": button.tick,
@@ -930,8 +998,12 @@ fn trade_records(
             .find_map(|(offset, later)| {
                 shop_button(later, index + 1 + offset).map(|button| button.item_id)
             });
-        let keeper = type_id
-            .and_then(|id| keepers.rows().iter().find(|row| i64::from(row.keeper.keeper_id) == id));
+        let keeper = type_id.and_then(|id| {
+            keepers
+                .rows()
+                .iter()
+                .find(|row| i64::from(row.keeper.keeper_id) == id)
+        });
         let config = keeper.map(|row| row.keeper.keeper_config);
         let requested_item = match following_item {
             Some(id) if id == i64::from(fixture.harpoon.id) => Some(fixture.harpoon.id),
@@ -989,13 +1061,22 @@ fn trade_records(
         failures.push("no observed NPC Trade action was captured".into());
     }
     if members.is_none() {
-        failures.push("Trade actions cannot be checked against an observed account membership gate".into());
+        failures.push(
+            "Trade actions cannot be checked against an observed account membership gate".into(),
+        );
     }
     (rows, failures)
 }
 
-fn close_analysis(actions: &[Value], frames: &[Value], baseline_closes: Option<u64>) -> (Value, Vec<String>) {
-    let closes = actions.iter().filter(|action| is_close_modal(action)).collect::<Vec<_>>();
+fn close_analysis(
+    actions: &[Value],
+    frames: &[Value],
+    baseline_closes: Option<u64>,
+) -> (Value, Vec<String>) {
+    let closes = actions
+        .iter()
+        .filter(|action| is_close_modal(action))
+        .collect::<Vec<_>>();
     let mut failures = Vec::new();
     let baseline = baseline_closes.unwrap_or(0);
     let final_frame = frames.last();
@@ -1014,7 +1095,8 @@ fn close_analysis(actions: &[Value], frames: &[Value], baseline_closes: Option<u
             || !action["wire_decoded"].as_bool().unwrap_or(false)
             || action["wire_opcodes"].as_array().is_none_or(Vec::is_empty)
         {
-            failures.push("final CloseModal lacked accepted, decoded Driver packet evidence".into());
+            failures
+                .push("final CloseModal lacked accepted, decoded Driver packet evidence".into());
         }
     }
     if final_count <= baseline {
@@ -1104,7 +1186,9 @@ fn over_target_failures(actions: &[Value], frames: &[Value], fixture: &Fixture) 
     for action in actions {
         let tick = action["snapshot_tick"].as_u64().unwrap_or(0);
         let Some(inventory) = action["snapshot"]["inventory"].as_array() else {
-            failures.push(format!("interaction snapshot at tick {tick} had no inventory evidence"));
+            failures.push(format!(
+                "interaction snapshot at tick {tick} had no inventory evidence"
+            ));
             continue;
         };
         for (item, target, label) in [
@@ -1128,7 +1212,10 @@ fn over_target_failures(actions: &[Value], frames: &[Value], fixture: &Fixture) 
 
 fn write_png(path: &Path, stem: &str, pixels: &[u32], sidecar: &Value) -> Result<PathBuf, String> {
     if pixels.len() != 765 * 503 {
-        return Err(format!("rendered frame had {} pixels, expected 765x503", pixels.len()));
+        return Err(format!(
+            "rendered frame had {} pixels, expected 765x503",
+            pixels.len()
+        ));
     }
     let mut rgba = Vec::with_capacity(pixels.len() * 4);
     for pixel in pixels {
@@ -1151,7 +1238,12 @@ fn write_png(path: &Path, stem: &str, pixels: &[u32], sidecar: &Value) -> Result
 }
 
 fn run_cell(kind: CellKind) {
-    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "{} requires LIVE=1", kind.name());
+    assert_eq!(
+        std::env::var("LIVE").as_deref(),
+        Ok("1"),
+        "{} requires LIVE=1",
+        kind.name()
+    );
     let root = std::env::var_os("LIVE_EVIDENCE_DIR")
         .map(PathBuf::from)
         .expect("acquire shop live cells require LIVE_EVIDENCE_DIR");
@@ -1169,7 +1261,13 @@ fn run_cell(kind: CellKind) {
     let evidence = root.join(format!("{}-{account}-{epoch}", kind.name()));
     let scratch = evidence.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence and scratch directories");
-    let options = profile_options(&scratch).unwrap_or_else(|error| panic!("live prerequisites: {error}"));
+    let options =
+        profile_options(&scratch).unwrap_or_else(|error| panic!("live prerequisites: {error}"));
+    let nav_pack = options.nav_pack.clone().expect("reference navigation pack");
+    let nav_flags = options
+        .nav_flags
+        .clone()
+        .expect("reference navigation flags");
     let template = options
         .resolve(None)
         .expect("resolve R289 Engine A profile")
@@ -1182,7 +1280,8 @@ fn run_cell(kind: CellKind) {
             .shop_keeper_facts()
             .expect("reference world binds selected R289 shop keepers"),
     );
-    let fixture = fixture(kind, &selected, &keepers).unwrap_or_else(|error| panic!("R289 content fixture: {error}"));
+    let fixture = fixture(kind, &selected, &keepers)
+        .unwrap_or_else(|error| panic!("R289 content fixture: {error}"));
     let trace = Arc::new(Mutex::new(ShopTrace::default()));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
@@ -1273,12 +1372,16 @@ fn run_cell(kind: CellKind) {
                         "AcquireRun exceeded fixed {}s cell deadline",
                         CELL_DEADLINE.as_secs()
                     ));
-                    trace.lock().fail(terminal_error.clone().expect("set error"));
+                    trace
+                        .lock()
+                        .fail(terminal_error.clone().expect("set error"));
                     break;
                 }
                 if status != "Passed" && completed_at.elapsed() >= TERMINAL_CAPTURE_GRACE {
                     terminal_error = Some("AcquireRun completed but the ScenarioRunner did not pass within terminal capture grace".into());
-                    trace.lock().fail(terminal_error.clone().expect("set error"));
+                    trace
+                        .lock()
+                        .fail(terminal_error.clone().expect("set error"));
                     break;
                 }
             } else if status != "Passed" && started_at.elapsed() >= CELL_DEADLINE {
@@ -1286,7 +1389,9 @@ fn run_cell(kind: CellKind) {
                     "AcquireRun exceeded fixed {}s cell deadline",
                     CELL_DEADLINE.as_secs()
                 ));
-                trace.lock().fail(terminal_error.clone().expect("set error"));
+                trace
+                    .lock()
+                    .fail(terminal_error.clone().expect("set error"));
                 break;
             }
         } else if status != "Passed" && Instant::now() >= preparation_deadline {
@@ -1294,7 +1399,9 @@ fn run_cell(kind: CellKind) {
                 "account preparation exceeded fixed {}s deadline",
                 PREPARATION_DEADLINE.as_secs()
             ));
-            trace.lock().fail(terminal_error.clone().expect("set error"));
+            trace
+                .lock()
+                .fail(terminal_error.clone().expect("set error"));
             break;
         }
         if status == "Passed" {
@@ -1304,7 +1411,9 @@ fn run_cell(kind: CellKind) {
             }
         } else if status.starts_with("Failed") {
             terminal_error = Some(format!("ScenarioRunner ended with {status}"));
-            trace.lock().fail(terminal_error.clone().expect("set error"));
+            trace
+                .lock()
+                .fail(terminal_error.clone().expect("set error"));
             break;
         }
         thread::sleep(POLL_INTERVAL);
@@ -1342,7 +1451,10 @@ fn run_cell(kind: CellKind) {
             "invalid_reason": capture.invalid_reason,
         })
     };
-    let actions = capture_json["actions"].as_array().cloned().unwrap_or_default();
+    let actions = capture_json["actions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let all_shop_buttons = actions
         .iter()
         .filter(|action| {
@@ -1386,21 +1498,32 @@ fn run_cell(kind: CellKind) {
         failures.push("outgoing Driver packet trace was incomplete".into());
     }
     if max_driver_packets > 5 {
-        failures.push(format!("observed {max_driver_packets} Driver packets in one captured tick (limit 5)"));
+        failures.push(format!(
+            "observed {max_driver_packets} Driver packets in one captured tick (limit 5)"
+        ));
     }
     let (interaction_packets, max_interaction_packets) = packet_action_ticks(&actions);
     if max_interaction_packets > 5 {
-        failures.push(format!("observed {max_interaction_packets} interaction packets in one captured tick (limit 5)"));
+        failures.push(format!(
+            "observed {max_interaction_packets} interaction packets in one captured tick (limit 5)"
+        ));
     }
     let final_frame = shop_frames.last();
     let final_harpoon = final_frame.and_then(|frame| frame["held"]["harpoon"].as_i64());
     let final_feather = final_frame.and_then(|frame| frame["held"]["feather"].as_i64());
     let native_outcome = trace_json["outcome"].clone();
-    if native_outcome["variant"] != "Done" || native_outcome["complete"] != true || native_outcome["bought"] != 11 {
+    if native_outcome["variant"] != "Done"
+        || native_outcome["complete"] != true
+        || native_outcome["bought"] != 11
+    {
         failures.push("AcquireRun did not return Done(complete=true, bought=11)".into());
     }
-    if final_harpoon != Some(i64::from(HARPOON_TARGET)) || final_feather != Some(i64::from(FEATHER_TARGET)) {
-        failures.push(format!("final held targets were harpoon={final_harpoon:?}, feather={final_feather:?}"));
+    if final_harpoon != Some(i64::from(HARPOON_TARGET))
+        || final_feather != Some(i64::from(FEATHER_TARGET))
+    {
+        failures.push(format!(
+            "final held targets were harpoon={final_harpoon:?}, feather={final_feather:?}"
+        ));
     }
     let sent_buttons = actions
         .iter()
@@ -1427,18 +1550,24 @@ fn run_cell(kind: CellKind) {
     if observed_button_transfer != 11 || reconciled != buttons.len() || buttons.len() != 2 {
         failures.push(format!("observed button reconciliation was {observed_button_transfer} units across {reconciled}/{} buttons", buttons.len()));
     }
-    let fixture_facts = fixture.facts(
-        &keepers,
-        &selected,
-        trace_json["start_members"].as_bool(),
-    );
+    let fixture_facts = fixture.facts(&keepers, &selected, trace_json["start_members"].as_bool());
     if kind == CellKind::Nearest {
-        let harpoon_trade = trades.iter().find(|trade| trade["next_button_item_id"] == fixture.harpoon.id);
-        if harpoon_trade.is_none() || harpoon_trade.is_some_and(|trade| trade["observed_npc_type"] != fixture.harry.id) {
-            failures.push("nearest harpoon Trade was not correlated to pinned Harry in Catherby".into());
+        let harpoon_trade = trades
+            .iter()
+            .find(|trade| trade["next_button_item_id"] == fixture.harpoon.id);
+        if harpoon_trade.is_none()
+            || harpoon_trade.is_some_and(|trade| trade["observed_npc_type"] != fixture.harry.id)
+        {
+            failures.push(
+                "nearest harpoon Trade was not correlated to pinned Harry in Catherby".into(),
+            );
         }
     }
-    if kind == CellKind::Explicit && trades.iter().any(|trade| trade["observed_npc_type"] != fixture.gerrant.id) {
+    if kind == CellKind::Explicit
+        && trades
+            .iter()
+            .any(|trade| trade["observed_npc_type"] != fixture.gerrant.id)
+    {
         failures.push("explicit request did not keep Gerrant authoritative for every Trade".into());
     }
     let mut receipt_base = json!({
@@ -1448,8 +1577,8 @@ fn run_cell(kind: CellKind) {
         "engine": {"host": "127.0.0.1", "game_port": ENGINE_A_GAME_PORT, "http_port": ENGINE_A_HTTP_PORT},
         "model": "openai-codex/gpt-6-luna",
         "selected_revision": "R289",
-        "reference_nav_pack": REFERENCE_NAV_PACK,
-        "reference_nav_flags": REFERENCE_NAV_FLAGS,
+        "reference_nav_pack": nav_pack,
+        "reference_nav_flags": nav_flags,
         "fixture": fixture_facts,
         "scenario_trace": trace_json,
         "acquire_outcome": native_outcome,
@@ -1472,16 +1601,23 @@ fn run_cell(kind: CellKind) {
         "typed_service_pick_limit": "The test-only action capture does not expose the internal ServicePickReceipt index/access/cost; nearest evidence records its input and actual Trade NPC type/index/tile correlated to pinned keeper facts.",
         "terminal_error": terminal_error,
     });
-    std::fs::write(evidence.join("actions.json"), serde_json::to_vec_pretty(&actions).expect("serialize actions"))
-        .expect("write raw action capture");
-    std::fs::write(evidence.join("snapshots.json"), serde_json::to_vec_pretty(&json!({
-        "combat_frames": capture_json["frames"],
-        "start_baseline": capture_json["start_baseline"],
-        "shop_frames": shop_frames,
-        "statuses": capture_json["statuses"],
-        "driver_packets_by_tick": driver_packets,
-    })).expect("serialize snapshots"))
-        .expect("write raw snapshot ticks");
+    std::fs::write(
+        evidence.join("actions.json"),
+        serde_json::to_vec_pretty(&actions).expect("serialize actions"),
+    )
+    .expect("write raw action capture");
+    std::fs::write(
+        evidence.join("snapshots.json"),
+        serde_json::to_vec_pretty(&json!({
+            "combat_frames": capture_json["frames"],
+            "start_baseline": capture_json["start_baseline"],
+            "shop_frames": shop_frames,
+            "statuses": capture_json["statuses"],
+            "driver_packets_by_tick": driver_packets,
+        }))
+        .expect("serialize snapshots"),
+    )
+    .expect("write raw snapshot ticks");
     let (start_pixels, terminal_pixels) = {
         let state = state.lock();
         (state.start_pixels.clone(), frame.snapshot())
@@ -1523,7 +1659,12 @@ fn run_cell(kind: CellKind) {
         serde_json::to_vec_pretty(&receipt_base).expect("serialize receipt"),
     )
     .expect("write machine-readable receipt");
-    assert!(passed, "{} failed; evidence: {}", kind.name(), evidence.display());
+    assert!(
+        passed,
+        "{} failed; evidence: {}",
+        kind.name(),
+        evidence.display()
+    );
 }
 
 #[test]

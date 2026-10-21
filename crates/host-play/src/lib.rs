@@ -620,9 +620,9 @@ mod relog_live_tests;
 #[cfg(test)]
 mod walk_optins_live_tests;
 
-#[cfg(test)]
-#[path = "nav_door_toggle_live_settlement_tests.rs"]
-mod nav_door_toggle_live_settlement_tests;
 #[cfg(all(test, feature = "live-harness", feature = "test-support"))]
 #[path = "acquire_shop_live.rs"]
 mod acquire_shop_live;
+#[cfg(test)]
+#[path = "nav_door_toggle_live_settlement_tests.rs"]
+mod nav_door_toggle_live_settlement_tests;
