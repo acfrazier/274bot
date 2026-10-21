@@ -21,6 +21,7 @@ pub mod paint;
 pub mod producer;
 pub mod quest_gates;
 pub mod router;
+pub mod service_pick;
 pub mod tile;
 pub mod transport;
 pub mod traveller;
@@ -39,3 +40,7 @@ pub fn debug_enabled() -> bool {
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_pick_tests.rs"]
+mod service_pick_tests;
