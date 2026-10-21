@@ -1214,11 +1214,11 @@
             "guard": "protect",
             "lost_radius": 24,
             "kill_budget_ticks": 400,
-            "until": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+            "until": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}}
           },
-          "skip_if": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}},
-          "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}},
-          "comment": "C maps/m48_50.jm2:6688,6690-6694; area_draynor/configs/draynor.npc:152-195: four level26 aggressive guards, huntrange5, respawn60. Clearing is a finite approach attempt, not a guarantee of a combat-free Keli scene."
+          "skip_if": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}},
+          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}},
+          "comment": "Jail guards hunt within 5 tiles and respawn every 60 ticks. Clear only nearby guards, then continue to Keli (content/scripts/areas/area_draynor/configs/draynor.npc:180-182)."
         }
       ],
       "acquire:key": [
@@ -1283,7 +1283,7 @@
               {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}
             ]
           },
-          "settle": {"Fact": {"kind": "npc_absent", "version": 1, "args": {"npc": "jailguard"}}}
+          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}}
         },
         {
           "id": "key-keli-imprint",
