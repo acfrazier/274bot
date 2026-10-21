@@ -1329,6 +1329,43 @@ fn bank_conservation_satisfied(
         && unneeded_after.is_empty()
 }
 
+#[derive(Debug, Clone)]
+struct ReprovisionDepositEvidence {
+    session: u64,
+    opened_at: Instant,
+    observed_at: Instant,
+    expected_items: BTreeMap<i32, i32>,
+    bank_before: BTreeMap<i32, i32>,
+    bank_after: BTreeMap<i32, i32>,
+}
+
+impl ReprovisionDepositEvidence {
+    fn accounts_for(&self, id: i32, count: i32, left_in: Instant) -> bool {
+        self.opened_at <= left_in
+            && left_in <= self.observed_at
+            && self.expected_items.get(&id).is_some_and(|expected| {
+                count > 0
+                    && *expected >= count
+                    && self
+                        .bank_after
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_sub(self.bank_before.get(&id).copied().unwrap_or(0))
+                        >= *expected
+            })
+    }
+
+    fn as_json(&self) -> Value {
+        json!({
+            "session": self.session,
+            "expected_items": self.expected_items,
+            "bank_before": self.bank_before,
+            "bank_after": self.bank_after,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct BankTripReceipt {
     trip: i64,
@@ -1838,6 +1875,7 @@ struct Witness {
     death_command_tile: Option<(i32, i32, i32)>,
     death_respawn_region_unchanged: bool,
     death_progress_baselines: BTreeMap<u8, (i32, i32, i64)>,
+    death_reprovision_deposits: Vec<ReprovisionDepositEvidence>,
     death_recovered: BTreeSet<u8>,
     death_products_after: BTreeSet<u8>,
     death_xp_after: BTreeSet<u8>,
@@ -1982,6 +2020,45 @@ impl GatherSlot {
             tutorial_reseed: None,
             soak_last_refill: Instant::now(),
         }
+    }
+
+    fn is_real_content_death_reprovision(&self) -> bool {
+        self.case == LiveCase::DeathReturn
+            && self.plan.seed_locs.is_empty()
+            && self.plan.oak_tiles.is_empty()
+    }
+
+    fn observe_reprovision_bank(&mut self, observation: &Observation) -> Result<(), String> {
+        if !self.is_real_content_death_reprovision() || !self.snapshot.bank_loaded() {
+            return Ok(());
+        }
+        let session = self.snapshot.bank_session_generation();
+        let bank_after = self.snapshot_bank_counts();
+        if let Some(evidence) = self
+            .witness
+            .death_reprovision_deposits
+            .last_mut()
+            .filter(|evidence| evidence.session == session)
+        {
+            evidence.bank_after = bank_after;
+            evidence.observed_at = observation.captured_at;
+        } else {
+            let expected_items = bank_deposit_expectation(
+                &self.snapshot_inventory_counts(),
+                &self.native_deposit_ids()?,
+            );
+            self.witness
+                .death_reprovision_deposits
+                .push(ReprovisionDepositEvidence {
+                    session,
+                    opened_at: observation.captured_at,
+                    observed_at: observation.captured_at,
+                    expected_items,
+                    bank_before: bank_after.clone(),
+                    bank_after,
+                });
+        }
+        Ok(())
     }
     fn fixture_progress(&self) -> FixtureProgress {
         let latest = self.latest.as_ref();
@@ -2986,6 +3063,7 @@ impl GatherSlot {
         {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
+        self.observe_reprovision_bank(&observation)?;
         let bank_active = self.bank_conservation_active();
         let drop_baseline = self.last_observed_dropped;
         let product_drop_baseline = self.last_observed_product_drops;
@@ -3027,6 +3105,11 @@ impl GatherSlot {
                             receipt.expected_items.contains_key(&id)
                                 && receipt.bank_increased_for(id, &bank_counts)
                         }))
+                && !self
+                    .witness
+                    .death_reprovision_deposits
+                    .iter()
+                    .any(|evidence| evidence.accounts_for(id, count, unsettled.left_in))
                 && !(id == GENIE_LAMP_ID
                     && wish_granted
                         .take_if(|granted| *granted >= unsettled.left_in)
@@ -3074,7 +3157,10 @@ impl GatherSlot {
             for (slot, old) in &previous.inventory {
                 if !observation.inventory.contains_key(slot) {
                     if self.cell.products(self.case).contains(&old.id) {
-                        if bank_active {
+                        if bank_active
+                            || (self.is_real_content_death_reprovision()
+                                && self.snapshot.bank_loaded())
+                        {
                             self.unsettled_items.entry((old.id, old.count)).or_insert(
                                 UnsettledItem {
                                     since: Instant::now(),
@@ -6458,7 +6544,11 @@ fn run_cell_with_fixture(
                     Err(error) => break Err(error),
                 }
             };
-            let bank_config = if case.is_bank_mode() {
+            let needs_bank_config = {
+                let slot = state.lock().map_err(|_| "live state poisoned")?;
+                case.is_bank_mode() || slot.is_real_content_death_reprovision()
+            };
+            let bank_config = if needs_bank_config {
                 let preparation = match play.script_prepare_config(
                     script::CompiledId("Gatherer"),
                     1,
@@ -7471,6 +7561,11 @@ fn run_cell_with_fixture(
             "resource": "oak",
             "scene_locations_seeded": fixture_plan.seed_locs.len(),
             "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
+            "deposit_evidence": witness
+                .death_reprovision_deposits
+                .iter()
+                .map(ReprovisionDepositEvidence::as_json)
+                .collect::<Vec<_>>(),
         });
     }
 
@@ -8182,6 +8277,86 @@ mod bank_conservation_tests {
             28,
         );
         (config, snapshot)
+    }
+
+    fn real_death_slot_at_bank() -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)]);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::DeathReturn,
+            target,
+            plan,
+            task,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn reprovision_deposit_observation(
+        slot: &mut GatherSlot,
+        bank_after: &[(i32, i32)],
+    ) -> Observation {
+        let before = slot.capture();
+        slot.observe_running(None, before.clone()).unwrap();
+        let (_, bank) = bank_fixture(bank_after);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        let after = slot.capture();
+        slot.observe_running(Some(before), after.clone()).unwrap();
+        assert_eq!(slot.unsettled_items.len(), 3);
+        assert_eq!(slot.witness.confirmed_drops, 0);
+        for item in slot.unsettled_items.values_mut() {
+            item.since = Instant::now() - UNSETTLED_WINDOW;
+        }
+        after
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_accepts_observed_per_item_bank_increases() {
+        let mut slot = real_death_slot_at_bank();
+        let after =
+            reprovision_deposit_observation(&mut slot, &[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)]);
+        slot.observe_running(Some(after), slot.capture()).unwrap();
+        assert!(slot.unsettled_items.is_empty());
+        let evidence = &slot.witness.death_reprovision_deposits[0];
+        assert_eq!(
+            evidence.expected_items,
+            counts(&[(KEBAB_ID, 2), (BEER_ID, 1), (1521, 3)])
+        );
+        assert_eq!(
+            evidence.bank_before,
+            counts(&[(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)])
+        );
+        assert_eq!(
+            evidence.bank_after,
+            counts(&[(KEBAB_ID, 7), (BEER_ID, 8), (1521, 5)])
+        );
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.opened_at - Duration::from_secs(1)));
+        assert!(!evidence.accounts_for(KEBAB_ID, 2, evidence.observed_at + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn real_death_reprovision_conservation_rejects_vanished_missing_or_short_bank_rows() {
+        for bank_after in [
+            vec![(KEBAB_ID, 5), (BEER_ID, 7), (1521, 2)],
+            vec![(KEBAB_ID, 6), (BEER_ID, 8), (1521, 5)],
+            vec![(KEBAB_ID, 8), (1521, 5)],
+        ] {
+            let mut slot = real_death_slot_at_bank();
+            let after = reprovision_deposit_observation(&mut slot, &bank_after);
+            let error = slot
+                .observe_running(Some(after), slot.capture())
+                .unwrap_err();
+            assert!(error.contains("was not conserved"), "{error}");
+            assert!(!slot.unsettled_items.is_empty());
+        }
     }
 
     fn native_deposit_ids(items: &[(i32, i32)]) -> Arc<[i32]> {
