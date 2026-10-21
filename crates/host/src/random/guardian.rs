@@ -1,11 +1,12 @@
 use super::*;
 
 use api::hostlog::{Category, Level};
-/// Content calls `map_findsquare(coord, 1, 7, ...)`, so the search uses the
-/// Chebyshev ring around the tile where the event fired, not the moving player
-/// (`macro_event_lost_axe.rs2:18`; `macro_event_lost_pickaxe.rs2:20`;
-/// `ServerOps.ts:298-335`).
+/// `map_findsquare(coord, 1, 7, ...)` finds an eligible ring tile, or returns
+/// `coord` when no ring tile qualifies. Recovery checks distance 0 through 7
+/// from both observed event-origin candidates (`ServerOps.ts:298-335`).
 const LOST_TOOL_RADIUS: i32 = 7;
+/// The content event can run before or after player movement. Keep the last
+/// pre-event tile and the tile from the first event observation as origins.
 /// Content adds the head at E+1 or E+2: `p_delay` receives 0 or 1 for the
 /// 1–7-tile projectile range. The client can read only five packets per frame,
 /// and OBJ_ADD follows PLAYER_INFO. Add one delivery tick to the two content
@@ -162,8 +163,18 @@ struct LostToolGroundHead {
 #[derive(Debug, Default)]
 struct LostToolBaseline {
     tick: Option<u32>,
+    tile: Option<(i32, i32, i32)>,
     tools: Vec<LostToolItem>,
     ground_heads: Vec<LostToolGroundHead>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LostToolOnset {
+    tick: u32,
+    kind: bool,
+    pre_event_tile: Option<(i32, i32, i32)>,
+    observed_tile: Option<(i32, i32, i32)>,
+    expected_head_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +189,7 @@ struct LostToolRecovery {
     event_tick: u32,
     kind: bool,
     expected_head_id: Option<i32>,
-    origin_tile: Option<(i32, i32, i32)>,
+    origin_tiles: [Option<(i32, i32, i32)>; 2],
     target: Option<LostToolTarget>,
 }
 /// Per-slot random-event guardian state.
@@ -224,8 +235,10 @@ pub struct Guardian {
     /// Lost-tool: the handle's base tool name (the handle name minus the
     /// "handle" suffix), the re-wield target after reattach.
     tool_handle_base: Option<String>,
-    /// Last non-event tool inventory and ground-head observations.
+    /// Last pre-event tool inventory, ground heads, and player tile.
     tool_baseline: LostToolBaseline,
+    /// First observed tool-loss evidence, if its handle update is delayed.
+    tool_onset: Option<LostToolOnset>,
     /// The current content-bounded recovery target, if the event is owned.
     tool_recovery: Option<LostToolRecovery>,
     /// The chat sequence before the most recent sent refit use.
@@ -323,6 +336,7 @@ impl Guardian {
             tool_was_worn: false,
             tool_handle_base: None,
             tool_baseline: LostToolBaseline::default(),
+            tool_onset: None,
             tool_recovery: None,
             tool_refit_after_sequence: None,
             tool_stalled: false,
@@ -398,6 +412,7 @@ impl Guardian {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
         let active = snap.ingame() && snap.scene_state() == SCENE_READY;
+        let mut new_lost_tool_message_kind = None;
         if active {
             self.refresh_ignored_plants(snap);
             self.revalidate_plant(snap);
@@ -462,6 +477,11 @@ impl Guardian {
                 }
                 self.acting = false;
             }
+            new_lost_tool_message_kind = snap
+                .chat_lines()
+                .iter()
+                .take_while(|line| line.sequence > self.chat_seen)
+                .find_map(|line| lost_tool_message_kind(&line.text));
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
             if self.in_flight && self.dialog_done(snap) {
@@ -531,9 +551,18 @@ impl Guardian {
         }
         if fresh {
             self.observe_lost_tool_refit_rejection(snap);
+            if self.tool_onset.is_some_and(|onset| {
+                snap.tick().wrapping_sub(onset.tick) > LOST_TOOL_SPAWN_GRACE_TICKS
+            }) {
+                self.tool_onset = None;
+            }
+            if active && self.tool_recovery.is_none() {
+                self.observe_lost_tool_onset(snap, new_lost_tool_message_kind);
+            }
             if !ev
                 .as_ref()
                 .is_some_and(|event| event.kind == RandomKind::LostTool)
+                && self.tool_onset.is_none()
             {
                 self.observe_lost_tool_baseline(snap, context.game_data);
             }
@@ -1958,8 +1987,9 @@ impl Guardian {
         }
     }
 
-    /// Refit only from the exact head dropped by this event. Search stays
-    /// anchored to the event tile. Content waits use PLAYER_INFO ticks.
+    /// Refit only from the exact head dropped by this event. Search checks
+    /// distance 0 through 7 from the last pre-event and first-evidence tiles.
+    /// Content waits use PLAYER_INFO ticks.
     fn step_lost_tool<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
         let handle_inv = snap
             .inventory()
@@ -1992,7 +2022,7 @@ impl Guardian {
         let tick = snap.tick();
         let event_tick = recovery.event_tick;
         let expected_head_id = recovery.expected_head_id;
-        let origin_tile = recovery.origin_tile;
+        let origin_tiles = recovery.origin_tiles;
         let mut target = recovery.target;
         let expected_head_in_pack = expected_head_id.is_some_and(|id| {
             snap.inventory()
@@ -2005,7 +2035,7 @@ impl Guardian {
                 .iter()
                 .filter_map(|ground| {
                     let distance = lost_tool_landing_distance(
-                        origin_tile,
+                        origin_tiles,
                         (ground.tile.x, ground.tile.z, ground.tile.level),
                     )?;
                     if tool_part(ground.def.name.as_deref(), "head") != Some(kind)
@@ -2088,7 +2118,7 @@ impl Guardian {
             });
             head_ground = target_ground.filter(|ground| {
                 lost_tool_landing_distance(
-                    origin_tile,
+                    origin_tiles,
                     (ground.tile.x, ground.tile.z, ground.tile.level),
                 )
                 .is_some()
@@ -2176,35 +2206,65 @@ impl Guardian {
             return;
         };
         let tick = snap.tick();
-        let adjacent_baseline = self
+        let onset = self.tool_onset.filter(|onset| onset.kind == kind);
+        let event_tick = onset.map_or(tick, |onset| onset.tick);
+        let baseline_at_onset = self
             .tool_baseline
             .tick
-            .is_some_and(|previous| previous.wrapping_add(1) == tick);
-        let expected_head_id = adjacent_baseline
-            .then(|| self.removed_lost_tool_head(snap, kind))
-            .flatten();
-        if !adjacent_baseline {
+            .is_some_and(|previous| previous.wrapping_add(1) == event_tick);
+        let expected_head_id = onset.and_then(|onset| onset.expected_head_id).or_else(|| {
+            (baseline_at_onset || onset.is_some())
+                .then(|| self.removed_lost_tool_head(snap, kind))
+                .flatten()
+        });
+        let origin_tiles = onset.map_or([self.tool_baseline.tile, snap.tile()], |onset| {
+            [onset.pre_event_tile, onset.observed_tile]
+        });
+        if !baseline_at_onset {
             self.tool_baseline.tools.clear();
-            // Keep the last non-event ground baseline. This snapshot can
-            // already contain the event's delayed head.
+            // Keep the last non-event ground baseline. The current snapshot
+            // can already contain the event's delayed head.
         }
+        self.tool_onset = None;
         self.tool_recovery = Some(LostToolRecovery {
-            event_tick: tick,
+            event_tick,
             kind,
             expected_head_id,
-            origin_tile: snap.tile(),
+            origin_tiles,
             target: None,
         });
     }
 
-    fn removed_lost_tool_head(&self, snap: &GameSnapshot, kind: bool) -> Option<i32> {
-        let mut removed = None;
-        for tool in self
-            .tool_baseline
-            .tools
+    fn observe_lost_tool_onset(&mut self, snap: &GameSnapshot, message_kind: Option<bool>) {
+        if self.tool_onset.is_some() {
+            return;
+        }
+        let removed = self.removed_lost_tool_item(snap);
+        let handle_kind = snap
+            .inventory()
             .iter()
-            .filter(|tool| tool.kind == kind)
-        {
+            .chain(snap.equipment().iter())
+            .find_map(|item| tool_part(item.def.name.as_deref(), "handle"));
+        let Some(kind) = message_kind
+            .or_else(|| removed.map(|(kind, _)| kind))
+            .or(handle_kind)
+        else {
+            return;
+        };
+        self.tool_onset = Some(LostToolOnset {
+            tick: snap.tick(),
+            kind,
+            pre_event_tile: self.tool_baseline.tile,
+            observed_tile: snap.tile(),
+            expected_head_id: removed
+                .filter(|(removed_kind, _)| *removed_kind == kind)
+                .and_then(|(_, head_id)| head_id),
+        });
+    }
+
+    fn removed_lost_tool_item(&self, snap: &GameSnapshot) -> Option<(bool, Option<i32>)> {
+        let mut removed = None;
+        for tool in &self.tool_baseline.tools {
             let current_count = snap
                 .inventory()
                 .iter()
@@ -2216,10 +2276,16 @@ impl Guardian {
                 if removed.is_some() {
                     return None;
                 }
-                removed = Some(*tool);
+                removed = Some((tool.kind, tool.head_id));
             }
         }
-        removed.and_then(|tool| tool.head_id)
+        removed
+    }
+
+    fn removed_lost_tool_head(&self, snap: &GameSnapshot, kind: bool) -> Option<i32> {
+        self.removed_lost_tool_item(snap)
+            .filter(|(removed_kind, _)| *removed_kind == kind)
+            .and_then(|(_, head_id)| head_id)
     }
 
     fn observe_lost_tool_baseline(
@@ -2229,6 +2295,7 @@ impl Guardian {
     ) {
         let baseline = &mut self.tool_baseline;
         baseline.tick = Some(snap.tick());
+        baseline.tile = snap.tile();
         if let Some(game_data) = game_data {
             for tool in &mut baseline.tools {
                 tool.count = 0;
@@ -2361,20 +2428,25 @@ fn lost_tool_tile_in_scene(snap: &GameSnapshot, (x, z, level): (i32, i32, i32)) 
     local_x >= 0 && local_x < scene.width && local_z >= 0 && local_z < scene.height
 }
 
-/// Distance from the event tile to a content-eligible landing tile. The
-/// player's later position must not change this search or its target.
+/// Distance from an observed event-origin candidate to a content-eligible
+/// landing tile. The player can move between those two snapshots.
 fn lost_tool_landing_distance(
-    origin: Option<(i32, i32, i32)>,
+    origins: [Option<(i32, i32, i32)>; 2],
     tile: (i32, i32, i32),
 ) -> Option<i32> {
-    let (origin_x, origin_z, origin_level) = origin?;
-    if tile.2 != origin_level {
-        return None;
-    }
-    let distance = cheb((origin_x, origin_z), (tile.0, tile.1));
-    (1..=LOST_TOOL_RADIUS)
-        .contains(&distance)
-        .then_some(distance)
+    origins
+        .into_iter()
+        .flatten()
+        .filter_map(|(origin_x, origin_z, origin_level)| {
+            if tile.2 != origin_level {
+                return None;
+            }
+            let distance = cheb((origin_x, origin_z), (tile.0, tile.1));
+            (0..=LOST_TOOL_RADIUS)
+                .contains(&distance)
+                .then_some(distance)
+        })
+        .min()
 }
 
 fn lost_tool_kind(alias: &str) -> Option<bool> {
@@ -2405,6 +2477,16 @@ fn lost_tool_head_id(game_data: &SelectedGameData, tool_alias: &str, kind: bool)
         let alias = item.alias.as_deref()?.strip_prefix("macro_")?;
         (alias.strip_prefix(tier)? == part).then_some(item.id)
     })
+}
+/// Content emits these `mes` lines when the lost-tool script starts.
+/// They can precede the inventory update in the decoded snapshot
+/// (`macro_event_lost_axe.rs2:23`; `macro_event_lost_pickaxe.rs2:24`).
+fn lost_tool_message_kind(message: &str) -> Option<bool> {
+    match message.trim() {
+        "You swing your axe at the tree." => Some(false),
+        "You swing your pick at the rock." => Some(true),
+        _ => None,
+    }
 }
 
 /// One `try_move` toward `target`; false when the walk is stuck

@@ -3903,6 +3903,155 @@ fn lost_tool_search_uses_event_origin_after_player_moves() {
 }
 
 #[test]
+fn lost_tool_search_uses_pre_event_tile_when_handle_snapshot_follows_movement() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_player(&mut c, "Test", 21, 21);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+
+    plant_ground_obj(&mut c, 13, 20, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(status.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 508),
+        "the event head is seven tiles from the pre-event tile and eight from the handle snapshot"
+    );
+}
+
+#[test]
+fn lost_tool_search_uses_post_move_tile_for_event_after_movement() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_player(&mut c, "Test", 21, 21);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+
+    plant_ground_obj(&mut c, 28, 21, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(status.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 508),
+        "the event head is seven tiles from the post-move event tile and eight from the pre-event tile"
+    );
+}
+
+#[test]
+fn lost_tool_search_accepts_a_head_on_the_event_tile_after_movement() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_player(&mut c, "Test", 21, 21);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+
+    plant_ground_obj(&mut c, 21, 21, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(status.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 508),
+        "MAP_FINDSQUARE can return the event tile at distance zero"
+    );
+}
+
+#[test]
+fn lost_tool_search_accepts_map_findsquare_origin_fallback() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+
+    plant_ground_obj(&mut c, 20, 20, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(status.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 508),
+        "recover the event head when content falls back to its origin tile"
+    );
+}
+
+#[test]
+fn lost_tool_message_anchors_recovery_before_delayed_handle_update() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_player(&mut c, "Test", 21, 21);
+    c.add_chat(0, "You swing your axe at the tree.", "");
+    tick_at(&mut c, &mut snap);
+    assert!(!guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+
+    plant_player(&mut c, "Test", 22, 22);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+
+    plant_ground_obj(&mut c, 13, 20, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(status.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 508),
+        "the pre-event tile is seven tiles from the head and later snapshots are farther away"
+    );
+}
+
+#[test]
 fn lost_tool_pickup_waits_for_delayed_inventory_update() {
     let (data, mut c, mut g, mut drv, settings, mut snap) = lost_tool_packet_probe_setup();
     plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
