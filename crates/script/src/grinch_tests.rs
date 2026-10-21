@@ -423,6 +423,7 @@ fn respond_walk(driver: &mut Driver, tick: u64, end: WalkEnd) -> (u64, WorldTile
         action
     };
     driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id,
         evidence: stamp(run, tick),
         end,
@@ -1737,6 +1738,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         .unwrap()
         .live());
     driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id: old_walk,
         evidence: stamp(RUN, child_tick),
         end: WalkEnd::Arrived,
@@ -1768,6 +1770,7 @@ fn pause_hold_and_same_run_relog_cancel_stale_children_and_keep_state() {
         .live());
     script.interrupt(crate::native::Interrupt::Hold(false));
     driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
         request_id: after_pause,
         evidence: stamp(RUN, child_tick),
         end: WalkEnd::Arrived,
