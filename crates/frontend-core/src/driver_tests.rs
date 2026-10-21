@@ -3703,8 +3703,8 @@ fn a_logout_during_the_switch_cancels_it_and_nothing_logs_back_in() {
     }
     assert_eq!(
         d.session().fleet_result().expect("result").text(),
-        "Switch world: cancelled 2: alice (a later Log in, Log out or Remove took over), \
-         bob (a later Log in, Log out or Remove took over)"
+        "Switch world: cancelled 2: alice (a later Log out took over), \
+         bob (a later Log out took over)"
     );
 }
 
@@ -3728,8 +3728,58 @@ fn a_log_in_during_the_switch_cancels_it_in_words() {
     );
     assert_eq!(
         d.session().fleet_result().expect("result").text(),
-        "Switch world: cancelled 1: alice (a later Log in, Log out or Remove took over)"
+        "Switch world: cancelled 1: alice (a later Log in took over)"
     );
+}
+
+/// Review F4 r2 (Sol): every command that can take a posted switch over
+/// is named for what it is, never as another command: Relog now and
+/// another Switch world supersede it and are named; Quit ends the slot,
+/// and the result says so.
+#[test]
+fn a_superseded_switch_names_the_command_that_took_it_over() {
+    use api::identity::Cancellation::{ScopeInvalidated, Superseded};
+    for (label, command, targets, cause, words) in [
+        (
+            "relog",
+            OperatorCommand::RelogNow,
+            Targets::Profile("alice"),
+            Superseded,
+            "a later Relog now took over",
+        ),
+        (
+            "switch",
+            OperatorCommand::SwitchWorld(3),
+            Targets::Profile("alice"),
+            Superseded,
+            "a later Switch world took over",
+        ),
+        (
+            "quit",
+            OperatorCommand::Quit,
+            Targets::Everyone,
+            ScopeInvalidated,
+            "the session or slot it was for ended",
+        ),
+    ] {
+        let mut d = world_driver(&format!("f4-r2-{label}"), &["alice"]);
+        assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+        let run = confirm_switch(&mut d);
+        land_saves(&mut d);
+        assert!(arm_of(&d, "alice").wants_logout(), "{label}: posted");
+        d.submit(command, targets).expect(label);
+        land_saves(&mut d);
+        assert_eq!(
+            terminal(&d, run, "alice"),
+            Some(Settlement::Cancelled(cause)),
+            "{label}"
+        );
+        assert_eq!(
+            d.session().fleet_result().expect("result").text(),
+            format!("Switch world: cancelled 1: alice ({words})"),
+            "{label}"
+        );
+    }
 }
 
 /// Removing a bot whose relog is posted cancels its member.
