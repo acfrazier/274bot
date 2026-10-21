@@ -180,6 +180,7 @@ runner="/Volumes/dev-scratch/274bot-worktrees/nightly-mac-quest"
 git -C "$runner" fetch origin +refs/heads/dev:refs/remotes/origin/dev
 sha=$(git -C "$runner" rev-parse --verify origin/dev)
 pinned="/Volumes/dev-scratch/274bot-nightly-mac/origin-dev-$sha.git"
+mkdir -p /Volumes/dev-scratch/274bot-nightly-mac
 git init --bare "$pinned"
 git -C "$runner" push "$pinned" refs/remotes/origin/dev:refs/heads/dev
 NIGHTLY_REPO="$pinned" NIGHTLY274_ACTION=nightly-mac \
