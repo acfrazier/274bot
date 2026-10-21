@@ -50,6 +50,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   four later observed game ticks after dispatch. Lost races do not penalize
   the item tile. Native scripts can report confirmed progress and wait for
   relevant evidence without disabling scheduler or connection checks.
+- Native ground-item selections reject more than 32 IDs, so later items
+  cannot bypass the selected-ID exclusion bitset.
 
 ### Fixed during development
 
