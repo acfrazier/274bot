@@ -251,8 +251,12 @@ fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
         ));
     }
     let message = trace.failure_message.as_deref().unwrap_or("");
-    if !(message.starts_with("supply-missing:") && message.to_ascii_lowercase().contains("bait")) {
-        return Err(format!("the failure must name the bait: {message:?}"));
+    if !(message.starts_with("no Fishing bait in the pack, worn, or in the bank as seen ")
+        && message.ends_with("; nobody sells it; waiting: put a Fishing bait in the pack"))
+    {
+        return Err(format!(
+            "the failure must name the bait and observed bank: {message:?}"
+        ));
     }
     if trace.final_origin.as_deref() != Some("Session") {
         return Err(format!(
@@ -634,11 +638,85 @@ fn status_transitions_fold_repeated_events() {
         "native Gatherer phase=working failure=none action_state=walk last_event=bank trip due",
         "bank open booth",
         "native Gatherer phase=working failure=none last_event=deposit confirmed",
-        "native Gatherer phase=blocked failure=supply-missing failure_message=supply-missing:Fishing bait last_event=deposit confirmed",
+        "native Gatherer phase=blocked failure=supply-missing failure_message=no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack last_event=deposit confirmed",
     ]
     .map(str::to_owned);
     assert_eq!(
         event_transitions(&lines),
         ["started", TRIP_DUE, "deposit confirmed"]
     );
+}
+
+fn valid_trace(variant: Variant) -> BaitTrace {
+    BaitTrace {
+        start_origin: Some(
+            match variant {
+                Variant::Banked => "Unknown",
+                Variant::StaleHint => "Hint",
+            }
+            .into(),
+        ),
+        start_rows: (variant == Variant::StaleHint).then_some(vec![(FISHING_BAIT, HINTED_BAIT)]),
+        trip_due_count: Some(1),
+        max_bait: match variant {
+            Variant::Banked => BANKED_BAIT,
+            Variant::StaleHint => 0,
+        },
+        final_bait: Some(0),
+        trips: Some(i64::from(variant == Variant::Banked)),
+        failure_code: Some("supply-missing".into()),
+        failure_message: Some(
+            "no Fishing bait in the pack, worn, or in the bank as seen less than a minute ago this session (0 rows); nobody sells it; waiting: put a Fishing bait in the pack"
+                .into(),
+        ),
+        final_distance_from_spots: Some(0),
+        final_origin: Some("Session".into()),
+        final_rows: Some(Vec::new()),
+        ..BaitTrace::default()
+    }
+}
+
+#[test]
+fn bait_oracle_accepts_core_shortage_text_after_one_observed_trip() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        assert_eq!(verdict(variant, &valid_trace(variant)), Ok(()));
+    }
+}
+
+#[test]
+fn bait_oracle_rejects_wrong_failure_item_provenance_and_trip_evidence() {
+    for variant in [Variant::Banked, Variant::StaleHint] {
+        let mut trace = valid_trace(variant);
+        trace.failure_code = Some("bank-open".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.failure_message = trace
+            .failure_message
+            .map(|message| message.replace("Fishing bait", "Feather"));
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.failure_message = Some("supply-missing:Fishing bait".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.final_origin = Some("Hint".into());
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.trip_due_count = Some(2);
+        assert!(verdict(variant, &trace).is_err());
+
+        let mut trace = valid_trace(variant);
+        trace.final_rows = Some(vec![(FISHING_BAIT, 1)]);
+        assert!(verdict(variant, &trace).is_err());
+    }
+    let mut trace = valid_trace(Variant::Banked);
+    trace.max_bait = BANKED_BAIT - 1;
+    assert!(verdict(Variant::Banked, &trace).is_err());
+
+    let mut trace = valid_trace(Variant::StaleHint);
+    trace.trips = Some(1);
+    assert!(verdict(Variant::StaleHint, &trace).is_err());
 }
