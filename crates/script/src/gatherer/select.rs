@@ -2105,6 +2105,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn danger_without_navigation_waits_for_depleted_tree_in_quester() {
+        let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, true);
+        assert_eq!(
+            result.outcome,
+            Selection::Exhausted {
+                wait_until: 200,
+                absent: 0,
+            }
+        );
+    }
+
+    #[test]
     fn danger_without_navigation_waits_for_avoided_tree_in_operating_range() {
         let result = danger_tree_selection_case(None, true, PlacementClass::Avoided, false);
         assert_eq!(result.outcome, Selection::Exhausted { wait_until: 81, absent: 0 });
