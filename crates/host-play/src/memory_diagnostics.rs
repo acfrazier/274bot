@@ -105,7 +105,9 @@ impl GathererBot {
 
     fn planned_start(&mut self) {
         if self.planned_restart == Some(GathererRestart::Stopped) {
-            self.planned_restart = self.last_tick.map(|tick| GathererRestart::Starting { tick });
+            self.planned_restart = self
+                .last_tick
+                .map(|tick| GathererRestart::Starting { tick });
         }
     }
 
@@ -1311,7 +1313,9 @@ mod tests {
     fn planned_lifecycle_restart_qualifies_but_unplanned_or_overdue_starting_fails() {
         let mut fleet = r2_fleet();
         let name = "gm1d8f7qgp_0";
-        let passed = GathererVerdict::Pass { fleet_xp_delta: 675 };
+        let passed = GathererVerdict::Pass {
+            fleet_xp_delta: 675,
+        };
         assert_eq!(gatherer_verdict(&fleet), passed);
         let start = fleet.bots[name].last_tick.unwrap() + 100;
         {
