@@ -23616,7 +23616,15 @@ fn a_world_switch_keeps_a_running_scripts_run() {
         "a fresh session began"
     );
     rig.wait_state(script::RunState::Running);
-    rig.frames(2);
+    let loops_after_turnover = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    rig.frames(5);
     let slot = rig.slot();
     let mut slot = slot.lock().unwrap();
     assert_eq!(slot.runtime_generation(), run_generation);
@@ -23624,6 +23632,15 @@ fn a_world_switch_keeps_a_running_scripts_run() {
         slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
         Some(1),
         "the same isolate resumes without a second Start"
+    );
+    let loops = slot
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    assert!(
+        loops > loops_after_turnover,
+        "loop() ticks in the new session: {loops_after_turnover} then {loops}"
     );
     slot.stop();
 }

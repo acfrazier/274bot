@@ -177,7 +177,8 @@ first; **Copy settings** copies the focused bot's parameters for the card to
 the targets on that card (the prompt names them and each skip).
 
 **Result.** Each action ends in one result on the message line (`msg:`),
-failures first, then skips, then done, with a `pending N` tail until every
+failures first, then cancellations (a bot a later Log in, Log out or Remove
+took over), then skips, then done, with a `pending N` tail until every
 member settles (a paced Start settles with its last queued bot). It is
 written once, not repeated as a banner; core also writes one log line when
 it settles.
