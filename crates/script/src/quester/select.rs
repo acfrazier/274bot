@@ -111,7 +111,8 @@ mod tests {
     use crate::native::ledger::TickBudget;
     use crate::native::{ActionContext, RetainedMemory};
     use crate::quester::compile::{
-        compile_uncached_for_test, decode_cook, PredicateContext, RUNE_MYSTERIES_JSON, SHEEP_JSON,
+        compile_uncached_for_test, decode_cook, path_bytes, PredicateContext, RUNE_MYSTERIES_JSON,
+        SHEEP_JSON,
     };
     use crate::quester::families::tests::with_tick_bank;
     use crate::quester::path::{PathDocument, PredicateDocument};
@@ -625,6 +626,37 @@ mod tests {
                     "source": "nearest selection fixture"
                 }
             }),
+        );
+    }
+
+    #[test]
+    fn monk_friends_cave_side_boundary_selects_blanket_instead_of_rewalking_ladder() {
+        let data = selected();
+        let quests = quests(&data);
+        let document: PathDocument =
+            serde_json::from_slice(path_bytes("drunkmonk").expect("released Path")).unwrap();
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 2561,
+                z: 9621,
+                level: 0,
+            },
+        ));
+        let bank = known_empty_bank();
+
+        assert_eq!(
+            choice_for_stage(
+                &compiled,
+                "drunkmonk:10",
+                &snapshot,
+                &quests,
+                &[],
+                &bank,
+            ),
+            chosen("take-childs-blanket"),
+            "the cave-side boundary must skip the ring-stone walk and ladder"
         );
     }
 
