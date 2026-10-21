@@ -1,5 +1,5 @@
 //! The shop-open rule shared by compat `Shop.open` ([`crate::shop`]) and the
-//! native [`crate::native_shop::BuyMachine`]. Both adapters feed it the same
+//! native [`crate::acquire::buy::BuyMachine`]. Both adapters feed it the same
 //! facts and carry out its decisions with their own walk and emit paths.
 //!
 //! - The keeper is a visible NPC with a Trade op. Its route is the walk to a

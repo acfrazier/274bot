@@ -911,3 +911,70 @@ fn changed_run_returns_stale_and_drops_the_unresolved_dispatch() {
     assert_eq!(log.buttons, [5]);
     assert_eq!(log.trades, [7]);
 }
+
+#[test]
+fn initial_trade_budget_denial_retries_without_consuming_an_open_attempt() {
+    let client = client_with_shop(false);
+    let page = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&page, &mut ledger, 1);
+    let denied = with_tick(&page, &mut ledger, 2, |native| {
+        spend_interaction(&mut native.cx);
+        native.actions.poll(&handle, &mut native.cx)
+    });
+    assert!(denied.is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    let mut log = ActionLog::default();
+    drain_trade(&mut ledger, &mut log, 3, 7);
+    assert_eq!(log.trades, [7]);
+    assert!(log.buttons.is_empty());
+}
+
+#[test]
+fn initial_close_budget_denial_retries_the_close_not_a_trade() {
+    let client = client_with_shop(true);
+    let page = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&page, &mut ledger, 1);
+    let denied = with_tick(&page, &mut ledger, 2, |native| {
+        spend_interaction(&mut native.cx);
+        native.actions.poll(&handle, &mut native.cx)
+    });
+    assert!(denied.is_pending());
+    assert_no_queued_action(&ledger);
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    assert!(matches!(last_request(&ledger), InteractReq::CloseModal));
+}
+
+#[test]
+fn unchanged_pending_purchase_polls_allocate_nothing_and_keep_bounded_state() {
+    let mut client = client_with_shop(false);
+    let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 5);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 5);
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..1_000 {
+            assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+        }
+    });
+    assert_eq!(measured.count_total, 0);
+    assert_no_queued_action(&ledger);
+    assert_eq!(log.buttons, [5]);
+    let machine_bytes = std::mem::size_of::<BuyMachine>();
+    assert!(machine_bytes <= 512, "bounded shop stage grew to {machine_bytes} bytes");
+    println!(
+        "A4 purchase state bytes: machine={machine_bytes} dispatch={} request={} receipt={}; unchanged_polls=1000 allocations={}",
+        std::mem::size_of::<Dispatch>(),
+        std::mem::size_of::<BuyRequest>(),
+        std::mem::size_of::<BuyReceipt>(),
+        measured.count_total,
+    );
+}

@@ -62,7 +62,6 @@ pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
-pub mod native_shop;
 pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).

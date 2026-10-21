@@ -221,6 +221,8 @@ pub struct BuyReceipt {
     pub refusal: Option<PurchaseRefusal>,
     /// Latest observed stock on the owned page, for the caller's live quote.
     pub stock: i32,
+    /// An increment observed on one owned page, never its initial stock post.
+    pub restock_at: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -264,6 +266,7 @@ pub struct BuyMachine {
     held: i32,
     stock: i32,
     page_closes: u64,
+    restock_at: Option<u64>,
     unanswered: u8,
     finish: Option<Finish>,
 }
@@ -278,7 +281,8 @@ impl NativeMachine for BuyMachine {
                 "buy quantity must be positive",
             )));
         }
-        let shop = cx.snapshot().shop();
+        let snapshot = cx.snapshot();
+        let shop = snapshot.shop();
         let closes = shop.as_ref().map_or(0, |shop| shop.value.server_closes);
         let phase = if shop.is_some_and(|shop| shop.value.open) {
             Phase::Close(
@@ -302,6 +306,7 @@ impl NativeMachine for BuyMachine {
             held: 0,
             stock: 0,
             page_closes: closes,
+            restock_at: None,
             unanswered: 0,
             finish: None,
         })
@@ -320,19 +325,27 @@ impl NativeMachine for BuyMachine {
         };
         self.held = held;
         if let Some(shop) = cx.snapshot().shop().filter(|shop| shop.value.open) {
-            self.stock = shop
+            let stock = shop
                 .value
                 .stock
                 .iter()
                 .find(|row| row.def.id == self.request.item_id)
                 .map_or(0, |row| row.count);
+            if matches!(self.phase, Phase::Buy | Phase::AwaitBatch)
+                && shop.value.server_closes == self.page_closes
+                && stock > self.stock
+            {
+                self.restock_at = Some(cx.evidence().tick);
+            }
+            self.stock = stock;
         }
         self.observe_dispatch(cx, SettlementWitness::Content)?;
         loop {
             match &mut self.phase {
                 Phase::Close(purpose, wait) => {
                     let purpose = *purpose;
-                    let Some(shop) = cx.snapshot().shop() else {
+                    let snapshot = cx.snapshot();
+                    let Some(shop) = snapshot.shop() else {
                         return Poll::Pending;
                     };
                     let (open, closes) = (shop.value.open, shop.value.server_closes);
@@ -434,7 +447,8 @@ impl NativeMachine for BuyMachine {
                         self.start_final_close(cx);
                         continue;
                     }
-                    let Some(shop) = cx.snapshot().shop() else {
+                    let snapshot = cx.snapshot();
+                    let Some(shop) = snapshot.shop() else {
                         return Poll::Pending;
                     };
                     if !shop.value.open || shop.value.server_closes > self.page_closes {
@@ -494,7 +508,8 @@ impl NativeMachine for BuyMachine {
                         self.phase = Phase::Buy;
                         continue;
                     };
-                    let Some(shop) = cx.snapshot().shop() else {
+                    let snapshot = cx.snapshot();
+                    let Some(shop) = snapshot.shop() else {
                         return Poll::Pending;
                     };
                     if dispatch.roundtrip_due(
@@ -508,7 +523,8 @@ impl NativeMachine for BuyMachine {
                     return Poll::Pending;
                 }
                 Phase::RoundtripClose(wait) => {
-                    let Some(modals) = cx.snapshot().modals() else {
+                    let snapshot = cx.snapshot();
+                    let Some(modals) = snapshot.modals() else {
                         return Poll::Pending;
                     };
                     let local_absent = [
@@ -611,7 +627,8 @@ impl BuyMachine {
     }
 
     fn start_final_close(&mut self, cx: &ActionContext<'_>) {
-        let shop = cx.snapshot().shop();
+        let snapshot = cx.snapshot();
+        let shop = snapshot.shop();
         let closes = shop.as_ref().map_or(self.page_closes, |shop| shop.value.server_closes);
         let baseline = if shop.is_some_and(|shop| shop.value.open) {
             closes
@@ -659,6 +676,7 @@ impl BuyMachine {
                 _ => None,
             },
             stock: self.stock,
+            restock_at: self.restock_at,
         })
     }
 
