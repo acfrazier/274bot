@@ -903,6 +903,21 @@ pub(crate) fn script_observe_cached_with_channels(
                     None
                 };
                 let service_gate = service_gate_guard.as_deref();
+                // Load Gather owns its own committed permissions; other native
+                // ticks use the compiled card's current permissions. Pass the
+                // same callback value to selection and route admission.
+                let walk_permissions = slot
+                    .api_gather_walk_permissions()
+                    .or_else(|| slot.native_walk_permissions());
+                let walk_danger = world.as_deref().map(|world| {
+                    crate::walk_permissions::SelectionDangerQuery::new(
+                        navs,
+                        name,
+                        world,
+                        snapshot,
+                        walk_permissions,
+                    )
+                });
                 let mut ctx = ScriptCtx {
                     driver,
                     tick,
@@ -921,6 +936,9 @@ pub(crate) fn script_observe_cached_with_channels(
                         collision: world
                             .as_deref()
                             .and_then(|world| nav::producer::collision_view(world).ok()),
+                        walk_danger: walk_danger
+                            .as_ref()
+                            .map(|query| query as &dyn script::native::WalkDangerQuery),
                         hold: hold || ours,
                         world_members,
                         ..Default::default()
@@ -1516,7 +1534,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     snapshot,
                                     request,
                                     authority,
-                                    slot.api_gather_walk_permissions(),
+                                    walk_permissions,
                                 );
                             }
                             script::native::HostEffect::AssessWalk(request) => {
@@ -1537,7 +1555,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         tick,
                                         sequence: tick,
                                     },
-                                    slot.api_gather_walk_permissions(),
+                                    walk_permissions,
                                 );
                             }
                             script::native::HostEffect::BankPick(request) => {
@@ -1568,7 +1586,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         authority,
                                         evidence,
                                     },
-                                    slot.api_gather_walk_permissions(),
+                                    walk_permissions,
                                 );
                             }
                         }
