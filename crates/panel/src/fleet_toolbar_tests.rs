@@ -8,7 +8,7 @@ use dear_imgui_rs::{BackendFlags, Condition, FramePrepareOptions, MouseButton};
 use frontend_core::scripts::{CardSource, ScriptChoice};
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
-use frontend_core::{FleetAction, FleetCard, OperatorCommand, Targets};
+use frontend_core::{FleetAction, FleetCard, OperatorCommand, Targets, OWN_CARD_LABEL};
 
 use super::{Site, ToolbarAction, ACTIONS};
 use crate::fleet::{take_layout, FleetLayout};
@@ -444,6 +444,85 @@ fn two_toolbars_on_screen_run_one_plan_once() {
     assert_eq!(rig.commands(OperatorCommand::Login), 1, "nothing ran twice");
     let (rail, window) = frame(&mut rig, AWAY, false);
     assert_eq!(rail.result.unwrap().0, window.result.unwrap().0);
+}
+
+/// With the rail and the Fleet window on screen together, a card picked
+/// through real clicks in either one's drop-down is pinned on the first
+/// try: the other toolbar's closed drop-down leaves the open search alone.
+/// (Headed F5 proof: a pick in either drop-down only highlighted the entry
+/// while both were drawn.)
+#[test]
+fn a_card_pick_lands_with_two_toolbars_on_screen() {
+    let all = names(2);
+    let mut rig = Rig::new("toolbar-two-card", &all, &all, 1.0);
+    let frame = |rig: &mut Rig, at: [f32; 2], down: bool| -> (FleetLayout, FleetLayout) {
+        let io = rig.ctx.io_mut();
+        io.add_mouse_pos_event(at);
+        io.add_mouse_button_event(MouseButton::Left, down);
+        rig.session.pump_status();
+        rig.ctx
+            .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        take_layout();
+        let (rail, window);
+        {
+            let ui = rig.ctx.frame();
+            let session = &mut rig.session;
+            session.fleet_open = true;
+            ui.window("Rail harness")
+                .position([0.0, 0.0], Condition::Always)
+                .size([264.0, 900.0], Condition::Always)
+                .build(|| crate::app::draw_test_rail_toolbar(ui, session));
+            rail = take_layout();
+            ui.window(crate::session::PanelWindow::Fleet.title())
+                .position([400.0, 0.0], Condition::Always)
+                .size([760.0, 460.0], Condition::Always)
+                .build(|| {});
+            crate::fleet::window(ui, session);
+            window = take_layout();
+        }
+        rig.ctx.render();
+        (rail, window)
+    };
+    let click = |rig: &mut Rig, at: [f32; 2]| {
+        for down in [false, true, false] {
+            frame(rig, at, down);
+        }
+    };
+    for _ in 0..4 {
+        frame(&mut rig, AWAY, false);
+    }
+    // First the rail's drop-down picks Gatherer, then the Fleet window's
+    // picks each bot's own card again.
+    for (site_is_rail, wanted, label) in [
+        (true, "Gatherer", "Gatherer"),
+        (false, OWN_CARD_LABEL, OWN_CARD_LABEL),
+    ] {
+        let (rail, window) = frame(&mut rig, AWAY, false);
+        let combo = if site_is_rail {
+            rail.card_combo
+        } else {
+            window.card_combo
+        };
+        click(&mut rig, centre(combo));
+        let (rail, window) = frame(&mut rig, AWAY, false);
+        let entries = if site_is_rail {
+            rail.card_entries
+        } else {
+            window.card_entries
+        };
+        let (_, entry) = entries
+            .iter()
+            .find(|(text, _)| text.contains(wanted))
+            .unwrap_or_else(|| panic!("{wanted} listed: {entries:?}"));
+        click(&mut rig, centre(*entry));
+        frame(&mut rig, AWAY, false);
+        assert_eq!(
+            rig.session.fleet_model.card_label(),
+            label,
+            "the pick in the {} drop-down landed on the first click",
+            if site_is_rail { "rail" } else { "Fleet window" }
+        );
+    }
 }
 
 /// Grid and MultiBox off draw the whole toolbar in the strip's fleet

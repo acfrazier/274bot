@@ -29,8 +29,9 @@ use crate::script_picker::{display_category, resolve_category_order};
 use crate::session::Session;
 use crate::theme::scale_px;
 
-/// Where a toolbar is drawn. Only tests read it: the three sites draw the
-/// same function with the same state.
+/// Where a toolbar is drawn. The three sites draw the same function with
+/// the same state; the site only names which card drop-down owns the
+/// open search (and labels what a test records).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
     /// The top of the MultiBox rail, above the scrolling tiles.
@@ -268,7 +269,8 @@ pub(crate) fn header(ui: &Ui, session: &mut Session, label: &str) -> bool {
 }
 
 /// The toolbar under its header (`open`), or the folded summary. `site`
-/// only labels what a test records.
+/// names the drop-down that owns an open card search, and labels what a
+/// test records.
 pub(crate) fn body(ui: &Ui, session: &mut Session, site: Site, open: bool) {
     #[cfg(test)]
     {
@@ -279,14 +281,12 @@ pub(crate) fn body(ui: &Ui, session: &mut Session, site: Site, open: bool) {
             layout.content = [left, right];
         });
     }
-    #[cfg(not(test))]
-    let _ = site;
     session.fleet_labels.sync(&session.fleet_model);
     session
         .fleet_model
         .sync_card_label(&session.scripts, &session.core);
     if open {
-        card_combo(ui, session);
+        card_combo(ui, session, site);
         marks_row(ui, session);
         filter_row(ui, session);
         action_bar(ui, session);
@@ -334,8 +334,11 @@ fn pick_card(session: &mut Session, card: FleetCard) {
 /// Assign & restart and Copy settings buttons use. Entries are each bot's
 /// own card, the focused bot's card, then every Browse card under its
 /// category in the Browse window's category order. While it is open a
-/// search field narrows the entries.
-fn card_combo(ui: &Ui, session: &mut Session) {
+/// search field narrows the entries. The search belongs to the site whose
+/// drop-down is open: another toolbar on screen, whose drop-down is
+/// closed, leaves it alone (else it would reset the search and refocus
+/// the field every frame, and a click on an entry would be lost).
+fn card_combo(ui: &Ui, session: &mut Session, site: Site) {
     ui.align_text_to_frame_padding();
     ui.text("Card:");
     ui.same_line();
@@ -347,20 +350,29 @@ fn card_combo(ui: &Ui, session: &mut Session) {
         layout.items.push(item_rect(ui));
     });
     let Some(_open) = combo else {
-        session.fleet_card_filter = None;
+        if session
+            .fleet_card_filter
+            .as_ref()
+            .is_some_and(|(owner, _)| *owner == site)
+        {
+            session.fleet_card_filter = None;
+        }
         return;
     };
-    let mut filter = session.fleet_card_filter.take().unwrap_or_else(|| {
-        ui.set_keyboard_focus_here();
-        String::new()
-    });
+    let mut filter = match session.fleet_card_filter.take() {
+        Some((owner, filter)) if owner == site => filter,
+        _ => {
+            ui.set_keyboard_focus_here();
+            String::new()
+        }
+    };
     ui.set_next_item_width(-1.0);
     ui.input_text("##fleet-card-filter", &mut filter)
         .hint("Filter cards")
         .build();
     ui.separator();
     let picked = card_entries(ui, session, &filter);
-    session.fleet_card_filter = Some(filter);
+    session.fleet_card_filter = Some((site, filter));
     if let Some(card) = picked {
         pick_card(session, card);
     }
