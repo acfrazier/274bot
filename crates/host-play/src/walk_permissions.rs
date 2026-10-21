@@ -452,9 +452,253 @@ impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
     }
 }
 
-/// The same loc footprint predicate and packed arrival predicate used by
-/// native route admission, without constructing a candidate vector.
-fn selection_access_tiles<'a>(
+/// Scalar radius geometry shared by the route cursor and selection's lazy
+/// access scan. Candidate storage and collision filtering stay with each caller.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RouteRadiusGeometry {
+    target: api::WorldTile,
+    radius: i32,
+    side: usize,
+    len: usize,
+}
+
+impl RouteRadiusGeometry {
+    pub(crate) fn new(target: api::WorldTile, radius: i32) -> Option<Self> {
+        let radius = radius.clamp(0, 104);
+        let side = usize::try_from(radius)
+            .ok()?
+            .checked_mul(2)?
+            .checked_add(1)?;
+        Some(Self {
+            target,
+            radius,
+            side,
+            len: side.checked_mul(side)?,
+        })
+    }
+
+    pub(crate) const fn radius(self) -> i32 {
+        self.radius
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn candidate_at(self, index: usize) -> Option<api::WorldTile> {
+        if index >= self.len {
+            return None;
+        }
+        let dx = i32::try_from(index / self.side)
+            .ok()?
+            .checked_sub(self.radius)?;
+        let dz = i32::try_from(index % self.side)
+            .ok()?
+            .checked_sub(self.radius)?;
+        Some(api::WorldTile {
+            x: self.target.x.checked_add(dx)?,
+            z: self.target.z.checked_add(dz)?,
+            level: self.target.level,
+        })
+    }
+}
+
+/// The scalar footprint predicate used by captured route goals and the
+/// allocation-free selection scan.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LocAccessGeometry {
+    target: api::WorldTile,
+    approach: Option<api::query::loc_approach::LocApproach>,
+    radius: u32,
+}
+
+impl LocAccessGeometry {
+    fn from_loc(
+        loc: &api::snapshot::LocView,
+        target: api::WorldTile,
+        radius: i32,
+    ) -> Option<Self> {
+        use api::query::loc_approach::{distance_from, LocApproach};
+
+        distance_from(loc, target)?;
+        Some(Self {
+            target,
+            approach: LocApproach::from_loc_def(
+                loc.width,
+                loc.length,
+                loc.angle,
+                loc.force_approach,
+            ),
+            radius: u32::try_from(radius.clamp(0, 104)).ok()?,
+        })
+    }
+
+    pub(crate) fn candidate_at(
+        self,
+        tile: api::WorldTile,
+        flags: i32,
+    ) -> Option<api::WorldTile> {
+        let approach = self.approach?;
+        if flags & client::dash3d::CollisionFlag::SQ_BLOCKED != 0
+            || !approach.can_operate(self.target, tile, flags)
+        {
+            return None;
+        }
+        let max_x = self
+            .target
+            .x
+            .checked_add(i32::from(approach.width).checked_sub(1)?)?;
+        let max_z = self
+            .target
+            .z
+            .checked_add(i32::from(approach.length).checked_sub(1)?)?;
+        let nearest_x = tile.x.clamp(self.target.x, max_x);
+        let nearest_z = tile.z.clamp(self.target.z, max_z);
+        (tile
+            .x
+            .abs_diff(nearest_x)
+            .max(tile.z.abs_diff(nearest_z))
+            <= self.radius)
+            .then_some(tile)
+    }
+}
+
+/// A scene-clipped scalar enumeration window for the route's loc footprint.
+/// It stores no collision flags; route capture and selection read them through
+/// their own existing storage/borrowed-scene paths.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LocAccessWindow {
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    start_x: i32,
+    start_z: i32,
+    height: usize,
+    len: usize,
+}
+
+impl LocAccessWindow {
+    fn new(
+        scene: &api::snapshot::SceneView,
+        target: api::WorldTile,
+        approach: Option<api::query::loc_approach::LocApproach>,
+    ) -> Option<Self> {
+        let (start_x, start_z, width, height) = if let Some(approach) = approach {
+            let dst_x = target.x.checked_sub(scene.base_x)?;
+            let dst_z = target.z.checked_sub(scene.base_z)?;
+            let width = i32::from(approach.width);
+            let height = i32::from(approach.length);
+            let start_x = dst_x.checked_sub(1)?.max(0);
+            let start_z = dst_z.checked_sub(1)?.max(0);
+            let end_x = dst_x.checked_add(width)?.min(scene.width.checked_sub(1)?);
+            let end_z = dst_z.checked_add(height)?.min(scene.height.checked_sub(1)?);
+            if start_x > end_x || start_z > end_z {
+                (start_x, start_z, 0, 0)
+            } else {
+                (
+                    start_x,
+                    start_z,
+                    usize::try_from(end_x.checked_sub(start_x)?.checked_add(1)?).ok()?,
+                    usize::try_from(end_z.checked_sub(start_z)?.checked_add(1)?).ok()?,
+                )
+            }
+        } else {
+            (0, 0, 0, 0)
+        };
+        Some(Self {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            start_x,
+            start_z,
+            height,
+            len: width.checked_mul(height)?,
+        })
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    fn local_at(self, index: usize) -> Option<(i32, i32)> {
+        if index >= self.len || self.height == 0 {
+            return None;
+        }
+        Some((
+            self.start_x
+                .checked_add(i32::try_from(index / self.height).ok()?)?,
+            self.start_z
+                .checked_add(i32::try_from(index % self.height).ok()?)?,
+        ))
+    }
+
+    pub(crate) fn tile_at(self, index: usize) -> Option<api::WorldTile> {
+        let (lx, lz) = self.local_at(index)?;
+        Some(api::WorldTile {
+            x: self.base_x.checked_add(lx)?,
+            z: self.base_z.checked_add(lz)?,
+            level: self.level,
+        })
+    }
+
+    pub(crate) fn collision_index(self, index: usize, scene_height: i32) -> Option<usize> {
+        let (lx, lz) = self.local_at(index)?;
+        usize::try_from(lx)
+            .ok()?
+            .checked_mul(usize::try_from(scene_height).ok()?)?
+            .checked_add(usize::try_from(lz).ok()?)
+    }
+}
+
+/// Resolve the exact live-loc geometry inputs used by the router, without
+/// capturing flags or allocating a candidate vector.
+pub(crate) fn route_loc_access_geometry<'a>(
+    snapshot: &'a api::snapshot::GameSnapshot,
+    target: api::WorldTile,
+    loc_id: i32,
+    radius: i32,
+) -> Option<(
+    LocAccessGeometry,
+    LocAccessWindow,
+    &'a api::snapshot::SceneView,
+)> {
+    let scene = snapshot.scene();
+    if !api::query::SceneQuery::new(scene, None).contains(target) {
+        return None;
+    }
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == target && loc.id == loc_id)?;
+    let geometry = LocAccessGeometry::from_loc(loc, target, radius)?;
+    let window = LocAccessWindow::new(scene, target, geometry.approach)?;
+    Some((geometry, window, scene))
+}
+
+/// Return the packed collision flags used by both route arrival admission and
+/// the selector's scalar Reach predicate.
+pub(crate) fn packed_arrival_flags(
+    collision: &nav::collision::WorldCollision,
+    tile: api::WorldTile,
+) -> Option<i32> {
+    if !(0..=3).contains(&tile.level) {
+        return None;
+    }
+    let x = i64::from(tile.x) - i64::from(collision.origin.x);
+    let z = i64::from(tile.z) - i64::from(collision.origin.z);
+    if x < 0
+        || z < 0
+        || usize::try_from(x).ok()? >= collision.width
+        || usize::try_from(z).ok()? >= collision.height
+    {
+        return None;
+    }
+    i32::try_from(collision.walkable_word(tile.x, tile.z, tile.level)).ok()
+}
+
+/// The same scalar destination geometry and packed arrival rule used by the
+/// route cursor, without capturing flags or constructing candidate vectors.
+pub(crate) fn selection_access_tiles<'a>(
     world: &'a nav::world::NavWorld,
     snapshot: Option<&'a api::snapshot::GameSnapshot>,
     target: api::WorldTile,
@@ -462,88 +706,48 @@ fn selection_access_tiles<'a>(
     radius: u16,
     arrival: nav::contract::ArrivalKind,
 ) -> impl Iterator<Item = api::WorldTile> + 'a {
-    use api::query::loc_approach::{distance_from, LocApproach};
-    use api::query::{is_arrived, CollisionArrivalProbe, SceneQuery};
+    use api::query::{is_arrived, CollisionArrivalProbe};
 
+    let radius_geometry = RouteRadiusGeometry::new(target, i32::from(radius))
+        .expect("a clamped access radius fits the route window");
     let exact = radius == 0;
-    let scene = snapshot.map(|snapshot| SceneQuery::new(snapshot.scene(), None));
-    let loc = (!exact)
-        .then(|| {
-            scene
-                .as_ref()
-                .filter(|scene| scene.contains(target))
-                .and_then(|_| {
-                    let id = loc_id?;
-                    snapshot?
-                        .locs()
-                        .iter()
-                        .find(|loc| loc.tile == target && loc.id == id)
-                })
-                .filter(|loc| distance_from(loc, target).is_some())
-        })
-        .flatten();
-    let approach = loc.and_then(|loc| {
-        LocApproach::from_loc_def(loc.width, loc.length, loc.angle, loc.force_approach)
-    });
-    let arrival_radius = i32::from(radius);
-    let candidate_radius = arrival_radius.clamp(0, 104);
-    let loc_radius_u32 = u32::from(radius);
-    let (min_x, min_z, max_x, max_z) = if exact {
-        (target.x, target.z, target.x, target.z)
+    let live_geometry = if exact {
+        None
     } else {
-        match approach {
-            Some(approach) => (
-                target.x.saturating_sub(1),
-                target.z.saturating_sub(1),
-                target.x.saturating_add(i32::from(approach.width)),
-                target.z.saturating_add(i32::from(approach.length)),
-            ),
-            None => (
-                target.x.saturating_sub(candidate_radius),
-                target.z.saturating_sub(candidate_radius),
-                target.x.saturating_add(candidate_radius),
-                target.z.saturating_add(candidate_radius),
-            ),
-        }
-    };
-    let probe = CollisionArrivalProbe::new(move |tile: api::WorldTile| {
-        let collision = &world.collision;
-        let x = usize::try_from(tile.x.checked_sub(collision.origin.x)?).ok()?;
-        let z = usize::try_from(tile.z.checked_sub(collision.origin.z)?).ok()?;
-        ((0..=3).contains(&tile.level) && x < collision.width && z < collision.height)
-            .then(|| i32::try_from(collision.walkable_word(tile.x, tile.z, tile.level)).ok())?
-    });
-    (min_x..=max_x)
-        .flat_map(move |x| {
-            (min_z..=max_z).map(move |z| api::WorldTile {
-                x,
-                z,
-                level: target.level,
+        loc_id.and_then(|loc_id| {
+            snapshot.and_then(|snapshot| {
+                route_loc_access_geometry(snapshot, target, loc_id, radius_geometry.radius())
             })
         })
-        .filter(move |&tile| {
-            if exact {
-                return true;
-            }
-            if let Some(loc) = loc {
-                let Some(approach) = approach else {
-                    return false;
-                };
-                let Some(scene) = scene.as_ref() else {
-                    return false;
-                };
-                scene.collision_at(tile).is_some_and(|flags| {
-                    flags & client::dash3d::CollisionFlag::SQ_BLOCKED == 0
-                        && approach.can_operate(target, tile, flags)
-                        && distance_from(loc, tile)
-                            .is_some_and(|distance| distance <= loc_radius_u32)
-                })
-            } else {
-                world.collision.standable(tile)
-                    && (arrival == nav::contract::ArrivalKind::Area
-                        || is_arrived(tile, target, arrival_radius, || &probe))
-            }
-        })
+    };
+    let candidate_count = if exact {
+        1
+    } else {
+        live_geometry.map_or(radius_geometry.len(), |(_, window, _)| window.len())
+    };
+    let collision = &world.collision;
+    let probe = CollisionArrivalProbe::new(move |tile: api::WorldTile| {
+        packed_arrival_flags(collision, tile)
+    });
+    (0..candidate_count).filter_map(move |index| {
+        if exact {
+            return Some(target);
+        }
+        if let Some((geometry, window, scene)) = live_geometry {
+            let tile = window.tile_at(index)?;
+            return geometry.candidate_at(tile, scene.collision_at(tile)?);
+        }
+        let tile = radius_geometry.candidate_at(index)?;
+        if !world.collision.standable(tile) {
+            return None;
+        }
+        // Explicit loc routes without a modeled in-scene footprint use the
+        // router's standable-radius estimate, not plain-tile Reach filtering.
+        (loc_id.is_some()
+            || arrival == nav::contract::ArrivalKind::Area
+            || is_arrived(tile, target, i32::from(radius), || &probe))
+        .then_some(tile)
+    })
 }
 
 /// Compiled callers using the existing bool wire (Sherlock's clue machine and
