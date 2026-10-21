@@ -1231,10 +1231,10 @@ impl FollowRun {
                 };
             }
             if step_pending {
-                // The server walked the player onto `at` before the queued
-                // Open fired, and the wall still blocks `at` → `to`: a walk
-                // packet now would cancel that Open. Keep the tick and probe
-                // again next poll.
+                // The player is on `at`, the leaf still reads closed and the
+                // wall still blocks `at` → `to`, however the player got
+                // there. A walk packet now would cancel the queued Open, so
+                // keep the tick and probe again next poll.
                 hop.open_sent_tick = Some(sent_tick);
             }
         }
