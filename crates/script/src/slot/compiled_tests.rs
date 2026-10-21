@@ -870,6 +870,7 @@ impl Script for Relog {
                         z: 1,
                         level: 0,
                     },
+                    candidate_goals: None,
                     loc_id: None,
                     radius: 0,
                     arrival: nav::contract::ArrivalKind::Reach,

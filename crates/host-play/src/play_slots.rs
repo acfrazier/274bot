@@ -1147,6 +1147,8 @@ fn spawn_slot_thread(
                         if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                             row.world = Some(world.number);
                         }
+                        // The next session to log in is bound to this world.
+                        arm.note_configured_world(world.number);
                         host_log!(
                             Category::Login,
                             Level::Info,

@@ -26,7 +26,7 @@ use frontend_core::GameInputEvent;
 use host_play::{SlotArm, SlotStatus};
 
 use super::{frame_pumps, game_window_title, ui_frame, LiveHarness, LiveNull, PanelState};
-use crate::session::{Session, SlotIo};
+use crate::session::{PanelWindow, Session, SlotIo};
 use crate::test_support::TestDir;
 use crate::window::Gpu;
 use frontend_core::{OperatorCommand, Targets};
@@ -156,9 +156,15 @@ impl Rig {
             Pointer::Away => [2.0, 2.0],
             Pointer::Over | Pointer::Click => self.game_centre.unwrap_or([480.0, 450.0]),
         };
+        self.frame_at(spot, pointer == Pointer::Click, pointer)
+    }
+
+    /// One frame with the pointer at `spot` and the left button `down`.
+    /// `pointer` is what the `Pumps` driver stages for the Game image.
+    fn frame_at(&mut self, spot: [f32; 2], down: bool, pointer: Pointer) -> bool {
         let io = self.ctx.io_mut();
         io.add_mouse_pos_event(spot);
-        io.add_mouse_button_event(MouseButton::Left, pointer == Pointer::Click);
+        io.add_mouse_button_event(MouseButton::Left, down);
         self.ctx
             .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let title = game_window_title(self.state.session.focused_name().as_deref());
@@ -252,6 +258,21 @@ fn window_centre(title: &str) -> Option<[f32; 2]> {
         }
         let (pos, size) = ((*window).Pos, (*window).Size);
         Some([pos.x + size.x / 2.0, pos.y + size.y / 2.0])
+    }
+}
+
+/// Whether the docked tab of window `title` is visible in the current
+/// frame: Dear ImGui draws a docked window's contents only on the frames
+/// its tab is visible.
+fn window_tab_visible(title: &str) -> bool {
+    let Ok(name) = CString::new(title) else {
+        return false;
+    };
+    // SAFETY: called with the frame's context bound; the name is a
+    // NUL-terminated copy that outlives the call.
+    unsafe {
+        let window = sys::igFindWindowByName(name.as_ptr());
+        !window.is_null() && (*window).DockTabIsVisible()
     }
 }
 
@@ -631,6 +652,21 @@ fn frames_settle_a_quester_paths_reload(drive: Drive) {
     let Some(mut rig) = Rig::new(drive, session) else {
         return;
     };
+    // The Script prefs window is docked, and Dear ImGui builds its dock
+    // node's host window and tab bar on the rig's second frame. That frame
+    // draws the tab labels only: a docked window's contents draw only while
+    // its tab is visible, so the Quest Paths section is absent from it. A
+    // reload that settled on that frame could not draw its result, although
+    // the panel had still advanced it before the drawing. Wait for the
+    // frame that draws the window before the reload starts: every frame
+    // the reload can settle then draws the section, and the assertion below
+    // holds the product's ordering.
+    if rig.gpu.is_some() {
+        rig.frames_until("the Script prefs window", |rig| {
+            rig.text.contains(frontend_core::QUEST_PATHS_HEADING)
+                && window_tab_visible(PanelWindow::ScriptPrefs.title())
+        });
+    }
     rig.session()
         .core
         .stage_quester_reload(Some(selected_game_data()));
@@ -749,3 +785,472 @@ fn captured_input_is_submitted_once_per_frame(drive: Drive) {
 }
 
 scenario!(captured_input, captured_input_is_submitted_once_per_frame);
+
+/// The rail caps a frame drew (`name: brief`), in their drawn order.
+fn drawn_caps<'a>(text: &str, names: &[&'a str]) -> Vec<&'a str> {
+    let mut caps: Vec<(usize, &str)> = names
+        .iter()
+        .filter_map(|name| text.find(&format!("{name}: ")).map(|at| (at, *name)))
+        .collect();
+    caps.sort_unstable();
+    caps.into_iter().map(|(_, name)| name).collect()
+}
+
+/// One fleet model behind every panel surface: the real frame draws the
+/// MultiBox rail, the Grid and the Fleet window from the same rows, filter
+/// and order. A profile that is not loaded is listed (folded) in the rail,
+/// never as a tile; the Fleet window's filter hides the same tiles in the
+/// rail and the Grid, and a filtered-out mark survives.
+#[test]
+fn the_rail_grid_and_fleet_window_draw_one_filtered_order() {
+    let (mut session, _dir) = session_with_play("fleet-one-order", &["carol", "alice", "bob"]);
+    frontend_core::test_support::session::vault_upsert(
+        &mut session.core,
+        FixtureProfile::new("dave", "pw").uid(9),
+    );
+    session.multibox = true;
+    session.fleet_open = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    let names = ["alice", "bob", "carol", "dave"];
+    // The docked rail lays out over the first frames.
+    rig.frames_until("the rail caps", |rig| {
+        !drawn_caps(&rig.text, &names).is_empty()
+    });
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["alice", "bob", "carol"],
+        "load order, and no tile for the profile that is not loaded:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Not loaded (1)"),
+        "the folded group names the profile count:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("not loaded"),
+        "the Fleet window lists dave as not loaded:\n{}",
+        rig.text
+    );
+
+    let alice = rig.session().core.profile_identity("alice").unwrap();
+    rig.session().fleet_model.set_mark_for_test(alice, true);
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("bob");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the rail shows the Fleet window's filter:\n{}",
+        rig.text
+    );
+    assert!(rig.session().fleet_model.marks().contains(alice));
+    assert_eq!(rig.session().fleet_model.counts().hidden_marked(), 1);
+
+    rig.session().wall.grid = true;
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["bob"],
+        "the Grid shows the same filtered cells:\n{}",
+        rig.text
+    );
+
+    rig.session().fleet_model.staged_filter_mut().clear();
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.session().submit(
+        OperatorCommand::SetFleetSort(frontend_core::FleetOrder::Name),
+        Targets::Application,
+    );
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &names),
+        ["alice", "bob", "carol"],
+        "the Grid follows the Fleet window's sort:\n{}",
+        rig.text
+    );
+}
+
+const REORDER_NAMES: [&str; 3] = ["alice", "bob", "carol"];
+
+fn centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
+    [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
+}
+
+/// The rail cap names of one frame, in drawn order (a `UiFrame` rig with the
+/// pointer away). `rail_cap` records five items per cap: world marker, mark
+/// box, name, fold, remove.
+fn rail_cap_names(rig: &mut Rig) -> Vec<[f32; 4]> {
+    super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    rig.frame(Pointer::Away);
+    super::TEST_RAIL_ITEM_BOUNDS
+        .with_borrow(|bounds| bounds.as_chunks::<5>().0.iter().map(|cap| cap[2]).collect())
+}
+
+fn saved_names(rig: &mut Rig) -> Vec<String> {
+    rig.session().core.profile_order().names().to_vec()
+}
+
+/// A rig on the MultiBox rail over `REORDER_NAMES`, settled until every cap
+/// is drawn; `None` when the host has no GPU.
+fn reorder_rig(label: &str) -> Option<(Rig, TestDir)> {
+    let (mut session, dir) = session_with_play(label, &REORDER_NAMES);
+    session.multibox = true;
+    let mut rig = Rig::new(Drive::UiFrame, session)?;
+    rig.frames_until("the rail caps", |rig| {
+        drawn_caps(&rig.text, &REORDER_NAMES).len() == REORDER_NAMES.len()
+    });
+    rig.frame(Pointer::Away);
+    Some((rig, dir))
+}
+
+/// Press on `from`, move over several frames, release on `to`, settle.
+fn rail_drag(rig: &mut Rig, from: [f32; 2], to: [f32; 2]) {
+    rig.frame_at(from, false, Pointer::Away);
+    rig.frame_at(from, true, Pointer::Away);
+    for step in 1..=4 {
+        let t = step as f32 / 4.0;
+        let at = [
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+        ];
+        rig.frame_at(at, true, Pointer::Away);
+    }
+    rig.frame_at(to, true, Pointer::Away);
+    rig.frame_at(to, false, Pointer::Away);
+    rig.frame_at(to, false, Pointer::Away);
+}
+
+/// A real drag of one rail tile's name onto another changes the saved Load
+/// order, and the next frames draw the rail and the Grid in the new order.
+/// The drag neither focuses the bot nor toggles a mark.
+#[test]
+fn dragging_a_rail_tile_reorders_the_saved_order_in_the_rail_and_the_grid() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag") else {
+        return;
+    };
+    let saved = saved_names(&mut rig);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        saved,
+        "the rail draws the saved order"
+    );
+    let focused = rig.session().focused_name();
+    let caps = rail_cap_names(&mut rig);
+    assert_eq!(caps.len(), 3, "one cap per loaded profile");
+    let before = crate::session::reorders_submitted();
+
+    // The first tile onto the last: it goes after it.
+    rail_drag(&mut rig, centre(caps[0]), centre(caps[2]));
+    assert_eq!(crate::session::reorders_submitted(), before + 1);
+    let mut expected = saved.clone();
+    let first = expected.remove(0);
+    expected.push(first);
+    assert_eq!(saved_names(&mut rig), expected, "the saved order moved");
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        expected,
+        "the rail follows the saved order:\n{}",
+        rig.text
+    );
+    assert_eq!(
+        rig.session().focused_name(),
+        focused,
+        "a drag does not focus the bot"
+    );
+    assert!(
+        rig.session().fleet_model.marks().is_empty(),
+        "a drag does not mark"
+    );
+    assert!(rig.session().error.is_none(), "{:?}", rig.session().error);
+
+    rig.session().wall.grid = true;
+    rig.frame(Pointer::Away);
+    rig.frame(Pointer::Away);
+    assert_eq!(
+        drawn_caps(&rig.text, &REORDER_NAMES),
+        expected,
+        "the Grid follows the saved order:\n{}",
+        rig.text
+    );
+}
+
+/// Dropping a tile on the tile above it puts it before that tile.
+#[test]
+fn dragging_a_rail_tile_up_lands_before_the_target() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag-up") else {
+        return;
+    };
+    let saved = saved_names(&mut rig);
+    let caps = rail_cap_names(&mut rig);
+    rail_drag(&mut rig, centre(caps[2]), centre(caps[0]));
+    let mut expected = saved;
+    let last = expected.pop().unwrap();
+    expected.insert(0, last);
+    assert_eq!(saved_names(&mut rig), expected);
+}
+
+/// Outside Load order a rail drag does nothing: no reorder is submitted and
+/// the saved order stays.
+#[test]
+fn a_rail_drag_does_nothing_while_the_fleet_is_sorted_by_name() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-drag-name") else {
+        return;
+    };
+    rig.session().submit(
+        OperatorCommand::SetFleetSort(frontend_core::FleetOrder::Name),
+        Targets::Application,
+    );
+    rig.frame(Pointer::Away);
+    let saved = saved_names(&mut rig);
+    let caps = rail_cap_names(&mut rig);
+    assert_eq!(caps.len(), 3);
+    let before = crate::session::reorders_submitted();
+    rail_drag(&mut rig, centre(caps[0]), centre(caps[2]));
+    assert_eq!(crate::session::reorders_submitted(), before);
+    assert_eq!(saved_names(&mut rig), saved);
+}
+
+/// A steady frame in Load order, even with the pointer over a tile, submits
+/// nothing and rebuilds no label: the cached cap strings keep their buffers.
+#[test]
+fn a_steady_rail_frame_submits_nothing_and_keeps_its_labels() {
+    let Some((mut rig, _dir)) = reorder_rig("rail-steady") else {
+        return;
+    };
+    let caps = rail_cap_names(&mut rig);
+    let label_buffers = |rig: &Rig| {
+        let mut buffers: Vec<*const u8> = rig
+            .state
+            .fleet_labels
+            .iter()
+            .map(|labels| labels.title.as_ptr())
+            .collect();
+        buffers.push(rig.state.not_loaded_label.as_ptr());
+        buffers
+    };
+    let buffers = label_buffers(&rig);
+    let before = crate::session::reorders_submitted();
+    for _ in 0..6 {
+        rig.frame_at(centre(caps[1]), false, Pointer::Away);
+    }
+    assert_eq!(crate::session::reorders_submitted(), before);
+    assert_eq!(label_buffers(&rig), buffers);
+}
+/// A Grid whose filter leaves no loaded profile frees the tile views its
+/// cells held: the rail, which also disposes them, is not drawn in Grid.
+#[test]
+fn an_empty_filtered_grid_frees_its_tile_views() {
+    let (mut session, _dir) = session_with_play("fleet-empty-grid", &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    rig.frames_until("a Grid cell holds a tile view", |rig| {
+        !rig.state.views.is_empty()
+    });
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("zzz");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert!(
+        rig.text.contains("no wall member matches the Fleet filter"),
+        "the Grid is empty:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.state.views.is_empty(),
+        "the hidden cells' views are freed: {:?}",
+        rig.state.views.keys().collect::<Vec<_>>()
+    );
+}
+
+/// Publish `name` as a connected, in-game slot on public world `world`.
+fn publish_on_world(session: &Session, name: &str, world: u16) {
+    let mut rows = session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap();
+    rows.retain(|row| row.username != name);
+    rows.push(SlotStatus {
+        username: name.into(),
+        world: Some(world),
+        connected: true,
+        ingame: true,
+        scene_state: 2,
+        ..SlotStatus::default()
+    });
+}
+
+/// A rig on the MultiBox rail (or the Grid) over `alice` on world 2 and
+/// `bob` on world 3, settled until both caps are drawn; the server offers
+/// `worlds`. `None` when the host has no GPU.
+fn world_rig(label: &str, grid: bool, worlds: Option<&[u16]>) -> Option<(Rig, TestDir)> {
+    let (mut session, dir) = session_with_play(label, &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = grid;
+    if let Some(worlds) = worlds {
+        session.core.set_public_worlds_for_test(worlds);
+    }
+    publish_on_world(&session, "alice", 2);
+    publish_on_world(&session, "bob", 3);
+    let mut rig = Rig::new(Drive::UiFrame, session)?;
+    rig.frames_until("both caps are drawn", |rig| {
+        drawn_caps(&rig.text, &["alice", "bob"]).len() == 2
+    });
+    rig.frame(Pointer::Away);
+    Some((rig, dir))
+}
+
+/// The world marker of each cap one frame drew, in drawn order (the first
+/// of the five items `rail_cap` records).
+fn world_markers(rig: &mut Rig) -> Vec<[f32; 4]> {
+    super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    rig.frame(Pointer::Away);
+    super::TEST_RAIL_ITEM_BOUNDS
+        .with_borrow(|bounds| bounds.as_chunks::<5>().0.iter().map(|cap| cap[0]).collect())
+}
+
+/// A left click at `at`, then frames that show the result.
+fn click_at(rig: &mut Rig, at: [f32; 2]) {
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at(at, true, Pointer::Away);
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at([2.0, 2.0], false, Pointer::Away);
+}
+
+/// The picker's rows as one frame draws them: each world, whether it is
+/// ticked and its rectangle.
+fn picker_rows(rig: &mut Rig) -> Vec<crate::world_picker::EntryRecord> {
+    rig.frame(Pointer::Away);
+    crate::world_picker::take_entries()
+}
+
+/// A click on a world marker of the rail or of a Grid cell opens the one
+/// world picker for that bot, with its world ticked; picking another world
+/// plans a Switch world for that bot alone, and the Fleet window opens to
+/// show the plan's confirmation (Confirm and Cancel); nothing runs before
+/// Confirm. Picking the world the bot is on submits nothing. The marker was
+/// a plain disc.
+fn a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(grid: bool) {
+    let label = if grid { "grid-world" } else { "rail-world" };
+    let Some((mut rig, _dir)) = world_rig(label, grid, Some(&[1, 2, 3])) else {
+        return;
+    };
+    let markers = world_markers(&mut rig);
+    assert_eq!(markers.len(), 2, "one marker per loaded bot");
+    assert!(!rig.session().fleet_open);
+    let commands = rig.session().core.commands().reports().count();
+
+    // alice's marker (the first cap): her own world 2 is ticked.
+    click_at(&mut rig, centre(markers[0]));
+    assert_eq!(rig.session().world_picker.target(), Some("alice"));
+    let rows = picker_rows(&mut rig);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.world, row.ticked))
+            .collect::<Vec<_>>(),
+        [(1, false), (2, true), (3, false)]
+    );
+    assert!(
+        rig.text.contains("Switch world of alice") && rig.text.contains("World 3"),
+        "the frame drew the picker:\n{}",
+        rig.text
+    );
+    assert!(rig.session().core.fleet_plan().is_none());
+
+    // Her own world: nothing is submitted, the picker closes.
+    let own = rows.iter().find(|row| row.world == 2).unwrap().rect;
+    click_at(&mut rig, centre(own));
+    assert!(!rig.session().world_picker.is_open());
+    assert!(rig.session().core.fleet_plan().is_none());
+    assert!(!rig.session().fleet_open);
+    assert_eq!(rig.session().core.commands().reports().count(), commands);
+
+    // bob's marker ticks his own world 3; picking 1 plans him alone.
+    let markers = world_markers(&mut rig);
+    click_at(&mut rig, centre(markers[1]));
+    assert_eq!(rig.session().world_picker.target(), Some("bob"));
+    let rows = picker_rows(&mut rig);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.world, row.ticked))
+            .collect::<Vec<_>>(),
+        [(1, false), (2, false), (3, true)]
+    );
+    let other = rows.iter().find(|row| row.world == 1).unwrap().rect;
+    click_at(&mut rig, centre(other));
+    let plan = rig.session().core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.action(), frontend_core::FleetAction::SwitchWorld(1));
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["bob"]);
+    let prompt = plan.prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 bot to world 1: bob."),
+        "{prompt}"
+    );
+    assert!(rig.session().fleet_open, "the Fleet window shows the plan");
+    rig.frame(Pointer::Away);
+    assert!(
+        rig.text.contains("Move 1 bot to world 1: bob.") && rig.text.contains("Confirm"),
+        "the frame draws the plan row:\n{}",
+        rig.text
+    );
+    let ran = rig
+        .session()
+        .core
+        .commands()
+        .reports()
+        .any(|report| report.command() == OperatorCommand::SwitchWorld(1));
+    assert!(!ran, "nothing runs before Confirm");
+}
+
+#[test]
+fn a_rail_world_marker_opens_the_picker_and_a_pick_plans_that_bot() {
+    a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(false);
+}
+
+#[test]
+fn a_grid_world_marker_opens_the_picker_and_a_pick_plans_that_bot() {
+    a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(true);
+}
+
+/// On a server with one world the marker is not clickable: a click opens no
+/// picker, plans nothing and opens no window.
+#[test]
+fn a_world_marker_is_not_clickable_on_a_one_world_server() {
+    for grid in [false, true] {
+        let label = if grid {
+            "grid-world-local"
+        } else {
+            "rail-world-local"
+        };
+        let Some((mut rig, _dir)) = world_rig(label, grid, None) else {
+            return;
+        };
+        let markers = world_markers(&mut rig);
+        assert_eq!(markers.len(), 2, "the markers are still drawn");
+        click_at(&mut rig, centre(markers[0]));
+        assert!(!rig.session().world_picker.is_open());
+        assert!(rig.session().core.fleet_plan().is_none());
+        assert!(!rig.session().fleet_open);
+        assert_eq!(rig.session().error, None);
+    }
+}

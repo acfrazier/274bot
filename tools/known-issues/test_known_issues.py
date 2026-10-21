@@ -396,6 +396,174 @@ class PublishedReleaseTest(unittest.TestCase):
         self.assertEqual([row["id"] for row in rows], ["panel-linux-dual-gpu"])
 
 
+LISTED_CHANGELOG = """# Changelog
+
+## Unreleased
+
+## [0.2.4] — 2026-10-20 — Test release
+
+## [0.2.3] — 2026-10-14 — Test release
+
+## [0.2.0] — 2026-10-01 — Test release
+"""
+
+DIAL_ITEM = """\
+[[item]]
+id = "delta-late-find"
+kind = "known-issue"
+area = "Dial"
+text = "The dial can jump past its stop. Turn it back to zero by hand."
+first = "0.2.0"
+listed = "0.2.5"
+target = "none"
+severity = "medium"
+owner = "dial"
+
+"""
+
+LAMP_ITEM = """\
+[[item]]
+id = "epsilon-early"
+kind = "known-issue"
+area = "Lamp"
+text = "The lamp flickers on a cold start. Wait a minute before you switch it on."
+first = "0.2.0"
+target = "none"
+severity = "low"
+owner = "lamp"
+"""
+
+LISTED_LEDGER = DIAL_ITEM + LAMP_ITEM
+
+
+class ListedTest(unittest.TestCase):
+    """``listed`` moves an item into the renders from the release that listed
+    it; ``first`` still gives the true age for ``carried``."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.ledger = self.root / "ledger.toml"
+        self.changelog = self.root / "CHANGELOG.md"
+        self.ledger.write_text(LISTED_LEDGER, encoding="utf-8")
+        self.changelog.write_text(LISTED_CHANGELOG, encoding="utf-8")
+        self.order = known_issues.changelog_releases(self.changelog)
+        self.items = known_issues.load_ledger(self.ledger, self.order)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load_text(self, text):
+        self.ledger.write_text(text, encoding="utf-8")
+        return known_issues.load_ledger(self.ledger, self.order)
+
+    def render(self, release):
+        return known_issues.render_release(self.items, self.order, release)
+
+    def stage(self, release):
+        """Write the render into the matching CHANGELOG section."""
+        body = self.render(release)
+        text = self.changelog.read_text(encoding="utf-8")
+        marker = f"## [{release}] — 2026-10-20 — Test release\n"
+        self.changelog.write_text(
+            text.replace(marker, marker + "\n" + body), encoding="utf-8")
+
+    def cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(TOOLS / "known_issues.py"),
+             "--ledger", str(self.ledger),
+             "--changelog", str(self.changelog), *args],
+            capture_output=True, text=True)
+
+    def test_listed_item_absent_before_listed_release(self):
+        for release in ("0.2.0", "0.2.3", "0.2.4"):
+            self.assertNotIn("Dial", self.render(release), release)
+        self.assertIn("Lamp", self.render("0.2.4"))
+
+    def test_listed_item_renders_from_listed_release(self):
+        flat = " ".join(self.render("0.2.5").split())
+        self.assertIn("- **Dial:** The dial can jump past its stop.", flat)
+        # The problem itself is old, so the carried sentence counts from first.
+        self.assertIn("0.2.0 to 0.2.4 have the same problem.", flat)
+
+    def test_check_passes_for_release_before_listing(self):
+        self.stage("0.2.4")
+        section = known_issues.section_lines(self.changelog, release="0.2.4")
+        self.assertEqual(known_issues.check_release(
+            self.items, self.order, "0.2.4", section), [])
+
+    def test_check_cli_passes_for_release_before_listing(self):
+        self.stage("0.2.4")
+        proc = self.cli("check", "--release", "0.2.4")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_carried_counts_from_first_release(self):
+        rows = {row["id"]: row for row in known_issues.carried_rows(
+            self.items, self.order, "0.2.5")}
+        self.assertEqual(rows["delta-late-find"]["first"], "0.2.0")
+        self.assertEqual(rows["delta-late-find"]["listed"], "0.2.5")
+        self.assertEqual(rows["delta-late-find"]["carried"], 3)
+
+    def test_carried_omits_item_before_listed_release(self):
+        rows = {row["id"]: row for row in known_issues.carried_rows(
+            self.items, self.order, "0.2.4")}
+        self.assertNotIn("delta-late-find", rows)
+        self.assertIn("epsilon-early", rows)
+
+    def test_carried_cli_shows_listed_column(self):
+        proc = self.cli("carried", "--release", "0.2.5")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        lines = proc.stdout.splitlines()
+        self.assertEqual(lines[0].split()[:3], ["id", "first", "listed"])
+        row = next(line.split() for line in lines
+                   if line.startswith("delta-late-find"))
+        self.assertEqual(row[:4], ["delta-late-find", "0.2.0", "0.2.5", "3"])
+
+    def test_applies_window_runs_from_listed_to_fixed(self):
+        items = self.load_text(DIAL_ITEM.replace(
+            'listed = "0.2.5"', 'listed = "0.2.4"\nfixed = "0.2.5"') + LAMP_ITEM)
+        item = {row["id"]: row for row in items}["delta-late-find"]
+        self.assertFalse(known_issues.applies(item, "0.2.3", self.order))
+        self.assertTrue(known_issues.applies(item, "0.2.4", self.order))
+        self.assertFalse(known_issues.applies(item, "0.2.5", self.order))
+
+    def test_default_listed_is_first(self):
+        items = self.load_text(
+            DIAL_ITEM.replace('listed = "0.2.5"\n', "") + LAMP_ITEM)
+        dial = {row["id"]: row for row in items}["delta-late-find"]
+        self.assertEqual(dial["listed"], "0.2.0")
+        self.assertIn("Dial", known_issues.render_release(
+            items, self.order, "0.2.0"))
+
+    def test_invalid_listed_rejected(self):
+        cases = {
+            "unknown release": 'listed = "9.9.9"',
+            "past the next release": 'listed = "0.2.6"',
+            "not a release name": 'listed = "soon"',
+            "empty value": 'listed = ""',
+        }
+        for why, line in cases.items():
+            with self.subTest(why):
+                with self.assertRaises(ValueError):
+                    self.load_text(
+                        DIAL_ITEM.replace('listed = "0.2.5"', line) + LAMP_ITEM)
+
+    def test_listed_out_of_order_rejected(self):
+        cases = {
+            "earlier than first": DIAL_ITEM.replace(
+                'first = "0.2.0"', 'first = "0.2.3"').replace(
+                'listed = "0.2.5"', 'listed = "0.2.0"'),
+            "equal to fixed": DIAL_ITEM.replace(
+                'listed = "0.2.5"', 'listed = "0.2.4"\nfixed = "0.2.4"'),
+            "later than fixed": DIAL_ITEM.replace(
+                'listed = "0.2.5"', 'listed = "0.2.4"\nfixed = "0.2.3"'),
+        }
+        for why, dial in cases.items():
+            with self.subTest(why):
+                with self.assertRaises(ValueError):
+                    self.load_text(dial + LAMP_ITEM)
+
+
 class NextReleaseTest(unittest.TestCase):
     def test_patch_bump(self):
         self.assertEqual(

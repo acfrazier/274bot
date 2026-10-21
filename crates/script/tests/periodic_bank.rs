@@ -127,6 +127,7 @@ fn arrive_walk(slot: &mut BankSlot, action: &HostAction, tick: u64) {
     slot.slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id: action.request_id.get(),
             evidence: api::quest_progress::EvidenceStamp {
                 run: authority.run(),

@@ -1322,7 +1322,7 @@ pub(crate) fn alcher_scenario() -> Scenario {
 /// Start off-scene in the dungeon that makes air-nearest choose Edgeville.
 /// The native walk-cost winner for this members, teleport-off route is
 /// Falador West. On the reference pack (`bake-r2-a`) the cheapest route to
-/// Falador East (74.5 ticks, south through the mine to the Falador stairs)
+/// Falador East (75.0 ticks, south through the mine to the Falador stairs)
 /// crosses the King Scorpion zones (L32, aggressive up to combat 64; the
 /// Magic-55 account is combat 29), so the default Danger routing plans the
 /// safe routes through the Ice Mountain ladder: Falador West (2945,3368)

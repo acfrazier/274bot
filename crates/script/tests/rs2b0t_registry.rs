@@ -436,7 +436,7 @@ fn targeted_registry_parser_matches_full_parser_for_schema_fixture() {
 }
 
 #[test]
-#[ignore = "manual characterization: run against frozen upstream 2de6bb2397ceb9ffd05f2354f67dde328e324531 with RS2B0T set"]
+#[ignore = "manual characterization: run against frozen upstream 90a69240a4617155f280f098958c3cd7f044f234 with RS2B0T set"]
 fn targeted_registry_parser_matches_every_frozen_real_catalogue_card() {
     let root = std::env::var_os("RS2B0T")
         .map(PathBuf::from)

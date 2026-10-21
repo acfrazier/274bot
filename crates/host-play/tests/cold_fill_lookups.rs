@@ -93,11 +93,15 @@ pub unsafe extern "C" fn getaddrinfo(
 
 const CERT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.cert.pem"
+    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.pem"
 );
 const KEY: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.key.pem"
+    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.key"
+);
+const CA: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/ca.pem"
 );
 
 /// Trust the test certificate. Every test calls this first, so the
@@ -105,7 +109,7 @@ const KEY: &str = concat!(
 /// a name.
 fn trust_test_certificate() {
     static TRUST: Once = Once::new();
-    TRUST.call_once(|| std::env::set_var("SSL_CERT_FILE", CERT));
+    TRUST.call_once(|| std::env::set_var("SSL_CERT_FILE", CA));
 }
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);

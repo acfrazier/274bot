@@ -2,7 +2,7 @@
 // on the host handle. Unused widgets throw `not impl`. Chrome selection,
 // rowsLeft budget and statGrid column policy live in the Rust helper: body
 // rows spend the dock budget in one batched crossing instead of one per row.
-import { host, notImpl } from '../shim/_kernel.js';
+import { HOST_CONTROLS, host, notImpl } from '../shim/_kernel.js';
 
 function chrome(op, a, b, c, d) {
     const fn = globalThis.__rs2b0t_paint_chrome;
@@ -159,25 +159,34 @@ export const Paint = {
                 if (!items || items.length === 0) {
                     return null;
                 }
-                const advertised = [];
-                for (const item of items) {
-                    if (item == null) continue;
-                    advertised.push({
-                        id: String(item.id),
-                        label: String(item.label),
-                    });
+                const first = rec.buttons.length;
+                if (items === HOST_CONTROLS) {
+                    // Frozen shim-owned descriptors with string fields: the
+                    // frame holds them as they are.
+                    rec.buttons.push(items[0], items[1]);
+                } else {
+                    // A script's descriptor is copied: the host reads string
+                    // fields after the tick, and the script owns the object.
+                    for (const item of items) {
+                        if (item == null) continue;
+                        rec.buttons.push({
+                            id: String(item.id),
+                            label: String(item.label),
+                        });
+                    }
                 }
-                if (advertised.length === 0) {
+                if (rec.buttons.length === first) {
                     return null;
-                }
-                for (const btn of advertised) {
-                    rec.buttons.push(btn);
                 }
                 chrome('buttons');
                 const click = host().paintClick;
-                if (typeof click === 'string' && advertised.some((b) => b.id === click)) {
-                    host().paintClick = null;
-                    return click;
+                if (typeof click === 'string') {
+                    for (let i = first; i < rec.buttons.length; i++) {
+                        if (rec.buttons[i].id === click) {
+                            host().paintClick = null;
+                            return click;
+                        }
+                    }
                 }
                 return null;
             },

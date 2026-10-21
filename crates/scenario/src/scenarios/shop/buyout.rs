@@ -210,22 +210,25 @@ const SHOP_BUYOUT_FERNAHEI_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_FERNAHEI_BUDGET_GP: f64 = 1500.0;
 /// Betty's frozen Falador West preset requires four travel legs before a
 /// resumed purchase: shop→bank→shop for the initial withdrawal, then
-/// shop→bank→shop for deposit and return. The 150-dirty first-purchase
+/// shop→bank→shop for deposit and return. The old 150-dirty first-purchase
 /// watch expired while the player was still progressing back with 500 coins.
 ///
-/// These are bounded trial estimates, not measured completion times.
-/// Dirty-snapshot increments are distinct from engine ticks and wall time.
-/// The failed trace had 102 engine ticks through initial withdrawal and
-/// 28 on the return. Its remaining 108-tile Chebyshev distance requires at
-/// least 54 ticks at two tiles/tick; later energy depletion and detours
-/// can increase that. It does not establish a 136-tick return lower bound.
+/// These are bounded trial estimates, not measured completion times. The old
+/// dirty-snapshot counts are distinct from server game ticks and wall time.
+/// The failed trace had 102 engine ticks through initial withdrawal and 28
+/// on the return. Its remaining 108-tile Chebyshev distance requires at least
+/// 54 game ticks at two tiles per game tick on a straight leg; later energy
+/// depletion and detours add time. It does not establish a 136-game-tick
+/// return lower bound.
 ///
-/// First purchase gets 320 dirties; later deposit/return get 280 each to
-/// allow for depleted energy. At the observed roughly 1.67 dirties/second,
-/// a 320-dirty first purchase is about 190s. Assuming later legs complete
-/// near 120 dirties each, plus setup/actions, gives roughly 365s; 420s is
-/// the wall trial bound. Those future durations remain unmeasured.
-/// Empty/close/further-purchase watches, other presets, runtime timeouts,
+/// Prior numeric budgets were 320 dirties for the first purchase and 280 for
+/// later deposit/return. Current waits keep those numeric caps as game ticks:
+/// 192s for 320, 168s for 280 at 600ms per game tick. The old 1.67 dirty/s
+/// trace made the first-purchase 320-dirty value about 190s. Assuming later
+/// legs finish near 120 old dirty increments each, plus setup/actions, gave
+/// a ~365s trial. The 420s deadline is a separate wall cap and may pre-empt
+/// the combined per-step game-tick limits. No live evidence supports raising
+/// it. Empty/close/further-purchase watches, other presets, runtime timeouts,
 /// and global guards retain their existing limits. Falador West is preserved.
 pub(crate) const SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS: u32 = 320;
 pub(crate) const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
@@ -236,8 +239,8 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// shop buyouts (initial shop→bank→shop withdrawal, post-buy shop→bank deposit,
 /// bank→shop return, resumed buy).
 ///
-/// **Units:** per-arm `budget_ticks` are runner dirty-snapshot increments
-/// (`SCRIPT_GOLD_WATCH_TICKS` docs); whole-cycle `deadline` is wall seconds.
+/// **Units:** per-arm `budget_ticks` are observed game ticks (one per
+/// `PLAYER_INFO`); whole-cycle `deadline` remains wall seconds.
 ///
 /// **Route (geometry, not measured completion):** Chebyshev Gerrant stand
 /// 3013,3224 ↔ Draynor approach 3092,3243 is 79 tiles → 40 engine ticks at
@@ -250,12 +253,12 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// - Deposit watch: shop→bank (leg 3) until product in bank — one travel leg.
 /// - Return watch: bank→shop keeper radius (leg 4) — one travel leg, often
 ///   depleted energy (same geometry as leg 2/3).
-/// - Empty/close/further-purchase arms stay ordinary 150-dirty gold watches.
+/// - Empty/close/further-purchase arms stay ordinary 150-game-tick watches.
 ///
 /// **Measured live7zpi0g_0 (180s wall, host 0a80e7535):** first purchase
 /// 160 feathers / 488gp, deposit, empty, close, 488gp withdraw under 150-dirty
 /// deposit arm; whole scenario deadline 180s exceeded on step 21 return at
-/// 3075,3264 run energy 6 (315 runner increments; capture
+/// 3075,3264 run energy 6 (315 old dirty-counter runner increments; capture
 /// `2026-09-18T11-53-30_shop_buyout_gerrant`). Establishes mid-return fail and
 /// deposit pass, not a first-purchase upper bound under hitch variance.
 ///
@@ -266,22 +269,23 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// Proves 150 insufficient for the two-leg + withdraw + buy arm under scene
 /// reload/hitch variance — not a completed first-purchase duration.
 ///
-/// **First-purchase dirty 240:** observed arm exhausted 150 dirty while the
-/// whole runner reported 168 increments (including setup). The additional
-/// 90 arm increments are a bounded trial margin for remaining Trade/buy work
-/// and route variation; they are not a measured UI or hitch duration.
+/// **Current first-purchase game-tick cap: 240.** The earlier run failed with
+/// a 150-dirty arm count and 168 old runner increments including setup. Its
+/// extra 90 dirty counts were a bounded trial margin, not a measured duration.
+/// The current 240-game-tick limit allows 144s at 600ms per game tick.
 ///
-/// **Deposit dirty 150:** live7zpi0g measured pass for leg 3; one depleted
-/// leg is shorter than the first-purchase composite — no widening without a
-/// deposit-arm fail.
+/// **Deposit game-tick cap: 150.** The old live7zpi0g run passed leg 3 with
+/// its 150-dirty arm. Keep the unchanged numeric game-tick cap pending a
+/// deposit-arm failure.
 ///
-/// **Return dirty 240:** bounded trial above depleted leg-4 lower bound plus
-/// detour margin from live7zpi0g mid-return geometry (~62 Chebyshev tiles
-/// remaining at 180s wall); not Betty's 280.
+/// **Return game-tick cap: 240.** It preserves a bounded margin above
+/// depleted leg-4 geometry (~62 Chebyshev tiles remained at the 180s wall);
+/// it is not a measured completion time and is not Betty's 280-game-tick cap.
 ///
-/// **Whole-cycle wall 390s:** live7zpi0g 180s through mid-return plus ~210s
-/// trial remainder for depleted return and resumed buy; retained unless LIVE
-/// shows deadline fail with widened first-purchase dirty budget.
+/// **Whole-cycle wall 390s:** live7zpi0g used 180s through mid-return; the
+/// remaining ~210s is a trial margin for depleted return and resumed buy.
+/// The wall remains separate and can pre-empt per-step game-tick caps; keep it
+/// unless LIVE evidence shows the expected terminal predicate needs more time.
 pub(crate) const SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS: u32 = 240;
 pub(crate) const SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS: u32 = 240;
 pub(crate) const SHOP_BUYOUT_GERRANT_DEADLINE: Duration = Duration::from_secs(390);
@@ -318,12 +322,12 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 
 /// Bob Lumbridge ↔ Draynor: Chebyshev stand 3231,3203 ↔ Draynor approach
 /// 3092,3243 is 139 tiles (estimate, not measured) — wider than Gerrant's 79.
-/// Reuses Betty's four-leg trial dirty budgets and 420s wall until LIVE
+/// Reuses Betty's four-leg trial game-tick budgets and 420s wall until LIVE
 /// measures Bob-specific variance.
 const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 
 /// Nurmof Dwarven Mine ↔ Falador East travel budgets. Betty's 320/280/280
-/// dirty budgets cannot cover this route: each leg also crosses the mine
+/// game-tick caps cannot cover this route: each leg also crosses the mine
 /// ladder, and run energy ends long before the first purchase completes.
 ///
 /// **Measured sm25wxbm3d_0 (Engine A, host e9b575be4, BOT_DEBUG nav trace):**
@@ -1294,9 +1298,9 @@ fn shop_buyout_with_bank(
     steps.push(start_catalog_step());
     // Contract: unseeded product → fresh bank product → empty pack →
     // BankClosed → return named shop → new product. Coins secondary only.
-    // Travel-leg dirty budgets come from `timing` (Betty long West route);
-    // empty/close/further stay ordinary gold watches. See
-    // SHOP_BUYOUT_BETTY_* constant docs (dirty increments, not 150×600ms).
+    // Travel-leg game-tick budgets come from `timing` (Betty long West route);
+    // empty/close/further stay ordinary gold game-tick watches. See
+    // SHOP_BUYOUT_BETTY_* constant docs for the old dirty-counter estimates.
     for (step_name, arm) in [
         (
             "watch unseeded purchased product in pack after Start",

@@ -79,16 +79,16 @@ impl CoreWatch {
                                     observation,
                                     preparation,
                                 )),
+                                start_preparation,
                             };
                             Ok(())
                         }
                         Err(error) => {
-                            *state = CoreWatchState::Failed {
+                            *state = CoreWatchState::Ready {
                                 case,
                                 account: expected,
-                                error: error.clone(),
                                 latest: Some(observation),
-                                witness: None,
+                                start_preparation,
                             };
                             Err(error)
                         }
@@ -127,6 +127,7 @@ impl CoreWatch {
             CoreWatchState::Running {
                 account: expected,
                 witness,
+                ..
             } if expected == account => CoreWatchState::Failed {
                 case: witness.case,
                 account: expected,
@@ -134,6 +135,28 @@ impl CoreWatch {
                 latest: None,
                 witness: Some(witness),
             },
+            other => other,
+        };
+    }
+
+    /// Restore a core Start baseline after a retryable host Start refusal.
+    pub fn retry_start(&self, account: &str) {
+        let mut state = self.inner.lock().unwrap();
+        let current = std::mem::take(&mut *state);
+        *state = match current {
+            CoreWatchState::Running {
+                account: expected,
+                witness,
+                start_preparation,
+            } if expected == account => {
+                let CoreWitness { case, latest, .. } = *witness;
+                CoreWatchState::Ready {
+                    case,
+                    account: expected,
+                    latest: Some(latest),
+                    start_preparation,
+                }
+            }
             other => other,
         };
     }
@@ -182,6 +205,7 @@ impl CoreWatch {
             CoreWatchState::Running {
                 account: expected,
                 mut witness,
+                start_preparation,
             } if expected == account => {
                 if session_boundary {
                     CoreWatchState::Failed {
@@ -205,6 +229,7 @@ impl CoreWatch {
                         CoreWatchState::Running {
                             account: expected,
                             witness,
+                            start_preparation,
                         }
                     }
                 }
@@ -415,7 +440,10 @@ impl CoreWatch {
         );
         if should_cache {
             let current = std::mem::take(&mut *state);
-            if let CoreWatchState::Running { account, witness } = current {
+            if let CoreWatchState::Running {
+                account, witness, ..
+            } = current
+            {
                 let evidence = Arc::new(
                     witness
                         .qualify()
@@ -445,7 +473,11 @@ impl CoreWatch {
         let mut state = self.inner.lock().unwrap();
         let current = std::mem::take(&mut *state);
         match current {
-            CoreWatchState::Running { account, witness } => match witness.qualify() {
+            CoreWatchState::Running {
+                account,
+                witness,
+                start_preparation,
+            } => match witness.qualify() {
                 Ok(value) => {
                     let evidence = Arc::new(value);
                     *state = CoreWatchState::Qualified {
@@ -455,7 +487,11 @@ impl CoreWatch {
                     Ok(evidence)
                 }
                 Err(error) => {
-                    *state = CoreWatchState::Running { account, witness };
+                    *state = CoreWatchState::Running {
+                        account,
+                        witness,
+                        start_preparation,
+                    };
                     Err(error)
                 }
             },
@@ -499,7 +535,9 @@ impl CoreWatch {
                 "latest": latest,
                 "start_preparation": start_preparation,
             }),
-            CoreWatchState::Running { account, witness } => json!({
+            CoreWatchState::Running {
+                account, witness, ..
+            } => json!({
                 "phase": "running",
                 "account": account,
                 "witness": witness,
@@ -569,6 +607,7 @@ enum CoreWatchState {
     Running {
         account: String,
         witness: Box<CoreWitness>,
+        start_preparation: HerbCleanerStartPreparation,
     },
     /// Immutable bounded receipt cached at the first terminal qualification.
     Qualified {

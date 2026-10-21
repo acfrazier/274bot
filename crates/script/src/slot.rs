@@ -362,6 +362,8 @@ pub enum StartLoadError {
     /// The caller must retain this Start until an operator hold is resolved.
     Waiting(String),
     Refused(String),
+    /// No saved loadouts exist for a required saved selection.
+    NoLoadouts(String),
     RuntimeLoad(String),
 }
 
@@ -369,9 +371,10 @@ pub enum StartLoadError {
 impl std::fmt::Display for StartLoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Waiting(message) | Self::Refused(message) | Self::RuntimeLoad(message) => {
-                f.write_str(message)
-            }
+            Self::Waiting(message)
+            | Self::Refused(message)
+            | Self::NoLoadouts(message)
+            | Self::RuntimeLoad(message) => f.write_str(message),
         }
     }
 }
@@ -2242,7 +2245,12 @@ impl SlotScript {
             let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
             crate::loadouts_store::resolve_script_loadout_setting(loadouts, wanted)
                 .map(|_| ())
-                .map_err(|error| StartLoadError::Refused(error.to_string()))?;
+                .map_err(|error| match error {
+                    error @ crate::loadouts_store::LoadoutResolutionError::NoLoadouts { .. } => {
+                        StartLoadError::NoLoadouts(error.to_string())
+                    }
+                    other => StartLoadError::Refused(other.to_string()),
+                })?;
         }
         self.start_load_with_loadouts_and_game_data_typed(
             source,
@@ -2511,6 +2519,7 @@ impl SlotScript {
         }) {
             let request_id = action.request_id.get();
             ledger.walk = Some(crate::native::WalkReceipt {
+                goal: None,
                 request_id,
                 evidence: api::quest_progress::EvidenceStamp {
                     run: action.run(),

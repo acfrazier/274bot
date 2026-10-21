@@ -100,6 +100,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::GroundTake(api::ground_take::GroundRefusal::AlreadyOwned { id }) => {
             format!("ground-take-already-owned:{id}").into()
         }
+        ActionError::WalkGoals(reason) => format!("walk-goals:{reason:?}").into(),
     }
 }
 

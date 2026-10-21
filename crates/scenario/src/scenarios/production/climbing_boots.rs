@@ -40,34 +40,31 @@ const CLIMBING_BOOTS_RUNES: &[(&str, i32)] = &[("lawrune", 1), ("airrune", 3), (
 /// The rest-of-trip arm after the 2-pair spend watch: the walk cell's
 /// return to Falador West and the teleport cell's Falador landing.
 ///
-/// **Units:** runner dirty-snapshot increments (`budget_ticks`), not engine
-/// ticks or wall seconds. `readyToBuy` fixes one trip at 28 (walk) / 25
-/// (teleport) pairs, and the frozen card returns only once `tripComplete`
-/// (`ClimbingBoots.ts` loop: `returnToBank` runs only when the pack is
-/// complete). Each pair is seven `death_sherpa.rs2` pause pages (two
-/// `~chatplayer`, two `~chatnpc`, the `~objbox`, `~p_choice2`, the
-/// `~p_choice5` reprompt), and frozen `driveShop` waits for each page to
-/// change, then `delayTicks(1)` per continue and `delayTicks(2)` per choice:
-/// at least 16 engine ticks (9.6s) a pair. Live 290253afd measured ~11s a
-/// pair at ~2.4 dirty increments/s, so the ordinary 150 (~62s) covered
-/// seven pairs of the 28.
-/// Walk: 26 pairs (~290s) plus the ~260-tile hut → Falador West walk
-/// (≤156s at walking pace) ≈ 450s ≈ 1080 dirties → **1200**.
-/// Teleport: 23 pairs (~255s) plus the cast ≈ 615 dirties → **750**. In the
-/// teleport cell that arm is the cast's Magic XP (see the watch list); the
-/// landing follows it within a few ticks.
+/// **Budget unit:** runner waits count observed game ticks (one per
+/// `PLAYER_INFO`), not dirty snapshots. The estimates below retain their old
+/// dirty-snapshot provenance.
+/// `readyToBuy` fixes one trip at 28 (walk) / 25 (teleport) pairs; the frozen
+/// card returns only once `tripComplete` (`ClimbingBoots.ts`:
+/// `returnToBank` runs only when the pack is complete). Each pair is seven
+/// `death_sherpa.rs2` pause pages (two `~chatplayer`, two `~chatnpc`, the
+/// `~objbox`, `~p_choice2`, the `~p_choice5` reprompt). `driveShop` waits for
+/// each page to change, then `delayTicks(1)` per continue and `delayTicks(2)`
+/// per choice: at least 16 server game ticks (9.6s) a pair. Live 290253afd
+/// measured ~11s a pair; at the old ~2.4 dirty snapshots/s, 150 old dirties
+/// (~62s) covered seven pairs of the 28.
 pub(crate) const CLIMBING_BOOTS_WALK_RETURN_WATCH_TICKS: u32 = 1200;
 pub(crate) const CLIMBING_BOOTS_TELE_CAST_WATCH_TICKS: u32 = 750;
 /// The further-pair arm (`has_item_id(3105)>=2` after the restock left zero
-/// carried): the walk back to the hut (≤156s), the 3745 entry, the talk and
-/// two pairs (~30s) ≈ 190s ≈ 460 dirties → **600**.
+/// carried) was estimated at ~190s, about 460 old dirty snapshots; its current
+/// cap is 600 observed game ticks (360s).
 pub(crate) const CLIMBING_BOOTS_FURTHER_WATCH_TICKS: u32 = 600;
-/// Whole-scenario wall: seed (~50s) + first pairs (~30s) + the arms above at
-/// their wall estimates + bank open/deposit/restock (~25s). Walk ≈ 745s
-/// with ~20% margin. Teleport measured live at bce85f2df: Start 15s,
-/// 25th pair 286s, landing 292s, restock closed 306s, hut re-entered 404s,
-/// further pair (last watch) 427s → 720s keeps ~65% margin. The Magic XP
-/// cast arm and terminal proof share the baseline captured before Start.
+/// Whole-scenario walls remain 900s (walk) and 720s (teleport). The walk
+/// estimate was ~745s with ~20% margin. The teleport cell measured live at
+/// bce85f2df: Start 15s, 25th pair 286s, landing 292s, restock closed 306s,
+/// hut re-entered 404s, further pair (last watch) 427s; the 720s wall retains
+/// about 65% margin. The Magic XP cast arm and terminal proof share the
+/// baseline captured before Start. Whole-run walls can pre-empt multiple
+/// per-step maxima; do not raise them without live deadline-failure evidence.
 pub(crate) const CLIMBING_BOOTS_WALK_DEADLINE: Duration = Duration::from_secs(900);
 pub(crate) const CLIMBING_BOOTS_TELE_DEADLINE: Duration = Duration::from_secs(720);
 /// The Water rune id for the bank-seed acknowledgement (Law 563 and Air 556

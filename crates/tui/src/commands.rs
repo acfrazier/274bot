@@ -6,9 +6,7 @@
 //! focus, so no letter leaks into another pane or a text field.
 
 use frontend_core::scripts::ScriptRunState;
-use frontend_core::{
-    combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock,
-};
+use frontend_core::{FleetAction, MarkPredicate};
 
 use crate::app::{TuiApp, WalkSendMode};
 use crate::layout::Screen;
@@ -28,11 +26,31 @@ pub enum Command {
     ToggleMouse,
     ShowMessage,
     FilterFleet,
+    /// Choose the card the fleet actions use (opens the card picker).
+    PickFleetCard,
+    /// Choose the world the fleet row under the cursor moves to (opens the
+    /// world picker over that profile).
+    PickWorld,
+    /// Choose the world the marked rows move to (opens the same picker, no
+    /// profile staged; with nothing marked, the loaded shown rows).
+    PickWorldMarked,
+    /// Mark every shown row (`MarkFleet(Shown)`).
     MarkAllShown,
+    /// Unmark every shown row; hidden marks stay (`MarkFleet(UnmarkShown)`).
+    UnmarkShown,
+    /// Flip the mark of every shown row (`MarkFleet(InvertShown)`).
+    InvertShown,
+    /// Mark the shown rows in one status (`MarkFleet(Where(_))`).
+    MarkWhere(MarkPredicate),
     ClearMarks,
-    LoadLoginAll,
+    MoveProfileUp,
+    MoveProfileDown,
+    MoveMarkedToTop,
     ImportProfiles,
-    LogoutAll,
+    /// A fleet action over the marked profiles, or the loaded shown rows
+    /// with no marks: core plans it (`PlanFleetAction`), the confirm
+    /// overlay shows its prompt when it asks first.
+    Fleet(FleetAction),
     Login,
     Logout,
     Remove,
@@ -48,11 +66,6 @@ pub enum Command {
     ScriptParams,
     ScriptReload,
     ScriptReloadCancel,
-    ScriptStartAll,
-    ScriptStopAll,
-    ScriptAssignMarked,
-    ScriptRestartMarked,
-    ScriptApplyMarked,
     ImportCatalog,
     ToggleGameChat,
     MapSearch,
@@ -91,18 +104,16 @@ impl Group {
     }
 }
 
-/// `1 member` / `N members`.
-pub fn members_text(n: usize) -> String {
-    if n == 1 {
-        "1 member".into()
-    } else {
-        format!("{n} members")
-    }
-}
-
-/// Fleet pane shortcuts (fleet-wide commands; both confirm their scope).
-pub const FLEET_KEYS: &[(char, Command)] =
-    &[('m', Command::LoadLoginAll), ('U', Command::LogoutAll)];
+/// Fleet pane shortcuts: the card picker, the shown-row marks and the
+/// fleet actions that live on the pane.
+pub const FLEET_KEYS: &[(char, Command)] = &[
+    ('c', Command::PickFleetCard),
+    ('a', Command::MarkAllShown),
+    ('A', Command::UnmarkShown),
+    ('m', Command::Fleet(FleetAction::Login)),
+    ('U', Command::Fleet(FleetAction::Logout)),
+    ('W', Command::PickWorld),
+];
 
 /// Overview shortcuts: they act on the selected bot, shown in the pane.
 pub const OVERVIEW_KEYS: &[(char, Command)] = &[
@@ -138,8 +149,8 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Params" => Command::ScriptParams,
         "Reload" | "Confirm" => Command::ScriptReload,
         "Cancel" => Command::ScriptReloadCancel,
-        "Start all" => Command::ScriptStartAll,
-        "Stop all" => Command::ScriptStopAll,
+        "Start fleet" => Command::Fleet(FleetAction::Start),
+        "Stop fleet" => Command::Fleet(FleetAction::Stop),
         _ => return None,
     })
 }
@@ -189,10 +200,24 @@ impl Command {
         Command::SelectNextBot,
         Command::SelectPrevBot,
         Command::FilterFleet,
+        Command::PickFleetCard,
         Command::MarkAllShown,
+        Command::UnmarkShown,
+        Command::InvertShown,
+        Command::MarkWhere(MarkPredicate::Ready),
+        Command::MarkWhere(MarkPredicate::Idle),
+        Command::MarkWhere(MarkPredicate::Running),
+        Command::MarkWhere(MarkPredicate::LoggedOut),
+        Command::MarkWhere(MarkPredicate::LoginError),
+        Command::MarkWhere(MarkPredicate::NotLoaded),
         Command::ClearMarks,
-        Command::LoadLoginAll,
-        Command::LogoutAll,
+        Command::MoveProfileUp,
+        Command::MoveProfileDown,
+        Command::MoveMarkedToTop,
+        Command::Fleet(FleetAction::Login),
+        Command::Fleet(FleetAction::Logout),
+        Command::PickWorld,
+        Command::PickWorldMarked,
         Command::ImportProfiles,
         Command::Login,
         Command::Logout,
@@ -209,11 +234,11 @@ impl Command {
         Command::ScriptParams,
         Command::ScriptReload,
         Command::ScriptReloadCancel,
-        Command::ScriptStartAll,
-        Command::ScriptStopAll,
-        Command::ScriptAssignMarked,
-        Command::ScriptRestartMarked,
-        Command::ScriptApplyMarked,
+        Command::Fleet(FleetAction::Start),
+        Command::Fleet(FleetAction::Stop),
+        Command::Fleet(FleetAction::Assign),
+        Command::Fleet(FleetAction::AssignRestart),
+        Command::Fleet(FleetAction::CopySettings),
         Command::ImportCatalog,
         Command::ToggleGameChat,
         Command::MapSearch,
@@ -243,10 +268,20 @@ impl Command {
             Command::SelectNextBot
             | Command::SelectPrevBot
             | Command::FilterFleet
+            | Command::PickFleetCard
+            | Command::PickWorld
+            | Command::PickWorldMarked
             | Command::MarkAllShown
+            | Command::UnmarkShown
+            | Command::InvertShown
+            | Command::MarkWhere(_)
             | Command::ClearMarks
-            | Command::LoadLoginAll
-            | Command::LogoutAll
+            | Command::MoveProfileUp
+            | Command::MoveProfileDown
+            | Command::MoveMarkedToTop
+            | Command::Fleet(
+                FleetAction::Login | FleetAction::Logout | FleetAction::SwitchWorld(_),
+            )
             | Command::ImportProfiles => Group::Fleet,
             Command::Login
             | Command::Logout
@@ -263,11 +298,13 @@ impl Command {
             | Command::ScriptParams
             | Command::ScriptReload
             | Command::ScriptReloadCancel
-            | Command::ScriptStartAll
-            | Command::ScriptStopAll
-            | Command::ScriptAssignMarked
-            | Command::ScriptRestartMarked
-            | Command::ScriptApplyMarked
+            | Command::Fleet(
+                FleetAction::Start
+                | FleetAction::Stop
+                | FleetAction::Assign
+                | FleetAction::AssignRestart
+                | FleetAction::CopySettings,
+            )
             | Command::ImportCatalog => Group::Script,
             Command::ToggleGameChat => Group::Chat,
             Command::MapSearch
@@ -295,10 +332,25 @@ impl Command {
             Command::ToggleMouse => "Mouse capture on",
             Command::ShowMessage => "Show full message",
             Command::FilterFleet => "Filter fleet",
-            Command::MarkAllShown => "Select all shown rows",
+            Command::PickFleetCard => "Pick fleet card…",
+            Command::PickWorld => "Switch world of cursor row…",
+            Command::PickWorldMarked => "Switch world of marked…",
+            Command::MarkAllShown => "Mark shown rows",
+            Command::UnmarkShown => "Unmark shown rows",
+            Command::InvertShown => "Invert shown",
+            Command::MarkWhere(predicate) => mark_where_label(predicate),
             Command::ClearMarks => "Clear row selection",
-            Command::LoadLoginAll => "Load + log in all…",
-            Command::LogoutAll => "Log out all…",
+            Command::MoveProfileUp => "Move profile up",
+            Command::MoveProfileDown => "Move profile down",
+            Command::MoveMarkedToTop => "Move marked to top",
+            Command::Fleet(FleetAction::Start) => "Start fleet",
+            Command::Fleet(FleetAction::Stop) => "Stop fleet",
+            Command::Fleet(FleetAction::Assign) => "Assign",
+            Command::Fleet(FleetAction::AssignRestart) => "Assign & restart",
+            Command::Fleet(FleetAction::Login) => "Load + log in fleet",
+            Command::Fleet(FleetAction::Logout) => "Log out fleet",
+            Command::Fleet(FleetAction::CopySettings) => "Copy settings",
+            Command::Fleet(FleetAction::SwitchWorld(_)) => "Switch world",
             Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
@@ -317,11 +369,6 @@ impl Command {
             Command::ScriptReload if app.reload_confirm => "Confirm reload",
             Command::ScriptReload => "Reload script",
             Command::ScriptReloadCancel => "Cancel reload",
-            Command::ScriptStartAll => "Start all…",
-            Command::ScriptStopAll => "Stop all…",
-            Command::ScriptAssignMarked => "Assign script to marked…",
-            Command::ScriptRestartMarked => "Assign & restart marked…",
-            Command::ScriptApplyMarked => "Apply focused bot's settings to marked…",
             Command::ImportCatalog => "Import rs2b0t catalog",
             Command::ToggleGameChat => "Toggle game chat / script paint",
             Command::MapSearch => "Map: search",
@@ -338,8 +385,8 @@ impl Command {
     /// Short button label (the visible `[Label k]` buttons).
     pub fn button(self, app: &TuiApp) -> &'static str {
         match self {
-            Command::LoadLoginAll => "Load+login all",
-            Command::LogoutAll => "Logout all",
+            Command::Fleet(FleetAction::Login) => "Load+login",
+            Command::Fleet(FleetAction::Logout) => "Logout",
             Command::Remove => "Remove",
             Command::ManualWalk => "Manual walk",
             Command::DismissNotice => "Got it",
@@ -363,81 +410,72 @@ impl Command {
             Command::Show(screen) => screen.key(),
             Command::FocusNext => "Tab",
             Command::FocusPrev => "S-Tab",
+            Command::MoveProfileUp => "Alt-Up",
+            Command::MoveProfileDown => "Alt-Down",
             Command::FilterFleet => "/",
             _ => return None,
         })
     }
 
-    /// Fleet-wide commands: they confirm a frozen scope before running.
-    pub fn is_bulk(self) -> bool {
-        matches!(
-            self,
-            Command::LoadLoginAll
-                | Command::LogoutAll
-                | Command::ScriptStartAll
-                | Command::ScriptStopAll
-                | Command::ScriptAssignMarked
-                | Command::ScriptRestartMarked
-        )
-    }
-
-    /// Who the command acts on, spelled out for the palette.
+    /// Who the command acts on, spelled out for the palette. The counts
+    /// are the core fleet model's; the targets themselves are core's plan.
     pub fn scope(self, app: &TuiApp) -> String {
         let bot = || match app.focused_name() {
             Some(name) => format!("BOT {name}"),
             None => "no bot selected".to_string(),
         };
-        let selected_scope = || match combined_bulk_scope(&app.table.selection) {
-            BulkScope::All => format!("all {}", members_text(app.names.len())),
-            BulkScope::Marked => format!("{} marked bots", app.table.selection.len()),
+        let fleet_scope = || {
+            let counts = app.fleet_model.counts();
+            if counts.marked() > 0 {
+                format!("{} marked bots", counts.marked())
+            } else {
+                format!("all {} shown", counts.shown_loaded())
+            }
         };
-        match self.group() {
-            Group::App => "app".into(),
-            Group::Logs => "log".into(),
-            Group::Fleet => match self {
-                Command::LoadLoginAll
-                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
-                {
-                    selected_scope()
-                }
-                Command::LoadLoginAll => "every vault profile".into(),
-                Command::LogoutAll
-                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
-                {
-                    selected_scope()
-                }
-                Command::LogoutAll => format!("all {}", members_text(app.names.len())),
-                Command::ImportProfiles => "vault".into(),
-                _ => "fleet table".into(),
-            },
-            Group::Script
-                if matches!(
-                    self,
-                    Command::ScriptStartAll
-                        | Command::ScriptStopAll
-                        | Command::ScriptAssignMarked
-                        | Command::ScriptRestartMarked
-                ) =>
-            {
-                selected_scope()
-            }
-            Group::Script if self == Command::ScriptApplyMarked => {
+        match self {
+            Command::Fleet(FleetAction::CopySettings) => {
                 let source = app.focused_name().unwrap_or_else(|| "no bot".into());
-                format!("{source} to {} marked", app.table.selection.len())
+                format!("{source} to {}", fleet_scope())
             }
-            Group::Script if matches!(self, Command::ScriptBrowse | Command::ScriptLoad) => {
-                "script library".into()
-            }
-            Group::Script if self == Command::ImportCatalog => "script library".into(),
-            Group::Map
-                if matches!(self, Command::MapWalk)
-                    && app.walk_send.mode == WalkSendMode::Group =>
-            {
-                format!("{} selected bots", app.walk_send.checked_count())
-            }
-            Group::Map if !matches!(self, Command::MapWalk | Command::MapTeleport) => "map".into(),
-            Group::Bot if self == Command::Loadouts => "loadout store".into(),
-            _ => bot(),
+            Command::Fleet(_) => fleet_scope(),
+            Command::PickFleetCard => "fleet card".into(),
+            Command::PickWorld => match app.cursor_profile() {
+                Some(name) => format!("BOT {name}"),
+                None => "no row under the cursor".to_string(),
+            },
+            Command::PickWorldMarked => fleet_scope(),
+            Command::MarkAllShown
+            | Command::UnmarkShown
+            | Command::InvertShown
+            | Command::MarkWhere(_) => "shown rows".into(),
+            _ => match self.group() {
+                Group::App => "app".into(),
+                Group::Logs => "log".into(),
+                Group::Fleet => match self {
+                    Command::ImportProfiles => "vault".into(),
+                    _ => "fleet table".into(),
+                },
+                Group::Script
+                    if matches!(self, Command::ScriptBrowse | Command::ScriptLoad)
+                        || self == Command::ImportCatalog =>
+                {
+                    "script library".into()
+                }
+                Group::Map
+                    if matches!(self, Command::MapWalk)
+                        && app.walk_send.mode == WalkSendMode::Group =>
+                {
+                    format!(
+                        "{} selected bots",
+                        app.walk_send.checked_count(app.fleet_model.marks())
+                    )
+                }
+                Group::Map if !matches!(self, Command::MapWalk | Command::MapTeleport) => {
+                    "map".into()
+                }
+                Group::Bot if self == Command::Loadouts => "loadout store".into(),
+                _ => bot(),
+            },
         }
     }
 
@@ -453,17 +491,54 @@ impl Command {
                 .then_some(())
                 .ok_or("open the Map first (F4)")
         };
-        let members = || {
-            (!app.names.is_empty())
+        let load_order = || {
+            (app.fleet_model.order() == frontend_core::FleetOrder::LoadOrder)
                 .then_some(())
-                .ok_or("no bots loaded")
+                .ok_or("choose Load order to reorder")
+        };
+        let rows_shown = || {
+            (!app.fleet_model.shown().is_empty())
+                .then_some(())
+                .ok_or("no rows shown")
         };
         match self {
             Command::ShowMessage => app.error.as_ref().map(|_| ()).ok_or("no message"),
-            Command::MarkAllShown => members(),
-            Command::ClearMarks => (!app.table.selection.is_empty())
+            Command::MarkAllShown | Command::InvertShown | Command::MarkWhere(_) => rows_shown(),
+            Command::UnmarkShown => (app.fleet_model.counts().shown_marked() > 0)
+                .then_some(())
+                .ok_or("no shown row is marked"),
+            Command::ClearMarks => (!app.fleet_model.marks().is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
+            Command::PickWorld => app
+                .cursor_profile()
+                .map(|_| ())
+                .ok_or("no fleet row under the cursor"),
+            Command::PickWorldMarked => (!app.fleet_model.marks().is_empty()
+                || !app.fleet_model.shown().is_empty())
+            .then_some(())
+            .ok_or("no rows shown or marked"),
+            Command::Fleet(action) => (!action.needs_card() || !app.fleet_model.card().is_own())
+                .then_some(())
+                .ok_or("pick a card first"),
+            Command::MoveProfileUp | Command::MoveProfileDown => {
+                load_order()?;
+                let (delta, reason) = if self == Command::MoveProfileUp {
+                    (-1, "no shown row above the cursor")
+                } else {
+                    (1, "no shown row below the cursor")
+                };
+                app.table
+                    .reorder_step(&app.fleet_model, delta)
+                    .map(|_| ())
+                    .ok_or(reason)
+            }
+            Command::MoveMarkedToTop => {
+                load_order()?;
+                (!app.fleet_model.marks().is_empty())
+                    .then_some(())
+                    .ok_or("mark fleet rows first (Space)")
+            }
             Command::Login | Command::Logout | Command::Remove => bot(),
             Command::ManualWalk => {
                 bot()?;
@@ -516,40 +591,6 @@ impl Command {
                 .reload_confirm
                 .then_some(())
                 .ok_or("no reload awaiting confirmation"),
-            Command::ScriptStartAll | Command::ScriptStopAll => members(),
-            Command::ScriptAssignMarked | Command::ScriptRestartMarked => {
-                let action = if self == Command::ScriptAssignMarked {
-                    MarkedAction::Assign
-                } else {
-                    MarkedAction::AssignAndRestart
-                };
-                match marked_availability(
-                    action,
-                    app.table.selection.len(),
-                    app.script_sel.is_some(),
-                    app.focused_name().is_some(),
-                ) {
-                    Ok(()) => Ok(()),
-                    Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
-                    Err(MarkedBlock::NoFocusedBot) => {
-                        Err("no bot selected (Fleet: Enter or click a row)")
-                    }
-                    Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
-                }
-            }
-            Command::ScriptApplyMarked => match marked_availability(
-                MarkedAction::ApplySettings,
-                app.table.selection.len(),
-                app.script_sel.is_some(),
-                app.focused_name().is_some(),
-            ) {
-                Ok(()) => Ok(()),
-                Err(MarkedBlock::NothingMarked) => Err("mark fleet rows first (Space)"),
-                Err(MarkedBlock::NoFocusedBot) => {
-                    Err("no bot selected (Fleet: Enter or click a row)")
-                }
-                Err(MarkedBlock::NoCard) => Err("browse to pick a script first"),
-            },
             Command::ToggleGameChat => app
                 .chat_data
                 .script_paint
@@ -569,5 +610,19 @@ impl Command {
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// The palette label of a status mark: `Mark by status: <label>`. The
+/// label text is core's ([`MarkPredicate::label`]); the pair is spelled
+/// out because a command label is a `&'static str`.
+fn mark_where_label(predicate: MarkPredicate) -> &'static str {
+    match predicate {
+        MarkPredicate::Ready => "Mark by status: ready",
+        MarkPredicate::Idle => "Mark by status: idle",
+        MarkPredicate::Running => "Mark by status: running",
+        MarkPredicate::LoggedOut => "Mark by status: logged out",
+        MarkPredicate::LoginError => "Mark by status: login error",
+        MarkPredicate::NotLoaded => "Mark by status: not loaded",
     }
 }

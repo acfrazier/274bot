@@ -4,8 +4,8 @@ use crate::bank::ops::{
     TRANSFER_OBSERVED_TICK_LIMIT,
 };
 use crate::bank::request::{
-    BankSeatArgs, BankSeatOperation, BANK_NEAREST_HOOK_DEPOSIT, BANK_NEAREST_HOOK_LOG,
-    DEPOSIT_MATCH_HOOK_LOG, DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
+    BankSeatArgs, BankSeatOperation, WithdrawLoadSelector, BANK_NEAREST_HOOK_DEPOSIT,
+    BANK_NEAREST_HOOK_LOG, DEPOSIT_MATCH_HOOK_LOG, DEPOSIT_MATCH_HOOK_MATCH, HOOK_LOG,
 };
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
 use crate::shim::InteractReq;
@@ -1208,6 +1208,25 @@ impl Transfer {
                     return Ok(Some(TransferValue::Bool(false)));
                 }
                 let request = &self.args.request;
+                let Some(selector) = request.withdraw_load_selector.as_ref() else {
+                    return Ok(Some(TransferValue::Bool(false)));
+                };
+                let rows = snapshot
+                    .bank_rows()
+                    .map_or(&[][..], |observed| observed.value);
+                let Some(row) = rows.iter().find(|row| {
+                    row.count > 0
+                        && match selector {
+                            WithdrawLoadSelector::Id(id) => row.def.id == *id,
+                            WithdrawLoadSelector::Name(name) => row
+                                .def
+                                .name
+                                .as_deref()
+                                .is_some_and(|got| ops::same_name(got, name)),
+                        }
+                }) else {
+                    return Ok(Some(TransferValue::Bool(false)));
+                };
                 let inv = snapshot
                     .inventory()
                     .map_or(&[][..], |observed| observed.value);
@@ -1221,22 +1240,6 @@ impl Transfer {
                 if used >= size {
                     return Ok(Some(TransferValue::Bool(true)));
                 }
-                let Some(name) = request.item_name.as_deref() else {
-                    return Ok(Some(TransferValue::Bool(false)));
-                };
-                let rows = snapshot
-                    .bank_rows()
-                    .map_or(&[][..], |observed| observed.value);
-                let Some(row) = rows.iter().find(|row| {
-                    row.count > 0
-                        && row
-                            .def
-                            .name
-                            .as_deref()
-                            .is_some_and(|got| ops::same_name(got, name))
-                }) else {
-                    return Ok(Some(TransferValue::Bool(false)));
-                };
                 let free = size - used;
                 let lands_as_id = landing_id(row, self.args.note_intent);
                 let goal = WithdrawGoal::available_limited(
@@ -2277,13 +2280,14 @@ mod tests {
 
     #[test]
     fn withdraw_load_uses_the_fixed_ladder_and_settles_each_click() {
+        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
         let mut snapshot = bank_snapshot(
             filler_rows(21),
             vec![bank_item(2, "Lobster", 10, &["Withdraw-5", "Withdraw-1"])],
             Vec::new(),
         );
-        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
-        args.request.item_name = Some("Lobster".to_owned());
+        args.request.withdraw_load_selector =
+            Some(WithdrawLoadSelector::Name("Lobster".to_owned()));
         let mut ledger = None;
         let handle = begin_transfer(&snapshot, &mut ledger, args);
         assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
@@ -2329,13 +2333,14 @@ mod tests {
 
     #[test]
     fn withdraw_load_all_waits_for_a_posted_pack_change() {
+        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
         let mut snapshot = bank_snapshot(
             vec![pack_item(9, "Rune", 0)],
             vec![bank_item(2, "Lobster", 30, &["Withdraw-All", "Withdraw-1"])],
             Vec::new(),
         );
-        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
-        args.request.item_name = Some("Lobster".to_owned());
+        args.request.withdraw_load_selector =
+            Some(WithdrawLoadSelector::Name("Lobster".to_owned()));
         let mut ledger = None;
         let handle = begin_transfer(&snapshot, &mut ledger, args);
         assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
@@ -2352,6 +2357,62 @@ mod tests {
         );
         assert!(matches!(
             poll_transfer(&snapshot, &mut ledger, &handle, 2),
+            Poll::Ready(Ok(TransferValue::Bool(true)))
+        ));
+    }
+
+    #[test]
+    fn withdraw_load_selects_the_bank_row_by_numeric_id() {
+        let snapshot = bank_snapshot(
+            filler_rows(27),
+            vec![
+                bank_item(42, "Lobster", 10, &["Withdraw-1"]),
+                bank_item(7, "42", 10, &["Withdraw-1"]),
+            ],
+            Vec::new(),
+        );
+        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
+        args.request.withdraw_load_selector = Some(WithdrawLoadSelector::Id(42));
+        let mut ledger = None;
+        let handle = begin_transfer(&snapshot, &mut ledger, args);
+        assert!(poll_transfer(&snapshot, &mut ledger, &handle, 1).is_pending());
+        assert!(matches!(
+            acknowledge(&mut ledger, 1, true),
+            HostEffect::Interaction(InteractReq::WithdrawX {
+                bank_item_id: 42,
+                count: 1,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn withdraw_load_checks_the_requested_row_before_full_pack_success() {
+        let absent = bank_snapshot(
+            filler_rows(28),
+            vec![bank_item(7, "Lobster", 10, &["Withdraw-1"])],
+            Vec::new(),
+        );
+        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
+        args.request.withdraw_load_selector = Some(WithdrawLoadSelector::Id(42));
+        let mut ledger = None;
+        let handle = begin_transfer(&absent, &mut ledger, args);
+        assert!(matches!(
+            poll_transfer(&absent, &mut ledger, &handle, 1),
+            Poll::Ready(Ok(TransferValue::Bool(false)))
+        ));
+
+        let present = bank_snapshot(
+            filler_rows(28),
+            vec![bank_item(42, "Lobster", 10, &["Withdraw-1"])],
+            Vec::new(),
+        );
+        let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
+        args.request.withdraw_load_selector = Some(WithdrawLoadSelector::Id(42));
+        let mut ledger = None;
+        let handle = begin_transfer(&present, &mut ledger, args);
+        assert!(matches!(
+            poll_transfer(&present, &mut ledger, &handle, 1),
             Poll::Ready(Ok(TransferValue::Bool(true)))
         ));
     }

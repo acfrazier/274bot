@@ -74,6 +74,11 @@ required-features = ["load", "test-hooks"]
 harness = false
 
 [[test]]
+name = "paint_controls_shape"
+required-features = ["load", "test-hooks"]
+harness = false
+
+[[test]]
 name = "load_isolate"
 required-features = ["load"]
 [[test]]
