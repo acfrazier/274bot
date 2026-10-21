@@ -631,7 +631,13 @@ mod tests {
 
     #[test]
     fn monk_friends_cave_side_boundary_selects_blanket_instead_of_rewalking_ladder() {
+        let _home = crate::IsolatedEnv::enter("monk-friends-select");
         let data = selected();
+        crate::quester::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            move |worker| data.prepare_gathering(worker)
+        })
+        .expect("prepare 289 gathering catalog");
         let quests = quests(&data);
         let document: PathDocument =
             serde_json::from_slice(path_bytes("drunkmonk").expect("released Path")).unwrap();
