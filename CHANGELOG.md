@@ -58,6 +58,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   deposit only selected items before returning to the exact Start tile.
   Empty waits stay visible as Waiting; duplicate refusals exclude only that
   item until the next Start. Saved settings apply on the next Start.
+- Grinch checks its network position when it returns to its Start tile.
+  A confirmed walking arrival no longer fails while the rendered player
+  catches up.
 
 ### Not in this release
 
