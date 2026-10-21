@@ -3202,10 +3202,6 @@ pub fn check_b_duplicate_untradeable(trace: &StaticSpawnTrace, item_id: i32) -> 
     check_a_b_scratch_kind(trace, kind, item_id)?;
     let patch = require_respawn_patch(&trace.engine.scratch)?;
     ensure(
-        trace.takes.len() == 2,
-        "duplicate variant requires one initial and one refused Take",
-    )?;
-    ensure(
         trace.refusals.len() == 1,
         "duplicate variant requires exactly one content refusal",
     )?;
@@ -3213,6 +3209,10 @@ pub fn check_b_duplicate_untradeable(trace: &StaticSpawnTrace, item_id: i32) -> 
     ensure(
         !trace.takes.iter().any(|take| take.tick > refusal.tick),
         "Grinch sent another Take after duplicate ID exclusion",
+    )?;
+    ensure(
+        trace.takes.len() == 2,
+        "duplicate variant requires one initial and one refused Take",
     )?;
     let spawn = &patch.static_spawns[0];
     let appearances = spawn_appearances(&trace.frames, item_id, spawn.tile)?;
@@ -6518,7 +6518,7 @@ mod tests {
             .unwrap();
         frame.inventory = Some(item_snapshot(&[(PUMPKIN_ID, 1)], 1, 28));
         for frame in trace.frames.iter_mut().filter(|frame| frame.tick >= 15) {
-            frame.status.as_mut().unwrap().pickup_units = 1;
+            frame.status.as_mut().unwrap().pickup_units += 1;
         }
         assert_eq!(
             check_b_contested_pumpkin(&trace).unwrap_err(),
