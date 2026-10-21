@@ -74,6 +74,7 @@ text = """a Catherby fishing card started from the Fishing Guild can pick a spot
   start the card again. A fix is planned for 0.2.5."""
 first = "0.2.3"
 target = "0.2.5"
+fixed = "0.2.5"
 severity = "medium"
 owner = "scripts-misc"
 
@@ -89,3 +90,44 @@ first = "0.2.0.2"
 target = "none"
 severity = "high"
 owner = "dual-gpu"
+
+[[item]]
+id = "survivable-acts-as-never"
+kind = "known-issue"
+area = "Navigation"
+text = """With the default Danger routing setting, **When survivable**, bots can
+  refuse walks and bank trips through dangerous monsters instead of checking
+  whether the account can survive the trip. For example, a bot at Rock Crabs
+  can report that no bank is reachable instead of walking to Seers' Village.
+  **Workaround:** set Nav → Danger routing to **Always** (allow danger zones).
+  This permits dangerous routes. Use it only when the account can handle the
+  monsters on the route."""
+first = "0.2.0"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "medium"
+owner = "S2c"
+
+[[item]]
+id = "quester-route-coverage"
+kind = "known-issue"
+area = "Quester"
+text = """The Quester has routes for 20 of the 68 quests. Routes for the other
+  quests are planned in waves."""
+first = "0.2.0"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "medium"
+owner = "Quester waves"
+
+[[item]]
+id = "brimhaven-agility-obstacles"
+kind = "known-issue"
+area = "Scripts"
+text = """The Brimhaven Agility Arena script can stop at a plank or pillar it
+  cannot use. The cause is under investigation."""
+first = "0.2.0"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "medium"
+owner = "T2.rest agility"
