@@ -17,7 +17,7 @@ const {
 const here = __dirname;
 const crate = path.resolve(here, '..');
 const frozen = process.env.RS2B0T;
-const frozenRevision = '2de6bb2397ceb9ffd05f2354f67dde328e324531';
+const frozenRevision = '90a69240a4617155f280f098958c3cd7f044f234';
 const frozenRepository = 'https://github.com/rs2b2t/rs2b0t.git';
 const frozenRevisionLabel = frozenRevision.slice(0, 10);
 if (!frozen) throw new Error(`Set RS2B0T to the frozen rs2b0t ${frozenRevisionLabel} source. Run npm ci in compat-js first.`);
