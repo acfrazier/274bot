@@ -8976,6 +8976,83 @@ mod bank_conservation_tests {
         slot.observe_running(Some(observation.clone()), observation)
     }
 
+    #[test]
+    fn bank_selection_observes_the_projection_without_a_retired_event() {
+        for kind in ["Reachable", "AirFallback", "NearShortcut"] {
+            let mut slot = soak_slot_at_deposit();
+            slot.witness.bank_selected = false;
+            let mut status = soak_status("Access", "bank trip due", 0, 0);
+            let mut fields = status.fields.to_vec();
+            fields
+                .iter_mut()
+                .find(|field| field.key == "bank")
+                .unwrap()
+                .value = script::native::StatusValue::Text(
+                format!("Catherby; {kind}; access:2809,3441,0; Access").into(),
+            );
+            status.fields = fields.into();
+            slot.apply_status(&status).unwrap();
+            assert!(slot.complete_bank_selection(), "{kind}");
+            assert_eq!(slot.selected_bank_kind(), Some(kind));
+        }
+    }
+
+    #[test]
+    fn bank_selection_rejects_a_retired_event_without_a_selection_projection() {
+        let mut slot = soak_slot_at_deposit();
+        slot.witness.bank_selected = false;
+        let mut status = soak_status("Select", "bank selected", 0, 0);
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        slot.apply_status(&status).unwrap();
+        assert!(!slot.witness.bank_selected);
+        assert!(!slot.complete_bank_selection());
+    }
+
+    fn slot_before_supply_withdrawal() -> GatherSlot {
+        let mut slot = soak_slot_at_deposit();
+        slot.snapshot
+            .seed_inventory(inventory_rows(&[(NET_ID, 1)]), 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 1, Some(bank_rows(&[(FEATHERS_ID, 3)])), vec![]);
+        slot.witness.pending_bank_trip = None;
+        let observation = slot.capture();
+        slot.observe_running(None, observation).unwrap();
+        slot
+    }
+
+    #[test]
+    fn bank_withdrawal_requires_matching_pack_and_bank_item_deltas() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(&mut slot, &[(NET_ID, 1), (FEATHERS_ID, 3)], &[]).unwrap();
+        assert!(slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_an_uncredited_pack_increase() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 3)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_retired_event_without_item_deltas() {
+        let mut slot = slot_before_supply_withdrawal();
+        slot.apply_status(&soak_status("Withdraw", "withdrawal confirmed", 0, 0))
+            .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
     fn age_unsettled(slot: &mut GatherSlot) {
         for item in slot.unsettled_items.values_mut() {
             item.since = Instant::now().checked_sub(Duration::from_secs(3)).unwrap();

@@ -3189,6 +3189,67 @@ mod tests {
     }
 
     #[test]
+    fn gatherer_bank_status_preserves_selected_kind_and_access() {
+        use crate::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
+        use crate::quester::families::tests::with_tick;
+        use api::quest_progress::EvidenceStamp;
+
+        for kind in [PickKind::Reachable, PickKind::AirFallback] {
+            let fixture = BaitFixture::new();
+            let mut gatherer = fixture.gatherer(GatherRetained::default());
+            gatherer.needs_validate = false;
+            let mut ledger = None;
+            with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+                gatherer.tick(tick).unwrap()
+            });
+            let action = ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(matches!(
+                action.effect,
+                crate::native::HostEffect::BankPick(_)
+            ));
+            let bank = api::named_banks::NamedBank::new(
+                "Test bank",
+                WorldTile {
+                    x: 3092,
+                    z: 3243,
+                    level: 0,
+                },
+            );
+            ledger.as_mut().unwrap().complete_bank_pick(
+                &action.authority(),
+                BankPickReceipt {
+                    request_id: action.request_id.get(),
+                    evidence: EvidenceStamp {
+                        run: action.authority().run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    selected: SelectedBank {
+                        bank_index: 0,
+                        access_tile: bank.tile,
+                        kind,
+                        access: Some(Arc::new(BankStandAccess {
+                            bank,
+                            stand_tile: bank.tile,
+                            kind: AccessKind::Booth,
+                            stand_op: 1,
+                            name: None,
+                            choose: None,
+                        })),
+                    },
+                },
+            );
+            with_tick(&fixture.snapshot, &mut ledger, 3, |tick| {
+                gatherer.tick(tick).unwrap()
+            });
+            assert_eq!(
+                gatherer.status_data(None).bank.as_ref(),
+                format!("Test bank; {kind:?}; access:3092,3243,0; Access")
+            );
+        }
+    }
+
+    #[test]
     fn gatherer_tickfix_deposit_receipt_begins_supply_child_same_tick() {
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{ItemActionFamily, ItemContainer};
