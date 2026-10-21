@@ -42,6 +42,9 @@ pub struct CompiledTick<'a> {
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav::contract::CollisionView<'a>>,
+    /// Revision-bound keeper placements and validated access, borrowed from
+    /// the shared navigation world. Only an active vendor pick clones its Arc.
+    pub shop_keepers: Option<&'a std::sync::Arc<api::service_pick::ShopKeeperFacts>>,
     /// The actual owner-held session gate. The host borrows it from
     /// `SlotArm.lifecycle` for a live compiled callback; bare contexts use
     /// `None`, and the isolate path does not read it.

@@ -398,6 +398,7 @@ pub(super) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        shop_keepers: ctx.compiled.shop_keepers,
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
@@ -511,6 +512,7 @@ impl CompiledRun {
                         bank_memory: ctx.compiled.bank_memory,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        shop_keepers: ctx.compiled.shop_keepers,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
                         #[cfg(feature = "load")]

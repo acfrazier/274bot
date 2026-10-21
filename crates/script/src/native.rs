@@ -527,6 +527,7 @@ pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
+    pub(crate) shop_keepers: Option<&'a Arc<api::service_pick::ShopKeeperFacts>>,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,

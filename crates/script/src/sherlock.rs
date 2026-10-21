@@ -1946,6 +1946,7 @@ mod tests {
             cx: crate::native::ActionContext {
                 evidence,
                 observed_walk_outcome_seq: 0,
+                shop_keepers: None,
                 pin: &pin,
                 snapshot,
                 retained: &mut retained,

@@ -133,6 +133,7 @@ impl Probe<'_> {
             budget: &mut budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
+            shop_keepers: None,
         };
         f(&PredicateContext {
             cx: &cx,

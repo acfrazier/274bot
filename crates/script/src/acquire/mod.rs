@@ -340,7 +340,8 @@ pub struct AcquireReceipt {
     pub deposited: u32,
     pub kept_unbankable: bool,
     pub bank_open: bool,
-    pub bought: u8,
+    /// Sum of observed landed shop units, never planned button quantities.
+    pub bought: u32,
     pub last_bank: Option<BankReceipt>,
 }
 

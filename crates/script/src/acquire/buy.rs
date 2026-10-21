@@ -601,7 +601,9 @@ impl BuyMachine {
         )?;
         if let Some(resolved) = resolved {
             self.pending = None;
-            self.bought = self.bought.saturating_add(resolved.landed);
+            self.bought = self.bought.checked_add(resolved.landed).ok_or_else(|| {
+                ActionError::Failed(Arc::from("observed purchase count exceeds u32"))
+            })?;
             if resolved.unanswered {
                 self.unanswered = self.unanswered.saturating_add(1);
                 if self.unanswered >= 2 {

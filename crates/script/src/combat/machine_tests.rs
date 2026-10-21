@@ -72,6 +72,7 @@ impl Runtime {
             budget: &mut self.budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
+            shop_keepers: None,
         };
         f(&mut actions, &mut cx)
     }
