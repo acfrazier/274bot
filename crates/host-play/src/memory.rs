@@ -1872,7 +1872,10 @@ impl Run {
             self.observing = Some(now);
         }
         if let Some(observing) = self.observing {
-            if self.config.workload == Workload::Lifecycle && self.teardown.is_none() {
+            if self.config.workload == Workload::Lifecycle
+                && self.teardown.is_none()
+                && observing.elapsed() < self.config.observe
+            {
                 let cycle = observing.elapsed().as_secs() / 60;
                 let should_stop = cycle % 2 == 1;
                 if cycle != self.lifecycle_cycle {
