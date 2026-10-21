@@ -23,8 +23,6 @@ use crate::acquire::{
     AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
     CoinPolicy, DepositSpec, Need, OpenGate, VendorChoice,
 };
-#[cfg(test)]
-use crate::bank;
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
