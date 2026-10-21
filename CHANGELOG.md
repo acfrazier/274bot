@@ -45,6 +45,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
 
+### Scripts
+
+- Script paint: scripts that use the standard paint-controls helper now show
+  working Pause/Resume and Stop buttons. Resume remains available while
+  paused. The panel and TUI use the same controls.
+
 ### Map baking
 
 - Resuming an interrupted local map bake on Windows now repairs a damaged

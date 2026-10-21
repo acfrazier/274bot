@@ -501,6 +501,14 @@ fn dispatch_profile<Io>(
                 return Applied::Rejected(Rejection::NoHost, None);
             }
             match input.0 {
+                // A host control id is never a script click: it reaches the
+                // run only as its own lifecycle row.
+                PaintAction::Click { id, .. } if crate::scripts::is_host_control(&id) => {
+                    return Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("a host paint control is not a script click".into()),
+                    );
+                }
                 PaintAction::Click { id, generation } => {
                     core.script_paint_click(profile, &id, generation)
                 }
@@ -509,6 +517,17 @@ fn dispatch_profile<Io>(
                     name,
                     generation,
                 } => core.script_paint_select(profile, &key, &name, generation),
+                // The seam routes a holding binding to its own row before
+                // dispatch; one that reaches this row was refused.
+                PaintAction::Refused(reason) => {
+                    return Applied::Rejected(Rejection::NotApplicable, Some(reason.into()));
+                }
+                PaintAction::Control(_) => {
+                    return Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("the paint control names no single profile".into()),
+                    );
+                }
             }
             Applied::Done
         }

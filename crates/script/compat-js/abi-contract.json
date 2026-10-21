@@ -14124,7 +14124,7 @@
       "selector": "loopReadyOrDetached",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:21",
+      "runtime": "crates/script/src/shim/script_runner.js:22",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -14135,7 +14135,7 @@
       "selector": "stopReasonOf",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:25",
+      "runtime": "crates/script/src/shim/script_runner.js:26",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -24030,7 +24030,7 @@
       "selector": "loopReadyOrDetached",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:21",
+      "source": "crates/script/src/shim/script_runner.js:22",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached"
     },
@@ -24040,7 +24040,7 @@
       "selector": "stopReasonOf",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:25",
+      "source": "crates/script/src/shim/script_runner.js:26",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:stopReasonOf"
     },
