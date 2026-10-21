@@ -70,7 +70,7 @@ fn args(id: i32, target: WorldTile, anchor: WorldTile) -> ReachArgs {
     }
 }
 
-fn dispatch(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, chat_since: i32) {
+fn dispatch(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, chat_since: i32) -> u64 {
     let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
     ledger.as_mut().unwrap().complete_interaction(
         &authority,
@@ -85,6 +85,7 @@ fn dispatch(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, chat_since: i32
             chat_since,
         },
     );
+    authority.request_id().get()
 }
 
 fn begin(
@@ -261,10 +262,31 @@ fn exact_ground_requires_live_access_and_uses_the_table_stand() {
         panic!("Take before approach")
     };
     assert_eq!((request.target, request.radius), (tile(3218, 3216), 0));
+    struct FallbackReach(Reach);
+    impl NativeMachine for FallbackReach {
+        type Args = ReachArgs;
+        type Output = ();
+        fn begin(args: ReachArgs, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+            Reach::begin(args, cx).map(Self)
+        }
+        fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+            match self.0.walk_to_target(cx) {
+                Ok(()) => Poll::Pending,
+                Err(error) => Poll::Ready(Err(error)),
+            }
+        }
+        fn cancel(&mut self) {
+            self.0.cancel();
+        }
+    }
     let mut fallback_ledger = None;
-    with_tick_reach(&snapshot, &reach, &mut fallback_ledger, 3, |tick| {
-        let mut machine = Reach::begin(args(1959, table, here), &mut tick.cx).unwrap();
-        machine.walk_to_target(&mut tick.cx).unwrap();
+    let fallback = with_tick_reach(&snapshot, &reach, &mut fallback_ledger, 3, |tick| {
+        tick.actions
+            .begin::<FallbackReach>(args(1959, table, here), &mut tick.cx)
+            .unwrap()
+    });
+    with_tick_reach(&snapshot, &reach, &mut fallback_ledger, 4, |tick| {
+        assert!(tick.actions.poll(&fallback, &mut tick.cx).is_pending());
         let HostEffect::Walk(request) = &tick
             .cx
             .ledger
@@ -464,7 +486,7 @@ fn identical_bound_copy_loss_needs_a_fresh_take_and_unbound_copy_loss_can_land()
         let reach = flood(here, &[]);
         let mut ledger = None;
         let handle = begin(1959, here, &snapshot, &reach, &mut ledger);
-        dispatch(&mut ledger, 1, 0);
+        let first_request = dispatch(&mut ledger, 1, 0);
         snapshot.seed_ground_items(vec![row(1959, here, here)]);
         for edge in 2..5 {
             assert!(poll(&handle, &snapshot, &mut ledger, edge).is_pending());
@@ -488,13 +510,21 @@ fn identical_bound_copy_loss_needs_a_fresh_take_and_unbound_copy_loss_can_land()
                     .begin::<GroundTake>(args(1959, here, here), &mut tick.cx)
                     .unwrap()
             });
-            dispatch(&mut ledger, 6, 0);
+            let next_request = dispatch(&mut ledger, 6, 0);
+            assert!(
+                next_request > first_request,
+                "remaining copy requires a fresh Take request"
+            );
             pack(&mut snapshot, 1959, 1);
             assert_eq!(
                 poll(&next, &snapshot, &mut ledger, 7),
                 Poll::Ready(Ok(TakeOutcome::Picked { units: 1 }))
             );
-            assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+            assert_eq!(
+                ledger.as_ref().unwrap().outbox.len(),
+                1,
+                "retired attempt rows are pruned"
+            );
         }
     }
 }
@@ -743,20 +773,27 @@ fn two_yoyo_takes_count_two_pack_deltas_without_duplicate_exclusion() {
     let reach = flood(here, &[]);
     let mut snapshot = snapshot(here, vec![row(4079, here, here)]);
     let mut ledger = None;
+    let mut previous_request = None;
     for (send, count) in [(1, 1), (4, 2)] {
         let handle = with_tick_reach(&snapshot, &reach, &mut ledger, send, |tick| {
             tick.actions
                 .begin::<GroundTake>(args(4079, here, here), &mut tick.cx)
                 .unwrap()
         });
-        dispatch(&mut ledger, send, 0);
+        let request = dispatch(&mut ledger, send, 0);
+        assert!(previous_request.is_none_or(|previous| request > previous));
+        previous_request = Some(request);
         pack(&mut snapshot, 4079, count);
         assert_eq!(
             poll(&handle, &snapshot, &mut ledger, send + 1),
             Poll::Ready(Ok(TakeOutcome::Picked { units: 1 }))
         );
     }
-    assert_eq!(ledger.as_ref().unwrap().outbox.len(), 2);
+    assert_eq!(
+        ledger.as_ref().unwrap().outbox.len(),
+        1,
+        "only the current attempt remains queued"
+    );
 }
 
 /// Exercise the production R289 packet handlers and snapshot publication, not
@@ -997,7 +1034,7 @@ mod packets {
             let mut wire = WireGround::new(false, 2);
             let mut ledger = None;
             let handle = wire.begin(&mut ledger);
-            dispatch(&mut ledger, wire.tick(), 0);
+            let first_request = dispatch(&mut ledger, wire.tick(), 0);
             wire.remove_one();
             assert_eq!(wire.snapshot.ground_items().len(), 1);
             assert!(matches!(wire.poll(&handle, &mut ledger), Poll::Pending));
@@ -1012,12 +1049,11 @@ mod packets {
                     }
                 }
                 let fresh = wire.begin(&mut ledger);
-                assert_eq!(
-                    ledger.as_ref().unwrap().outbox.len(),
-                    2,
-                    "remaining copy needs a new Take"
+                let fresh_request = dispatch(&mut ledger, wire.tick(), 0);
+                assert!(
+                    fresh_request > first_request,
+                    "remaining copy requires a fresh Take request"
                 );
-                dispatch(&mut ledger, wire.tick(), 0);
                 wire.picked_inventory();
                 assert!(matches!(
                     wire.poll(&fresh, &mut ledger),

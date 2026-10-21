@@ -866,7 +866,7 @@ pub enum ActionError {
     /// The action requires typed quest evidence before it can continue.
     NeedsEvidence(Arc<[QuestGate]>),
     /// Typed capacity or duplicate refusal from exact ground-item Take.
-    GroundTake(crate::ground_take::GroundRefusal),
+    GroundTake(api::ground_take::GroundRefusal),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
@@ -1113,7 +1113,7 @@ mod defer_budget_tests {
             ActionError::Failed(Arc::from("failed")),
             ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
-            ActionError::GroundTake(crate::ground_take::GroundRefusal::Capacity),
+            ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];
         for error in errors {
