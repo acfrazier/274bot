@@ -218,7 +218,10 @@ extra rasters (`wall_open = false`); every slot keeps running.
 
 A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
 **Login all** / **Logout all**, then **Start all** / **Stop all** (script
-bulk — separate from login bulk; see [script.md](script.md)), an
+bulk — separate from login bulk; see [script.md](script.md); these act on
+every wall member and keep these names until the combined fleet toolbar
+planned for 0.2.6, while the TUI's fleet buttons say **Start fleet** /
+**Stop fleet**), an
 **only render focused** checkbox, one
 tile per shown wall member, **Profiles…**, and the 1 Hz resource card. The
 tiles follow the Fleet window's filter and sort (one order for the rail,
