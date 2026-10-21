@@ -7712,6 +7712,23 @@ impl QuesterSharedCoreState {
 }
 
 #[cfg(feature = "live-harness")]
+fn quester_shared_core_completed(
+    native_status: Option<&script::native::ScriptStatus>,
+    _lifecycle: Option<&script::ScriptLifecycleReceipt>,
+    _run_state: script::RunState,
+) -> Result<bool, String> {
+    if let Some(status) = native_status {
+        if status.card != script::CompiledId("Quester") {
+            return Err(format!(
+                "quester_sheep terminal status belongs to {:?}",
+                status.card
+            ));
+        }
+    }
+    Ok(native_status.is_some_and(|status| status.phase == script::native::NativePhase::Complete))
+}
+
+#[cfg(feature = "live-harness")]
 fn run_quester_sheep_shared_core() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
@@ -7822,6 +7839,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         let script_error = play.script_last_error(&account);
         let native_status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
             if run_state == script::RunState::Running {
@@ -7845,27 +7863,29 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
                         "quester_sheep passed after {start_count} compiled Starts, expected one"
                     ));
                 }
-                if let Some(status) = native_status.as_ref() {
-                    if status.card != script::CompiledId("Quester") {
-                        break Err(format!(
-                            "quester_sheep terminal status belongs to {:?}",
-                            status.card
-                        ));
-                    }
-                    if status.phase == script::native::NativePhase::Complete {
+                match quester_shared_core_completed(
+                    native_status.as_deref(),
+                    lifecycle.as_ref(),
+                    run_state,
+                ) {
+                    Ok(true) => {
                         println!(
                             "{}",
                             json!({
                                 "phase": "witness",
                                 "live_case": CELL,
                                 "scenario": "quester_sheep",
-                                "card": status.card.0,
-                                "native_phase": format!("{:?}", status.phase),
+                                "card": "Quester",
+                                "native_phase": native_status.as_ref().map(|status| format!("{:?}", status.phase)),
+                                "run_state": format!("{run_state:?}"),
+                                "lifecycle": lifecycle,
                                 "start_count": start_count,
                             })
                         );
                         break Ok(());
                     }
+                    Ok(false) => {}
+                    Err(error) => break Err(error),
                 }
             }
             RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
@@ -10011,5 +10031,77 @@ mod real_content_death_fixture_tests {
         assert!(plan.seed_locs.is_empty());
         assert!(plan.oak_tiles.is_empty());
         assert!(task.is_none());
+    }
+}
+
+#[cfg(all(test, feature = "live-harness"))]
+mod quester_shared_core_completion_tests {
+    use super::*;
+    use script::{RunState, ScriptLifecycleReceipt, ScriptTerminalState};
+
+    fn receipt(state: ScriptTerminalState) -> ScriptLifecycleReceipt {
+        ScriptLifecycleReceipt {
+            runtime_generation: 1,
+            state,
+            tick: 100,
+            reason: "terminal fixture".into(),
+        }
+    }
+
+    #[test]
+    fn durable_completion_survives_native_status_teardown() {
+        assert!(quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn absent_completion_and_active_runs_do_not_pass() {
+        assert!(!quester_shared_core_completed(None, None, RunState::Idle).unwrap());
+        assert!(!quester_shared_core_completed(
+            None,
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Running,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn other_terminal_states_do_not_pass() {
+        for state in [
+            ScriptTerminalState::Failed,
+            ScriptTerminalState::Stopped,
+            ScriptTerminalState::Cancelled,
+        ] {
+            assert!(
+                quester_shared_core_completed(None, Some(&receipt(state)), RunState::Idle).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn another_cards_status_does_not_pass() {
+        let status = script::native::ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: script::native::NativePhase::Complete,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([]),
+        };
+        assert!(quester_shared_core_completed(
+            Some(&status),
+            Some(&receipt(ScriptTerminalState::Completed)),
+            RunState::Idle,
+        )
+        .is_err());
     }
 }
