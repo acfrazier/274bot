@@ -19,7 +19,9 @@ pub struct Evidence {
     pub outcome: &'static str,
     /// The proof / arm predicate that passed or failed.
     pub predicate: String,
-    /// Game ticks the run took (seed waits are not counted).
+    /// Observed game ticks the run took (one per `PLAYER_INFO`; seed
+    /// waits are not counted). Client cycles and dirty snapshots do
+    /// not count.
     pub ticks: u32,
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,7 +67,8 @@ pub struct ProtectWindowEvidence {
     pub prayer_off_tick: Option<u32>,
 }
 
-/// Content-timed fixture isolation, counted only by observed PLAYER_INFO ticks.
+/// Content-timed fixture isolation, counted only by observed game ticks
+/// (one per `PLAYER_INFO`). Client cycles and dirty snapshots do not count.
 #[derive(Debug, Clone, Serialize)]
 pub struct GroundGuardEvidence {
     pub start_tick: u32,
@@ -276,7 +279,7 @@ mod tests {
             "walk",
             "FAIL",
             "arrived(3220,3212,0)".into(),
-            Some("step 1: arrived(3220,3216,0) not seen within 90 ticks".into()),
+            Some("step 1: arrived(3220,3216,0) not seen within 90 game ticks".into()),
             90,
             &snap,
             None,
@@ -287,7 +290,7 @@ mod tests {
         assert_eq!(v["outcome"], "FAIL");
         assert_eq!(
             v["message"],
-            "step 1: arrived(3220,3216,0) not seen within 90 ticks"
+            "step 1: arrived(3220,3216,0) not seen within 90 game ticks"
         );
         assert!(
             v["inv"][0].get("name").is_none(),

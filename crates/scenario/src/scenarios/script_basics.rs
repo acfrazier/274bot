@@ -12,12 +12,13 @@ pub(crate) fn bone_burier_scenario() -> Scenario {
         },
         wait: Wait {
             // The off-scene trip may legitimately outlast the ordinary
-            // 150-dirty action observation. Budgets count runner dirty
-            // snapshots (~1.25-1.5 per engine tick), so covering the
-            // script's 120-second (200 engine tick) travel timeout needs
-            // 200 * 1.5 = 300 dirties, rounded to 320. Without coins the
-            // Lumbridge -> Al Kharid route detours north (~155 engine
-            // ticks of walking); 240 expired mid-walk.
+            // 150-game-tick action watch. This budget was historically sized
+            // from runner dirty snapshots (~1.25–1.5 per game tick): covering
+            // the script's 120-second (200-game-tick) travel timeout needed
+            // 200 * 1.5 = 300 old dirty increments, rounded to 320. That
+            // numeric cap now allows 320 game ticks (192s). Without coins,
+            // the Lumbridge -> Al Kharid route detours north (~155 game ticks
+            // of walking); the old 240-dirty cap expired mid-walk.
             budget_ticks: if matches!(arm, Proof::BankItem { .. }) {
                 320
             } else {

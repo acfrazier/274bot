@@ -29,6 +29,7 @@ pub mod ui_state;
 pub mod walk_map;
 pub mod wall;
 pub mod window;
+mod world_picker;
 
 pub use app::*;
 pub use chrome::*;

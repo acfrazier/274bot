@@ -493,6 +493,17 @@ impl Play {
         self.arms.get(name).cloned()
     }
 
+    /// Whether `arm` is the current arm of a slot that has a status row.
+    /// Reads the rows in place: nothing is copied or allocated, so a
+    /// caller may ask every frame.
+    pub fn holds_arm(&self, arm: &Arc<SlotArm>) -> bool {
+        lock_statuses(&self.statuses).iter().any(|status| {
+            self.arms
+                .get(&status.username)
+                .is_some_and(|live| Arc::ptr_eq(live, arm))
+        })
+    }
+
     /// Keep vault credentials for a later [`Play::spawn_slot`] / reconnect,
     /// and publish handshake-time settings to an already-running slot.
     pub fn remember_profile(&mut self, profile: Profile) {

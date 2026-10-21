@@ -16,6 +16,11 @@ the CI lanes, the cells through `panel-play` in the console session, and the
 cells through `tui-play` on ConPTY, against a running engine it never starts or
 stops (Engine B).
 
+The revision-274 lane (zinfandel) runs this same script with
+`NIGHTLY_REVISION=274`, one branch (`dev`) and a cell subset
+(`--cells-file`, `cells-274.conf`). Its runs end in `-274`. The lane
+reports only. It never gates a merge or a release.
+
 Standard library only (Python 3.10+); on Windows also `pywinpty` for ConPTY
 (pinned in windows/requirements.txt).
 """
@@ -61,7 +66,46 @@ def env_flag(name: str, default: bool) -> bool:
 HERE = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("NIGHTLY_ROOT", r"C:\274bot-nightly" if IS_WINDOWS else "/srv/nightly"))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
-PROFILE = os.environ.get("NIGHTLY_PROFILE", "local-289")
+RUNNER_REPO = HERE.parent.parent
+NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
+
+
+def revision_defaults(revision: str, windows: bool) -> dict:
+    """The settings a game revision implies, before any specific override.
+
+    289 is the production revision: its defaults are the values this script
+    has always used. 274 (the zinfandel lane) differs in the built-in launch
+    profile, the folder under a cell HOME's `.274bot` that holds the decoded
+    cache (`unpack`, where 289 uses `unpack-289`), the run-folder suffix,
+    and the remote engine's /crc identity (the pinned hash is the 289
+    engine's, so a 274 remote engine is not compared against it).
+    """
+    if revision not in ("274", "289"):
+        raise ValueError(f"revision must be 274 or 289, got {revision!r}")
+    suffix = "-windows" if windows else ""
+    if revision != "289":
+        suffix = f"-{revision}{suffix}"
+    return {
+        "profile": f"local-{revision}",
+        "unpack_dir": "unpack-289" if revision == "289" else "unpack",
+        "run_suffix": suffix,
+        "engine_crc_sha256": ("687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623"
+                              if revision == "289" else ""),
+    }
+
+
+# The game revision this lane exercises (NIGHTLY_REVISION, default 289).
+# It also names the engine start/stop scripts (`start-<revision>.sh`) and
+# the nav bake revision (BOT_NAV_REVISION). A specific setting
+# (NIGHTLY_PROFILE, NIGHTLY_RUN_SUFFIX, NIGHTLY_ENGINE_CRC_SHA256) still
+# wins over the default the revision implies.
+REVISION = os.environ.get("NIGHTLY_REVISION", "289")
+try:
+    DEFAULTS = revision_defaults(REVISION, IS_WINDOWS)
+except ValueError as error:
+    raise SystemExit(f"NIGHTLY_REVISION: {error}") from error
+PROFILE = os.environ.get("NIGHTLY_PROFILE", DEFAULTS["profile"])
+UNPACK_DIR = DEFAULTS["unpack_dir"]
 
 
 def load_timezone() -> ZoneInfo | None:
@@ -85,7 +129,7 @@ KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
 EXE = ".exe" if IS_WINDOWS else ""
 # Runs of one commit on two platforms must not collide on the archive dataset.
-RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", "-windows" if IS_WINDOWS else "")
+RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", DEFAULTS["run_suffix"])
 # "local": a private engine copy this runner starts and stops (malbec).
 # "remote": an engine that is already running; never started, stopped or changed.
 ENGINE_MODE = os.environ.get("NIGHTLY_ENGINE", "remote" if IS_WINDOWS else "local")
@@ -93,8 +137,7 @@ ENGINE_HOST = os.environ.get("NIGHTLY_ENGINE_HOST", "127.0.0.1")
 GAME_PORT = int(os.environ.get("NIGHTLY_GAME_PORT", "47594"))
 HTTP_PORT = int(os.environ.get("NIGHTLY_HTTP_PORT", "3080"))
 # The 289 engine's 40-byte /crc identity (ENGINE.md); empty skips the comparison.
-ENGINE_CRC_SHA256 = os.environ.get(
-    "NIGHTLY_ENGINE_CRC_SHA256", "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623")
+ENGINE_CRC_SHA256 = os.environ.get("NIGHTLY_ENGINE_CRC_SHA256", DEFAULTS["engine_crc_sha256"])
 ENGINE_LABEL = os.environ.get("NIGHTLY_ENGINE_LABEL", "Engine B")
 # Fresh exact-commit clone per run from local bare mirrors (Windows) into the
 # branch's one stable tree path, instead of one reused checkout per branch
@@ -461,6 +504,18 @@ def read_list(path: Path) -> list[str]:
     return rows
 
 
+def cells_file_path(arg: Path | None, env: str | None) -> Path | None:
+    """The cells file named by `--cells-file` or NIGHTLY_CELLS_FILE, if any.
+
+    A relative path is read beside this script, so a guest's settings file
+    can name a committed list (`cells-274.conf`) without a guest path.
+    """
+    raw = arg if arg is not None else (Path(env) if env else None)
+    if raw is None:
+        return None
+    return raw if raw.is_absolute() else HERE / raw
+
+
 def read_skips(path: Path) -> dict[str, str]:
     skips = {}
     for row in read_list(path):
@@ -716,9 +771,14 @@ def prune_trees(branches: list[str]) -> None:
 
 def build_env(target: Path, **extra: str) -> dict:
     # host-play's build script bakes the bundled navigation from the engine's content
-    # and a decoded client-cache snapshot (BOT_NAV_SNAPSHOT_ROOT).
-    return dict(os.environ, CARGO_TARGET_DIR=str(target), ENGINE_DIR=str(ENGINE_PRISTINE / "engine"),
-                BOT_NAV_SNAPSHOT_ROOT=str(NAV_SNAPSHOT), **extra)
+    # and a decoded client-cache snapshot (BOT_NAV_SNAPSHOT_ROOT). The bake
+    # defaults to revision 289; name the revision only for the other lane, so
+    # the 289 build environment stays exactly what it was.
+    env = dict(os.environ, CARGO_TARGET_DIR=str(target), ENGINE_DIR=str(ENGINE_PRISTINE / "engine"),
+               BOT_NAV_SNAPSHOT_ROOT=str(NAV_SNAPSHOT), **extra)
+    if REVISION != "289":
+        env["BOT_NAV_REVISION"] = REVISION
+    return env
 
 
 def frontend_bins() -> list[str]:
@@ -760,7 +820,7 @@ def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: 
     finally:
         engine_stop(None)
     decoded = [path.parent for path in
-               (home / ".274bot" / "unpack-289").glob("revision-289/*/*/*/versionlist")]
+               (home / ".274bot" / UNPACK_DIR).glob(f"revision-{REVISION}/*/*/*/versionlist")]
     if not decoded:
         raise RuntimeError("nav snapshot bootstrap: the client decoded no snapshot; "
                            f"see {work / 'stderr.log'}")
@@ -775,7 +835,29 @@ def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: 
     log(f"nav snapshot ready: {[path.name for path in decoded]}")
 
 
+def apply_274_inventory_overlay(tree: Path) -> None:
+    """Use the pinned-content inventory for the revision-274 nav bake.
+
+    The tested branch's manifest includes a test-only script absent from the
+    pinned 274 content commit. Keep the lane-specific correction in the runner
+    checkout and overlay it only on revision-274 build trees.
+    """
+    if REVISION != "274":
+        return
+    target = tree / "crates" / "nav" / "src" / "required-content-274.tsv"
+    if not NAV_274_REQUIRED_CONTENT.is_file():
+        raise RuntimeError(f"revision-274 nav inventory missing: {NAV_274_REQUIRED_CONTENT}")
+    if not target.is_file():
+        raise RuntimeError(f"tested tree's revision-274 nav inventory missing: {target}")
+    if NAV_274_REQUIRED_CONTENT.read_bytes() != target.read_bytes():
+        shutil.copyfile(NAV_274_REQUIRED_CONTENT, target)
+        log("274: applied pinned-content nav inventory overlay")
+    else:
+        log("274: pinned-content nav inventory overlay already current")
+
+
 def build(tree: Path, target: Path, run_dir: Path, build_log: Path) -> dict[str, Path]:
+    apply_274_inventory_overlay(tree)
     deadline = step_deadline("build", time.monotonic())
     remaining = lambda: max(60.0, deadline - time.monotonic())  # noqa: E731
     bins = frontend_bins()
@@ -843,7 +925,7 @@ def engine_start(run_dir: Path) -> tuple[bool, str]:
     engine_stop(None)
     try:
         copy_engine(run_dir)
-        run([str(ENGINE_RUN / "start-289.sh")], cwd=ENGINE_RUN, log_to=run_dir / "engine-control.log")
+        run([str(ENGINE_RUN / f"start-{REVISION}.sh")], cwd=ENGINE_RUN, log_to=run_dir / "engine-control.log")
     except subprocess.CalledProcessError as error:
         return False, f"failed to start: {error}"
     return True, "fresh copy started, stopped after the run"
@@ -853,7 +935,7 @@ def engine_stop(run_dir: Path | None) -> None:
     if ENGINE_MODE == "remote" or not (ENGINE_RUN / "runtime" / "pids" / "engine.pid").exists():
         return
     control = run_dir / "engine-control.log" if run_dir else None
-    run([str(ENGINE_RUN / "stop-289.sh")], cwd=ENGINE_RUN, log_to=control, check=False)
+    run([str(ENGINE_RUN / f"stop-{REVISION}.sh")], cwd=ENGINE_RUN, log_to=control, check=False)
     if run_dir:
         engine_log = ENGINE_RUN / "runtime" / "logs" / "engine.log"
         if engine_log.is_file():
@@ -1463,7 +1545,8 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
     md = [
         f"# Nightly {meta['run']}",
         "",
-        f"- Branch `{meta['branch']}` at `{meta['commit_full']}`",
+        f"- Branch `{meta['branch']}` at `{meta['commit_full']}` (revision {meta['revision']}"
+        + (f", cells from `{meta['cells_file']}`" if meta.get("cells_file") else "") + ")",
         f"- Platform {meta['platform']} ({meta['os']}, host {meta['host']})",
         f"- Started {meta['started']}, finished {meta['finished']}, wall {fmt_s(meta['wall_s'])}",
         f"- Build: {'FAILED' if not meta['build']['ok'] else 'ok' if meta['build'].get('ran', True) else 'not run'}"
@@ -1529,7 +1612,8 @@ def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
 
 def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: list[str] | None,
                unavailable: str | None = None, date: dt.date | None = None,
-               summary_only: bool = False) -> Path:
+               summary_only: bool = False, only_exact: bool = False,
+               cells_file: str | None = None) -> Path:
     """One branch: sources, the steps in order, summary, DONE.
 
     `unavailable` writes a complete run where every lane and cell is
@@ -1537,6 +1621,10 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     `summary_only` is the logon catch-up for a missed night. It writes
     that same UNAVAILABLE run and does no other work. In particular it
     does not run the disk guard. See the guard call below.
+    `only_exact` (a cells file) fails the run when a named cell is not in
+    the catalog, instead of running the rest without a word: a committed
+    cell list must not shrink silently when a cell is renamed or removed.
+    `cells_file` only names that list in the summary.
     """
     ident = platform_id()
     target = ROOT / "target" / slug(branch)
@@ -1595,6 +1683,13 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         build_ok = False
         build_error = (build_error or "") + f"; cell list: {error}"
     if only:
+        if only_exact and cells:
+            unknown = [cell for cell in only if cell not in cells]
+            if unknown:
+                build_ok = False
+                build_error = (build_error or "") + (
+                    f"; cell list: {cells_file or 'cells file'} names not in the catalog: "
+                    + ", ".join(unknown))
         cells = [cell for cell in cells if cell in only]
     cell_base = CellResult(cell="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     lane_base = LaneResult(lane="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
@@ -1698,7 +1793,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if not build_ok and engine_status == "not started":
         engine_status = "not started (build failed)"
     meta = dict(
-        run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full,
+        run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
+        cells_file=cells_file,
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
         cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE, interrupted=_stop.is_set(),
@@ -1707,10 +1803,10 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
                    panel_play_sha256=sha256(binaries["panel-play"]) if binaries.get("panel-play", Path()).is_file() else None),
         engine=dict(status=engine_status, mode=ENGINE_MODE,
-                    source=("engine-pristine (289 engine copy, fresh DB)" if ENGINE_MODE == "local"
+                    source=(f"engine-pristine ({REVISION} engine copy, fresh DB)" if ENGINE_MODE == "local"
                             else f"{ENGINE_LABEL} (running, shared; never started or stopped), "
                                  f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from engine-pristine")),
-        catalog_commit=git_head(CATALOG), runner_commit=git_head(HERE.parent.parent),
+        catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
         tree=str(tree) if tree else None,
     )
     write_summary(run_dir, meta, lanes, panel, results)
@@ -1779,6 +1875,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--branch", action="append", help="branch to test (repeatable; default branches.conf)")
     parser.add_argument("--cells", help="comma-separated cell names (default: every catalog cell)")
+    parser.add_argument("--cells-file", type=Path,
+                        help="file with one cell name per line (default NIGHTLY_CELLS_FILE; "
+                             "a relative path is read beside this script; --cells wins)")
     parser.add_argument("--lanes", help="comma-separated CI lane names (default: every lane)")
     parser.add_argument("--parallel", type=int, default=int(os.environ.get("NIGHTLY_PARALLEL", "4")))
     parser.add_argument("--list", action="store_true", help="print the cell list of a checked-out tree and exit")
@@ -1793,6 +1892,14 @@ def main() -> int:
         return 0
     branches = args.branch or os.environ.get("NIGHTLY_BRANCHES", "").split() or read_list(HERE / "branches.conf")
     only = [c.strip() for c in args.cells.split(",") if c.strip()] if args.cells else None
+    only_exact, cells_file = False, None
+    if only is None:
+        cells_path = cells_file_path(args.cells_file, os.environ.get("NIGHTLY_CELLS_FILE"))
+        if cells_path is not None:
+            only, only_exact, cells_file = read_list(cells_path), True, cells_path.name
+            if not only:
+                log(f"cells file {cells_path} names no cells; exiting")
+                return 1
     only_lanes = [c.strip() for c in args.lanes.split(",") if c.strip()] if args.lanes else None
     (ROOT / "runs").mkdir(parents=True, exist_ok=True)
     (ROOT / "state").mkdir(parents=True, exist_ok=True)
@@ -1814,7 +1921,7 @@ def main() -> int:
         wtext(started_marker(night), moment.isoformat(timespec="seconds") + " catch-up\n")
         for branch in branches:
             run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night,
-                       summary_only=True)
+                       summary_only=True, only_exact=only_exact, cells_file=cells_file)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
     global _run_deadline
@@ -1824,7 +1931,7 @@ def main() -> int:
     for branch in branches:
         if _stop.is_set():
             break
-        run_branch(branch, args.parallel, only, only_lanes)
+        run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file)
     if FRESH_TREES:
         prune_trees(branches)
     prune_local()

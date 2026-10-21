@@ -1,5 +1,7 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
+#[cfg(test)]
+use super::path::SequenceOrder;
 use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
@@ -2249,6 +2251,179 @@ mod tests {
             assert_eq!(error.code.as_ref(), "recipe-nesting-limit");
             assert!(error.detail.as_deref().unwrap().contains("32"));
         }
+    }
+
+    #[cfg(feature = "path-schema")]
+    #[test]
+    fn released_path_fixes_match_content_backed_facts() {
+        fn path(id: &str) -> PathDocument {
+            serde_json::from_slice(path_bytes(id).expect("released Path"))
+                .expect("valid Path document")
+        }
+
+        fn step_by_id<'a>(document: &'a PathDocument, id: &str) -> Option<&'a StepDocument> {
+            for role in &document.roles {
+                if let Some(step) = role.prelude.iter().find(|step| step.id.0.as_ref() == id) {
+                    return Some(step);
+                }
+                if let Some(step) = role
+                    .progress_reader
+                    .as_ref()
+                    .filter(|step| step.id.0.as_ref() == id)
+                {
+                    return Some(step);
+                }
+                for sequence in &role.sequences {
+                    if let Some(step) = sequence.steps.iter().find(|step| step.id.0.as_ref() == id)
+                    {
+                        return Some(step);
+                    }
+                }
+            }
+            document
+                .quest
+                .as_ref()?
+                .acquire
+                .values()
+                .flatten()
+                .find(|step| step.id.0.as_ref() == id)
+        }
+
+        fn has_fact(
+            predicate: &PredicateDocument,
+            expected_kind: &str,
+            expected_args: &serde_json::Value,
+        ) -> bool {
+            match predicate {
+                PredicateDocument::Fact { kind, args, .. } => {
+                    kind == expected_kind && args == expected_args
+                }
+                PredicateDocument::All(items) | PredicateDocument::Any(items) => items
+                    .iter()
+                    .any(|item| has_fact(item, expected_kind, expected_args)),
+                PredicateDocument::Not(inner) => has_fact(inner, expected_kind, expected_args),
+            }
+        }
+
+        fn excludes_nearby_jailguard(predicate: &PredicateDocument) -> bool {
+            matches!(
+                predicate,
+                PredicateDocument::Not(inner)
+                    if matches!(
+                        inner.as_ref(),
+                        PredicateDocument::Fact { kind, args, .. }
+                            if kind == "npc_near"
+                                && args == &serde_json::json!({"npc": "jailguard", "radius": 5})
+                    )
+            )
+        }
+
+        let demon = path("demon");
+        assert_eq!(
+            step_by_id(&demon, "receive-silverlight").unwrap().args["gap_ticks"],
+            3
+        );
+
+        let hunt = path("hunt");
+        let read_message = step_by_id(&hunt, "hunt-read-pirate-message").unwrap();
+        assert!(read_message.args.get("dialogue").is_none());
+        assert!(read_message
+            .comment
+            .as_deref()
+            .unwrap()
+            .contains("still needs S7 runtime journal-root handling"));
+        let apron = step_by_id(&hunt, "apron-buy-thessalia").unwrap();
+        assert_eq!(apron.args["est_gp"], 2);
+        assert!(apron.comment.as_deref().unwrap().contains("base cost 2 gp"));
+        let rum = step_by_id(&hunt, "rum-buy-zambo").unwrap();
+        assert_eq!(rum.args["est_gp"], 30);
+        assert!(rum.comment.as_deref().unwrap().contains("base cost 30 gp"));
+        let quest = hunt.quest.as_ref().unwrap();
+        let coin_float = u64::from(quest.coin_float);
+        // Count each one-way ship talk in the Path; each costs 30 gp.
+        let fare_cost = hunt
+            .roles
+            .iter()
+            .flat_map(|role| {
+                role.prelude
+                    .iter()
+                    .chain(role.progress_reader.iter())
+                    .chain(
+                        role.sequences
+                            .iter()
+                            .flat_map(|sequence| sequence.steps.iter()),
+                    )
+            })
+            .chain(quest.acquire.values().flatten())
+            .filter(|step| {
+                matches!(
+                    step.args.get("npc").and_then(serde_json::Value::as_str),
+                    Some("captain_tobias" | "customs_officer")
+                )
+            })
+            .fold(0_u64, |total, _| total + 30);
+        let purchase_total = coin_float
+            + fare_cost
+            + apron.args["est_gp"].as_u64().unwrap()
+            + rum.args["est_gp"].as_u64().unwrap();
+        assert_eq!(purchase_total, 282);
+
+        let totem = path("totem");
+        assert_eq!(
+            step_by_id(&totem, "start")
+                .unwrap()
+                .comment
+                .as_deref(),
+            Some("A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85).")
+        );
+
+        let seaslug = path("seaslug");
+        let swamppaste = seaslug
+            .quest
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| item.obj == "swamppaste")
+            .unwrap();
+        assert!(swamppaste.acquire.is_none());
+
+        let prince = path("prince");
+        let nearby_guards = &serde_json::json!({"npc": "jailguard", "radius": 5});
+        assert!(excludes_nearby_jailguard(
+            &step_by_id(&prince, "key-jail-approach").unwrap().settle
+        ));
+        let clear_guards = step_by_id(&prince, "jail-clear-guards").unwrap();
+        let until: PredicateDocument =
+            serde_json::from_value(clear_guards.args["until"].clone()).unwrap();
+        assert!(excludes_nearby_jailguard(&until));
+        assert!(excludes_nearby_jailguard(&clear_guards.skip_if));
+        assert!(excludes_nearby_jailguard(&clear_guards.settle));
+        assert_eq!(nearby_guards["radius"], 5);
+
+        let fluffs = path("fluffs");
+        let fluffs_quest = fluffs.quest.as_ref().unwrap();
+        assert_eq!(fluffs_quest.areas["yard"].boxes[0][1], 3493);
+        let yard_sequence = fluffs
+            .roles
+            .iter()
+            .flat_map(|role| &role.sequences)
+            .find(|sequence| sequence.stage.0.as_ref() == "fluffs:4")
+            .unwrap();
+        assert_eq!(yard_sequence.order, SequenceOrder::Ordered);
+
+        let drunkmonk = path("drunkmonk");
+        let walk = step_by_id(&drunkmonk, "walk-to-ring-stones").unwrap();
+        assert!(has_fact(
+            &walk.skip_if,
+            "near",
+            &serde_json::json!({"tile": [2561, 3222, 0], "radius": 2})
+        ));
+        assert!(has_fact(
+            &walk.skip_if,
+            "in_area",
+            &serde_json::json!({"area": "drunkmonk_cave"})
+        ));
     }
 
     #[test]

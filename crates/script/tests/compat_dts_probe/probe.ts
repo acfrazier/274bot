@@ -13,6 +13,11 @@ void okDist;
 const npcTileDist: number = new Npc({}).tile().distanceTo({ x: 1, z: 2, level: 0 });
 void npcTileDist;
 Bank.depositAllMatching((name: string, id: number) => name.length > 0 && id >= 0);
+const loadedByName: Promise<boolean> = Bank.withdrawLoad('Lobster');
+const loadedById: Promise<boolean> = Bank.withdrawLoad(42);
+void [loadedByName, loadedById];
+// @ts-expect-error the selector must be an item name or ID
+Bank.withdrawLoad(false);
 const progress = levelProgress(1, 0);
 const okLevel: number = progress.level;
 const okFrac: number = progress.fraction;

@@ -483,7 +483,13 @@ fn review_h2_overwrite_keeps_what_the_export_does_not_carry() {
 
     // The review's case: only leashRadius is in the export.
     let file = probe_file(json!({ "set:Thiever:leashRadius": "99" }));
-    let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Overwrite);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &catalog,
+        ConflictPolicy::Overwrite,
+    );
     let settings = plan.accounts()[0].settings().unwrap();
     let bag = &settings.script_settings["catalog:Thiever"];
     assert_eq!(bag["leashRadius"], json!(40));
@@ -495,7 +501,13 @@ fn review_h2_overwrite_keeps_what_the_export_does_not_carry() {
         "set:Thiever:leashRadius": "12",
         "set:Thiever:foodWithdraw": "lots",
     }));
-    let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Overwrite);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &catalog,
+        ConflictPolicy::Overwrite,
+    );
     let bag = &plan.accounts()[0].settings().unwrap().script_settings["catalog:Thiever"];
     assert_eq!(bag["leashRadius"], json!(12));
     assert_eq!(bag.get("foodWithdraw"), Some(&json!(27)), "{bag:?}");
@@ -509,7 +521,13 @@ fn review_m2_stored_numbers_are_read_as_rs2b0t_reads_them() {
     let catalog = ThieverCatalog::new();
     let imported = |storage: Value, key: &str| {
         let file = probe_file(storage);
-        let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Skip);
+        let plan = plan_import(
+            &file,
+            &vault,
+            crate::profiles::next_vault_uid(&vault),
+            &catalog,
+            ConflictPolicy::Skip,
+        );
         plan.accounts()[0]
             .settings()
             .unwrap()
@@ -562,10 +580,22 @@ fn review_h1_an_evicted_failure_is_never_reported_saved() {
     let mut core = failing_session("review-h1-evicted");
     let catalog = ThieverCatalog::new();
     let file = probe_file(json!({}));
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let run = apply_import(&mut core, plan).unwrap();
     let file = probe_file_for("rvimunseen", json!({}));
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let unseen = apply_import(&mut core, plan).unwrap();
     core.flush_writes();
     let AccountResult::Failed(first_error) = run.results(&core)[0].1 else {
@@ -601,6 +631,7 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &ThieverCatalog::new(),
         ConflictPolicy::Skip,
     );
@@ -693,7 +724,13 @@ fn review_m3_credentials_the_289_server_refuses_are_not_imported_by_default() {
     )
     .unwrap();
     let vault = vault_with("review-m3", &[]);
-    let plan = plan_import(&file, &vault, &FakeCatalog::new(), ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &FakeCatalog::new(),
+        ConflictPolicy::Skip,
+    );
     for unusable in &plan.accounts()[..4] {
         assert!(unusable.settings().is_none(), "{}", unusable.username());
         assert_ne!(unusable.status(), AccountStatus::New);
@@ -932,7 +969,13 @@ fn reads_the_file_from_disk() {
 fn maps_every_item_or_reports_why_not() {
     let file = parse_profile_file(FIXTURE).unwrap();
     let vault = vault_with("map", &[]);
-    let plan = plan_import(&file, &vault, &FakeCatalog::new(), ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &FakeCatalog::new(),
+        ConflictPolicy::Skip,
+    );
     assert_eq!(plan.count(AccountStatus::New), 2);
 
     let alice = account(&plan, "alice");
@@ -1021,6 +1064,7 @@ fn dimmed_scripts_keep_parameters_but_are_not_assigned() {
     let plan = plan_import(
         &file,
         &vault,
+        crate::profiles::next_vault_uid(&vault),
         &FakeCatalog::new().dim("CowKiller"),
         ConflictPolicy::Skip,
     );
@@ -1045,7 +1089,13 @@ fn without_the_catalog_scripts_are_reported_not_dropped() {
     let vault = vault_with("no-catalog", &[]);
     let mut catalog = FakeCatalog::new();
     catalog.loaded = false;
-    let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let alice = account(&plan, "alice");
     assert!(alice.settings().unwrap().script_settings.is_empty());
     for item in [
@@ -1064,14 +1114,26 @@ fn existing_profiles_are_skipped_by_default_or_overwritten_on_request() {
     let vault = vault_with("conflict", &[("alice", 274_000_005)]);
     let catalog = FakeCatalog::new();
 
-    let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::default());
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &catalog,
+        ConflictPolicy::default(),
+    );
     let alice = account(&plan, "alice");
     assert_eq!(alice.status(), AccountStatus::Exists);
     assert!(alice.settings().is_none());
     // A new profile's uid follows the vault's highest.
     assert_eq!(account(&plan, "bob").row.as_ref().unwrap().uid, 274_000_006);
 
-    let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Overwrite);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &catalog,
+        ConflictPolicy::Overwrite,
+    );
     let alice = account(&plan, "alice");
     assert_eq!(alice.status(), AccountStatus::Overwrite);
     let row = alice.row.as_ref().unwrap();
@@ -1096,7 +1158,13 @@ fn duplicate_and_blank_usernames_are_reported() {
     }))
     .unwrap();
     let vault = vault_with("dupes", &[]);
-    let plan = plan_import(&file, &vault, &FakeCatalog::new(), ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &FakeCatalog::new(),
+        ConflictPolicy::Skip,
+    );
     let statuses: Vec<AccountStatus> = plan.accounts().iter().map(|a| a.status()).collect();
     assert_eq!(
         statuses,
@@ -1116,7 +1184,13 @@ fn import_writes_through_the_session_and_reruns_are_idempotent() {
     let mut core = session(vault_with("apply", &[]));
     let catalog = FakeCatalog::new();
 
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let run = apply_import(&mut core, plan).unwrap();
     core.flush_writes();
     assert!(run.settled(&core));
@@ -1143,13 +1217,20 @@ fn import_writes_through_the_session_and_reruns_are_idempotent() {
     assert!(report.contains("file: tabs (Combat)"), "{report}");
 
     // Again with Skip: nothing to write.
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     assert_eq!(plan.count(AccountStatus::Exists), 2);
     assert!(!plan.writes());
     // Again with Overwrite: the vault already matches the export.
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &catalog,
         ConflictPolicy::Overwrite,
     );
@@ -1176,6 +1257,7 @@ fn overwrite_replaces_the_password_and_keeps_the_uid() {
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &FakeCatalog::new(),
         ConflictPolicy::Overwrite,
     );
@@ -1195,6 +1277,7 @@ fn a_profile_created_after_the_preview_is_never_replaced() {
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &FakeCatalog::new(),
         ConflictPolicy::Skip,
     );
@@ -1385,7 +1468,13 @@ fn tiles_must_be_whole() {
     let catalog = ThieverCatalog::new();
     for raw in ["3200.5,3200", "3200", "a,b", "1,2,Infinity"] {
         let file = probe_file(json!({ "set:Thiever:spot": raw }));
-        let plan = plan_import(&file, &vault, &catalog, ConflictPolicy::Skip);
+        let plan = plan_import(
+            &file,
+            &vault,
+            crate::profiles::next_vault_uid(&vault),
+            &catalog,
+            ConflictPolicy::Skip,
+        );
         let account = &plan.accounts()[0];
         assert!(
             account.settings().unwrap().script_settings.is_empty(),
@@ -1470,6 +1559,7 @@ fn overwrite_says_per_parameter_what_happens_and_what_stays() {
     let plan = plan_import(
         &file,
         &vault,
+        crate::profiles::next_vault_uid(&vault),
         &ThieverCatalog::new(),
         ConflictPolicy::Overwrite,
     );
@@ -1494,6 +1584,7 @@ fn overwrite_says_per_parameter_what_happens_and_what_stays() {
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &ThieverCatalog::new(),
         ConflictPolicy::Overwrite,
     );
@@ -1530,6 +1621,7 @@ fn an_overwrite_without_a_world_keeps_the_profiles_world() {
     let plan = plan_import(
         &file,
         &vault,
+        crate::profiles::next_vault_uid(&vault),
         &FakeCatalog::new(),
         ConflictPolicy::Overwrite,
     );
@@ -1551,7 +1643,13 @@ fn unusable_accounts_are_imported_only_on_request_and_never_shortened() {
     )
     .unwrap();
     let vault = vault_with("unusable", &[]);
-    let plan = plan_import(&file, &vault, &FakeCatalog::new(), ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        &vault,
+        crate::profiles::next_vault_uid(&vault),
+        &FakeCatalog::new(),
+        ConflictPolicy::Skip,
+    );
     let account = &plan.accounts()[0];
     assert_eq!(account.status(), AccountStatus::Unusable);
     assert_eq!(account.problem(), Some(CredentialProblem::PasswordTooLong));
@@ -1560,6 +1658,7 @@ fn unusable_accounts_are_imported_only_on_request_and_never_shortened() {
     let plan = plan_import(
         &file,
         &vault,
+        crate::profiles::next_vault_uid(&vault),
         &FakeCatalog::new(),
         ImportChoices {
             policy: ConflictPolicy::Skip,
@@ -1610,7 +1709,13 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
     let mut core = session(vault_with("unknown", &[]));
     let catalog = ThieverCatalog::new();
     let file = probe_file(json!({}));
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let run = apply_import(&mut core, plan).unwrap();
     core.flush_writes();
     for _ in 0..65 {
@@ -1621,7 +1726,13 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
 
     // Seen settled once, it stays durable after the record is gone.
     let file = probe_file_for("rvimseen", json!({}));
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let run = apply_import(&mut core, plan).unwrap();
     core.flush_writes();
     assert_eq!(run.results(&core)[0].1, AccountResult::Created);
@@ -1636,7 +1747,13 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
     let gate = core.write_gate();
     let hold = gate.lock().unwrap();
     let file = probe_file_for("rvimlater", json!({}));
-    let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &catalog,
+        ConflictPolicy::Skip,
+    );
     let run = apply_import(&mut core, plan).unwrap();
     let row = core.vault().unwrap().get("rvimlater").unwrap().clone();
     core.save_profile(row, ArmMirror::remember(None), "later edit")
@@ -1745,6 +1862,7 @@ fn r3_h3_a_password_repeated_in_a_tab_reaches_no_preview_report_or_debug() {
     let plan = plan_import(
         &file,
         core.vault().unwrap(),
+        core.fresh_uid(),
         &FakeCatalog::new(),
         ConflictPolicy::Skip,
     );
@@ -1949,7 +2067,13 @@ fn r3_h3_a_password_repeated_in_any_other_field_reaches_no_text() {
         let secret = format!("r4m{index:02}-pw-60233");
         let file = parse_profile_file(&export_with_password(&secret, edit)).unwrap();
         let mut core = session(vault_with(&format!("r4-matrix-{index}"), &[]));
-        let plan = plan_import(&file, core.vault().unwrap(), &catalog, ConflictPolicy::Skip);
+        let plan = plan_import(
+            &file,
+            core.vault().unwrap(),
+            core.fresh_uid(),
+            &catalog,
+            ConflictPolicy::Skip,
+        );
         let what = |part: &str| format!("{label}: {part}");
         leaks.check(&secret, &what("preview"), &plan.lines().join("\n"));
         let probe = account(&plan, "rvr4probe");

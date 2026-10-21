@@ -8,11 +8,12 @@ const MOSS_GIANT_BANK_FOOD: i32 = 2;
 /// Restock lines the cards themselves withdraw to (MossGiant's declared
 /// `foodWithdraw` default 20, AutoFighter's 10, HillGiant's 12).
 const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
-/// Frozen `Fight` can own the task for 120s (200 engine ticks at the 600ms
-/// script cadence) before `BankRun` gets the bank walk. The dirty-rate
-/// calibration is 1.25 runner dirties per engine tick (`scenarios/lib.rs`
-/// `gnome_fletch_short` note); 200 × 1.25 = 250, plus a 100-dirty allowance
-/// for the 74-tile field-to-bank path and bank interaction = 350.
+/// Frozen `Fight` can own the task for 120s (200 game ticks at the 600ms
+/// script cadence) before `BankRun` gets the bank walk. Historical sizing
+/// converted 200 game ticks at 1.25 runner dirty snapshots per game tick
+/// (`gnome_fletch_short` note) to 250 old dirty increments, then added a
+/// 100-dirty path/interaction allowance for the 74-tile field-to-bank route.
+/// The retained 350 cap now means 350 game ticks (210s).
 const MOSS_GIANT_BANK_LOOT_WATCH_TICKS: u32 = 350;
 const RUNE_ARROW_ID: i32 = 892;
 const MOSS_GIANT_DART_SUPPLY: i32 = 80;

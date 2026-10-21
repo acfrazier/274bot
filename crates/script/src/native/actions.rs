@@ -276,6 +276,15 @@ impl ActionContext<'_> {
         if request.required_after.run != run {
             return Err(ActionError::Stale);
         }
+        if request.candidate_goals.is_some()
+            && (request.arrival != nav::contract::ArrivalKind::Area
+                || request.loc_id.is_some()
+                || request.radius != 0)
+        {
+            return Err(ActionError::WalkGoals(
+                super::WalkGoalsError::IncompatibleArrival,
+            ));
+        }
         let ledger = self.ledger.get_or_insert_with(Default::default);
         let owner = match ledger.assess_owner.as_ref() {
             Some(owner) if owner.run == run && owner.live() => Arc::clone(owner),
@@ -333,6 +342,15 @@ impl ActionContext<'_> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
             return Err(ActionError::Stale);
+        }
+        if request.candidate_goals.is_some()
+            && (request.arrival != nav::contract::ArrivalKind::Area
+                || request.loc_id.is_some()
+                || request.radius != 0)
+        {
+            return Err(ActionError::WalkGoals(
+                super::WalkGoalsError::IncompatibleArrival,
+            ));
         }
         if !self.budget.event(false) {
             return Err(ActionError::BudgetExhausted);
@@ -1779,6 +1797,7 @@ mod tests {
                     z: 9,
                     level: 0,
                 },
+                candidate_goals: None,
                 radius: 0,
                 arrival: nav::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
@@ -2290,6 +2309,7 @@ mod tests {
                     z: 9,
                     level: 0,
                 },
+                candidate_goals: None,
                 loc_id: None,
                 radius: 0,
                 arrival: nav::contract::ArrivalKind::Reach,
@@ -2389,6 +2409,7 @@ mod tests {
                     |cx| {
                         let request = WalkRequest {
                             target,
+                            candidate_goals: None,
                             loc_id: None,
                             radius,
                             arrival: nav::contract::ArrivalKind::Reach,
@@ -2403,6 +2424,7 @@ mod tests {
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
                         let authority = cx.ledger.as_ref().unwrap().outbox[0].authority();
                         cx.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+                            goal: None,
                             request_id: authority.request_id().get(),
                             evidence: cx.evidence(),
                             end: WalkEnd::RouteEnded,
@@ -2449,6 +2471,7 @@ mod tests {
                 z: 9,
                 level: 0,
             },
+            candidate_goals: None,
             loc_id: None,
             radius: 0,
             arrival: nav::contract::ArrivalKind::Reach,

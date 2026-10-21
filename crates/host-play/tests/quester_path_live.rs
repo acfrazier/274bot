@@ -3,9 +3,12 @@
 //! This is the permanent form of the PATHS-OVERNIGHT throwaway runner. It
 //! runs the Path id in `QUESTER_PATH` from the embedded release index, or
 //! from `QUESTER_PATH_DIR` through the existing `FolderSource` registry.
-//! Optional account seeds come from the `QUESTER_SEEDS` JSON file. The cell
-//! runs under a fixed deadline; expected stage settling or terminal completion
-//! passes after Start.
+//! Optional account seeds come from the `QUESTER_SEEDS` JSON file.
+//! Stage mode checks the expected stage after Start. Clean mode checks terminal
+//! completion without seeding the target Path's stage.
+//! Set `QUESTER_ALLOW_DANGER_ZONES=1` to run a separate cell with the Quester
+//! card's `allow_danger_zones` setting enabled; unset keeps the default.
+//! The cell runs under a fixed deadline.
 //!
 //! Run from the repository root against an explicitly selected local 289
 //! engine, with a throwaway HOME containing the `local-289q` profile:
@@ -42,6 +45,10 @@
 //!   "mode": "stage"
 //! }
 //! ```
+//!
+//! For clean completion, set `mode` to `clean` and `expect` to `[]`.
+//! The `stage` field stays required by the shared schema, but the fixture does
+//! not apply it to the account.
 //!
 //! `seed_vars` names the stage varp for Paths with no progress varp hint
 //! (released Cook); `before_relog` holds raw fixture cheats such as
@@ -88,19 +95,23 @@ fn smoke_cell(
     loadout: Option<FixtureLoadout<'_>>,
     extra_items: &[(&str, i32)],
     seed_vars: &[(&str, i32)],
+    allow_danger_zones: bool,
 ) -> Result<Cell, String> {
-    let mode = match seeds.mode.as_deref().unwrap_or("stage") {
-        "stage" => Mode::Stage {
-            expect: seeds.expect.clone(),
-        },
-        "clean" => Mode::Clean,
+    let (mode, stage) = match seeds.mode.as_deref().unwrap_or("stage") {
+        "stage" => (
+            Mode::Stage {
+                expect: seeds.expect.clone(),
+            },
+            Some(seeds.stage.as_str()),
+        ),
+        "clean" => (Mode::Clean, None),
         other => return Err(format!("unknown smoke mode {other:?}")),
     };
     let mut cell = quester_live::path_cell(PathCell {
         quest: row.quest,
         display: row.display,
         label: "path-smoke".to_owned(),
-        stage: seeds.stage.as_str(),
+        stage,
         loadout,
         extra_items,
         seed_vars,
@@ -112,8 +123,22 @@ fn smoke_cell(
         mode,
         before_relog: seeds.before_relog_steps(),
     })?;
+    if allow_danger_zones {
+        cell.start_settings
+            .insert("allow_danger_zones".into(), true.into());
+    }
     cell.scenario.settings.deadline = DEADLINE;
     Ok(cell)
+}
+
+fn allow_danger_zones_from_env() -> Result<bool, String> {
+    match std::env::var("QUESTER_ALLOW_DANGER_ZONES") {
+        Ok(value) if value == "1" => Ok(true),
+        Ok(value) if value == "0" => Ok(false),
+        Ok(_) => Err("QUESTER_ALLOW_DANGER_ZONES must be 0 or 1".into()),
+        Err(std::env::VarError::NotPresent) => Ok(false),
+        Err(error) => Err(format!("QUESTER_ALLOW_DANGER_ZONES: {error}")),
+    }
 }
 
 #[test]
@@ -134,8 +159,17 @@ fn live_quester_path_smoke() {
         .unwrap_or_else(|error| panic!("{error}"));
     let extra_items = seeds.extra_item_refs();
     let seed_vars = seeds.seed_var_refs();
-    let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars)
-        .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
+    let allow_danger_zones =
+        allow_danger_zones_from_env().unwrap_or_else(|error| panic!("{error}"));
+    let cell = smoke_cell(
+        row,
+        &seeds,
+        loadout,
+        &extra_items,
+        &seed_vars,
+        allow_danger_zones,
+    )
+    .unwrap_or_else(|error| panic!("build {quest} smoke cell from {source}: {error}"));
     let result = quester_live::run_quester_path(cell);
     println!("PATH-SMOKE {quest} ({source}): {:?}", result.is_ok());
     registry::set_source(before);
@@ -160,6 +194,17 @@ mod smoke_tests {
         "mode": "stage"
     }"#;
 
+    const COG_CLEAN_SEEDS: &str = r#"{
+        "stage": "cog:0",
+        "stand": [2569, 3249, 0],
+        "loadout": null,
+        "extra_items": [],
+        "seed_vars": [],
+        "before_relog": [],
+        "expect": [],
+        "mode": "clean"
+    }"#;
+
     fn parse_seeds(text: &str) -> Result<QuesterPathSeeds, String> {
         scenario::quester::parse_quester_path_seeds(text, "QUESTER_SEEDS")
     }
@@ -170,7 +215,7 @@ mod smoke_tests {
         let loadout = seeds.fixture_loadout().unwrap();
         let extra_items = seeds.extra_item_refs();
         let seed_vars = seeds.seed_var_refs();
-        smoke_cell(row, seeds, loadout, &extra_items, &seed_vars).unwrap()
+        smoke_cell(row, seeds, loadout, &extra_items, &seed_vars, false).unwrap()
     }
 
     #[test]
@@ -202,9 +247,60 @@ mod smoke_tests {
     }
 
     #[test]
+    fn clean_smoke_does_not_seed_target_progress() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let seeds = parse_seeds(COG_CLEAN_SEEDS).unwrap();
+        let row = smoke_row("cog").unwrap();
+        let loadout = seeds.fixture_loadout().unwrap();
+        let extra_items = seeds.extra_item_refs();
+        let seed_vars = seeds.seed_var_refs();
+        let cell = smoke_cell(row, &seeds, loadout, &extra_items, &seed_vars, false).unwrap();
+        assert!(matches!(cell.mode, Mode::Clean));
+        assert!(!cell.start_settings.contains_key("allow_danger_zones"));
+        assert!(!cell
+            .scenario
+            .steps
+            .iter()
+            .any(|step| step.name == "reset authored content stage"));
+    }
+
+    #[test]
+    fn danger_route_permission_is_opt_in() {
+        let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
+        let seeds = parse_seeds(COG_CLEAN_SEEDS).unwrap();
+        let row = smoke_row("cog").unwrap();
+        let extra_items = seeds.extra_item_refs();
+        let seed_vars = seeds.seed_var_refs();
+        let default = smoke_cell(
+            row,
+            &seeds,
+            seeds.fixture_loadout().unwrap(),
+            &extra_items,
+            &seed_vars,
+            false,
+        )
+        .unwrap();
+        assert!(!default.start_settings.contains_key("allow_danger_zones"));
+        let allowed = smoke_cell(
+            row,
+            &seeds,
+            seeds.fixture_loadout().unwrap(),
+            &extra_items,
+            &seed_vars,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            allowed.start_settings.get("allow_danger_zones"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
     fn smoke_row_rejects_unknown_quests_and_non_base40_profiles() {
         assert!(smoke_row("not-a-quest").is_err());
         assert!(smoke_row("dragon").is_err());
+        assert_eq!(smoke_row("cog").unwrap().profile, TestProfile::Base40);
         assert_eq!(smoke_row("cook").unwrap().display, "Cook's Assistant");
     }
 
@@ -217,7 +313,7 @@ mod smoke_tests {
         assert!(seeds.fixture_loadout().is_ok());
         let row = smoke_row("cook").unwrap();
         let empty: Vec<(&str, i32)> = Vec::new();
-        assert!(smoke_cell(row, &seeds, None, &empty, &empty).is_err());
+        assert!(smoke_cell(row, &seeds, None, &empty, &empty, false).is_err());
         let seeds = parse_seeds(
             &COOK_SEEDS.replace(r#""loadout": null"#, r#""loadout": {"standard": "plate"}"#),
         )

@@ -284,7 +284,7 @@ fn strict_bank_access_options(mut options: FindOptions) -> FindOptions {
 }
 
 fn route_blocker_diagnosis(request: &ScriptRouteRequest) -> BlockerDiagnosis {
-    if request.radius <= 0 {
+    if request.radius <= 0 && request.candidate_goals.is_none() {
         BlockerDiagnosis::SingleTarget
     } else {
         BlockerDiagnosis::FirstGoal
@@ -673,6 +673,9 @@ fn route_capture_bytes(
         .checked_add(state.try_shared_retained_bytes()?)?
         .checked_add(route_vec_bytes(&request.bank)?)?
         .checked_add(arc_slice_heap_bytes::<AvoidRect>(request.avoid().len())?)?;
+    if let Some(goals) = &request.candidate_goals {
+        bytes = bytes.checked_add(goals.retained_bytes()?)?;
+    }
     if let Some(geometry) = &request.live_geometry {
         bytes = bytes.checked_add(route_vec_bytes(&geometry.flags)?)?;
     }
@@ -807,6 +810,7 @@ fn route_output_detail_bound(
     } else {
         supply_bytes.checked_add(2)?
     })?;
+    let detail_len = detail_len.max("candidate_goal_tier=preferred".len());
     detail_len.checked_add(arc_slice_heap_bytes::<u8>(detail_len)?)
 }
 
@@ -969,6 +973,7 @@ enum RouteJobStage {
 enum RouteSearchPurpose {
     Strict,
     StrictFirst,
+    CandidateFallback,
     MissingTarget,
     MissingTargets,
     MissingRoute,
@@ -984,6 +989,7 @@ enum RouteSearchPurpose {
 enum RouteGoalCopy {
     None,
     First,
+    CandidateFallback,
     Missing,
     Fetchable,
     Diagnostics,
@@ -1112,10 +1118,12 @@ impl RouteJob {
             .map_err(|_| RouteJobError::Allocation)?;
         let target_cursor = RouteTargetCursor::new(&request)?;
         let targets = Vec::new();
-        let search_mode = if request.radius > 0
-            && (request.arrival == ArrivalKind::Area
-                || request.live_geometry.is_some()
-                || (request.loc_id.is_none() && !request.world.collision.standable(request.to)))
+        let search_mode = if request.candidate_goals.is_some()
+            || (request.radius > 0
+                && (request.arrival == ArrivalKind::Area
+                    || request.live_geometry.is_some()
+                    || (request.loc_id.is_none()
+                        && !request.world.collision.standable(request.to))))
         {
             RouteSearchMode::First
         } else {
@@ -1430,39 +1438,54 @@ impl RouteJob {
         }
     }
 
+    fn goal_copy_sources(&self, kind: RouteGoalCopy) -> (&[WorldTile], &[WorldTile]) {
+        if let Some(goals) = &self.request.candidate_goals {
+            return match kind {
+                // A safe wider goal must not suppress the preferred tier's
+                // own-zone completion. Run candidate tiers separately.
+                RouteGoalCopy::First => (goals.preferred(), &[]),
+                RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => (
+                    goals.preferred(),
+                    if self.strict_fallback.is_none() {
+                        goals.fallback()
+                    } else {
+                        &[]
+                    },
+                ),
+                RouteGoalCopy::CandidateFallback => (goals.fallback(), &[]),
+                RouteGoalCopy::Diagnostics => (&self.targets, &[]),
+                RouteGoalCopy::None => (&[], &[]),
+            };
+        }
+        match kind {
+            RouteGoalCopy::None => (&[], &[]),
+            RouteGoalCopy::CandidateFallback => unreachable!("candidate request required"),
+            RouteGoalCopy::Diagnostics => (&self.targets, &[]),
+            RouteGoalCopy::First | RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => {
+                let primary = if self.first_fallback_enabled {
+                    self.first_preferred.as_slice()
+                } else {
+                    self.targets.as_slice()
+                };
+                let fallback = if self.first_fallback_enabled
+                    && (kind == RouteGoalCopy::First || self.strict_fallback.is_none())
+                {
+                    self.targets.as_slice()
+                } else {
+                    &[]
+                };
+                (primary, fallback)
+            }
+        }
+    }
+
     fn prepare_goal_copy(
         &mut self,
         kind: RouteGoalCopy,
         purpose: RouteSearchPurpose,
     ) -> Result<(), RouteJobError> {
-        let (primary_capacity, fallback_capacity) = match kind {
-            RouteGoalCopy::None => (0, 0),
-            RouteGoalCopy::First => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.len()
-                } else {
-                    self.targets.len()
-                },
-                if self.first_fallback_enabled {
-                    self.targets.len()
-                } else {
-                    0
-                },
-            ),
-            RouteGoalCopy::Missing | RouteGoalCopy::Fetchable => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.len()
-                } else {
-                    self.targets.len()
-                },
-                if self.first_fallback_enabled && self.strict_fallback.is_none() {
-                    self.targets.len()
-                } else {
-                    0
-                },
-            ),
-            RouteGoalCopy::Diagnostics => (self.targets.len(), 0),
-        };
+        let (primary, fallback) = self.goal_copy_sources(kind);
+        let (primary_capacity, fallback_capacity) = (primary.len(), fallback.len());
         self.goal_copy.clear();
         self.goal_copy
             .try_reserve_exact(primary_capacity)
@@ -1480,52 +1503,33 @@ impl RouteJob {
     }
 
     fn advance_goal_copy(&mut self) -> bool {
-        let (primary, fallback, filter_excluded) = match self.goal_copy_kind {
-            RouteGoalCopy::None => return true,
-            RouteGoalCopy::First => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled,
-                false,
-            ),
-            RouteGoalCopy::Missing => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled && self.strict_fallback.is_none(),
-                false,
-            ),
-            RouteGoalCopy::Fetchable => (
-                if self.first_fallback_enabled {
-                    self.first_preferred.as_slice()
-                } else {
-                    self.targets.as_slice()
-                },
-                self.first_fallback_enabled && self.strict_fallback.is_none(),
-                true,
-            ),
-            RouteGoalCopy::Diagnostics => (self.targets.as_slice(), false, false),
+        if self.goal_copy_kind == RouteGoalCopy::None {
+            return true;
+        }
+        let (primary, fallback) = self.goal_copy_sources(self.goal_copy_kind);
+        let primary_target = primary.get(self.goal_copy_index).copied();
+        let fallback_target = fallback.get(self.fallback_copy_index).copied();
+        let filter_excluded = self.goal_copy_kind == RouteGoalCopy::Fetchable;
+        let accepted = |target| {
+            (self.request.candidate_goals.is_none()
+                || self.request.world.collision.standable(target))
+                && (!filter_excluded || !self.excluded_targets.contains(&target))
         };
-        if let Some(&target) = primary.get(self.goal_copy_index) {
+        if let Some(target) = primary_target {
+            let accepted = accepted(target);
             self.goal_copy_index += 1;
-            if !filter_excluded || !self.excluded_targets.contains(&target) {
+            if accepted {
                 self.goal_copy.push(target);
             }
             return false;
         }
-        if fallback {
-            if let Some(&target) = self.targets.get(self.fallback_copy_index) {
-                self.fallback_copy_index += 1;
-                if !filter_excluded || !self.excluded_targets.contains(&target) {
-                    self.fallback_copy.push(target);
-                }
-                return false;
+        if let Some(target) = fallback_target {
+            let accepted = accepted(target);
+            self.fallback_copy_index += 1;
+            if accepted {
+                self.fallback_copy.push(target);
             }
+            return false;
         }
         self.stage = RouteJobStage::Search;
         true
@@ -1572,22 +1576,22 @@ impl RouteJob {
                 )
                 .map_err(|_| RouteJobError::Search)?
             }
-            RouteSearchPurpose::StrictFirst | RouteSearchPurpose::FetchableFirst => {
-                SearchCursor::new_preflighted(
-                    SearchRequest::First {
-                        from: self.request.from,
-                        targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
-                        fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
-                        options,
-                        avoid,
-                        max_settles,
-                    },
-                    self.lease.clone(),
-                    Arc::clone(&self.state),
-                    self.preflights.first,
-                )
-                .map_err(|_| RouteJobError::Search)?
-            }
+            RouteSearchPurpose::StrictFirst
+            | RouteSearchPurpose::CandidateFallback
+            | RouteSearchPurpose::FetchableFirst => SearchCursor::new_preflighted(
+                SearchRequest::First {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    fallback: std::mem::take(&mut self.fallback_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.first,
+            )
+            .map_err(|_| RouteJobError::Search)?,
             RouteSearchPurpose::MissingTarget | RouteSearchPurpose::MissingCarry => {
                 let target = if self.search_purpose == RouteSearchPurpose::MissingCarry {
                     self.request.to
@@ -1785,11 +1789,26 @@ impl RouteJob {
                     self.outcome = Some(RouteJobOutcome::Route(route));
                     self.stage = RouteJobStage::Assess;
                 } else {
+                    if self
+                        .request
+                        .candidate_goals
+                        .as_ref()
+                        .is_some_and(|goals| !goals.fallback().is_empty())
+                    {
+                        return self.prepare_goal_copy(
+                            RouteGoalCopy::CandidateFallback,
+                            RouteSearchPurpose::CandidateFallback,
+                        );
+                    }
                     if let Some(CompactFallbackRoute::Routed(route)) = fallback {
                         self.strict_fallback = Some(route);
                     }
                     self.begin_fetchable_first()?;
                 }
+            }
+            (RouteSearchPurpose::CandidateFallback, SearchOutcome::First { search }) => {
+                self.strict_fallback = search.into_routes().0.ok();
+                self.begin_fetchable_first()?;
             }
             (RouteSearchPurpose::MissingTarget, SearchOutcome::MissingItemReqs(missing)) => {
                 if let Some(missing) = missing.filter(|missing| !missing.is_empty()) {
@@ -2138,6 +2157,21 @@ impl RouteJob {
     fn finish(&mut self) -> RouteJobOutput {
         let outcome = self.outcome.take().unwrap_or(RouteJobOutcome::NoPath);
         let mut detail = self.detail.take();
+        let final_goal = match &outcome {
+            RouteJobOutcome::Route(route)
+            | RouteJobOutcome::Bank {
+                final_route: route, ..
+            } => Some(route.destination()),
+            RouteJobOutcome::NoPath => None,
+        };
+        if let (Some(goals), Some(goal)) = (&self.request.candidate_goals, final_goal) {
+            let tier = if goals.preferred().contains(&goal) {
+                "preferred"
+            } else {
+                "fallback"
+            };
+            detail = Some(format!("candidate_goal_tier={tier}"));
+        }
         if matches!(&outcome, RouteJobOutcome::NoPath) {
             let mut route_detail = if self.blocked.is_empty() {
                 self.request
@@ -2198,6 +2232,7 @@ impl RouteJob {
             }
         }
         RouteJobOutput {
+            candidate_goals: self.request.candidate_goals.is_some(),
             kind: self.kind.take().expect("route demand kind is present"),
             completion: std::mem::take(&mut self.request.completion),
             identity: self
@@ -2729,6 +2764,7 @@ impl CooperativeJob for RouteJob {
 }
 
 pub(crate) struct RouteJobOutput {
+    candidate_goals: bool,
     kind: RouteDemandKind,
     completion: RouteCompletion,
     identity: WorkIdentity,
@@ -3428,6 +3464,7 @@ fn apply_route_output(
                 return;
             };
             let mut reservation = reservation;
+            let no_path = matches!(&output.outcome, RouteJobOutcome::NoPath);
             let (route_path, pending, custody) = match output.outcome {
                 RouteJobOutcome::NoPath => (None, None, None),
                 RouteJobOutcome::Route(route) => {
@@ -3504,6 +3541,14 @@ fn apply_route_output(
             {
                 return;
             }
+            let chosen_goal = if output.candidate_goals {
+                pending.as_ref().map_or_else(
+                    || route_path.as_ref().map(RoutePath::destination),
+                    |pending| Some(pending.dest),
+                )
+            } else {
+                None
+            };
             if let Some(assessment) = output.assessment.as_ref() {
                 crate::admission::log(Some(name), assessment, output.compat_v1);
             }
@@ -3522,6 +3567,15 @@ fn apply_route_output(
                     .as_ref()
                     .map(|_| script::native::WalkEnd::Refused)
             });
+            let native_failure = if no_path
+                && native_failure
+                    .as_ref()
+                    .is_none_or(|failure| *failure == script::native::WalkEnd::Failed)
+            {
+                Some(script::native::WalkEnd::NoPath)
+            } else {
+                native_failure
+            };
             let native_refused = native_failure == Some(script::native::WalkEnd::Refused);
             let detail = output.detail.take().map(Arc::from);
             let blocked = std::mem::take(&mut output.blocked);
@@ -3542,6 +3596,13 @@ fn apply_route_output(
                 ) {
                     return;
                 }
+                if let Some(goal) = chosen_goal {
+                    // Recovery follows the chosen exact goal, not the caller's
+                    // ranking tile that may be in another component.
+                    if let Some(key) = bot.requested_route.as_mut() {
+                        key.0 = goal;
+                    }
+                }
                 if bot.route_basis.is_none() {
                     if let Some(route) = bot.route_path_for_follow() {
                         bot.route_basis = Some(Arc::new(crate::admission::RouteBasis {
@@ -3553,11 +3614,11 @@ fn apply_route_output(
                     }
                 }
                 bot.admission_pending = true;
+                bot.walk_outcome_detail = detail;
                 if bot.walk_outcome_generation == output.generation
                     && bot.walk_outcome_request_id == output.request_id
                 {
                     bot.native_walk_failure = native_failure.map(|end| (output.request_id, end));
-                    bot.walk_outcome_detail = detail;
                     bot.native_walk_blocked = if native_refused {
                         (!blocked.is_empty())
                             .then(|| (output.request_id, Arc::<[ZoneKey]>::from(blocked)))
@@ -4307,6 +4368,7 @@ impl ScriptWalkArm {
             None
         };
         let request = ScriptRouteRequest {
+            candidate_goals: request.candidate_goals,
             generation: admission.generation,
             request_id: authority.request_id().get(),
             world: Arc::clone(world),
@@ -4493,6 +4555,7 @@ impl ScriptWalkArm {
             request.arrival,
             Some(admission),
             false,
+            request.candidate_goals,
         );
         if queued {
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
@@ -4535,6 +4598,7 @@ impl ScriptWalkArm {
             arrival,
             None,
             compat_tile_intent,
+            None,
         )
     }
 
@@ -4635,6 +4699,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4675,6 +4740,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4706,6 +4772,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             false,
+            None,
         )
     }
 
@@ -4739,6 +4806,7 @@ impl ScriptWalkArm {
             ArrivalKind::Reach,
             None,
             compat_tile_intent,
+            None,
         )
     }
 
@@ -4777,6 +4845,7 @@ impl ScriptWalkArm {
                 ArrivalKind::Reach,
                 None,
                 false,
+                None,
             )
             .then_some(receiver)
     }
@@ -4880,6 +4949,7 @@ impl ScriptWalkArm {
         arrival: ArrivalKind,
         request_admission: Option<crate::admission::Admission>,
         compat_tile_intent: bool,
+        candidate_goals: Option<script::native::WalkGoals>,
     ) -> bool {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
@@ -5159,6 +5229,7 @@ impl ScriptWalkArm {
             bot.native_walk_failure = None;
             bot.route_compat_tile_intent = compat_tile_intent;
             let request = ScriptRouteRequest {
+                candidate_goals,
                 generation: bot.route_generation,
                 request_id,
                 world: Arc::clone(world),
@@ -5381,12 +5452,16 @@ enum RouteTargetMode {
     Exact,
     Geometry,
     Radius,
+    Candidates,
 }
 
 impl RouteTargetCursor {
     fn shape(
         request: &ScriptRouteRequest,
     ) -> Result<(RouteTargetMode, usize, usize), RouteJobError> {
+        if let Some(goals) = &request.candidate_goals {
+            return Ok((RouteTargetMode::Candidates, goals.as_slice().len(), 0));
+        }
         if request.radius <= 0 {
             return Ok((RouteTargetMode::Exact, 1, 0));
         }
@@ -5442,6 +5517,20 @@ impl RouteTargetCursor {
             return false;
         }
         match self.mode {
+            RouteTargetMode::Candidates => {
+                let goals = request
+                    .candidate_goals
+                    .as_ref()
+                    .expect("candidate mode")
+                    .as_slice();
+                if let Some(&tile) = goals.get(self.index) {
+                    if request.world.collision.standable(tile) {
+                        self.targets.push(tile);
+                    }
+                }
+                self.index += 1;
+                self.index >= goals.len()
+            }
             RouteTargetMode::Exact => {
                 if self.index == 0 {
                     self.targets.push(request.to);
@@ -5720,6 +5809,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) world: Arc<NavWorld>,
     pub(crate) from: WorldTile,
     pub(crate) to: WorldTile,
+    pub(crate) candidate_goals: Option<script::native::WalkGoals>,
     pub(crate) radius: i32,
     pub(crate) loc_id: Option<i32>,
     pub(crate) arrival: ArrivalKind,
@@ -5749,7 +5839,14 @@ const BANK_ZONE_DIAGNOSTIC_TARGETS: usize = 8;
 impl ScriptRouteRequest {
     #[cfg(test)]
     fn targets(&self) -> Vec<WorldTile> {
-        if self.radius <= 0 {
+        if let Some(goals) = &self.candidate_goals {
+            goals
+                .as_slice()
+                .iter()
+                .copied()
+                .filter(|&tile| self.world.collision.standable(tile))
+                .collect()
+        } else if self.radius <= 0 {
             vec![self.to]
         } else if let Some(geometry) = self.live_geometry.as_ref() {
             geometry.candidates(self.to)
@@ -6461,7 +6558,8 @@ impl NavBot {
         self.walk_outcome_radius = radius;
         self.walk_outcome_allow_teleports = allow_teleports;
         self.native_walk_blocked = None;
-        self.walk_outcome_detail = None;
+        // The request arm clears stale detail. Keep this route's host detail
+        // for its correlated terminal receipt.
         self.walk_missing_carry.clear();
         self.walk_live_refusal_id = 0;
     }
@@ -6937,6 +7035,7 @@ mod diagnostic_tests {
             Vec::new(),
         );
         let mut request = ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -7006,6 +7105,7 @@ mod diagnostic_tests {
     fn stage_request(world: Arc<NavWorld>) -> Box<ScriptRouteRequest> {
         let from = world.collision.origin;
         Box::new(ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -7053,6 +7153,253 @@ mod diagnostic_tests {
             nav::transport::TransportGraph::default(),
             Vec::new(),
         )))
+    }
+
+    #[test]
+    fn candidate_search_keeps_reachable_components_without_per_goal_searches() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let world = Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: tile(0),
+                width: 3,
+                height: 1,
+                walk: vec![0; 3 * 4],
+                blocked: vec![1 << 1],
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ));
+        let mut old = stage_request(Arc::clone(&world));
+        old.to = tile(2);
+        old.arrival = ArrivalKind::Area;
+        let (outcome, _) = old.drive_route_job_for_test();
+        assert!(matches!(outcome, RouteOutcome::NoPath));
+        for from in [tile(0), tile(2)] {
+            let mut request = stage_request(Arc::clone(&world));
+            request.from = from;
+            request.to = tile(2);
+            request.arrival = ArrivalKind::Area;
+            request.candidate_goals = Some(
+                script::native::WalkGoals::with_preferred(vec![tile(2), tile(0)], &[tile(2)])
+                    .unwrap(),
+            );
+            let (output, _, _) = request.drive_route_job_output_for_test();
+            let RouteJobOutcome::Route(route) = &output.outcome else {
+                panic!("the bounded tier searches must find this component");
+            };
+            assert_eq!(route.to_route(&world.graph).dest, from);
+            assert_eq!(
+                output.detail.as_deref(),
+                Some(if from == tile(2) {
+                    "candidate_goal_tier=preferred"
+                } else {
+                    "candidate_goal_tier=fallback"
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn candidate_search_tries_the_distant_fallback_after_preferred_failure() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let mut blocked = vec![0u64; (1024usize * 4).div_ceil(64)];
+        blocked[1022 >> 6] |= 1 << (1022 & 63);
+        let world = Arc::new(NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin: tile(0),
+                width: 1024,
+                height: 1,
+                walk: vec![0; 1024 * 4],
+                blocked,
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        ));
+        let mut request = stage_request(world);
+        request.to = tile(1023);
+        request.arrival = ArrivalKind::Area;
+        request.candidate_goals = Some(
+            script::native::WalkGoals::with_preferred(vec![tile(1023), tile(1000)], &[tile(1023)])
+                .unwrap(),
+        );
+        let (output, _, _) = request.drive_route_job_output_for_test();
+        let RouteJobOutcome::Route(route) = &output.outcome else {
+            panic!("fallback-only continuation must reach the distant alternative");
+        };
+        assert_eq!(route.destination(), tile(1000));
+        assert_eq!(
+            output.detail.as_deref(),
+            Some("candidate_goal_tier=fallback")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the reviewed real R289 NAV_PACK"]
+    fn candidate_preference_keeps_own_zone_completion_ahead_of_a_safe_fallback() {
+        let pack = std::env::var_os("NAV_PACK").expect("set the real 289 navpack");
+        let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+        let tile = |x, z| WorldTile { x, z, level: 0 };
+        let bank = tile(3092, 3242);
+        let preferred = [tile(3086, 3230), tile(3086, 3231)];
+        let mut state = WorldState::empty().with_map_members(true);
+        state.stats = (0..=20).map(|skill| (skill, 99)).collect();
+        let shared = nav::router::find_first_with_fallback(
+            &world.collision,
+            &world.graph,
+            bank,
+            &preferred,
+            &[bank],
+            FindOptions::default(),
+            &state,
+        );
+        assert!(
+            shared.route().is_err(),
+            "safe fallback closes before own-zone completion"
+        );
+        assert!(
+            matches!(shared.fallback(), Some(nav::router::FallbackRoute::Routed(route)) if route.dest == bank)
+        );
+        let old = nav::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            bank,
+            &preferred,
+            FindOptions::default(),
+            &state,
+        )
+        .into_route()
+        .unwrap();
+        let mut request = stage_request(Arc::clone(&world));
+        request.from = bank;
+        request.to = tile(3085, 3230);
+        request.arrival = ArrivalKind::Area;
+        request.state = Some(state);
+        request.candidate_goals =
+            Some(script::native::WalkGoals::with_preferred(vec![bank], &preferred).unwrap());
+        let mut job = completed_search_stage(request);
+        let Some(RouteJobOutcome::Route(route)) = job.outcome.as_ref() else {
+            panic!("the preferred-only route must remain reachable");
+        };
+        assert_eq!(route.to_route(&world.graph), old);
+        assert!(preferred.contains(&route.destination()));
+        assert_eq!(
+            job.finish().detail.as_deref(),
+            Some("candidate_goal_tier=preferred")
+        );
+    }
+
+    #[test]
+    #[ignore = "bounded 524288-settle failure-cost measurement"]
+    fn candidate_preferred_failure_cost_stays_within_the_existing_first_goal_budget() {
+        // Both components exceed the backward proof's 262144-tile cap.
+        // The preferred proof must abandon, rather than cheaply close.
+        let (width, height) = (1537usize, 769usize);
+        let cells = width * height * 4;
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for level in 0..4 {
+            for z in 0..height {
+                let index = level * width * height + z * width + 768;
+                blocked[index >> 6] |= 1 << (index & 63);
+            }
+        }
+        let from = WorldTile {
+            x: 384,
+            z: 384,
+            level: 0,
+        };
+        let preferred = WorldTile { x: 1152, ..from };
+        let collision = nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width,
+            height,
+            walk: vec![0; cells],
+            blocked,
+            flags: None,
+        };
+        let graph = nav::transport::TransportGraph::default();
+        let started = std::time::Instant::now();
+        let search = nav::router::find_first_with(
+            &collision,
+            &graph,
+            from,
+            &[preferred],
+            FindOptions::default(),
+            &WorldState::empty(),
+        );
+        let elapsed = started.elapsed();
+        assert_eq!(
+            search.route(),
+            Err(nav::router::RouteError::BudgetExhausted)
+        );
+        assert_eq!(search.proof(), nav::router::ReverseProof::Abandoned);
+        assert!(search.settled() <= nav::router::FIRST_TARGET_BUDGET + 1);
+        let fallback = nav::router::find_first_with(
+            &collision,
+            &graph,
+            from,
+            &[from],
+            FindOptions::default(),
+            &WorldState::empty(),
+        )
+        .into_route()
+        .expect("the separate fallback tier must retain the zero-cost origin");
+        assert_eq!(fallback.dest, from);
+        let record = serde_json::json!({
+            "preferred_failure": "BudgetExhausted",
+            "proof": "Abandoned",
+            "forward_settles": search.settled(),
+            "unproven_settle_budget": nav::router::FIRST_TARGET_BUDGET,
+            "elapsed_ms": elapsed.as_millis(),
+            "fallback": fallback.dest,
+            "fallback_ticks": fallback.ticks,
+        });
+        eprintln!("{record}");
+        if let Some(path) = std::env::var_os("BOT_FISHING_TIER_BUDGET_OUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn single_candidate_keeps_the_ordinary_exact_area_route() {
+        let world = tiny_stage_request().world;
+        let tile = |x, z| WorldTile { x, z, level: 0 };
+        for (from, to) in [
+            (tile(0, 0), tile(3, 3)),
+            (tile(3, 0), tile(0, 3)),
+            (tile(1, 1), tile(2, 1)),
+            (tile(2, 2), tile(2, 2)),
+        ] {
+            let request = |candidate_goals| {
+                let mut request = stage_request(Arc::clone(&world));
+                request.from = from;
+                request.to = to;
+                request.arrival = ArrivalKind::Area;
+                request.candidate_goals = candidate_goals;
+                request
+            };
+            let ordinary = completed_search_stage(request(None));
+            assert!(matches!(ordinary.search_mode, RouteSearchMode::InOrder));
+            let candidate = completed_search_stage(request(Some(
+                script::native::WalkGoals::new(vec![to]).unwrap(),
+            )));
+            assert!(matches!(candidate.search_mode, RouteSearchMode::First));
+            let Some(RouteJobOutcome::Route(ordinary)) = ordinary.outcome else {
+                panic!("ordinary exact-Area route must be reachable");
+            };
+            let Some(RouteJobOutcome::Route(candidate)) = candidate.outcome else {
+                panic!("the equivalent single candidate must be reachable");
+            };
+            assert_eq!(
+                candidate.to_route(&world.graph),
+                ordinary.to_route(&world.graph),
+            );
+        }
     }
 
     #[test]
@@ -7222,6 +7569,298 @@ mod diagnostic_tests {
     }
 
     #[test]
+    #[ignore = "requires BOT_ROUTE_PARITY_NAVPACK and BOT_ROUTE_PARITY_OUT; real 17-case per-goal corpus"]
+    fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
+        use std::collections::{HashMap, HashSet};
+
+        let pack = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PARITY_NAVPACK").expect("set the real 289 navpack"),
+        );
+        let output = std::path::PathBuf::from(
+            std::env::var_os("BOT_ROUTE_PARITY_OUT").expect("set the parity evidence output"),
+        );
+        assert!(pack.is_absolute() && output.is_absolute());
+        let stride: usize = std::env::var("BOT_ROUTE_PARITY_STRIDE")
+            .map_or(1, |value| value.parse().expect("positive parity stride"));
+        assert!(stride > 0);
+        let tile = |x, z, level| WorldTile { x, z, level };
+        let mut loaded = NavWorld::load_pack(&pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let mut zones = loaded.graph.zones.take();
+        let mut world = Arc::new(loaded);
+        let empty = WorldState::empty();
+        let rich = WorldState {
+            map_members: true,
+            combat_level: Some(126),
+            quests: HashSet::from([
+                "Prince Ali Rescue".into(),
+                "Rune Mysteries".into(),
+                "Lost City".into(),
+                "Shilo Village".into(),
+                "Tree Gnome Village".into(),
+                "The Grand Tree".into(),
+            ]),
+            inv: HashMap::from([
+                (995, 10_000),
+                (554, 1_000),
+                (555, 1_000),
+                (556, 1_000),
+                (557, 1_000),
+                (558, 1_000),
+                (561, 1_000),
+                (563, 1_000),
+            ]),
+            stats: (0..21).map(|skill| (skill, 99)).collect(),
+            ..WorldState::empty()
+        };
+        let low = WorldState {
+            combat_level: Some(3),
+            ..rich.clone()
+        };
+        let live = WorldState {
+            map_members: true,
+            combat_level: Some(50),
+            inv: HashMap::from([(995, 60)]),
+            ..WorldState::empty()
+        };
+        let legacy = FindOptions {
+            zones: nav::zones::ZoneExempt::all(),
+            ..FindOptions::default()
+        };
+        let teleports = FindOptions {
+            allow_teleports: true,
+            ..legacy
+        };
+        let default = FindOptions::default();
+        let bank_targets: Vec<_> = world
+            .named_bank_facts()
+            .unwrap()
+            .banks()
+            .iter()
+            .filter(|bank| bank.routable)
+            .map(|bank| bank.tile)
+            .collect();
+        let mut radius_targets = Vec::new();
+        for x in 2543..=2563 {
+            for z in 3396..=3416 {
+                let goal = tile(x, z, 0);
+                if world.collision.standable(goal) {
+                    radius_targets.push(goal);
+                }
+            }
+        }
+        let lumbridge = tile(3222, 3218, 0);
+        let falador = tile(2965, 3379, 0);
+        let dungeon = tile(3016, 9840, 0);
+        let radius_from = tile(2615, 3332, 0);
+        // Per-goal projections of all 17 rows in nav/examples/perf_corpus.rs.
+        // Many/First rows expand to their full goal lists, not a proxy center.
+        let cases = [
+            (
+                "reachable_lumbridge_falador",
+                lumbridge,
+                vec![falador],
+                legacy,
+                empty.clone(),
+            ),
+            (
+                "bank_pick_all_stands",
+                dungeon,
+                bank_targets.clone(),
+                legacy,
+                rich.clone(),
+            ),
+            (
+                "radius_walk_candidates",
+                radius_from,
+                radius_targets.clone(),
+                legacy,
+                rich.clone(),
+            ),
+            (
+                "teleports_on_real_state",
+                lumbridge,
+                vec![tile(2817, 3443, 0)],
+                teleports,
+                rich.clone(),
+            ),
+            (
+                "unreachable_fail_closed",
+                lumbridge,
+                vec![tile(2817, 3443, 0)],
+                legacy,
+                empty.clone(),
+            ),
+            (
+                "reachable_lumbridge_falador_zones_l126",
+                lumbridge,
+                vec![falador],
+                default,
+                rich.clone(),
+            ),
+            (
+                "reachable_lumbridge_falador_zones_l3",
+                lumbridge,
+                vec![falador],
+                default,
+                low.clone(),
+            ),
+            (
+                "bank_pick_all_stands_zones_l3",
+                dungeon,
+                bank_targets,
+                default,
+                low.clone(),
+            ),
+            (
+                "radius_walk_candidates_zones_l3",
+                radius_from,
+                radius_targets,
+                default,
+                low.clone(),
+            ),
+            (
+                "lumbridge_rellekka_refused_zones_l126",
+                lumbridge,
+                vec![tile(2664, 3664, 0)],
+                default,
+                rich.clone(),
+            ),
+            (
+                "taverley_catherby_zones_l126",
+                tile(2895, 3450, 0),
+                vec![tile(2809, 3440, 0)],
+                default,
+                rich,
+            ),
+            (
+                "danger_live_off",
+                tile(2809, 3441, 0),
+                vec![tile(3103, 3163, 2)],
+                default,
+                live.clone(),
+            ),
+            (
+                "danger_live_grant",
+                tile(2809, 3441, 0),
+                vec![tile(3103, 3163, 2)],
+                legacy,
+                live,
+            ),
+            (
+                "falador_lumbridge_zones_l3",
+                falador,
+                vec![lumbridge],
+                default,
+                low.clone(),
+            ),
+            (
+                "deep_zone_goal_teles_off",
+                tile(2895, 3450, 0),
+                vec![tile(2852, 3493, 0)],
+                default,
+                low.clone(),
+            ),
+            (
+                "deep_zone_goal_teles_on",
+                tile(2895, 3450, 0),
+                vec![tile(2852, 3493, 0)],
+                FindOptions {
+                    allow_teleports: true,
+                    ..default
+                },
+                low,
+            ),
+            ("all_off_control", lumbridge, vec![falador], default, empty),
+        ];
+        let mut records = Vec::new();
+        let started = Instant::now();
+        for (index, (name, from, goals, opts, state)) in cases.into_iter().enumerate() {
+            if index == 5 {
+                Arc::get_mut(&mut world).unwrap().graph.zones = zones.take();
+            }
+            let all_goals = goals.len();
+            let mut selected = if name.starts_with("radius_walk") && stride > 1 {
+                let mut selected: Vec<_> = goals.iter().step_by(stride).copied().collect();
+                let first = nav::router::find_first_with(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    &goals,
+                    opts,
+                    &state,
+                );
+                if let Ok(route) = first.route() {
+                    if !selected.contains(&route.dest) {
+                        selected.push(route.dest);
+                    }
+                }
+                selected
+            } else {
+                goals
+            };
+            let pair_count = selected.len();
+            let mut routed = 0;
+            for goal in selected.drain(..) {
+                let request = |candidate_goals| {
+                    let mut request = stage_request(Arc::clone(&world));
+                    request.from = from;
+                    request.to = goal;
+                    request.arrival = ArrivalKind::Area;
+                    request.opts = opts;
+                    request.admission = crate::admission::Admission::manual(
+                        opts,
+                        Default::default(),
+                        1,
+                        crate::WalkGlobals::default(),
+                    );
+                    request.state = Some(state.clone());
+                    request.candidate_goals = candidate_goals;
+                    request
+                };
+                let (ordinary, _) = request(None).drive_route_job_for_test();
+                let (candidate, _) =
+                    request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
+                        .drive_route_job_for_test();
+                match (ordinary, candidate) {
+                    (RouteOutcome::Routed(ordinary), RouteOutcome::Routed(candidate)) => {
+                        assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                        routed += 1;
+                    }
+                    (RouteOutcome::NoPath, RouteOutcome::NoPath) => {}
+                    _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
+                }
+            }
+            let record = serde_json::json!({
+                "case": name, "from": [from.x, from.z, from.level],
+                "corpus_goals": all_goals, "pairs": pair_count,
+                "arrival": "Area", "radius": 0,
+                "stride": if name.starts_with("radius_walk") { stride } else { 1 },
+                "routed_pairs": routed, "no_path_pairs": pair_count - routed,
+                "exact_path_and_cost_equal": true,
+            });
+            println!("{record}");
+            records.push(record);
+            std::fs::write(
+                &output,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "schema": "274bot-host-per-goal-parity-v1",
+                    "complete": records.len() == 17,
+                    "elapsed_ms": started.elapsed().as_millis(),
+                    "rows": records,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(records.len(), 17);
+    }
+
+    #[test]
     #[ignore = "requires BOT_ROUTE_PLAN_NAVPACK and BOT_ROUTE_PLAN_CAPTURE_OUT"]
     fn qualifies_real_bank_route_stages_with_the_production_node_budget() {
         let pack = std::path::PathBuf::from(
@@ -7353,6 +7992,7 @@ mod diagnostic_tests {
                 let purpose = match job.search_purpose {
                     RouteSearchPurpose::Strict => "Strict",
                     RouteSearchPurpose::StrictFirst => "StrictFirst",
+                    RouteSearchPurpose::CandidateFallback => "CandidateFallback",
                     RouteSearchPurpose::MissingTarget => "MissingTarget",
                     RouteSearchPurpose::MissingTargets => "MissingTargets",
                     RouteSearchPurpose::MissingRoute => "MissingRoute",

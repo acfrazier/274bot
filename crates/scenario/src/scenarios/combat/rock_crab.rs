@@ -116,17 +116,21 @@ const ROCK_CRAB_LOOT_EMPTY: &[i32] = &[
     CASKET_ID,
     NOTED_CASKET_ID,
 ];
-/// Seeded-cargo route windows use the measured runner calibration in
-/// `bank-cell-windows.md`: 1.25 dirty increments per 0.6-second engine tick.
+/// The old seeded-cargo route sizing used a calibration from
+/// `bank-cell-windows.md`: 1.25 dirty snapshots per 0.6-second game tick.
 /// The hostile RockCrab spot `(2704, 3726)` to Seers `(2725, 3491)` is
-/// 235 Chebyshev tiles. MossGiant's measured 74-tile one-way envelope is
-/// 100 dirty increments including its booth interaction, so its inferred
-/// interaction component is `100 - (74 * 1.25) = 7.5`; RockCrab is
-/// `235 * 1.25 + 7.5 = 301.25`, rounded to 320 for each travel arm.
+/// 235 Chebyshev tiles. MossGiant's old 74-tile envelope was 100 dirty
+/// snapshots including its booth interaction, so the inferred interaction
+/// component was `100 - (74 * 1.25) = 7.5`; RockCrab was estimated at
+/// `235 * 1.25 + 7.5 = 301.25`, rounded to the current 320-game-tick cap
+/// (192s at 600ms per game tick) for each travel arm.
 const ROCK_CRAB_BANK_ROUTE_WATCH_TICKS: u32 = 320;
 /// Two 235-tile walks at 0.6 seconds/tile take 282 seconds; the 360-second
-/// deadline leaves 78 seconds for seed/start, the same booth interaction,
-/// and close/return evidence without expanding the earned-drop RNG witness.
+/// whole-run deadline leaves 78 seconds for seed/start, the same booth
+/// interaction, and close/return evidence without expanding the earned-drop
+/// RNG witness. Both 320-game-tick route caps allow 384 seconds together, so
+/// the wall can pre-empt them if both reach their maxima. Retain the measured
+/// route estimate rather than raising the deadline without live evidence.
 const ROCK_CRAB_BANK_SEEDED_DEADLINE: Duration = Duration::from_secs(360);
 
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.

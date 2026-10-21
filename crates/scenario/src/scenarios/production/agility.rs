@@ -74,12 +74,6 @@ const BRIMHAVEN_ENTRANCE: WorldTile = WorldTile {
     z: 3194,
     level: 0,
 };
-/// Selected ladder 3617 Climb-Down destination, also arena platform 24.
-const BRIMHAVEN_LADDER_LANDING: WorldTile = WorldTile {
-    x: 2805,
-    z: 9590,
-    level: 3,
-};
 const AGILITY_TICKET_ID: i32 = 2996;
 const AGILITY_ARENA_VARP: i32 = 309;
 /// Search radius the radius cell injects, in tiles.
@@ -120,7 +114,7 @@ const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject
 ///   every radius from 11 up sees the log. Together with the lap, which needs
 ///   10, the cell passes for radius 10 only.
 /// - The tile is open ground (`m38_53.jm2:2744`). The nav pack bake-r2-a calls
-///   it walkable and routes it to the course start in one 13-tick walk leg,
+///   it walkable and routes it to the course start in one 13-game-tick walk leg,
 ///   and the engine accepts a loc click from anywhere in the scene (engine
 ///   `OpLocHandler.ts:20-33`), so a bot that does click the log walks off.
 pub(crate) const GNOME_RADIUS_WITNESS_TILE: WorldTile = WorldTile {
@@ -132,19 +126,33 @@ pub(crate) const GNOME_RADIUS_WITNESS_TILE: WorldTile = WorldTile {
 /// must see pass without the bot acting. A bot that ignores the radius clicks
 /// the Log balance in its first `loop()`. `onStart` parks one `delayUntil`
 /// (`AgilityBot.ts:50`, `crates/script/src/shim/execution.js:73-82`), so the
-/// first `loop()` runs one tick after the isolate's first and its click leaves
-/// in that same tick (`crates/script/src/load/isolate/thread.rs:1057-1094`).
-/// The engine applies a click in the tick it receives it, and that tick's
+/// first `loop()` runs one game tick after the isolate's first game tick. Its
+/// click leaves in that same game tick
+/// (`crates/script/src/load/isolate/thread.rs:1057-1094`).
+/// The engine applies a click in the game tick it receives it, and that tick's
 /// PLAYER_INFO already shows the first step (engine `World.ts:352-378,397-408`).
-/// That is 3 ticks after the isolate's first tick; 12 is four times that, so it
-/// also covers an isolate that needs up to 9 ticks (5.4 s) to come up after
-/// Start.
-pub(crate) const GNOME_RADIUS_WITNESS_TICKS: u32 = 12;
+/// That is 3 game ticks after the isolate's first game tick; 12 is four times
+/// that, so it also covers an isolate that needs up to 9 game ticks (5.4 s) to
+/// come up after Start.
+pub(crate) const GNOME_RADIUS_WITNESS_GAME_TICKS: u32 = 12;
 /// Receipt name of the radius witness step.
 pub(crate) const GNOME_RADIUS_WITNESS_EVIDENCE: &str =
     "gnome_course_log_balance_left_alone_beyond_the_search_radius";
 
+/// Both agility cards read their food from the selected loadout
+/// (`scriptFood`); Start refuses a card whose `loadout` setting cannot
+/// select a row, so each cell posts the Lobsters it already seeds in the
+/// pack (five for Wildy, ten for Brimhaven) as its fixture loadout and
+/// pins that row by name.
+const WILDY_AGILITY_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Wildy Agility food",
+    carry: &[("Lobster", 5)],
+}];
 const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Wildy Agility food"),
+    },
     ScriptSettingInject {
         id: "acquireFoodAtStart",
         value: ScriptInjectValue::Bool(false),
@@ -155,7 +163,15 @@ const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const BRIMHAVEN_AGILITY_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+    name: "Scenario Brimhaven Agility food",
+    carry: &[("Lobster", 10)],
+}];
 const BRIMHAVEN_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Brimhaven Agility food"),
+    },
     ScriptSettingInject {
         id: "stealRestock",
         value: ScriptInjectValue::Bool(false),
@@ -350,6 +366,7 @@ pub(crate) fn wildy_agility_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("WildyAgility"),
             script_settings_inject: Some(WILDY_AGILITY_INJECT),
+            fixture_loadouts: Some(WILDY_AGILITY_FIXTURE_LOADOUTS),
             terminal_shot: Some("wildy_agility"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -371,10 +388,10 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance",
+        name: "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
-                cheat(c, "advancestat agility 52");
+                cheat(c, "advancestat agility 75");
                 cheat(c, "give coins 1000");
                 cheat(c, "give lobster 10");
                 cheat(
@@ -441,12 +458,14 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
             },
         ),
         (
-            "watch Climb-Down reach the arena ladder platform",
-            Proof::ArrivedNear {
-                x: BRIMHAVEN_LADDER_LANDING.x,
-                z: BRIMHAVEN_LADDER_LANDING.z,
-                level: BRIMHAVEN_LADDER_LANDING.level,
-                radius: 2,
+            "watch entry to the Brimhaven arena after the paid Climb-Down",
+            // The engine lands in map square 43_149; the script can move before the next observation.
+            Proof::VisitedWithin {
+                min_x: 2752,
+                max_x: 2815,
+                min_z: 9536,
+                max_z: 9599,
+                level: 3,
             },
         ),
         (
@@ -502,6 +521,7 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BrimhavenAgility"),
             script_settings_inject: Some(BRIMHAVEN_AGILITY_INJECT),
+            fixture_loadouts: Some(BRIMHAVEN_AGILITY_FIXTURE_LOADOUTS),
             terminal_shot: Some("brimhaven_agility"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -687,14 +707,15 @@ fn is_gnome_course_obstacle(loc: &LocView) -> bool {
 /// What the radius witness has seen of one slot.
 #[derive(Default)]
 struct GnomeRadiusWitness {
-    /// Agility XP on the first tick the bot stood on the witness tile; `None`
-    /// until then.
+    /// Agility XP on the first game tick the bot stood on the witness tile;
+    /// `None` until then.
     xp: Option<i32>,
-    /// `GameSnapshot::tick` of the latest observation judged. The runner calls
-    /// `ready` on every frame, so a repeated tick is not a new observation.
-    tick: Option<u32>,
-    /// Consecutive judged ticks on which every condition held.
-    still_ticks: u32,
+    /// Latest observed `GameSnapshot::tick`. The runner calls `ready` on every
+    /// client frame, so repeated observations of the same game tick do not
+    /// count as new observations.
+    last_observed_game_tick: Option<u32>,
+    /// Consecutive judged game ticks on which every condition held.
+    still_game_ticks: u32,
     /// The bot walked off the tile or earned XP after the watch began, so it
     /// acted on an obstacle outside its radius. Never cleared: a bot that
     /// walks back onto the tile is still refused.
@@ -703,10 +724,10 @@ struct GnomeRadiusWitness {
 
 impl GnomeRadiusWitness {
     /// One verdict per observed game tick. Accepts after
-    /// `GNOME_RADIUS_WITNESS_TICKS` consecutive ticks on which the bot stood on
-    /// the witness tile and earned no Agility XP, the scene listed the Log
-    /// balance beyond the injected radius but within the default one, and no
-    /// loc the bot's own search could take was inside the injected radius.
+    /// `GNOME_RADIUS_WITNESS_GAME_TICKS` consecutive game ticks on which the
+    /// bot stood on the witness tile and earned no Agility XP, the scene listed
+    /// the Log balance beyond the injected radius but within the default one,
+    /// and no loc the bot's own search could take was inside the injected radius.
     /// Distances are Chebyshev from the player tile to the loc origin tile
     /// (`ClientAdapter.ts:984`), computed here from the tiles.
     fn observe(&mut self, snapshot: &GameSnapshot) -> bool {
@@ -717,19 +738,19 @@ impl GnomeRadiusWitness {
             .tile()
             .filter(|_| snapshot.ingame() && snapshot.scene_state() == api::interact::SCENE_READY);
         let Some((x, z, level)) = position else {
-            self.still_ticks = 0;
+            self.still_game_ticks = 0;
             return false;
         };
-        if self.tick == Some(snapshot.tick()) {
-            return self.still_ticks >= GNOME_RADIUS_WITNESS_TICKS;
+        if self.last_observed_game_tick == Some(snapshot.tick()) {
+            return self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS;
         }
-        self.tick = Some(snapshot.tick());
+        self.last_observed_game_tick = Some(snapshot.tick());
         let tile = GNOME_RADIUS_WITNESS_TILE;
         if (x, z, level) != (tile.x, tile.z, tile.level) {
-            // Before the first tick on the tile this is the teleport still
+            // Before the first game tick on the tile this is the teleport still
             // landing. After it, the bot has walked away.
             self.refused = self.xp.is_some();
-            self.still_ticks = 0;
+            self.still_game_ticks = 0;
             return false;
         }
         let Some(xp) = snapshot
@@ -738,13 +759,13 @@ impl GnomeRadiusWitness {
             .find(|stat| stat.index == AGILITY_STAT)
             .map(|stat| stat.xp)
         else {
-            self.still_ticks = 0;
+            self.still_game_ticks = 0;
             return false;
         };
         let baseline = *self.xp.get_or_insert(xp);
         if xp > baseline {
             self.refused = true;
-            self.still_ticks = 0;
+            self.still_game_ticks = 0;
             return false;
         }
         let distance = |loc: &LocView| (loc.tile.x - x).abs().max((loc.tile.z - z).abs());
@@ -762,24 +783,25 @@ impl GnomeRadiusWitness {
             .min();
         let log_beyond_radius = log.is_some_and(|d| d <= GNOME_DEFAULT_SEARCH_RADIUS)
             && nearest.is_some_and(|d| d > GNOME_COURSE_RADIUS);
-        self.still_ticks = if log_beyond_radius {
-            self.still_ticks + 1
+        self.still_game_ticks = if log_beyond_radius {
+            self.still_game_ticks + 1
         } else {
             0
         };
-        self.still_ticks >= GNOME_RADIUS_WITNESS_TICKS
+        self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS
     }
 }
 
 /// The witness step, right after Start: the bot must leave the Log balance
-/// alone for `GNOME_RADIUS_WITNESS_TICKS` observed ticks. A bot that ignores
-/// the radius walks off the tile, which refuses the witness for good, so the
-/// step can then only time out and fail the cell. The success path takes about
-/// 15 dirty snapshots (12 ticks at the 1.2 dirty snapshots per observed tick
-/// measured in `lib.rs:583-585`), so the standing post-Start watch budget runs
-/// out only when the witness was refused or its conditions never held. The
-/// step is named "watch ..." like every first post-Start step. `Await` ignores
-/// the arm; it is the placeholder the other `Await` steps use.
+/// alone for `GNOME_RADIUS_WITNESS_GAME_TICKS` observed game ticks (one per
+/// `PLAYER_INFO`). A bot that ignores the radius walks off the tile, which
+/// refuses the witness for good, so the step can then only time out and fail.
+/// The earlier success path took about 15 dirty snapshots while 12 game ticks
+/// elapsed; those snapshots reflect client-cycle polling frequency, not the
+/// witness clock.
+/// The standing post-Start watch budget only runs out when the witness was
+/// refused or its conditions never held. `Await` ignores the arm; it is the
+/// placeholder the other `Await` steps use.
 fn gnome_radius_witness_step() -> Step {
     let witness = Mutex::new(GnomeRadiusWitness::default());
     Step {

@@ -2772,13 +2772,36 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
     assert!(session.core.fleet().contains("bob"));
 }
 
+/// MultiBox off, the unlock focuses and auto-logs in the last focused
+/// profile: it runs, so it is a fleet member (the Fleet window lists it
+/// loaded) without joining a rail, since there is none.
 #[test]
-fn single_mode_unlock_still_selects_without_joining_the_rail() {
+fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
     let (mut session, path) = multibox_unlock_fixture();
     assert!(session.unlock_at(&path, "test-passphrase-01"));
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
-    assert!(session.core.members().is_empty(), "no MultiBox, no rail");
+    assert!(!session.multibox, "no MultiBox, no rail");
+    assert_eq!(session.core.members(), ["alice".to_string()]);
+    // The views project the members at the next poll.
+    session.core.poll();
+    session.fleet_model.refresh(&session.core);
+    let alice = session
+        .fleet_model
+        .rows()
+        .iter()
+        .find(|row| row.name() == "alice")
+        .expect("alice row");
+    assert!(
+        alice.loaded(),
+        "the Fleet window lists the running bot as loaded"
+    );
+    // A chooser pick of another profile opens its slot the same way.
+    session.pick_profile("bob");
+    assert_eq!(
+        session.core.members(),
+        ["alice".to_string(), "bob".to_string()]
+    );
 }
 
 #[test]
@@ -3585,7 +3608,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         .map(|row| {
             (
                 row.name(),
-                row.checked(&s.fleet_selection),
+                row.checked(s.fleet_model.marks()),
                 row.status.exclusion(),
             )
         })
@@ -3665,7 +3688,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
     for name in ["alice", "bob", "logged-out", "nopos"] {
         s.core.fleet_mut().add(name);
         let identity = s.fleet_identity(name);
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     s.refresh_walk_send();
@@ -3712,7 +3735,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         s.core.fleet_mut().add(name);
     }
     let alice = s.fleet_identity("alice");
-    s.fleet_selection.set_for_test(alice, true);
+    s.fleet_model.set_mark_for_test(alice, true);
 
     s.open_walkto_for_marked();
 
@@ -3722,11 +3745,11 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         .walk_send
         .rows()
         .iter()
-        .map(|row| (row.name(), row.checked(&s.fleet_selection)))
+        .map(|row| (row.name(), row.checked(s.fleet_model.marks())))
         .collect();
     assert_eq!(checked, [("alice", true), ("bob", false)]);
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
-    assert_eq!(s.fleet_selection.len(), 1, "a mark is never added");
+    assert_eq!(s.fleet_model.marks().len(), 1, "a mark is never added");
 }
 
 /// WalkTo's Send keeps no selection of its own: the Walk button's count reads
@@ -3761,7 +3784,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         s.core.fleet_mut().add(name);
     }
     let (alice, bob) = (s.fleet_identity("alice"), s.fleet_identity("bob"));
-    s.fleet_selection.set_for_test(alice, true);
+    s.fleet_model.set_mark_for_test(alice, true);
     s.open_walkto_for_marked();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
@@ -3782,11 +3805,11 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
     // Another surface marks bob; Send was not pressed and the list was not
     // rebuilt.
-    s.fleet_selection.set_for_test(bob, true);
+    s.fleet_model.set_mark_for_test(bob, true);
     assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
-    s.fleet_selection.set_for_test(alice, false);
+    s.fleet_model.set_mark_for_test(alice, false);
     assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
-    s.fleet_selection.clear_for_test();
+    s.fleet_model.clear_marks_for_test();
     assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
 }
 
@@ -4798,7 +4821,10 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
-    s.select("alice");
+    // Focus alice without opening her slot: a focused profile that is not
+    // a fleet member (a Select that opens a slot loads the bot).
+    s.set_focus_for_test("alice");
+    assert!(!s.core.members().iter().any(|m| m == "alice"));
     s.core.fleet_mut().add("bob");
     crate::ui_state::save(
         &s.preferences,
@@ -8066,10 +8092,10 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.load("alice");
     let identity = s.core.profile_identity("alice").unwrap();
-    s.fleet_selection.set_for_test(identity, true);
+    s.fleet_model.set_mark_for_test(identity, true);
     assert!(s.vault_remove("alice"), "chooser ✕ deletes the vault row");
     assert!(
-        !s.fleet_selection.contains(identity),
+        !s.fleet_model.marks().contains(identity),
         "deleting a profile removes its shared mark"
     );
     assert!(
@@ -9029,7 +9055,7 @@ fn marked_debug_command_queues_ready_and_reports_ineligible_rows() {
     session.core.set_spawn_workers(false);
     install_vault(&mut session.core, vault);
     session.core.set_play(Some(play));
-    session.fleet_selection.mark_all_for_test([
+    session.fleet_model.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(11),
         frontend_core::ProfileIdentity::uid(22),
         frontend_core::ProfileIdentity::uid(33),

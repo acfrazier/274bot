@@ -5944,6 +5944,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6037,6 +6038,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
 fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6093,6 +6095,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6154,6 +6157,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
     };
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6208,6 +6212,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: 0,
     };
     let make_request = |avoid| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6307,6 +6312,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6366,6 +6372,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
             world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
         }
         ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -6428,6 +6435,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6492,6 +6500,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6550,6 +6559,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         .expect("actual 289 navpack"),
     );
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -7400,7 +7410,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     )];
     let handle = play.script_start_handle();
     match fire_compiled_until_settled(&mut pending, &handle) {
-        live_start::StartScriptPump::CompiledFailed(error) => {
+        live_start::StartScriptPump::Failed(error) => {
             assert!(
                 error.contains("start rejected:"),
                 "rejection must name the outcome: {error}"
@@ -7410,7 +7420,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
                 "{error}"
             );
         }
-        other => panic!("expected CompiledFailed, got {other:?}"),
+        other => panic!("expected Failed, got {other:?}"),
     }
     assert_eq!(handle.run_state("alice"), script::RunState::Idle);
     assert!(handle.last_error("alice").is_some());
@@ -20152,6 +20162,7 @@ fn plant_positive_hit(c: &mut Client) {
 fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
     c.gens.npc = c.gens.npc.wrapping_add(1);
     c.gens.player = c.gens.player.wrapping_add(1);
+    c.gens.player_info = c.gens.player_info.wrapping_add(1);
     c.gens.inv = c.gens.inv.wrapping_add(1);
     c.gens.scene = c.gens.scene.wrapping_add(1);
     c.gens.iface = c.gens.iface.wrapping_add(1);
@@ -22037,7 +22048,11 @@ impl ReconnectRig {
             None,
         );
         crate::script_runtime::pump_route_work(&self.navs, "alice");
-        self.slot().lock().unwrap().probe("true").unwrap();
+        let slot = self.slot();
+        let slot = slot.lock().unwrap();
+        if slot.load_active() {
+            slot.probe("true").unwrap();
+        }
     }
     fn wait_for_route_work(&self, ms: u64, mut ready: impl FnMut() -> bool) -> bool {
         wait_until(ms, || {
@@ -22057,6 +22072,54 @@ impl ReconnectRig {
             &self.navs,
             &self.channels,
         );
+    }
+    /// Put the logged-in arm and script seat on a synthetic ready session.
+    fn login_session(&mut self, arm: &SlotArm) {
+        arm.set_script_active(true);
+        let command = arm
+            .login_command(false)
+            .expect("active script requests a login");
+        on_login_success(arm, command);
+        assert!(arm.update_session_readiness(true, false, false, false));
+        self.client.ingame = true;
+        let session = self.ready_session.get();
+        let slot = self.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        slot.align_seat_session(Some(session));
+    }
+
+    /// End the logged-in session as the clean server logout caused by a world
+    /// switch, then run the same host boundary reset as the reconnect rig.
+    fn exit_world_switch_session(&mut self, arm: &SlotArm) {
+        arm.observe_session_exit(api::lifecycle::SessionEndCause::ServerLogout, false);
+        self.client.ingame = false;
+        self.slot().lock().unwrap().on_is_up(false);
+        self.end_session(arm);
+    }
+
+    /// Complete the turnover's fresh login and align the script to its next
+    /// ready session.
+    fn ready_after_world_switch(&mut self, arm: &SlotArm) {
+        let command = arm
+            .login_command(false)
+            .expect("world switch owes a fresh login");
+        on_login_success(arm, command);
+        assert!(
+            arm.update_session_readiness(true, false, false, false),
+            "the new session is ready"
+        );
+        self.client.ingame = true;
+        let session = self
+            .ready_session
+            .get()
+            .next()
+            .expect("script seat session epoch");
+        self.ready_session.set(session);
+        let slot = self.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        slot.align_seat_session(Some(session));
     }
 
     /// A frame that posts and ticks, then one that dispatches what the
@@ -23552,6 +23615,241 @@ fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
         "the original dispatch and its carried re-dispatch, nothing else"
     );
     rig.slot().lock().unwrap().stop();
+}
+
+const SWITCH_WORLD_COUNTER_SRC: &str = r#"
+export default class T extends LoopingBot {
+    onStart() { globalThis.__starts = (globalThis.__starts || 0) + 1; }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#;
+
+/// A clean SwitchWorld turnover keeps the same isolate and re-gates its
+/// running script when the new session becomes ready.
+#[test]
+fn a_world_switch_keeps_a_running_scripts_run() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    let old_session = arm.session_key().expect("initial session");
+    let run_generation = rig.slot().lock().unwrap().runtime_generation();
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__starts || 0")
+            .unwrap()
+            .as_i64(),
+        Some(1),
+        "the initial Start ran once"
+    );
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    assert!(arm.session_key().is_none(), "the old session exited");
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert_eq!(
+        rig.slot().lock().unwrap().runtime_generation(),
+        run_generation,
+        "the run remains installed while offline"
+    );
+
+    rig.ready_after_world_switch(&arm);
+    assert_ne!(
+        arm.session_key(),
+        Some(old_session),
+        "a fresh session began"
+    );
+    rig.wait_state(script::RunState::Running);
+    let loops_after_turnover = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    rig.frames(5);
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.runtime_generation(), run_generation);
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the same isolate resumes without a second Start"
+    );
+    let loops = slot
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    assert!(
+        loops > loops_after_turnover,
+        "loop() ticks in the new session: {loops_after_turnover} then {loops}"
+    );
+    slot.stop();
+}
+
+/// SwitchWorld must not override an operator Pause while it re-gates a run.
+#[test]
+fn a_world_switch_keeps_an_operator_paused_script_paused() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    arm.post_intent(api::lifecycle::Intent::PauseScript);
+    rig.operator_pause();
+    rig.wait_state(script::RunState::Paused);
+    let run_generation = rig.slot().lock().unwrap().runtime_generation();
+    let loops_before = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    rig.ready_after_world_switch(&arm);
+    rig.frames(2);
+    rig.frames(3);
+
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.state(), script::RunState::Paused);
+    assert_eq!(slot.runtime_generation(), run_generation);
+    assert_eq!(
+        slot.probe("globalThis.__loops || 0").unwrap().as_i64(),
+        Some(loops_before),
+        "the paused script does not tick in the new session"
+    );
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the paused run is not restarted"
+    );
+    slot.stop();
+}
+
+/// Stop during the offline half of SwitchWorld ends the run before the new
+/// session can dispatch any of its actions.
+#[test]
+fn a_stop_during_world_switch_does_not_resume_the_script() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    let dispatched_before_switch = rig.walks();
+    assert!(
+        !dispatched_before_switch.is_empty(),
+        "the old session dispatched its script walk"
+    );
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.post_intent(api::lifecycle::Intent::StopScript);
+    rig.slot().lock().unwrap().stop();
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    arm.set_script_active(false);
+    rig.wait_state(script::RunState::Idle);
+
+    rig.ready_after_world_switch(&arm);
+    rig.frames(2);
+    rig.frames(3);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    assert_eq!(
+        rig.walks(),
+        dispatched_before_switch,
+        "the stopped run dispatches no action in the new session"
+    );
+}
+
+/// Logout during SwitchWorld withdraws the owed fresh login and leaves the
+/// offline script paused.
+#[test]
+fn a_logout_during_world_switch_withdraws_the_new_session() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.request_logout();
+    play_slots::apply_offline_logout_reset(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+        &rig.channels,
+    );
+
+    assert!(arm.session_key().is_none(), "no new session began");
+    assert!(arm.login_latched(), "Logout latches the slot");
+    assert!(!arm.wants_login(), "Logout withdraws login intent");
+    assert!(
+        !should_handshake(&arm, false),
+        "Logout withdraws the turnover"
+    );
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.state(), script::RunState::Paused);
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the paused run remains installed but is not restarted"
+    );
+    slot.stop();
+}
+
+/// Removing a slot during SwitchWorld closes it before any replacement
+/// session or script run can start.
+#[test]
+fn removing_a_slot_during_world_switch_stops_the_slot() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.post_intent(api::lifecycle::Intent::RemoveSlot);
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+
+    assert!(arm.session_key().is_none(), "no replacement session began");
+    assert!(
+        !should_handshake(&arm, false),
+        "a removed slot cannot resume its turnover"
+    );
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
 }
 
 /// Stop then Start of another script before the relog: the old run's
@@ -26590,6 +26888,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     z: 0,
                                     level: 0,
                                 },
+                                candidate_goals: None,
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
@@ -28183,6 +28482,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     let candidates = approach_tiles(&world, origin, target, 12, false);
     assert_eq!(candidates.first(), Some(&endpoint));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),

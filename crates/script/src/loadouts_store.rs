@@ -792,6 +792,12 @@ pub fn resolve_script_loadout<'a>(
     rows: &'a [Loadout],
     wanted: &str,
 ) -> Result<&'a Loadout, LoadoutResolutionError> {
+    if rows.is_empty() {
+        return Err(LoadoutResolutionError::NoLoadouts {
+            requested: wanted.to_string(),
+        });
+    }
+
     if let Some(row) = rows.iter().find(|row| row.name == wanted) {
         return Ok(row);
     }
@@ -2036,6 +2042,12 @@ mod compatibility_tests {
         let message = error.to_string();
         assert!(message.contains("\"\""), "{message}");
         assert!(message.contains("Available loadouts: []"), "{message}");
+    }
+
+    #[test]
+    fn named_script_loadout_refuses_as_no_loadouts_when_store_empty() {
+        let error = resolve_script_loadout(&[], "missing").expect_err("there are no loadouts");
+        assert!(matches!(error, LoadoutResolutionError::NoLoadouts { .. }));
     }
 
     #[test]
