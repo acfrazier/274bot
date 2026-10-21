@@ -1662,11 +1662,61 @@ impl<Io> OperatorSession<Io> {
         )
     }
 
-    /// `name`'s current script paint frame, from its status row.
+    /// `name`'s current script paint frame, from its status row. A frame
+    /// that advertises host controls also carries the run it was read with
+    /// (profile, run and lifecycle state), which decides their labels and
+    /// binds their activations.
     pub fn script_paint(&self, name: &str) -> Option<crate::scripts::PaintFrame> {
-        self.status(name)
-            .and_then(|status| status.script_paint.clone())
-            .map(crate::scripts::PaintFrame::new)
+        let paint = self.status(name)?.script_paint.clone()?;
+        let run = crate::scripts::advertises_any_control(&paint).then(|| self.paint_run(name));
+        Some(crate::scripts::PaintFrame::new(paint, run))
+    }
+
+    /// The run a host control on `name`'s paint is shown for.
+    fn paint_run(&self, name: &str) -> crate::scripts::PaintRun {
+        let held = self
+            .play
+            .as_ref()
+            .and_then(|play| play.script_run_key(name));
+        crate::scripts::PaintRun {
+            profile: self.profile_identity_or_synthetic(name),
+            run: held.map(|(slot, generation, _)| crate::scripts::RunToken::new(slot, generation)),
+            state: held.map_or(crate::scripts::ScriptRunState::Idle, |(_, _, state)| {
+                crate::scripts::ScriptRunState::from_script(state)
+            }),
+        }
+    }
+
+    /// Why a host paint control may not issue its row for `name` now, or
+    /// `None` when its binding still holds: `name` is the profile it was
+    /// shown for, the slot still holds the same run, the current frame has
+    /// the same generation and still advertises the control, and the run's
+    /// state still takes the shown action.
+    pub(crate) fn paint_control_refusal(
+        &self,
+        name: &str,
+        activation: &crate::scripts::ControlActivation,
+    ) -> Option<&'static str> {
+        if self.profile_identity_or_synthetic(name) != activation.profile {
+            return Some("the paint control belongs to another profile");
+        }
+        let run = self.paint_run(name);
+        if run.run != Some(activation.run) {
+            return Some("the paint control's run has ended");
+        }
+        let current = self
+            .status(name)
+            .and_then(|status| status.script_paint.as_deref());
+        if !current.is_some_and(|paint| {
+            paint.generation == activation.generation
+                && crate::scripts::advertises_control(paint, activation.control)
+        }) {
+            return Some("the paint control's frame is stale");
+        }
+        if !activation.control.applies(run.state) {
+            return Some("the run no longer takes this paint control");
+        }
+        None
     }
 
     /// `name`'s script lifecycle state; `Idle` without a play or a script.

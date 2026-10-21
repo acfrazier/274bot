@@ -1,7 +1,9 @@
 // ScriptRunner: `stop()` flags the host handle (the isolate thread logs
 // the clear hook; Stop dispatch lands with the Execution wiring);
-// `paintControls` appends Pause/Stop hint rows to a paint frame.
-import { notImpl } from '../shim/_kernel.js';
+// `paintControls` advertises the host's Pause/Resume and Stop controls as
+// paint buttons with fixed ids. The host owns their labels and commands;
+// a click on them never returns to the script.
+import { HOST_CONTROLS, notImpl } from '../shim/_kernel.js';
 
 const host = () => globalThis.__rs2b0t_host || {};
 
@@ -13,8 +15,7 @@ export const ScriptRunner = {
         }
     },
     paintControls(p) {
-        p.gap();
-        p.row('Pause/Resume: host · Stop: ScriptRunner.stop()');
+        p.buttons(HOST_CONTROLS);
     },
 };
 export function loopReadyOrDetached() {
@@ -24,4 +25,3 @@ export function loopReadyOrDetached() {
 export function stopReasonOf(reason) {
     throw notImpl('stopReasonOf');
 }
-

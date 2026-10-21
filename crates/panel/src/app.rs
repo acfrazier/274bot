@@ -1088,8 +1088,10 @@ fn overlay_script_paint(
                 size,
             ) {
                 match hit {
-                    crate::paint::PaintFrameHit::Button(id) => {
-                        state.session.script_paint_click(&id, generation);
+                    crate::paint::PaintFrameHit::Button(index) => {
+                        if let Some(frame) = paint.as_ref() {
+                            state.session.script_paint_activate(frame, index);
+                        }
                     }
                     crate::paint::PaintFrameHit::Select { key, name } => {
                         state.session.script_paint_select(&key, &name, generation);

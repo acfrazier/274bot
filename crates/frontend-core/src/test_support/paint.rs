@@ -50,6 +50,13 @@ impl TestPaint {
         self
     }
 
+    /// Advertise the host's Pause/Resume and Stop controls under the fixed
+    /// ids the standard paint-controls helper writes (tests).
+    pub fn with_host_controls(self) -> Self {
+        self.with_button(script::shim::HOST_PAUSE_CONTROL_ID, "Pause")
+            .with_button(script::shim::HOST_STOP_CONTROL_ID, "Stop")
+    }
+
     /// Stamp the host-owned frame generation (tests).
     pub fn with_generation(mut self, generation: u64) -> Self {
         self.paint.generation = generation;
@@ -129,6 +136,32 @@ impl TestPaint {
     /// This paint as the front ends draw it (tests).
     pub fn frame(&self) -> PaintFrame {
         PaintFrame::from_script(self.paint.clone())
+    }
+
+    /// This paint as read with a run of `profile` in `state`, so its host
+    /// controls show and activate as they would for that run (tests).
+    pub fn frame_for_run(
+        &self,
+        profile: &str,
+        state: crate::scripts::ScriptRunState,
+    ) -> PaintFrame {
+        PaintFrame::with_run(self.paint.clone(), profile, state)
+    }
+
+    /// Publish this paint on `name`'s status row in `play`, as the slot's
+    /// observe does after a script tick; the session reads it at its next
+    /// poll (tests). Adds the row when it is missing.
+    pub fn publish(&self, play: &host_play::Play, name: &str) {
+        let paint = Some(std::sync::Arc::new(self.paint.clone()));
+        let mut rows = play.statuses.lock().expect("status rows");
+        match rows.iter_mut().find(|row| row.username == name) {
+            Some(row) => row.script_paint = paint,
+            None => rows.push(host_play::SlotStatus {
+                username: name.to_owned(),
+                script_paint: paint,
+                ..host_play::SlotStatus::default()
+            }),
+        }
     }
 }
 
