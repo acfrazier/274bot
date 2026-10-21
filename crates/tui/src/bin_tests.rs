@@ -4853,3 +4853,271 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let report = app.error.clone().expect("the assign report is shown");
     assert!(report.contains("assigned"), "{report}");
 }
+
+fn alt_key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::ALT)
+}
+
+fn saved_order(session: &TuiSession) -> Vec<String> {
+    session.core.profile_order().names().to_vec()
+}
+
+/// The names of the fleet table's drawn rows, top to bottom. Only the
+/// table's own columns are read, so the detail pane never adds a name.
+fn drawn_fleet_names(app: &mut TuiApp, names: &[&str]) -> Vec<String> {
+    let rows = crate::test_support::draw(app, 120, 40);
+    let region = app.regions.fleet_rows;
+    (region.y..region.y + region.height)
+        .filter_map(|y| {
+            let line: String = rows[usize::from(y)]
+                .chars()
+                .skip(usize::from(region.x))
+                .take(usize::from(region.width))
+                .collect();
+            names
+                .iter()
+                .find(|name| line.contains(**name))
+                .map(|name| (*name).to_owned())
+        })
+        .collect()
+}
+
+/// Alt+Down and Alt+Up through the real key path change the saved Load
+/// order and the drawn fleet table; the cursor stays on the moved profile;
+/// Alt+Up on the top row does nothing.
+#[test]
+fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
+    let iso = IsolatedStores::enter("tui-reorder-keys");
+    let names = ["alice", "bob", "carol", "dave"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    assert_eq!(app.key_focus, crate::layout::Pane::Fleet);
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+    let alice = session.core.profile_identity("alice").unwrap();
+    let bob = session.core.profile_identity("bob").unwrap();
+
+    // Alt+Down on alice: after the next shown row.
+    let action = app.on_key(alt_key(crossterm::event::KeyCode::Down));
+    assert_eq!(
+        action,
+        AppAction::ReorderProfiles(frontend_core::ReorderOp::Move {
+            moving: alice,
+            to: frontend_core::Placement::After(bob),
+        })
+    );
+    dispatch(&mut session, &mut app, action);
+    session.core.flush_writes();
+    assert_eq!(saved_order(&session), ["bob", "alice", "carol", "dave"]);
+    assert_eq!(
+        drawn_fleet_names(&mut app, &names),
+        ["bob", "alice", "carol", "dave"],
+        "the drawn table follows the saved order"
+    );
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(alice),
+        "the cursor stays on the moved profile"
+    );
+    assert_eq!(app.error, None);
+
+    // Alt+Up on alice: back before bob, and the top row now holds alice.
+    let action = app.on_key(alt_key(crossterm::event::KeyCode::Up));
+    assert_eq!(
+        action,
+        AppAction::ReorderProfiles(frontend_core::ReorderOp::Move {
+            moving: alice,
+            to: frontend_core::Placement::Before(bob),
+        })
+    );
+    dispatch(&mut session, &mut app, action);
+    session.core.flush_writes();
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+    assert_eq!(
+        drawn_fleet_names(&mut app, &names),
+        ["alice", "bob", "carol", "dave"]
+    );
+
+    // Alt+Up on the top row does nothing.
+    assert_eq!(
+        app.on_key(alt_key(crossterm::event::KeyCode::Up)),
+        AppAction::None
+    );
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+}
+
+/// A filter hides the middle profile: Alt+Down on the upper shown row lands
+/// after the lower shown row, and the hidden profile keeps its relative
+/// place among the others.
+#[test]
+fn alt_down_with_a_hidden_profile_between_lands_after_the_lower_shown_row() {
+    let iso = IsolatedStores::enter("tui-reorder-hidden");
+    let names = ["alpha-zq", "bob", "carol-zq", "dave"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    assert_eq!(
+        saved_order(&session),
+        ["alpha-zq", "bob", "carol-zq", "dave"]
+    );
+    let open = app.run_command(crate::commands::Command::FilterFleet);
+    dispatch(&mut session, &mut app, open);
+    for c in "zq".chars() {
+        let typed = app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+        dispatch(&mut session, &mut app, typed);
+    }
+    let done = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, done);
+    let shown: Vec<&str> = app
+        .fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
+        .collect();
+    assert_eq!(shown, ["alpha-zq", "carol-zq"]);
+
+    let action = app.on_key(alt_key(crossterm::event::KeyCode::Down));
+    let moving = session.core.profile_identity("alpha-zq").unwrap();
+    let target = session.core.profile_identity("carol-zq").unwrap();
+    assert_eq!(
+        action,
+        AppAction::ReorderProfiles(frontend_core::ReorderOp::Move {
+            moving,
+            to: frontend_core::Placement::After(target),
+        })
+    );
+    dispatch(&mut session, &mut app, action);
+    session.core.flush_writes();
+    assert_eq!(
+        saved_order(&session),
+        ["bob", "carol-zq", "alpha-zq", "dave"],
+        "alpha-zq is after carol-zq; bob and dave keep their relative order"
+    );
+    let shown: Vec<&str> = app
+        .fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
+        .collect();
+    assert_eq!(shown, ["carol-zq", "alpha-zq"]);
+}
+
+/// Play `moves` (palette commands, or Alt keys) from alice's row on four
+/// profiles and return the saved order after each.
+fn reorder_run(label: &str, via_keys: bool) -> Vec<Vec<String>> {
+    use crate::commands::Command;
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter(label);
+    let names = ["alice", "bob", "carol", "dave"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    let mut seen = Vec::new();
+    for down in [true, true, true, false] {
+        let action = match (via_keys, down) {
+            (true, true) => app.on_key(alt_key(KeyCode::Down)),
+            (true, false) => app.on_key(alt_key(KeyCode::Up)),
+            (false, true) => app.run_command(Command::MoveProfileDown),
+            (false, false) => app.run_command(Command::MoveProfileUp),
+        };
+        dispatch(&mut session, &mut app, action);
+        session.core.flush_writes();
+        seen.push(saved_order(&session));
+    }
+    seen
+}
+
+/// The palette commands give the same saved order as the keys.
+#[test]
+fn move_profile_commands_match_the_alt_keys() {
+    let keys = reorder_run("tui-reorder-parity-keys", true);
+    let palette = reorder_run("tui-reorder-parity-palette", false);
+    assert_eq!(keys, palette);
+    assert_eq!(
+        keys.last().unwrap(),
+        &["bob", "carol", "alice", "dave"],
+        "down three rows, then up one"
+    );
+}
+
+/// Move marked to top puts the marked profiles first, in their saved
+/// relative order.
+#[test]
+fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
+    let iso = IsolatedStores::enter("tui-reorder-marked");
+    let names = ["alice", "bob", "carol", "dave"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    let before = app.run_command(crate::commands::Command::MoveMarkedToTop);
+    assert_eq!(before, AppAction::None, "nothing is marked");
+    for name in ["dave", "carol"] {
+        dispatch(
+            &mut session,
+            &mut app,
+            AppAction::SetMark(name.into(), true),
+        );
+    }
+    let action = app.run_command(crate::commands::Command::MoveMarkedToTop);
+    assert_eq!(
+        action,
+        AppAction::ReorderProfiles(frontend_core::ReorderOp::MarkedToTop)
+    );
+    dispatch(&mut session, &mut app, action);
+    session.core.flush_writes();
+    assert_eq!(saved_order(&session), ["carol", "dave", "alice", "bob"]);
+    assert_eq!(
+        drawn_fleet_names(&mut app, &names),
+        ["carol", "dave", "alice", "bob"]
+    );
+}
+
+/// Outside Load order the keys and the palette commands are unavailable
+/// and submit nothing; a reorder that reaches the core anyway is refused
+/// and the saved order stays.
+#[test]
+fn reorder_is_unavailable_outside_load_order() {
+    use crate::commands::Command;
+    let iso = IsolatedStores::enter("tui-reorder-sorted");
+    let names = ["alice", "bob", "carol", "dave"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::SetMark("bob".into(), true),
+    );
+    app.fleet_model
+        .set_order_for_test(frontend_core::FleetOrder::Name);
+    for command in [
+        Command::MoveProfileUp,
+        Command::MoveProfileDown,
+        Command::MoveMarkedToTop,
+    ] {
+        assert_eq!(
+            command.availability(&app),
+            Err("choose Load order to reorder"),
+            "{command:?}"
+        );
+        assert_eq!(app.run_command(command), AppAction::None, "{command:?}");
+    }
+    for code in [
+        crossterm::event::KeyCode::Up,
+        crossterm::event::KeyCode::Down,
+    ] {
+        assert_eq!(app.on_key(alt_key(code)), AppAction::None);
+    }
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+
+    // The core refuses the same op when the model does not show Load order.
+    let alice = session.core.profile_identity("alice").unwrap();
+    let bob = session.core.profile_identity("bob").unwrap();
+    app.error = None;
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ReorderProfiles(frontend_core::ReorderOp::Move {
+            moving: alice,
+            to: frontend_core::Placement::After(bob),
+        }),
+    );
+    session.core.flush_writes();
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
+    let error = app.error.clone().expect("the refusal is shown");
+    assert!(error.contains("choose Load order to reorder"), "{error}");
+}

@@ -3385,6 +3385,21 @@ impl TuiSession {
         }
     }
 
+    /// Reorder the saved Load order (`ReorderProfiles`): stage the op, then
+    /// submit it with the fleet model lent. The core refuses it unless the
+    /// model shows Load order. The cursor follows its profile by identity.
+    fn reorder_profiles(&mut self, app: &mut TuiApp, op: frontend_core::ReorderOp) {
+        self.core.stage_reorder(op);
+        if let Err(error) =
+            self.submit_with(app, OperatorCommand::ReorderProfiles, Targets::Application)
+        {
+            app.error = Some(error);
+        }
+        // Follow the new order now, so a repeated key sees it.
+        app.fleet_model.refresh(&self.core);
+        app.table.sync(&app.fleet_model);
+    }
+
     /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
     /// shown rows follow the text.
     fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
@@ -3940,6 +3955,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::SetMark(name, on) => session.set_mark(app, &name, on),
         AppAction::MarkAll(identities) => session.mark_all(app, identities),
         AppAction::ClearMarks => session.clear_marks(app),
+        AppAction::ReorderProfiles(op) => session.reorder_profiles(app, op),
         AppAction::FleetFilter(edit) => session.set_fleet_filter(app, edit),
         AppAction::SaveLog => session.save_log(app),
         AppAction::SetSessionLog(on) => session.set_session_log(app, on),

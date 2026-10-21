@@ -33,6 +33,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   loaded", and the rail lists them in a folded "Not loaded" group where you
   can mark them. A profile keeps its mark when the filter hides it or when
   it is unloaded, until the profile is deleted.
+- Fleet: Load order is saved. Reorder bots by dragging MultiBox tiles or
+  Fleet rows, by using the TUI move keys, or by moving marked profiles to
+  the top. Name and Status remain temporary view sorts. Load all logs in
+  bots in that order, a new profile goes to the end, a renamed profile
+  keeps its place and removing a bot from the wall keeps its place. The
+  order is saved as `profile_order` in the shared preferences; a reorder
+  whose write fails is reported and the last saved order comes back.
 
 ### TUI
 
@@ -43,6 +50,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   loaded (state "not loaded"), with the same marks and filter as the panel.
   A profile keeps its mark when the filter hides it or when it is unloaded,
   until the profile is deleted. The Map's group send uses the same marks.
+- The fleet table follows the saved Load order. `Alt+Up` / `Alt+Down` move
+  the cursor's profile one shown row up or down, and the palette has
+  **Move profile up**, **Move profile down** and **Move marked to top**.
 
 ### Map baking
 

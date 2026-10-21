@@ -1233,3 +1233,192 @@ fn the_context_menu_of_an_unloaded_row_offers_only_the_mark() {
         .marks()
         .contains(frontend_core::ProfileIdentity::synthetic("zed")));
 }
+
+fn alt(code: KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::ALT)
+}
+
+fn reorder_ids() -> [frontend_core::ProfileIdentity; 3] {
+    [
+        frontend_core::ProfileIdentity::uid(41),
+        frontend_core::ProfileIdentity::uid(42),
+        frontend_core::ProfileIdentity::uid(43),
+    ]
+}
+
+/// Three profiles with vault identities, drawn once so the table has its
+/// regions.
+fn reorder_app() -> TuiApp {
+    let mut app = fleet_app(&["alice", "bob", "carol"]);
+    crate::test_support::set_profile_ids(&mut app, &reorder_ids());
+    draw(&mut app, 120, 40);
+    app
+}
+
+fn move_op(moving: frontend_core::ProfileIdentity, to: frontend_core::Placement) -> AppAction {
+    AppAction::ReorderProfiles(frontend_core::ReorderOp::Move { moving, to })
+}
+
+/// Alt+Up / Alt+Down move the cursor row; the action names the identities
+/// of the cursor row and its shown neighbour. At the first or last shown
+/// row nothing happens.
+#[test]
+fn alt_up_and_alt_down_return_the_reorder_action_for_the_cursor_row() {
+    use frontend_core::Placement::{After, Before};
+    let [alice, bob, carol] = reorder_ids();
+    let mut app = reorder_app();
+    assert_eq!(
+        app.on_key(alt(KeyCode::Up)),
+        AppAction::None,
+        "alice is on the first row"
+    );
+    assert_eq!(
+        app.on_key(alt(KeyCode::Down)),
+        move_op(alice, After(bob)),
+        "down: after the next shown row"
+    );
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(alt(KeyCode::Up)),
+        move_op(bob, Before(alice)),
+        "up: before the previous shown row"
+    );
+    assert_eq!(app.on_key(alt(KeyCode::Down)), move_op(bob, After(carol)));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(alt(KeyCode::Down)),
+        AppAction::None,
+        "carol is on the last row"
+    );
+    assert_eq!(app.on_key(alt(KeyCode::Up)), move_op(carol, Before(bob)));
+}
+
+/// The keys act only while the fleet pane has the keyboard.
+#[test]
+fn alt_up_and_alt_down_are_scoped_to_the_fleet_pane() {
+    let mut app = reorder_app();
+    app.key_focus = Pane::Detail;
+    assert_eq!(app.on_key(alt(KeyCode::Down)), AppAction::None);
+    assert_eq!(app.on_key(alt(KeyCode::Up)), AppAction::None);
+    app.key_focus = Pane::Fleet;
+    assert!(matches!(
+        app.on_key(alt(KeyCode::Down)),
+        AppAction::ReorderProfiles(_)
+    ));
+}
+
+/// The palette commands return the same op as the keys, are listed with
+/// their reasons, and a sorted fleet makes all three unavailable.
+#[test]
+fn the_move_commands_match_the_keys_and_follow_their_availability() {
+    use frontend_core::Placement::{After, Before};
+    use frontend_core::{FleetOrder, ReorderOp};
+    let [alice, bob, _] = reorder_ids();
+    let mut app = reorder_app();
+    assert_eq!(
+        Command::MoveProfileUp.availability(&app),
+        Err("no shown row above the cursor")
+    );
+    assert_eq!(
+        Command::MoveMarkedToTop.availability(&app),
+        Err("mark fleet rows first (Space)")
+    );
+    assert_eq!(Command::MoveProfileDown.availability(&app), Ok(()));
+    assert_eq!(
+        app.run_command(Command::MoveProfileDown),
+        move_op(alice, After(bob))
+    );
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.run_command(Command::MoveProfileUp),
+        move_op(bob, Before(alice))
+    );
+    app.fleet_model.set_mark_for_test(bob, true);
+    assert_eq!(Command::MoveMarkedToTop.availability(&app), Ok(()));
+    assert_eq!(
+        app.run_command(Command::MoveMarkedToTop),
+        AppAction::ReorderProfiles(ReorderOp::MarkedToTop)
+    );
+
+    app.error = None;
+    app.fleet_model.set_order_for_test(FleetOrder::Name);
+    for command in [
+        Command::MoveProfileUp,
+        Command::MoveProfileDown,
+        Command::MoveMarkedToTop,
+    ] {
+        assert_eq!(
+            command.availability(&app),
+            Err("choose Load order to reorder"),
+            "{command:?}"
+        );
+        assert_eq!(app.run_command(command), AppAction::None, "{command:?}");
+        let message = app.error.take().expect("the reason is shown");
+        assert!(
+            message.contains("choose Load order to reorder"),
+            "{message}"
+        );
+    }
+    for code in [KeyCode::Up, KeyCode::Down] {
+        assert_eq!(app.on_key(alt(code)), AppAction::None);
+    }
+}
+
+/// The palette lists the commands with their keys and the reason a command
+/// cannot run.
+#[test]
+fn the_palette_lists_the_move_commands_with_keys_and_reasons() {
+    let mut app = reorder_app();
+    app.on_key(ctrl('p'));
+    for c in "move".chars() {
+        app.on_key(ch(c));
+    }
+    let screen = text(&draw(&mut app, 140, 40));
+    for wanted in [
+        "Move profile up",
+        "Alt-Up",
+        "Move profile down",
+        "Alt-Down",
+        "Move marked to top",
+        "mark fleet rows first",
+        "no shown row above the cursor",
+    ] {
+        assert!(screen.contains(wanted), "{wanted}: {screen}");
+    }
+}
+
+/// Help lists the keys and the palette-only command.
+#[test]
+fn help_lists_the_reorder_keys_and_move_marked_to_top() {
+    let app = reorder_app();
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.keys.contains("Alt-Up") && row.keys.contains("Alt-Down")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.what.contains("Move marked to top")),
+        "{rows:?}"
+    );
+}
+
+/// The fleet KEYS line names the keys while they work: the fleet pane has
+/// the keyboard and the order is Load order.
+#[test]
+fn the_fleet_keys_line_names_the_reorder_keys_only_while_they_work() {
+    let mut app = reorder_app();
+    let wanted = "Alt-Up/Down reorder";
+    assert!(app.key_hints().contains(wanted), "{}", app.key_hints());
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains(wanted), "{screen}");
+    app.key_focus = Pane::Detail;
+    assert!(!app.key_hints().contains(wanted));
+    assert!(!text(&draw(&mut app, 120, 40)).contains(wanted));
+    app.key_focus = Pane::Fleet;
+    app.fleet_model
+        .set_order_for_test(frontend_core::FleetOrder::Status);
+    assert!(!app.key_hints().contains(wanted));
+    assert!(!text(&draw(&mut app, 120, 40)).contains(wanted));
+}

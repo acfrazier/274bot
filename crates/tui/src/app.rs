@@ -184,6 +184,9 @@ pub enum AppAction {
     MarkAll(Vec<frontend_core::ProfileIdentity>),
     /// Clear every row mark (`ClearMarks`).
     ClearMarks,
+    /// Move profiles in the saved Load order (`ReorderProfiles`): the
+    /// dispatcher stages the op and submits it with the fleet model lent.
+    ReorderProfiles(frontend_core::ReorderOp),
     /// Edit the fleet filter text and commit it (`SetFleetFilter`).
     FleetFilter(crate::fleet::FilterEdit),
     /// Save the rows the log view shows (`SaveLog`).

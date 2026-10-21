@@ -1343,6 +1343,18 @@ fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::Wal
     nav.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
 }
 
+#[cfg(test)]
+std::thread_local! {
+    /// `ReorderProfiles` submits made on this test thread.
+    static REORDERS_SUBMITTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// How many reorders this test thread has submitted.
+#[cfg(test)]
+pub(crate) fn reorders_submitted() -> u32 {
+    REORDERS_SUBMITTED.get()
+}
+
 impl Session {
     /// Empty session for tests. Product startup uses [`Self::with_instance`].
     #[cfg(test)]
@@ -3154,6 +3166,24 @@ impl Session {
     fn report_failure(&mut self, op: frontend_core::OperationId) {
         if let Some(error) = self.core.failure(op) {
             self.error = Some(error);
+        }
+    }
+
+    /// Reorder the saved Load order: stage `op`, then submit
+    /// `ReorderProfiles` (the core decides; it refuses outside Load order).
+    /// A refusal or a failed write shows on the banner.
+    pub(crate) fn reorder_profiles(&mut self, op: frontend_core::ReorderOp) {
+        #[cfg(test)]
+        REORDERS_SUBMITTED.set(REORDERS_SUBMITTED.get() + 1);
+        self.core.stage_reorder(op);
+        let Some(submitted) = self.submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        else {
+            return;
+        };
+        if let Some(reason) = self.core.command_failure(submitted.request()) {
+            self.error = Some(reason.to_owned());
+        } else if let Some(op) = submitted.operation() {
+            self.report_failure(op);
         }
     }
 
