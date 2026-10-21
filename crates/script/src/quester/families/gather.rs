@@ -762,7 +762,6 @@ mod tests {
     }
 
     struct MixedResourceAccess {
-        safe: WorldTile,
         restricted: bool,
     }
 
@@ -779,14 +778,19 @@ mod tests {
 
         fn safe_access_goals(
             &self,
-            _target: WorldTile,
+            target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
             _arrival: nav::contract::ArrivalKind,
             _existing: Option<&crate::native::WalkGoals>,
         ) -> Result<Option<crate::native::WalkGoals>, crate::native::WalkGoalsError> {
             self.restricted
-                .then(|| crate::native::WalkGoals::new(vec![self.safe]))
+                .then(|| {
+                    crate::native::WalkGoals::new(vec![WorldTile {
+                        x: target.x + 1,
+                        ..target
+                    }])
+                })
                 .transpose()
         }
     }
@@ -803,14 +807,16 @@ mod tests {
             x: loc.tile.x - 4,
             ..loc.tile
         }));
-        let query = MixedResourceAccess { safe, restricted };
+        static RESTRICTED: MixedResourceAccess = MixedResourceAccess { restricted: true };
+        static ALLOWED: MixedResourceAccess = MixedResourceAccess { restricted: false };
+        let query = if restricted { &RESTRICTED } else { &ALLOWED };
         let mut ledger = None;
         let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            tick.walk_danger = Some(&query);
+            tick.walk_danger = Some(query);
             with_step(tick, |cx| plan.begin(cx).unwrap())
         });
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.walk_danger = Some(&query);
+            tick.walk_danger = Some(query);
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
