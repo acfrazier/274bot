@@ -1081,9 +1081,9 @@ impl TuiSession {
         let start_file = view.start_file().map(str::to_owned);
         let fleet_start = view.fleet_start();
         let inject_companion_as = view.inject_companion_as().map(str::to_owned);
-        let settings_inject = scenario.settings_inject();
+        let mut settings_inject = scenario.settings_inject();
         let fixture_loadouts = scenario.fixture_loadouts();
-        self.core.resolve_live_core(
+        let live_core = self.core.resolve_live_core(
             &name,
             profile_count,
             self.live_catalog_core,
@@ -1091,6 +1091,21 @@ impl TuiSession {
         )?;
         let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
         let names = profiles.names();
+        // The driven slot's bag names its companion, exactly as the panel
+        // injects it; the companion's own bag is built by the Start plan.
+        // A pair-core run builds both bags itself.
+        if live_core != frontend_core::live::LiveCoreMode::Pair {
+            if let Some(key) = inject_companion_as.as_deref() {
+                if names.len() > 1 {
+                    settings_inject
+                        .get_or_insert_with(serde_json::Map::new)
+                        .insert(
+                            key.to_string(),
+                            serde_json::Value::String(frontend_core::live::screen_name(&names[1])),
+                        );
+                }
+            }
+        }
         let fleet_cards = scenario.fleet_cards(names)?;
         let path = profiles.tui_vault();
         self.unlock_at(&path, profiles.passphrase())?;
@@ -1163,6 +1178,36 @@ impl TuiSession {
                         id,
                         bag,
                     ));
+            } else if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(&card_name)
+            {
+                // The checked-in live file fixture (TradeBot): the panel
+                // loads it as a File card; the catalog has no such card,
+                // so the TUI must take the same branch instead of
+                // failing with `no card (Catalog, TradeBot)`.
+                self.scripts.stage_load_file(fixture);
+                let submitted = self
+                    .submit_raw(OperatorCommand::LoadScriptFile, Targets::Application)
+                    .map_err(|error| format!("load {card_name} fixture: {error}"))?;
+                if let Some(error) = self.core.command_failure(submitted.request()) {
+                    return Err(format!("load {card_name} fixture: {error}"));
+                }
+                if self.scripts.card(CardSource::File, &stem).is_none() {
+                    return Err(format!("file fixture {card_name} missing after load"));
+                }
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
+                let bag = self.pending_settings_bag(CardSource::File, &stem);
+                let selected = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    selected,
+                    bag,
+                    inject_companion_as.as_deref(),
+                    fixture_loadouts,
+                )?;
             } else {
                 self.fill_rs2b0t_cards_for_live_start()?;
                 self.scripts
@@ -1503,22 +1548,16 @@ impl TuiSession {
                 );
             }
             ChatAction::PaintButton(index) => {
-                let click = app
+                // The core decides what the button does: a script click, or
+                // a host control bound to the profile and run the frame was
+                // read for (refused, not retargeted, if focus moved).
+                let input = app
                     .chat_data
                     .script_paint
                     .as_ref()
-                    .map(PaintFrame::view)
-                    .and_then(|paint| {
-                        paint
-                            .buttons()
-                            .nth(index)
-                            .map(|button| (button.id().to_owned(), paint.generation()))
-                    });
-                if let Some((id, generation)) = click {
-                    self.scripts
-                        .stage_paint_input(frontend_core::scripts::PaintInput::click(
-                            id, generation,
-                        ));
+                    .and_then(|paint| paint.view().activate(index));
+                if let Some(input) = input {
+                    self.scripts.stage_paint_input(input);
                     app.error = self
                         .submit_with(
                             app,

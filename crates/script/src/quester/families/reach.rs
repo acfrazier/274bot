@@ -1186,6 +1186,7 @@ pub fn walk_request(
 ) -> WalkRequest {
     WalkRequest {
         target: tile,
+        candidate_goals: None,
         loc_id,
         radius,
         arrival: nav::contract::ArrivalKind::Reach,

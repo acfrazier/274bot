@@ -342,9 +342,8 @@ fn smithing_bot_variant(
         ("watch further Smithing XP after restock", further_xp),
     ] {
         // Deposit arms on the first product while ≤26 bars may still forge.
-        // SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS is runner dirty increments
-        // (not engine p_delay ticks); see constant docs. Other arms keep
-        // the ordinary gold watch; do not loosen the global deadline.
+        // Its wait is an observed game-tick budget; see constant docs.
+        // Other arms keep the 150-game-tick gold watch and the 180s deadline.
         let budget_ticks = if matches!(arm, Proof::BankItemId { .. }) {
             SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS
         } else {

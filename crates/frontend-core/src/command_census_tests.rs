@@ -684,6 +684,7 @@ const CORE: &[(&str, Decision)] = &[
     ("driver.rs::HeadlessDriver::models_mut", Excluded(ACCESSOR)),
     ("driver.rs::DriverModels::fleet_mut", Excluded(ACCESSOR)),
     ("driver.rs::DriverModels::map_mut", Excluded(ACCESSOR)),
+    ("driver.rs::DriverModels::scripts_mut", Excluded(ACCESSOR)),
     // views.rs
     ("views.rs::QueuePlace::write_wait", Excluded(PROJECTION)),
     ("views.rs::FleetRow::write_world_login", Excluded(PROJECTION)),
@@ -1157,7 +1158,7 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/bin.rs::TuiSession::chat_send",
         Rows(
             &[C::ScriptPaintInput, C::GameInput],
-            "a paint answer (1-9, Enter) or a dialogue Continue/Answer",
+            "a paint answer (1-9, Enter; a host Pause/Resume/Stop control routes to its own row inside the ScriptPaintInput submission) or a dialogue Continue/Answer",
         ),
     ),
     // --- tui: loadouts ---

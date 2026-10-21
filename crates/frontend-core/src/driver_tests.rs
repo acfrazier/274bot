@@ -1748,3 +1748,288 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     again.poll();
     assert_eq!(order_names(&again), saved, "after a restart");
 }
+
+// --- Script-paint host controls (PAINT-CONTROLS-025) ---
+
+use crate::scripts::{PaintControl, PaintFrame, ScriptRunState};
+use crate::test_support::paint::TestPaint;
+
+/// Hang guard for the script lifecycle waits below; the pass condition is
+/// the slot's own state.
+const PAINT_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The frame the standard paint-controls helper records (`gobank` is one
+/// ordinary script button beside it), stamped with `generation`.
+fn helper_paint(generation: u64) -> TestPaint {
+    TestPaint::new(Some("Helper"), &["status"])
+        .with_button("gobank", "Go bank")
+        .with_host_controls()
+        .with_generation(generation)
+}
+
+fn wait_state(d: &mut HeadlessDriver, name: &str, want: ScriptRunState) {
+    let guard = std::time::Instant::now() + PAINT_HANG_GUARD;
+    while d.session().script_state(name) != want {
+        assert!(std::time::Instant::now() < guard, "{name}: never {want:?}");
+        if let Some(play) = d.session().play() {
+            play.pump_script_lifecycle(name);
+        }
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Start a real Load script on `name` and publish the helper's frame on its
+/// status row, as the slot's observe does after a tick.
+fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
+    d.session()
+        .play()
+        .expect("play")
+        .script_start_load(
+            name,
+            "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start");
+    wait_state(d, name, ScriptRunState::Running);
+    helper_paint(generation).publish(d.session().play().expect("play"), name);
+    d.poll();
+}
+
+fn paint_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver(test, names);
+    d.submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load");
+    for (i, name) in names.iter().enumerate() {
+        run_helper(&mut d, name, 40 + i as u64);
+    }
+    d
+}
+
+/// `name`'s displayed frame, as a front end reads it each frame.
+fn shown(d: &HeadlessDriver, name: &str) -> PaintFrame {
+    d.session().script_paint(name).expect("displayed paint")
+}
+
+/// The labels the front ends draw for `frame`.
+fn labels(frame: &PaintFrame) -> Vec<(String, bool)> {
+    frame
+        .view()
+        .buttons()
+        .map(|button| (button.label().to_owned(), button.enabled()))
+        .collect()
+}
+
+/// Activate button `index` of `frame` and submit it for `target`, as the
+/// panel's overlay and the TUI's chat pane do.
+fn activate(
+    d: &mut HeadlessDriver,
+    frame: &PaintFrame,
+    index: usize,
+    target: &str,
+) -> Option<Submitted> {
+    let input = frame.view().activate(index)?;
+    d.models_mut().scripts_mut().stage_paint_input(input);
+    Some(
+        d.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(target))
+            .expect("paint input admitted"),
+    )
+}
+
+const PAUSE: usize = 1;
+const STOP: usize = 2;
+
+fn command_of(d: &HeadlessDriver, submitted: &Submitted) -> OperatorCommand {
+    d.report(submitted.request()).expect("report").command()
+}
+
+fn refused(d: &HeadlessDriver, submitted: &Submitted, name: &str) -> bool {
+    command_of(d, submitted) == OperatorCommand::ScriptPaintInput
+        && matches!(
+            terminal(d, submitted.request(), name),
+            Some(Settlement::Failed(CommandFailure::Rejected(
+                crate::command::Rejection::NotApplicable
+            )))
+        )
+}
+
+#[test]
+fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_rows() {
+    let mut d = paint_driver("paint-controls", &["alice"]);
+    let running = shown(&d, "alice");
+    assert_eq!(
+        labels(&running),
+        vec![
+            ("Go bank".to_string(), true),
+            ("Pause".to_string(), true),
+            ("Stop".to_string(), true),
+        ]
+    );
+    assert_eq!(
+        running
+            .view()
+            .buttons()
+            .nth(PAUSE)
+            .and_then(|b| b.control()),
+        Some(PaintControl::Pause)
+    );
+
+    let pause = activate(&mut d, &running, PAUSE, "alice").expect("pause applies");
+    assert_eq!(command_of(&d, &pause), OperatorCommand::PauseScript);
+    settle(&mut d, pause.request());
+    assert_eq!(terminal(&d, pause.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+
+    // The retained frame is not republished while paused; it shows Resume.
+    let paused = shown(&d, "alice");
+    assert_eq!(paused.view().generation(), running.view().generation());
+    assert_eq!(
+        labels(&paused)[PAUSE..],
+        [("Resume".to_string(), true), ("Stop".to_string(), true)]
+    );
+    let resume = activate(&mut d, &paused, PAUSE, "alice").expect("resume applies");
+    assert_eq!(command_of(&d, &resume), OperatorCommand::ResumeScript);
+    settle(&mut d, resume.request());
+    assert_eq!(terminal(&d, resume.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    // Stop from Paused reaches the normal terminal state.
+    let resumed = shown(&d, "alice");
+    let again = activate(&mut d, &resumed, PAUSE, "alice").expect("pause");
+    settle(&mut d, again.request());
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+    let stop_frame = shown(&d, "alice");
+    let stop = activate(&mut d, &stop_frame, STOP, "alice").expect("stop applies");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    assert!(
+        d.session().script_paint("alice").is_none(),
+        "Stop clears the published paint"
+    );
+    // A late control from the stopped run's frame controls nothing.
+    let late = activate(&mut d, &stop_frame, STOP, "alice").expect("staged");
+    assert!(refused(&d, &late, "alice"), "late Stop is refused");
+}
+
+#[test]
+fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
+    let mut d = paint_driver("paint-stop-running", &["alice"]);
+    let frame = shown(&d, "alice");
+    let stop = activate(&mut d, &frame, STOP, "alice").expect("stop applies");
+    let second = activate(&mut d, &frame, STOP, "alice").expect("staged");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    assert!(
+        refused(&d, &second, "alice"),
+        "a double Stop opens no second Stop report"
+    );
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+}
+
+#[test]
+fn a_double_pause_never_becomes_a_resume() {
+    let mut d = paint_driver("paint-double-pause", &["alice"]);
+    let frame = shown(&d, "alice");
+    let first = activate(&mut d, &frame, PAUSE, "alice").expect("pause");
+    let second = activate(&mut d, &frame, PAUSE, "alice").expect("staged");
+    settle(&mut d, first.request());
+    assert_eq!(command_of(&d, &first), OperatorCommand::PauseScript);
+    assert!(refused(&d, &second, "alice"), "the stale Pause is refused");
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+}
+
+#[test]
+fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
+    let mut d = paint_driver("paint-focus", &["alice", "bob"]);
+    let alice = shown(&d, "alice");
+    for index in [PAUSE, STOP] {
+        let submitted = activate(&mut d, &alice, index, "bob").expect("staged");
+        assert!(refused(&d, &submitted, "bob"), "control {index} refused");
+    }
+    assert_eq!(d.session().script_state("bob"), ScriptRunState::Running);
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn a_control_from_an_ended_run_never_controls_its_replacement() {
+    let mut d = paint_driver("paint-replacement", &["alice"]);
+    let old = shown(&d, "alice");
+    let generation = old.view().generation();
+    d.session().play().expect("play").script_stop("alice");
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    // The replacement advertises the same ids under the same (recycled)
+    // frame generation.
+    run_helper(&mut d, "alice", generation);
+    assert_eq!(shown(&d, "alice").view().generation(), generation);
+    for index in [PAUSE, STOP] {
+        let submitted = activate(&mut d, &old, index, "alice").expect("staged");
+        assert!(refused(&d, &submitted, "alice"), "control {index} refused");
+    }
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn a_stale_frame_generation_is_refused_before_dispatch() {
+    let mut d = paint_driver("paint-stale-frame", &["alice"]);
+    let old = shown(&d, "alice");
+    helper_paint(old.view().generation() + 1).publish(d.session().play().expect("play"), "alice");
+    d.poll();
+    let submitted = activate(&mut d, &old, PAUSE, "alice").expect("staged");
+    assert!(refused(&d, &submitted, "alice"));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn an_ordinary_paint_button_keeps_its_script_click_path() {
+    let mut d = paint_driver("paint-ordinary", &["alice"]);
+    let frame = shown(&d, "alice");
+    let click = activate(&mut d, &frame, 0, "alice").expect("script click");
+    assert_eq!(command_of(&d, &click), OperatorCommand::ScriptPaintInput);
+    assert_eq!(terminal(&d, click.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+    // A host id staged as a script click never reaches the mailbox.
+    d.models_mut()
+        .scripts_mut()
+        .stage_paint_input(crate::scripts::PaintInput::click(
+            script::shim::HOST_PAUSE_CONTROL_ID.into(),
+            frame.view().generation(),
+        ));
+    let forged = d
+        .submit(OperatorCommand::ScriptPaintInput, Targets::Profile("alice"))
+        .expect("admitted");
+    assert!(refused(&d, &forged, "alice"));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+/// Rows 10 and 11 of the plan: the controls follow the run lifecycle, not a
+/// native status phase. A running card whose status reads Blocked keeps
+/// Pause and Stop; an idle slot that kept a terminal Blocked detail offers
+/// neither and activates nothing.
+#[test]
+fn paint_controls_follow_the_lifecycle_state() {
+    let paint =
+        TestPaint::new(Some("Gatherer — Blocked"), &["blocked: no supply"]).with_host_controls();
+    let expect = |state, pause: (&str, bool), stop: bool| {
+        let frame = paint.frame_for_run("alice", state);
+        assert_eq!(
+            labels(&frame),
+            vec![(pause.0.to_string(), pause.1), ("Stop".to_string(), stop)],
+            "{state:?}"
+        );
+        assert_eq!(frame.view().activate(0).is_some(), pause.1, "{state:?}");
+        assert_eq!(frame.view().activate(1).is_some(), stop, "{state:?}");
+    };
+    expect(ScriptRunState::Running, ("Pause", true), true);
+    expect(ScriptRunState::Starting, ("Pause", true), true);
+    expect(ScriptRunState::Paused, ("Resume", true), true);
+    expect(ScriptRunState::Stopping, ("Pause", false), false);
+    expect(ScriptRunState::Idle, ("Pause", false), false);
+    expect(ScriptRunState::Error, ("Pause", false), false);
+    // A frame read without a run (no host) offers no control.
+    assert!(paint.frame().view().activate(0).is_none());
+}

@@ -41,11 +41,12 @@ pub(crate) use guardian_events::{
     guardian_event_maze_scenario, guardian_event_mime_scenario, guardian_event_old_man_scenario,
     guardian_event_strange_box_scenario, guardian_event_strange_plant_scenario,
     guardian_event_swarm_scenario, guardian_skill_big_fish_scenario, guardian_skill_ent_scenario,
-    guardian_skill_gas_scenario, guardian_skill_lost_axe_scenario,
-    guardian_skill_lost_pickaxe_scenario, guardian_skill_river_troll_scenario,
-    guardian_skill_rock_golem_scenario, guardian_skill_shade_scenario,
-    guardian_skill_tree_spirit_scenario, guardian_skill_watchman_scenario,
-    guardian_skill_whirlpool_scenario, guardian_skill_zombie_scenario,
+    guardian_skill_gas_scenario, guardian_skill_lost_axe_same_kind_head_scenario,
+    guardian_skill_lost_axe_scenario, guardian_skill_lost_pickaxe_scenario,
+    guardian_skill_river_troll_scenario, guardian_skill_rock_golem_scenario,
+    guardian_skill_shade_scenario, guardian_skill_tree_spirit_scenario,
+    guardian_skill_watchman_scenario, guardian_skill_whirlpool_scenario,
+    guardian_skill_zombie_scenario,
 };
 
 pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};

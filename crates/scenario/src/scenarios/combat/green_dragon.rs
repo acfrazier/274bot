@@ -30,7 +30,7 @@ pub(crate) fn green_dragon_scenario() -> Scenario {
 
 /// Prepared GreenDragon melee core. The strict core needs one kill, its loot
 /// and further work on a second dragon; the measured first 75-HP kill alone
-/// took 265 ticks after the first Attack at 40/40/40 with the Rune scimitar,
+/// took 265 game ticks after the first Attack at 40/40/40 with the Rune scimitar,
 /// which leaves the 180s gold wall no room for the rest.
 pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
     let mut scenario = prepared_combat_core_scenario(
@@ -901,7 +901,8 @@ const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
 /// Default-table loot fills more pack slots than the explicit inject sibling;
-/// measured pressure trip + return needs a longer wall while keeping 2.5 dirty/s.
+/// measured pressure trip + return needs a longer wall; earlier runs saw about
+/// 2.5 dirty snapshots per second, not game ticks.
 const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE: Duration =
     Duration::from_secs(720);
 const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_WATCH_TICKS: u32 = 1800;
@@ -944,25 +945,24 @@ const VARROCK_TELE_LAW: i32 = 3;
 const VARROCK_TELE_AIR: i32 = 9;
 const VARROCK_TELE_FIRE: i32 = 3;
 const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
-/// Food leg of `green_dragon_bank`, in runner dirty increments from the first
-/// hit to the last Lobster eaten. Engine A 2026-10-19 measured 270
-/// (`FIX-024/combat-bank/diagA2`) and 208 (`fixB1`); `diagA1` ate nine of
-/// twelve in the first 150. Rounded up to 400 so fewer dragon hits still end
-/// the leg, while a bot that stops fighting (and so stops eating) still
-/// fails it.
+/// Food-leg cap in observed game ticks (one per `PLAYER_INFO`). Engine A
+/// 2026-10-19 measured 270 (`FIX-024/combat-bank/diagA2`) and 208 (`fixB1`)
+/// old dirty snapshots; `diagA1` ate nine of twelve in its first 150 dirty
+/// snapshots. The current 400-game-tick cap allows 240s at 600ms per game tick.
 const GREEN_DRAGON_BANK_FOOD_WATCH_TICKS: u32 = 400;
 /// Each foot leg between the field `(3096, 3814)` and the Edgeville booth
-/// `(3096, 3494)` is 320 Chebyshev tiles. At the bank-cell calibration of
-/// 1.25 dirty increments per tile plus the 7.5-dirty booth component
-/// (`rock_crab.rs`), `320 * 1.25 + 7.5 = 407.5`, rounded to 420. Measured:
-/// 220 and 246 to the restock, about 325 and 330 back (`diagA2`, `fixB1`;
-/// the card runs part of each leg).
+/// `(3096, 3494)` is 320 Chebyshev tiles. The old bank-cell calibration
+/// predicted 1.25 dirty snapshots per tile plus the 7.5-snapshot booth
+/// component (`rock_crab.rs`), or 407.5 old dirty snapshots. The old receipts
+/// measured 220 and 246 to restock, about 325 and 330 back (`diagA2`, `fixB1`;
+/// the card runs part of each leg). This numeric cap now means 420 game ticks
+/// (252s at 600ms per game tick) per route arm.
 const GREEN_DRAGON_BANK_ROUTE_WATCH_TICKS: u32 = 420;
-/// Two 320-tile walks at 0.6 seconds per tile take 384 seconds, the food leg
-/// took 45 to 60 seconds and seed/Start about 20 (`diagA2`, `fixB1`): 464
-/// seconds, rounded to 540 to keep the booth, close and fresh-XP watches
-/// inside the cell.
-const GREEN_DRAGON_BANK_DEADLINE: Duration = Duration::from_secs(540);
+/// The prior estimate used two 320-tile walks (384s), food (45–60s) and
+/// seed/Start (~20s), about 464s total. The fixed 540s wall remains separate
+/// from the per-arm game-tick caps; it can pre-empt them if several arms run
+/// long. No live evidence justifies raising the whole-scenario deadline.
+pub(crate) const GREEN_DRAGON_BANK_DEADLINE: Duration = Duration::from_secs(540);
 const GREEN_DRAGON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
@@ -1197,7 +1197,7 @@ const GREEN_DRAGON_LOOT_EMPTY: &[i32] = &[
 /// `content/scripts/levelrequire/scripts/levelrequire.rs2`).
 pub(crate) const LOST_CITY_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Lost City",
-    journal: "Lost City",
+    acknowledgement: Proof::QuestDone { name: "Lost City" },
 };
 const GREEN_DRAGON_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {

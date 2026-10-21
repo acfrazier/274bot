@@ -1825,7 +1825,9 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
                    detail,
                    assessment,
                    refusal,
-                   escape| script::native::WalkReceipt {
+                   escape,
+                   goal| script::native::WalkReceipt {
+        goal,
         request_id: owner.request_id().get(),
         evidence: api::quest_progress::EvidenceStamp {
             run: owner.run(),
@@ -1854,7 +1856,9 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         let blocked = risk.as_deref().and_then(|risk| risk.blocked.clone());
         slot.complete_native_walk(
             &owner,
-            receipt(&owner, end, blocked, detail, assessment, refusal, escape),
+            receipt(
+                &owner, end, blocked, detail, assessment, refusal, escape, None,
+            ),
         );
         if bot.walk_outcome_request_id == request_id {
             bot.walk_outcome_detail = None;
@@ -1903,9 +1907,25 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
         .admission
         .as_deref()
         .and_then(|admission| admission.escape);
+    // The existing correlated outcome already retains the chosen exact Area
+    // goal. No additional per-bot destination state is needed. Other walk
+    // modes keep their original target/radius settlement contract.
+    let goal = (matches!(
+        &end,
+        script::native::WalkEnd::Arrived | script::native::WalkEnd::RouteEnded
+    ) && bot.route_arrival == nav::contract::ArrivalKind::Area
+        && bot.route_loc_id.is_none()
+        && bot.walk_outcome_radius == 0)
+        .then_some(api::snapshot::WorldTile {
+            x: bot.walk_outcome_x,
+            z: bot.walk_outcome_z,
+            level: bot.walk_outcome_level,
+        });
     slot.complete_native_walk(
         owner,
-        receipt(owner, end, blocked, detail, assessment, refusal, escape),
+        receipt(
+            owner, end, blocked, detail, assessment, refusal, escape, goal,
+        ),
     );
     bot.native_receipt_seq = bot.walk_outcome_seq;
     bot.native_walk_blocked = None;

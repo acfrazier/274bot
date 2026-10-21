@@ -62,6 +62,61 @@ fn every_cell_is_registered_once_with_one_authentic_trigger() {
 }
 
 #[test]
+fn same_kind_head_variant_drops_the_distractor_before_triggering() {
+    const RUNE_AXE_HEAD_ID: i32 = 520;
+    let scenario = crate::get("guardian_skill_lost_axe_same_kind_head")
+        .expect("the exact-tier live cell is registered");
+    let seed = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "seed an unrelated Rune axe head")
+        .expect("seed step");
+    let drop = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "drop the Rune axe head beside the player")
+        .expect("real drop step");
+    let observe = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "summon the event and observe the Guardian handle it")
+        .expect("event observation step");
+    assert!(seed < drop && drop < observe);
+    assert!(matches!(
+        &scenario.steps[seed].kind,
+        StepKind::Perform { .. }
+    ));
+    assert_eq!(
+        scenario.steps[seed].wait.arm,
+        Proof::ItemId {
+            id: RUNE_AXE_HEAD_ID,
+            count: 1
+        }
+    );
+    assert!(matches!(
+        &scenario.steps[drop].kind,
+        StepKind::Perform { .. }
+    ));
+    assert_eq!(
+        scenario.steps[drop].wait.arm,
+        Proof::ItemIdAtMost {
+            id: RUNE_AXE_HEAD_ID,
+            count: 0
+        }
+    );
+    let StepKind::ObserveRandomEvent { cell } = &scenario.steps[observe].kind else {
+        panic!("last step is the event observation");
+    };
+    assert_eq!(cell.trigger, Trigger::Skill(9));
+    assert_eq!(
+        cell.oracle,
+        Oracle::LostTool {
+            tool_ids: &[BRONZE_AXE_ID]
+        }
+    );
+}
+
+#[test]
 fn the_fixtures_seed_only_the_accounts_own_state() {
     for (name, ..) in GUARDIAN_EVENT_CELLS {
         let scenario = crate::get(name).unwrap();

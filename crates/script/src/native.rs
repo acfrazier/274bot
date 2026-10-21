@@ -562,8 +562,111 @@ impl Default for WalkAllow {
     }
 }
 
+/// Bounded exact alternatives for one native Area walk. A reachable preferred
+/// goal wins over every fallback goal, even when a fallback route is shorter.
+#[derive(Debug, Clone)]
+pub struct WalkGoals {
+    goals: Arc<Vec<WorldTile>>,
+    preferred_len: usize,
+}
+
+/// A candidate request is rejected, never silently shortened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WalkGoalsError {
+    #[error("candidate goal set is empty")]
+    Empty,
+    #[error("{count} unique candidate goals exceed the limit of {limit}")]
+    TooMany { count: usize, limit: usize },
+    #[error("candidate goals require exact Area arrival without a location")]
+    IncompatibleArrival,
+}
+
+impl WalkGoals {
+    /// The generated 274/289 movement rectangles need at most 810 goals;
+    /// stationary NPCs need 961. This leaves 63 goals of headroom.
+    pub const MAX: usize = 1024;
+
+    /// All goals belong to the preferred tier.
+    pub fn new(mut goals: Vec<WorldTile>) -> Result<Self, WalkGoalsError> {
+        goals.sort_unstable_by_key(|tile| (tile.level, tile.x, tile.z));
+        goals.dedup();
+        let preferred_len = goals.len();
+        Self::from_parts(goals, preferred_len)
+    }
+
+    /// Preserve the supplied preferred goals before trying the remaining goals.
+    /// The cap applies to the unique union, not to either tier separately.
+    pub fn with_preferred(
+        mut goals: Vec<WorldTile>,
+        preferred: &[WorldTile],
+    ) -> Result<Self, WalkGoalsError> {
+        goals.sort_unstable_by_key(|tile| (tile.level, tile.x, tile.z));
+        goals.dedup();
+        for &tile in preferred {
+            let key = (tile.level, tile.x, tile.z);
+            if let Err(index) =
+                goals.binary_search_by_key(&key, |tile| (tile.level, tile.x, tile.z))
+            {
+                goals.insert(index, tile);
+            }
+        }
+        let mut preferred_len = 0;
+        for &tile in preferred {
+            if let Some(index) = goals[preferred_len..].iter().position(|goal| *goal == tile) {
+                goals[preferred_len..=preferred_len + index].rotate_right(1);
+                preferred_len += 1;
+            }
+        }
+        Self::from_parts(goals, preferred_len)
+    }
+
+    fn from_parts(goals: Vec<WorldTile>, preferred_len: usize) -> Result<Self, WalkGoalsError> {
+        if goals.is_empty() {
+            return Err(WalkGoalsError::Empty);
+        }
+        if goals.len() > Self::MAX {
+            return Err(WalkGoalsError::TooMany {
+                count: goals.len(),
+                limit: Self::MAX,
+            });
+        }
+        // Retain the producer's allocation instead of copying its tiles into
+        // an Arc slice. A thin Arc plus the tier boundary stays two words.
+        Ok(Self {
+            goals: Arc::new(goals),
+            preferred_len,
+        })
+    }
+
+    pub fn as_slice(&self) -> &[WorldTile] {
+        self.goals.as_slice()
+    }
+
+    pub fn preferred(&self) -> &[WorldTile] {
+        &self.goals[..self.preferred_len]
+    }
+
+    pub fn fallback(&self) -> &[WorldTile] {
+        &self.goals[self.preferred_len..]
+    }
+
+    /// Shared Vec header, Arc counters and the retained tile capacity.
+    pub fn retained_bytes(&self) -> Option<usize> {
+        std::mem::size_of::<Vec<WorldTile>>()
+            .checked_add(2 * std::mem::size_of::<usize>())?
+            .checked_add(
+                self.goals
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<WorldTile>())?,
+            )
+    }
+}
+
 pub struct WalkRequest {
     pub target: WorldTile,
+    /// Exact alternatives for a native Area walk with radius zero and no loc.
+    /// `None` preserves the existing single-target route and arrival behavior.
+    pub candidate_goals: Option<WalkGoals>,
     /// Explicit identity for a walk whose destination is a loc origin.
     /// `None` deliberately keeps the destination tile-based.
     pub loc_id: Option<i32>,
@@ -680,6 +783,9 @@ pub enum WalkEnd {
 pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
+    /// Chosen destination for a successful exact Area walk (radius zero,
+    /// without a loc), with or without candidates. Other arrivals report None.
+    pub goal: Option<WorldTile>,
     pub end: WalkEnd,
     pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
@@ -841,6 +947,8 @@ pub enum ActionError {
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
     NeedsEvidence(Arc<[QuestGate]>),
+    /// Invalid bounded candidate-goal request, rejected before host admission.
+    WalkGoals(WalkGoalsError),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
@@ -939,6 +1047,69 @@ mod walk_permission_tests {
     }
 
     #[test]
+    fn candidate_goal_limit_refuses_instead_of_truncating() {
+        let tile = WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        };
+        assert!(matches!(
+            WalkGoals::new(Vec::new()),
+            Err(WalkGoalsError::Empty)
+        ));
+        let tiles = |count| {
+            (0..count)
+                .map(|x| WorldTile {
+                    x: x as i32,
+                    ..tile
+                })
+                .collect()
+        };
+        let maximum = WalkGoals::new(tiles(WalkGoals::MAX)).unwrap();
+        assert_eq!(maximum.as_slice().len(), WalkGoals::MAX);
+        assert_eq!(maximum.preferred(), maximum.as_slice());
+        assert!(maximum.fallback().is_empty());
+        assert!(matches!(
+            WalkGoals::new(tiles(WalkGoals::MAX + 1)),
+            Err(WalkGoalsError::TooMany { count, limit })
+                if count == WalkGoals::MAX + 1 && limit == WalkGoals::MAX
+        ));
+    }
+
+    #[test]
+    fn candidate_tiers_share_one_unique_bound_without_inline_growth() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let goals = WalkGoals::with_preferred(
+            vec![tile(1), tile(2), tile(2), tile(3)],
+            &[tile(3), tile(3), tile(4)],
+        )
+        .unwrap();
+        assert_eq!(goals.preferred(), &[tile(3), tile(4)]);
+        assert_eq!(goals.fallback(), &[tile(1), tile(2)]);
+        assert_eq!(goals.as_slice().len(), 4);
+        assert_eq!(
+            std::mem::size_of::<WalkGoals>(),
+            2 * std::mem::size_of::<usize>()
+        );
+        let maximum = (0..WalkGoals::MAX).map(|x| tile(x as i32)).collect();
+        assert!(matches!(
+            WalkGoals::with_preferred(maximum, &[tile(WalkGoals::MAX as i32)]),
+            Err(WalkGoalsError::TooMany { count, limit })
+                if count == WalkGoals::MAX + 1 && limit == WalkGoals::MAX
+        ));
+        let deduplicated = WalkGoals::new(vec![tile(1); WalkGoals::MAX + 1]).unwrap();
+        assert_eq!(deduplicated.as_slice(), &[tile(1)]);
+        assert_eq!(
+            WalkGoalsError::TooMany {
+                count: 1025,
+                limit: 1024
+            }
+            .to_string(),
+            "1025 unique candidate goals exceed the limit of 1024"
+        );
+    }
+
+    #[test]
     fn refusal_variants_preserve_distinct_typed_kinds() {
         let refusals = [
             WalkRefusal::NoRouteWithinBounds {
@@ -964,6 +1135,7 @@ mod walk_permission_tests {
     #[test]
     fn aborted_walk_maps_to_blocked_with_the_escape_detail() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {
@@ -992,6 +1164,7 @@ mod walk_permission_tests {
     #[test]
     fn typed_refusal_supplies_a_reason_when_host_detail_is_absent() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {

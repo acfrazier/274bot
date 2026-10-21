@@ -563,6 +563,7 @@ impl<Io> OperatorSession<Io> {
         if matches!(command, OperatorCommand::SwitchWorld(_)) {
             return Err(SubmitError::NoEntryPoint(command));
         }
+        let command = self.route_paint_control(command, targets, surface);
         {
             let models = surface.models();
             self.resolve_targets(command, targets, models.marks())?;
@@ -598,6 +599,48 @@ impl<Io> OperatorSession<Io> {
         self.drain_watched();
         self.settle_owned();
         Ok(submitted)
+    }
+
+    /// A staged host paint control never dispatches as `ScriptPaintInput`.
+    /// When its binding still holds for the one target
+    /// ([`OperatorSession::paint_control_refusal`]), the submission becomes
+    /// the control's own Pause, Resume or Stop row, with that row's
+    /// settlement. A refused binding stays a `ScriptPaintInput`, which
+    /// reports why and controls nothing.
+    fn route_paint_control<S: SlotSurface<Io = Io>>(
+        &self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+        surface: &mut S,
+    ) -> OperatorCommand {
+        if command != OperatorCommand::ScriptPaintInput {
+            return command;
+        }
+        let mut models = surface.models();
+        let Some(scripts) = models.scripts.as_deref_mut() else {
+            return command;
+        };
+        let Some(activation) = scripts.staged_paint_control() else {
+            return command;
+        };
+        let name = match targets {
+            Targets::Profile(name) => Some(name),
+            Targets::Selected => self.selected(),
+            _ => None,
+        };
+        let Some(name) = name else {
+            return command;
+        };
+        match self.paint_control_refusal(name, &activation) {
+            None => {
+                scripts.take_staged_paint_input();
+                activation.control.command()
+            }
+            Some(reason) => {
+                scripts.refuse_staged_paint_control(reason);
+                command
+            }
+        }
     }
 
     /// [`Self::submit`] for a row that never attaches or releases a slot

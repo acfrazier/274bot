@@ -59,9 +59,19 @@ fn headed_watch_rejects_wrong_and_invalidates_pre_start_session_baselines() {
     let mut wrong = thiever_observation();
     wrong.player = Some("other".into());
     watch.observe("catalogtest", wrong, false);
-    assert!(watch.begin_start("catalogtest").is_err());
-    let error = watch.failure().expect("wrong account fails the watch");
+    let error = watch
+        .begin_start("catalogtest")
+        .expect_err("wrong account must refuse Start");
     assert!(error.contains("fresh account"), "{error}");
+    assert_eq!(watch.status(), CoreWatchStatus::Ready);
+    assert!(
+        watch.failure().is_none(),
+        "a refused pre-Start baseline leaves the watch retryable"
+    );
+    watch.observe("catalogtest", thiever_observation(), false);
+    watch
+        .begin_start("catalogtest")
+        .expect("a corrected baseline can Start without reconfiguration");
 
     watch.configure(CoreCase::Thiever, "catalogtest");
     watch.observe("catalogtest", thiever_observation(), false);

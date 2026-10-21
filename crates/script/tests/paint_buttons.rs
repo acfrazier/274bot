@@ -353,3 +353,83 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+/// A catalogue-shaped bot that calls the real paint-controls helper beside
+/// one ordinary button, as rs2b0t scripts do (`ScriptRunner.paintControls`).
+const HELPER: &str = r#"
+import { Paint } from '../../paint/Paint.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+    }
+    onPaint() {
+        const p = Paint.begin(null, {});
+        p.title('Helper');
+        p.row('status');
+        const c = p.buttons([{id:'gobank', label:'Go bank'}]);
+        if (c) {
+            globalThis.__clicked = c;
+            globalThis.__got = (globalThis.__got || 0) + 1;
+        }
+        p.gap();
+        ScriptRunner.paintControls(p);
+        p.end();
+    }
+}
+"#;
+
+#[test]
+fn paint_controls_helper_advertises_host_controls_instead_of_hint_text() {
+    let iso = spawn(HELPER);
+    tick(&iso, 1);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not impl")),
+        "the helper must not throw: {logs:?}"
+    );
+    let paint = iso.paint().expect("paint forwarded");
+    assert_eq!(
+        paint.buttons,
+        vec![
+            ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            },
+            ScriptPaintButton {
+                id: script::shim::HOST_PAUSE_CONTROL_ID.into(),
+                label: "Pause".into(),
+            },
+            ScriptPaintButton {
+                id: script::shim::HOST_STOP_CONTROL_ID.into(),
+                label: "Stop".into(),
+            },
+        ],
+        "real hit targets with the fixed host ids"
+    );
+    assert_eq!(
+        paint.lines,
+        vec!["status".to_string(), String::new()],
+        "no hint row: {:?}",
+        paint.lines
+    );
+    iso.join();
+}
+
+#[test]
+fn helper_frame_keeps_the_ordinary_one_shot_click() {
+    let iso = spawn(HELPER);
+    tick(&iso, 1);
+    iso.paint_click("gobank");
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(clicked(&iso).as_str(), Some("gobank"));
+    assert_eq!(got(&iso), 1, "exactly one matching id");
+    iso.pause();
+    iso.paint_click("gobank");
+    tick(&iso, 4);
+    iso.resume();
+    tick(&iso, 5);
+    assert_eq!(got(&iso), 1, "a paused ordinary click stays dropped");
+    iso.join();
+}

@@ -4,7 +4,7 @@
   "activation_state": "partially-activated",
   "frozen_source": {
     "repository": "https://github.com/rs2b2t/rs2b0t.git",
-    "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+    "revision": "90a69240a4617155f280f098958c3cd7f044f234",
     "runtime_declarations": "packages/rs2b0t-api/index.js",
     "typed_declarations": "packages/rs2b0t-api/index.d.ts"
   },
@@ -12831,6 +12831,16 @@
       "nav_consuming": false
     },
     {
+      "id": "bank-withdraw-load-numeric-id",
+      "module": "api/bank/Bank.js",
+      "selector": "Bank.withdrawLoad",
+      "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
+      "runtime": "crates/script/src/shim/bank.js:162",
+      "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
       "id": "native-gathering-helper-types",
       "module": "shim/gathering_locations.js",
       "selector": "$module",
@@ -14114,7 +14124,7 @@
       "selector": "loopReadyOrDetached",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:21",
+      "runtime": "crates/script/src/shim/script_runner.js:22",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -14125,7 +14135,7 @@
       "selector": "stopReasonOf",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:25",
+      "runtime": "crates/script/src/shim/script_runner.js:26",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -24020,7 +24030,7 @@
       "selector": "loopReadyOrDetached",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:21",
+      "source": "crates/script/src/shim/script_runner.js:22",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached"
     },
@@ -24030,7 +24040,7 @@
       "selector": "stopReasonOf",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:25",
+      "source": "crates/script/src/shim/script_runner.js:26",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:stopReasonOf"
     },

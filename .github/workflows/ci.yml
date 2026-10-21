@@ -9,6 +9,9 @@ on:
     branches: [main, dev, "release/**"]
   pull_request:
     branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -59,7 +62,7 @@ jobs:
 
   clippy:
     name: clippy
-    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -172,7 +175,7 @@ jobs:
           diff -ru crates/script/schema/generated "$generated"
   test_lanes:
     name: test (${{ matrix.lane }})
-    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/') }}
     strategy:
       fail-fast: false
       matrix:
@@ -309,7 +312,7 @@ jobs:
   # Preserve the required `test` status while the expensive commands fan out.
   test:
     name: test
-    if: ${{ always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') }}
+    if: ${{ always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/')) }}
     needs: test_lanes
     runs-on: ubuntu-24.04
     steps:

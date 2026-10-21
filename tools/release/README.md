@@ -231,13 +231,16 @@ Apple's 3.9.
 `docs/known-issues.toml` is the single source of truth for the
 `### Known issues` and `### Not in this release` blocks in `CHANGELOG.md`.
 Edit the ledger, never the CHANGELOG blocks. Item lifecycle: add the item
-with `first` (the first affected release); the commit that fixes it sets
-`fixed` to the release carrying the fix; never delete an item. An item is
-open at release X when `first` is not newer than X and `fixed` (when set)
-is newer than X, so a fix recorded for 0.2.5 leaves the published 0.2.4
-section untouched and its check passing. `fixed` must name a known release
-or the next one and must be later than `first`; unknown fields are rejected,
-so a typo cannot silently keep an item open.
+with `first` (the first affected release), and `listed` (the first release
+whose notes list it) when it was found after `first` had shipped. The commit
+that fixes it sets `fixed` to the release carrying the fix; never delete an
+item. An item is open at release X when `listed` (default `first`) is not
+newer than X and `fixed` (when set) is newer than X, so a fix recorded for
+0.2.5 leaves the published 0.2.4 section untouched and its check passing.
+`fixed` must name a known release or the next one and must be later than
+`first`; `listed` must name a known release or the next one, not be earlier
+than `first`, and be earlier than `fixed`. Unknown fields are rejected, so a
+typo cannot silently keep an item open.
 
 The `## Unreleased` section stages no ledger blocks during development.
 When a release section is cut, render the blocks for the next release,
