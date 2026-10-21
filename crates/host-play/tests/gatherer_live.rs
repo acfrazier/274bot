@@ -3064,6 +3064,7 @@ impl GatherSlot {
             return Err("Gatherer fetched the unusable banked pickaxe".into());
         }
         self.observe_reprovision_bank(&observation)?;
+        self.observe_bank_open(self.witness.status_deposited)?;
         let bank_active = self.bank_conservation_active();
         let drop_baseline = self.last_observed_dropped;
         let product_drop_baseline = self.last_observed_product_drops;
@@ -3569,6 +3570,52 @@ impl GatherSlot {
             .ok_or_else(|| format!("{} bank settings are not a Gatherer config", self.name()))
     }
 
+    fn observe_bank_open(&mut self, current_deposited: i64) -> Result<(), String> {
+        if !self.bank_conservation_active()
+            || !self.snapshot.bank_loaded()
+            || self.witness.pending_bank_trip.is_some()
+        {
+            return Ok(());
+        }
+        let inventory_before = self.snapshot_inventory_counts();
+        let deposit_ids = self.native_deposit_ids()?;
+        if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
+            for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
+                if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
+                    return Err(format!(
+                        "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
+                        self.name()
+                    ));
+                }
+            }
+        }
+        let seeded_casket_expected =
+            if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
+                self.witness.seeded_casket_baseline_count
+            } else {
+                0
+            };
+        if seeded_casket_expected > 0
+            && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
+        {
+            return Err(format!(
+                "{} lost its seeded casket before the first bank deposit: {:?}",
+                self.name(),
+                inventory_before
+            ));
+        }
+        self.witness.pending_bank_trip = Some(BankTripReceipt::new(
+            self.witness.status_trips.saturating_add(1),
+            inventory_before,
+            &deposit_ids,
+            self.snapshot_bank_counts(),
+            current_deposited,
+            self.cell.products(self.case),
+            seeded_casket_expected,
+        ));
+        Ok(())
+    }
+
     fn observe_bank_deposit(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -3577,51 +3624,8 @@ impl GatherSlot {
         if !self.bank_conservation_active() {
             return Ok(());
         }
-        let bank = text_field(status, "bank");
-        let bank_step = bank.and_then(|bank| bank.rsplit_once("; ").map(|(_, step)| step));
+        self.observe_bank_open(current_deposited)?;
         let event = text_field(status, "last_event");
-        if bank_step == Some("Deposit")
-            && self.snapshot.bank_loaded()
-            && self.witness.pending_bank_trip.is_none()
-        {
-            let inventory_before = self.snapshot_inventory_counts();
-            let deposit_ids = self.native_deposit_ids()?;
-            if self.case == LiveCase::FishHarpoonBank && self.witness.bank_trips.is_empty() {
-                for (id, label) in [(SPARE_NET_ID, "spare net"), (BEER_ID, "beer")] {
-                    if inventory_before.get(&id) != Some(&1) || !deposit_ids.contains(&id) {
-                        return Err(format!(
-                            "{} did not prepare the seeded {label} as a deposit candidate: inventory={inventory_before:?} deposit_ids={deposit_ids:?}",
-                            self.name()
-                        ));
-                    }
-                }
-            }
-            let seeded_casket_expected =
-                if self.case.requires_seeded_casket() && self.witness.bank_trips.is_empty() {
-                    self.witness.seeded_casket_baseline_count
-                } else {
-                    0
-                };
-            if seeded_casket_expected > 0
-                && inventory_before.get(&CASKET_ID).copied().unwrap_or(0) < seeded_casket_expected
-            {
-                return Err(format!(
-                    "{} lost its seeded casket before the first bank deposit: {:?}",
-                    self.name(),
-                    inventory_before
-                ));
-            }
-            let receipt = BankTripReceipt::new(
-                self.witness.status_trips.saturating_add(1),
-                inventory_before,
-                &deposit_ids,
-                self.snapshot_bank_counts(),
-                current_deposited,
-                self.cell.products(self.case),
-                seeded_casket_expected,
-            );
-            self.witness.pending_bank_trip = Some(receipt);
-        }
         if event == Some("deposit confirmed") && self.witness.pending_bank_trip.is_none() {
             return Err(format!(
                 "{} confirmed a deposit without pre-deposit inventory evidence",
@@ -3629,13 +3633,22 @@ impl GatherSlot {
             ));
         }
 
+        // The core skips an empty deposit, including its status and event.
+        // Its observed pack and bank still prove the zero-item boundary.
+        let empty_deposit = self
+            .witness
+            .pending_bank_trip
+            .as_ref()
+            .is_some_and(|receipt| receipt.expected_items.is_empty());
         let should_observe_deposit =
             self.witness
                 .pending_bank_trip
                 .as_ref()
                 .is_some_and(|receipt| {
                     !receipt.deposit_verified
-                        && (event == Some("deposit confirmed") || receipt.deposit_confirmed)
+                        && (event == Some("deposit confirmed")
+                            || receipt.deposit_confirmed
+                            || empty_deposit)
                 });
         if should_observe_deposit {
             let inventory_after = self.snapshot_inventory_counts();
@@ -3658,7 +3671,7 @@ impl GatherSlot {
                     bank_loaded,
                     &bank_after,
                     current_deposited,
-                    event == Some("deposit confirmed"),
+                    event == Some("deposit confirmed") || empty_deposit,
                 );
             result.map_err(|error| format!("{}: {error}", self.name()))?;
         }
