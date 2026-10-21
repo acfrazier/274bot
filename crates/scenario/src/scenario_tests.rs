@@ -2986,6 +2986,86 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
 }
 
 #[test]
+fn fire_giant_bank_uses_tier40_rune_short_trip_without_seeding_earned_loot() {
+    let scenario = get("fire_giant_bank").expect("fire_giant_bank registered");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("FireGiant starts after preparation");
+    let prepare = scenario.steps[..start]
+        .iter()
+        .find(|step| step.name.starts_with("prepare melee stats"))
+        .expect("combat preparation stays on the safe tile");
+    let StepKind::Perform { send } = &prepare.kind else {
+        panic!("combat preparation is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    for stat in ["attack", "strength", "hitpoints", "defence"] {
+        assert!(
+            emitted_has(&client, &format!("setstat {stat} {COMBAT_ATTACK_LEVEL}")),
+            "{stat} uses the existing tier-40 profile, not level 99"
+        );
+    }
+    for alias in [
+        "rune_scimitar",
+        "rune_chainbody",
+        "rune_platelegs",
+        "rune_full_helm",
+    ] {
+        assert!(emitted_has(&client, &format!("give {alias} 1")));
+    }
+    let tele = scenario.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("hostile teleport follows the equipped kit");
+    for id in [RUNE_SCIMITAR_ID, RUNE_CHAINBODY_ID, 1079, 1163] {
+        assert!(scenario.steps[..tele]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id }));
+    }
+    let food = scenario.steps[..tele]
+        .iter()
+        .find(|step| step.name == "stock prepared trip food after wearing the combat kit")
+        .expect("short-trip food is stocked after the kit is worn");
+    let StepKind::Perform { send } = &food.kind else {
+        panic!("food stock is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "give lobster 8"));
+    assert!(!emitted_has(&client, "give lobster 12"));
+    for arm in [
+        Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 8,
+        },
+        Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        },
+    ] {
+        assert!(scenario.steps[..start]
+            .iter()
+            .any(|step| step.wait.arm == arm));
+    }
+    assert!(scenario.steps[start + 1..].iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
+    }));
+    assert_eq!(scenario.settings.deadline, Duration::from_secs(600));
+    assert!(scenario.steps[start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks == 1500));
+}
+
+#[test]
 fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets() {
     const DEFENCE: i32 = 1;
     let start_idx = |scenario: &Scenario| {
@@ -3528,7 +3608,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
-        ("fire_giant_bank", "adamant_scimitar"),
+        ("fire_giant_bank", "rune_scimitar"),
     ] {
         let written = seed(name);
         assert!(
