@@ -22,6 +22,7 @@ pub mod bin;
 pub mod chat;
 pub mod commands;
 pub mod fleet;
+pub mod fleet_card;
 pub mod help;
 pub mod input;
 pub mod layout;

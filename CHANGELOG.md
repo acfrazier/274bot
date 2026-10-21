@@ -38,19 +38,41 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   panel's own window state no longer rewrites them.
 - A capture frame that fills the input queue is reported, instead of
   dropping events silently.
-- Fleet: the Fleet table, the MultiBox rail and the Grid use one filter, sort
-  and set of marks. The sort offers Load order (the default), Name and
-  Status. The Fleet table lists profiles that are not loaded as "not
-  loaded", and the rail lists them in a folded "Not loaded" group where you
-  can mark them. A profile keeps its mark when the filter hides it or when
-  it is unloaded, until the profile is deleted.
-- Fleet: Load order is saved. Reorder bots by dragging MultiBox tiles or
-  Fleet rows, by using the TUI move keys, or by moving marked profiles to
-  the top. Name and Status remain temporary view sorts. Load all logs in
-  bots in that order, a new profile goes to the end, a renamed profile
-  keeps its place and removing a bot from the wall keeps its place. The
-  order is saved as `profile_order` in the shared preferences; a reorder
-  whose write fails is reported and the last saved order comes back.
+
+### Fleet
+
+- The panel's Fleet table, MultiBox rail and Grid, and the TUI fleet table,
+  use one filter, sort and set of marks. The sort offers Load order (the
+  default), Name and Status. Profiles that are not loaded are listed as "not
+  loaded"; the rail lists them in a folded "Not loaded" group where you can
+  mark them. A profile keeps its mark when the filter hides it or when it is
+  unloaded, until the profile is deleted. The TUI Map's group send uses the
+  same marks.
+- Load order is saved. Reorder bots by dragging MultiBox tiles or Fleet rows
+  in the panel, with `Alt+Up` / `Alt+Down` in the TUI, or with **Move marked
+  to top** (the TUI palette also has **Move profile up** and **Move profile
+  down**). Name and Status remain temporary view sorts. Load all logs in bots
+  in that order, a new profile goes to the end, a renamed profile keeps its
+  place and removing a bot from the wall keeps its place. The order is saved
+  as `profile_order` in the shared preferences; a reorder whose write fails
+  is reported and the last saved order comes back.
+- Choose each bot's own card, the focused bot's card, or a pinned card (the
+  panel's card picker; `c` in the TUI). Choosing a card does not start a
+  script or change a bot's assignment.
+- Fleet actions name their scope. With bots marked, an action covers every
+  marked profile, hidden marks included; with nothing marked, it covers the
+  loaded bots the filter shows and asks first. Interruption and
+  settings-copy prompts name their targets, the panel and the TUI show the
+  same prompt, and each action keeps one result until it settles. A plan is
+  frozen when it is made: a bot marked, loaded or made ready later does not
+  join it, and a bot that changed is skipped with its new reason. Stop on a
+  bot whose Start is still waiting cancels that Start, and the Start
+  reports it cancelled. The panel's mark box and the TUI's `a` / `A` mark
+  and unmark the shown rows, and both mark the shown rows by status. In
+  the TUI, mark profiles that are not loaded before logging them in.
+- The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
+  **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
+  **Start all** / **Stop all** until the combined fleet toolbar.
 
 ### Random events
 
@@ -62,13 +84,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
-- The fleet table lists every profile, including the ones that are not
-  loaded (state "not loaded"), with the same marks and filter as the panel.
-  A profile keeps its mark when the filter hides it or when it is unloaded,
-  until the profile is deleted. The Map's group send uses the same marks.
-- The fleet table follows the saved Load order. `Alt+Up` / `Alt+Down` move
-  the cursor's profile one shown row up or down, and the palette has
-  **Move profile up**, **Move profile down** and **Move marked to top**.
 
 ### Scripts
 

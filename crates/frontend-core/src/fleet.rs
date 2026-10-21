@@ -464,6 +464,225 @@ impl FleetFilter {
     }
 }
 
+/// The card the fleet buttons use (Start, Assign, Assign & restart and
+/// Copy settings). Choosing one changes nothing else: no assignment, no
+/// Browse pick, no profile form, no Start. [`Self::OWN`] (the default)
+/// is each bot's own saved assignment (Start only; the writing actions
+/// need a card), [`Self::FOCUSED`] the focused bot's card (its pending
+/// Browse pick, else its assignment) followed as the focus moves, and
+/// [`Self::pinned`] one card, fixed whatever the focus.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FleetCard(CardChoice);
+
+/// What a [`FleetCard`] holds.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) enum CardChoice {
+    #[default]
+    Own,
+    Focused,
+    Pinned(crate::scripts::ScriptChoice),
+}
+
+impl FleetCard {
+    /// Each bot's own saved assignment.
+    pub const OWN: Self = Self(CardChoice::Own);
+    /// The focused bot's card.
+    pub const FOCUSED: Self = Self(CardChoice::Focused);
+
+    /// One card, fixed whatever the focus.
+    pub fn pinned(card: crate::scripts::ScriptChoice) -> Self {
+        Self(CardChoice::Pinned(card))
+    }
+
+    /// Whether this is each bot's own card.
+    pub fn is_own(&self) -> bool {
+        matches!(self.0, CardChoice::Own)
+    }
+
+    /// Whether this follows the focused bot's card.
+    pub fn is_focused(&self) -> bool {
+        matches!(self.0, CardChoice::Focused)
+    }
+
+    /// The pinned card, when one is pinned.
+    pub fn pinned_card(&self) -> Option<&crate::scripts::ScriptChoice> {
+        match &self.0 {
+            CardChoice::Pinned(card) => Some(card),
+            CardChoice::Own | CardChoice::Focused => None,
+        }
+    }
+
+    pub(crate) fn choice(&self) -> &CardChoice {
+        &self.0
+    }
+
+    /// The same choice, copied.
+    pub fn duplicate(&self) -> Self {
+        Self(match &self.0 {
+            CardChoice::Own => CardChoice::Own,
+            CardChoice::Focused => CardChoice::Focused,
+            CardChoice::Pinned(card) => CardChoice::Pinned(card.duplicate()),
+        })
+    }
+}
+
+/// The label text of [`FleetCard::OWN`].
+pub const OWN_CARD_LABEL: &str = "Each bot's own card";
+/// The label prefix of [`FleetCard::FOCUSED`].
+pub const FOCUSED_CARD_LABEL: &str = "Focused bot's card";
+
+/// The fleet card's label and the inputs it was built from.
+#[derive(Debug, Default)]
+struct CardLabel {
+    text: String,
+    /// (card kind, focused name, heading, pending) the text was built
+    /// from; `None` forces a rebuild.
+    key: Option<(u8, String, String, bool)>,
+}
+
+impl CardLabel {
+    fn sync(
+        &mut self,
+        card: &FleetCard,
+        focused: Option<&str>,
+        heading: Option<&str>,
+        pending: bool,
+    ) {
+        let kind = match card.choice() {
+            CardChoice::Own => 0,
+            CardChoice::Focused => 1,
+            CardChoice::Pinned(_) => 2,
+        };
+        let focused = focused.unwrap_or("");
+        let heading_text = match card.choice() {
+            CardChoice::Pinned(choice) => choice.label(),
+            _ => heading.unwrap_or(""),
+        };
+        if let Some((k, f, h, p)) = &self.key {
+            if *k == kind && f == focused && h == heading_text && *p == pending {
+                return;
+            }
+        }
+        self.text.clear();
+        match card.choice() {
+            CardChoice::Own => self.text.push_str(OWN_CARD_LABEL),
+            CardChoice::Focused => {
+                self.text.push_str(FOCUSED_CARD_LABEL);
+                self.text.push_str(": ");
+                self.text.push_str(heading.unwrap_or("none"));
+                if pending {
+                    self.text.push_str(" (pending)");
+                }
+            }
+            CardChoice::Pinned(choice) => self.text.push_str(choice.label()),
+        }
+        match &mut self.key {
+            Some((k, f, h, p)) => {
+                *k = kind;
+                f.clear();
+                f.push_str(focused);
+                h.clear();
+                h.push_str(heading_text);
+                *p = pending;
+            }
+            None => self.key = Some((kind, focused.to_owned(), heading_text.to_owned(), pending)),
+        }
+    }
+}
+
+/// A mark operation over the fleet model's shown rows (rows the filter
+/// hides keep their marks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkOp {
+    /// Mark every shown row.
+    Shown,
+    /// Unmark every shown row.
+    UnmarkShown,
+    /// Flip every shown row's mark.
+    InvertShown,
+    /// Mark every shown row the predicate matches (other marks stay).
+    Where(MarkPredicate),
+}
+
+/// A row status for [`MarkOp::Where`]: a predicate over the row's
+/// state, never its rendered text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkPredicate {
+    /// Loaded and logged in.
+    Ready,
+    /// Logged in with no script running (idle, stopped or failed).
+    Idle,
+    /// A script is starting or running.
+    Running,
+    /// Loaded but not logged in (offline or logged out).
+    LoggedOut,
+    /// Loaded, and its login failed.
+    LoginError,
+    /// A vault profile that is not loaded.
+    NotLoaded,
+}
+
+impl MarkPredicate {
+    /// Every predicate, in menu order.
+    pub const ALL: [MarkPredicate; 6] = [
+        Self::Ready,
+        Self::Idle,
+        Self::Running,
+        Self::LoggedOut,
+        Self::LoginError,
+        Self::NotLoaded,
+    ];
+
+    /// The menu label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::LoggedOut => "logged out",
+            Self::LoginError => "login error",
+            Self::NotLoaded => "not loaded",
+        }
+    }
+
+    /// Whether `row` is in this status.
+    pub fn matches(self, row: &FleetRow) -> bool {
+        use crate::scripts::ScriptRunState as RunState;
+        let loaded = row.loaded();
+        let phase = row.phase();
+        let running = matches!(row.script(), RunState::Starting | RunState::Running);
+        match self {
+            Self::Ready => loaded && phase == Phase::Ready,
+            Self::Idle => {
+                loaded
+                    && phase == Phase::Ready
+                    && !matches!(
+                        row.script(),
+                        RunState::Starting
+                            | RunState::Running
+                            | RunState::Paused
+                            | RunState::Stopping
+                    )
+            }
+            Self::Running => loaded && running,
+            Self::LoggedOut => loaded && matches!(phase, Phase::Offline | Phase::LoggedOut),
+            Self::LoginError => loaded && matches!(phase, Phase::LoginError | Phase::Failed),
+            Self::NotLoaded => !loaded,
+        }
+    }
+}
+
+/// How many of the shown rows are marked (the tri-state box).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShownMarks {
+    /// No shown row is marked.
+    None,
+    /// Some shown rows are marked.
+    Some,
+    /// Every shown row is marked (and at least one row is shown).
+    All,
+}
+
 /// Mark and row counts over the fleet model's universe and shown rows,
 /// recomputed with the shown rows or the marks, never per frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -552,6 +771,13 @@ pub struct FleetModel {
     /// Moves whenever the universe was rebuilt (row contents may have
     /// changed), never for a filter, order or mark change.
     rows_generation: u64,
+    /// The card the fleet buttons use, and the one staged for the next
+    /// [`crate::OperatorCommand::SetFleetCard`].
+    card: FleetCard,
+    staged_card: Option<FleetCard>,
+    /// The card label and the inputs it was built from
+    /// ([`Self::sync_card_label`]).
+    card_label: CardLabel,
 }
 
 impl Default for FleetModel {
@@ -576,6 +802,9 @@ impl FleetModel {
             scratch: Vec::new(),
             placed: Vec::new(),
             rows_generation: 0,
+            card: FleetCard::OWN,
+            staged_card: None,
+            card_label: CardLabel::default(),
         }
     }
 
@@ -669,6 +898,49 @@ impl FleetModel {
     /// labels rebuilds only then (not for a filter, order or mark change).
     pub fn rows_generation(&self) -> u64 {
         self.rows_generation
+    }
+
+    /// The card the fleet buttons use.
+    pub fn card(&self) -> &FleetCard {
+        &self.card
+    }
+
+    /// Whether every, some or none of the shown rows is marked (the
+    /// tri-state box over the shown rows).
+    pub fn shown_marks(&self) -> ShownMarks {
+        let counts = self.counts;
+        if counts.shown_marked == 0 {
+            ShownMarks::None
+        } else if counts.shown_marked == counts.shown {
+            ShownMarks::All
+        } else {
+            ShownMarks::Some
+        }
+    }
+
+    /// Bring the card label up to date with the focused bot's heading
+    /// (call once per frame; it borrows and compares until an input
+    /// changed, then rebuilds the label in its own buffer), and borrow it.
+    pub fn sync_card_label<Io>(
+        &mut self,
+        scripts: &crate::scripts::Scripts,
+        core: &crate::OperatorSession<Io>,
+    ) -> &str {
+        let focused = core.selected();
+        let (heading, pending) = match (self.card.choice(), focused) {
+            (CardChoice::Focused, Some(name)) => (
+                scripts.heading_label(core, name),
+                scripts.heading_is_pending(core, name),
+            ),
+            _ => (None, false),
+        };
+        self.card_label.sync(&self.card, focused, heading, pending);
+        &self.card_label.text
+    }
+
+    /// The card label as of the last [`Self::sync_card_label`].
+    pub fn card_label(&self) -> &str {
+        &self.card_label.text
     }
 
     /// Follow the core: rebuild the universe when the projected rows or the
@@ -848,6 +1120,54 @@ impl FleetModel {
             self.recount();
         }
         removed
+    }
+
+    /// Apply a mark operation to the shown rows (hidden rows keep their
+    /// marks). Returns how many marks changed.
+    pub(crate) fn apply_mark_op(&mut self, op: MarkOp) -> usize {
+        let mut changed = 0;
+        for &index in &self.shown {
+            let identity = self.ids[index];
+            let marked = self.marks.contains(identity);
+            let want = match op {
+                MarkOp::Shown => true,
+                MarkOp::UnmarkShown => false,
+                MarkOp::InvertShown => !marked,
+                MarkOp::Where(predicate) => {
+                    if !predicate.matches(&self.rows[index]) {
+                        continue;
+                    }
+                    true
+                }
+            };
+            if want != marked {
+                self.marks.set(identity, want);
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.recount();
+        }
+        changed
+    }
+
+    /// Stage the card the next [`crate::OperatorCommand::SetFleetCard`]
+    /// commits.
+    pub fn stage_card(&mut self, card: FleetCard) {
+        self.staged_card = Some(card);
+    }
+
+    /// Commit the staged card: `None` when nothing was staged, else
+    /// whether the card changed.
+    pub(crate) fn commit_card(&mut self) -> Option<bool> {
+        let card = self.staged_card.take()?;
+        if card == self.card {
+            return Some(false);
+        }
+        self.card = card;
+        self.card_label.key = None;
+        self.generation = self.generation.wrapping_add(1);
+        Some(true)
     }
 
     /// Commit the staged filter text: `false` when it was already the

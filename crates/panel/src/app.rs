@@ -2471,7 +2471,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         let queued = session
             .core
             .selected()
-            .is_some_and(|name| session.scripts.start_queue_place(name).is_some());
+            .is_some_and(|name| session.scripts.start_waiting(name));
         let _stop = if script_stop_enabled(state) || queued {
             None
         } else {
@@ -3981,31 +3981,43 @@ fn script_parameter_rows(
     }
 }
 
-/// Apply to all: copy the focused profile's parameters for this card to
-/// every wall member assigned the same card, after a confirmation naming
-/// the frozen scope. The last result stays below it.
+/// Apply to same-card members: copy the focused profile's parameters for
+/// its card to the bots the fleet buttons cover, through the fleet plan
+/// flow. Its confirmation (naming the frozen scope) and its result are the
+/// fleet plan row and result line, drawn by the Fleet window; while that
+/// window is closed they are drawn here, for this action only.
 fn apply_to_all_section(ui: &Ui, session: &mut Session) {
     ui.separator();
-    if let Some(scope) = session.scripts.prepared_settings_sync() {
-        ui.text_wrapped(scope.prompt());
-        if ui.button("Apply") {
-            session.apply_settings_sync();
-        }
-        ui.same_line();
-        if ui.button("Cancel##apply-to-all") {
-            session.cancel_settings_sync();
-        }
-    } else {
-        if ui.button("Apply to same-card members…") {
-            session.prepare_settings_sync();
-        }
-        ui.set_item_tooltip(
-            "copy these parameters to every wall member assigned this card; members on another card are skipped",
-        );
+    if ui.button("Apply to same-card members…") {
+        session.copy_focused_settings_to_same_card();
     }
-    if let Some(report) = session.scripts.last_settings_sync() {
-        ui.text_wrapped(report.summary());
+    ui.set_item_tooltip(
+        "copy these parameters to the marked bots (every loaded bot shown when none is marked) \
+         assigned this card; a confirmation names them first, and bots on another card are skipped",
+    );
+    if !session.fleet_open {
+        let is_copy = |action| action == frontend_core::FleetAction::CopySettings;
+        if session
+            .core
+            .fleet_plan()
+            .is_some_and(|plan| is_copy(plan.action()))
+        {
+            crate::fleet::plan_row(ui, session);
+        }
+        if session
+            .core
+            .fleet_result()
+            .is_some_and(|result| is_copy(result.action()))
+        {
+            crate::fleet::result_line(ui, session);
+        }
     }
+}
+
+/// Draw the Scripts window's Apply to same-card members section for a test.
+#[cfg(test)]
+pub(crate) fn draw_test_apply_section(ui: &Ui, session: &mut Session) {
+    apply_to_all_section(ui, session);
 }
 
 const RESTART_SETTINGS_POPUP: &str = "##script-restart-required";

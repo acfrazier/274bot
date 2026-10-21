@@ -6073,13 +6073,15 @@ fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
     session.pump_status();
     let layout = fleet_reorder_setup(&mut ctx, &mut session);
     let button = rect_centre(layout.move_to_top);
-    let click = |ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session| {
+    let click = |ctx: &mut dear_imgui_rs::Context,
+                 session: &mut crate::session::Session,
+                 button: [f32; 2]| {
         for down in [false, true, false, false] {
             fleet_reorder_frame(ctx, session, button, down);
         }
     };
     let before = crate::session::reorders_submitted();
-    click(&mut ctx, &mut session);
+    click(&mut ctx, &mut session, button);
     assert_eq!(
         crate::session::reorders_submitted(),
         before,
@@ -6090,8 +6092,10 @@ fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
         let identity = session.core.profile_identity(name).unwrap();
         session.fleet_model.set_mark_for_test(identity, true);
     }
-    fleet_reorder_setup(&mut ctx, &mut session);
-    click(&mut ctx, &mut session);
+    // The labels name the marked count, so the buttons lay out again.
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    let button = rect_centre(layout.move_to_top);
+    click(&mut ctx, &mut session, button);
     assert_eq!(crate::session::reorders_submitted(), before + 1);
     assert_eq!(
         saved_order(&session),

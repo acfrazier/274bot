@@ -161,24 +161,25 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
             class: SizeClass::Compact,
         },
         40,
-        6,
+        9,
     );
-    assert!(rows[1].starts_with("[ ]  *alice"), "{rows:?}");
+    // Two header rows (the pane is 40 wide), then the column header.
+    assert!(rows[3].starts_with("[ ]  *alice"), "{rows:?}");
     assert!(
-        rows[1].contains("w2") && rows[1].contains("idle"),
+        rows[3].contains("w2") && rows[3].contains("idle"),
         "the panel's status label: {rows:?}"
     );
-    assert!(rows[2].contains('!'), "restart badge: {rows:?}");
-    assert!(rows[2].starts_with("[ ] > bob"), "cursor row: {rows:?}");
-    assert!(rows[2].contains("queued 2/5"), "{rows:?}");
-    assert!(rows[3].starts_with("[x]   carol"), "marked row: {rows:?}");
-    assert!(rows[3].contains("offline"), "{rows:?}");
+    assert!(rows[4].contains('!'), "restart badge: {rows:?}");
+    assert!(rows[4].starts_with("[ ] > bob"), "cursor row: {rows:?}");
+    assert!(rows[4].contains("queued 2/5"), "{rows:?}");
+    assert!(rows[5].starts_with("[x]   carol"), "marked row: {rows:?}");
+    assert!(rows[5].contains("offline"), "{rows:?}");
     assert_eq!(
-        rows[5].trim_end(),
+        rows[8].trim_end(),
         "3/3 shown · marked 1 · BOT alice",
         "{rows:?}"
     );
-    assert_eq!(hits.rows.y, 1, "rows start under the column header");
+    assert_eq!(hits.rows.y, 3, "rows start under the column header");
     assert_eq!(hits.first, 0);
 }
 
@@ -208,28 +209,28 @@ fn an_unloaded_vault_profile_is_listed_after_the_loaded_rows_dim_and_markable() 
         7,
     );
     assert!(
-        rows[1].contains("alice") && rows[1].contains("w2"),
+        rows[2].contains("alice") && rows[2].contains("w2"),
         "{rows:?}"
     );
     assert!(
-        rows[2].starts_with("[x]") && rows[2].contains("zed") && rows[2].contains("not loaded"),
+        rows[3].starts_with("[x]") && rows[3].contains("zed") && rows[3].contains("not loaded"),
         "an unloaded row is markable and says why it has no state: {rows:?}"
     );
     assert!(
-        rows[3].contains("yan") && rows[3].contains("not loaded"),
+        rows[4].contains("yan") && rows[4].contains("not loaded"),
         "{rows:?}"
     );
     assert!(
-        !rows[2].contains('*') && !rows[2].contains("loc"),
+        !rows[3].contains('*') && !rows[3].contains("loc"),
         "{rows:?}"
     );
-    assert!(rows[2].contains(" - "), "the world column is `-`: {rows:?}");
+    assert!(rows[3].contains(" - "), "the world column is `-`: {rows:?}");
     assert!(
-        buf[(8, 2)].modifier.contains(Modifier::DIM),
+        buf[(8, 3)].modifier.contains(Modifier::DIM),
         "an unloaded row is dim"
     );
     assert!(
-        !buf[(8, 1)].modifier.contains(Modifier::DIM),
+        !buf[(8, 2)].modifier.contains(Modifier::DIM),
         "a loaded row is not"
     );
     assert!(
@@ -283,11 +284,11 @@ fn the_selected_marker_only_goes_to_a_loaded_row() {
         40,
         6,
     );
-    assert!(!rows[1].contains('*') && !rows[2].contains('*'), "{rows:?}");
+    assert!(!rows[3].contains('*') && !rows[4].contains('*'), "{rows:?}");
 }
 
 #[test]
-fn an_empty_universe_says_how_to_load_profiles() {
+fn an_empty_universe_says_there_is_nothing_to_act_on() {
     let model = FleetModel::new();
     let mut state = FleetState::default();
     let (rows, _, _) = render(
@@ -304,8 +305,127 @@ fn an_empty_universe_says_how_to_load_profiles() {
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("no bots loaded: m loads every vault profile")),
+            .any(|row| row.contains("no profiles: nothing to mark or log in")),
         "{rows:?}"
+    );
+}
+
+fn header_rows(model: &FleetModel, state: &mut FleetState, width: u16) -> Vec<String> {
+    let (rows, _, _) = render(
+        FleetTable {
+            model,
+            restart_badges: &HashSet::new(),
+            state,
+            selected: None,
+            keys: false,
+            class: SizeClass::Standard,
+        },
+        width,
+        8,
+    );
+    rows
+}
+
+/// The header names the card, the sort and the marked count on one row
+/// when they fit, and wraps each part whole onto the next row when the
+/// pane is narrow, so none is cut off.
+#[test]
+fn the_header_names_the_card_the_sort_and_the_marks() {
+    let mut model = model_of(vec![ready("alice", 2), ready("bob", 2), ready("carol", 2)]);
+    model.set_mark_for_test(id("alice"), true);
+    model.set_mark_for_test(id("bob"), true);
+    let mut state = FleetState::default();
+    let rows = header_rows(&model, &mut state, 80);
+    assert_eq!(
+        rows[0].trim_end(),
+        "card: Each bot's own card · sort: Load order · 2 marked"
+    );
+    model.set_order_for_test(frontend_core::FleetOrder::Name);
+    let rows = header_rows(&model, &mut state, 80);
+    assert_eq!(
+        rows[0].trim_end(),
+        "card: Each bot's own card · sort: Name · 2 marked"
+    );
+
+    // A 34-cell pane (the 120-column layout's fleet pane) wraps by part.
+    let rows = header_rows(&model, &mut state, 34);
+    assert_eq!(rows[0].trim_end(), "card: Each bot's own card");
+    assert_eq!(rows[1].trim_end(), "sort: Name · 2 marked");
+    assert!(rows[2].starts_with("sel "), "the column header follows");
+}
+
+/// The header text is built when the card label, the order or the marked
+/// count changes, not every draw.
+#[test]
+fn the_header_is_rebuilt_only_when_an_input_changed() {
+    let mut model = model_of(vec![ready("alice", 2), ready("bob", 2)]);
+    let mut state = FleetState::default();
+    header_rows(&model, &mut state, 80);
+    // Overwrite the cached row: a draw that rebuilt it would restore it.
+    state.header.lines[0] = "CACHED".into();
+    let rows = header_rows(&model, &mut state, 80);
+    assert!(rows[0].starts_with("CACHED"), "{rows:?}");
+    // A different width rebuilds it too.
+    let rows = header_rows(&model, &mut state, 60);
+    assert!(rows[0].starts_with("card: "), "{rows:?}");
+    state.header.lines[0] = "CACHED".into();
+    let rows = header_rows(&model, &mut state, 60);
+    assert!(rows[0].contains("CACHED"), "{rows:?}");
+    model.set_mark_for_test(id("alice"), true);
+    let rows = header_rows(&model, &mut state, 80);
+    assert!(
+        rows[0].contains("1 marked") && !rows[0].contains("CACHED"),
+        "a mark rebuilds it: {rows:?}"
+    );
+    model.set_order_for_test(frontend_core::FleetOrder::Status);
+    let rows = header_rows(&model, &mut state, 80);
+    assert!(rows[0].contains("sort: Status"), "{rows:?}");
+}
+
+/// A card label wider than the pane wraps at its spaces: every part reads
+/// in full. A single word wider than the pane is cut into rows.
+#[test]
+fn a_long_card_label_wraps_by_word_and_a_long_word_is_cut() {
+    let mut lines = Vec::new();
+    wrap_header(
+        [
+            "card: Focused bot's card: Alcher (pending)".into(),
+            "sort: Load order".into(),
+            "0 marked".into(),
+        ],
+        32,
+        &mut lines,
+    );
+    assert_eq!(
+        lines,
+        [
+            "card: Focused bot's card: Alcher",
+            "(pending) · sort: Load order",
+            "0 marked"
+        ]
+    );
+    wrap_header(
+        [
+            "card: /a/very/long/path/with/no/spaces.ts".into(),
+            "sort: Name".into(),
+            "1 marked".into(),
+        ],
+        16,
+        &mut lines,
+    );
+    assert_eq!(
+        lines,
+        [
+            "card:",
+            "/a/very/long/pat",
+            "h/with/no/spaces",
+            ".ts · sort: Name",
+            "1 marked"
+        ]
+    );
+    assert!(
+        lines.iter().all(|line| line.chars().count() <= 16),
+        "{lines:?}"
     );
 }
 

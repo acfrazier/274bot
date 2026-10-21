@@ -24,6 +24,8 @@ use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
+/// A planned copy's target whose profile was deleted since the plan.
+const GONE: &str = "profile no longer exists";
 const NOT_LOADED: &str = "not loaded";
 const UNAVAILABLE: &str = "profile unavailable";
 
@@ -161,6 +163,11 @@ pub struct SyncScope {
     /// Per-account fields every compiled target keeps; empty for JS cards.
     excluded_fields: Vec<String>,
     field: Option<String>,
+    /// A planned copy's targets, frozen with the plan: identity and the
+    /// name at plan time. Apply writes each through its identity (under its
+    /// current name), skips one gone since or still saving, and writes no
+    /// other row.
+    frozen: Option<Vec<(crate::selection::ProfileIdentity, String)>>,
     prompt: String,
 }
 
@@ -271,6 +278,18 @@ impl SyncScope {
         self.refresh_marked_prompt();
     }
 
+    /// Keep only `shown` (the frozen loaded shown rows of a no-marks
+    /// fleet copy). Unlike [`Self::restrict_to_marked`], an unassigned
+    /// member stays skipped: the no-marks scope never assigns the card.
+    fn restrict_to_shown(&mut self, shown: &[String]) {
+        let others = self.targets.len() + self.skipped.len();
+        self.targets.retain(|target| shown.contains(target));
+        self.skipped.retain(|(member, _)| shown.contains(member));
+        self.unmarked = Some(others - self.targets.len() - self.skipped.len());
+        self.refresh_excluded();
+        self.refresh_marked_prompt();
+    }
+
     fn refresh_excluded(&mut self) {
         if self.excluded_fields.is_empty() {
             self.excluded.clear();
@@ -359,6 +378,9 @@ pub struct SyncReport {
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
     copy_cancellation: Option<NativeCopyCancellation>,
+    /// Applied by a planned fleet action: its text stays off the banner
+    /// (the plan's result line reports it).
+    quiet: bool,
     text: String,
 }
 
@@ -665,7 +687,10 @@ impl SyncState {
         if !std::mem::take(&mut self.announce) {
             return None;
         }
-        self.last.as_ref().map(|report| report.text.clone())
+        self.last
+            .as_ref()
+            .filter(|report| !report.quiet)
+            .map(|report| report.text.clone())
     }
 
     pub(super) fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
@@ -958,6 +983,7 @@ impl Scripts {
             assigning: Vec::new(),
             excluded_fields: Vec::new(),
             field: None,
+            frozen: None,
             prompt,
         })
     }
@@ -1030,12 +1056,24 @@ impl Scripts {
             assigning: Vec::new(),
             excluded_fields,
             field: field.map(str::to_owned),
+            frozen: None,
             prompt,
         }))
     }
 
     pub fn prepared_settings_sync(&self) -> Option<&SyncScope> {
         self.sync.prepared.as_ref()
+    }
+
+    /// Freeze the prepared copy to a plan's targets (identity and name at
+    /// plan time): see [`SyncScope`]'s `frozen`.
+    pub(crate) fn freeze_settings_sync_targets(
+        &mut self,
+        targets: Vec<(crate::selection::ProfileIdentity, String)>,
+    ) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.frozen = Some(targets);
+        }
     }
 
     /// Stage a profile's selected script settings for the Apply-to-all
@@ -1065,6 +1103,14 @@ impl Scripts {
     pub(crate) fn restrict_prepared_settings_sync(&mut self, marked: &[String], gone: Vec<String>) {
         if let Some(scope) = self.sync.prepared.as_mut() {
             scope.restrict_to_marked(marked, gone);
+        }
+    }
+
+    /// Restrict the prepared scope to the frozen shown rows of a no-marks
+    /// fleet copy (unassigned members stay skipped).
+    pub(crate) fn restrict_prepared_settings_sync_to_shown(&mut self, shown: &[String]) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.restrict_to_shown(shown);
         }
     }
 
@@ -1121,6 +1167,7 @@ impl Scripts {
             excluded,
             unmarked,
             field,
+            frozen,
             ..
         } = scope;
         let op = core.open_operation(ActionKind::SyncSettings);
@@ -1133,8 +1180,37 @@ impl Scripts {
             Ok(None) => Err("catalog preparation pending".into()),
             Err(error) => Err(error),
         };
-        for target in targets {
-            let row = core.vault().and_then(|v| v.get(&target)).cloned();
+        for prepared_name in targets {
+            let (target, row) = match frozen.as_deref() {
+                // A planned copy writes the frozen identity, never a row
+                // that took its name since.
+                Some(frozen) => {
+                    let row = frozen
+                        .iter()
+                        .find(|(_, name)| *name == prepared_name)
+                        .and_then(|(identity, _)| {
+                            core.vault()?
+                                .profiles()
+                                .find(|profile| {
+                                    crate::selection::ProfileIdentity::uid(profile.uid) == *identity
+                                })
+                                .cloned()
+                        });
+                    let Some(row) = row else {
+                        skipped.push((prepared_name, GONE.to_string()));
+                        continue;
+                    };
+                    if core.profile_write_pending(&row.username) {
+                        skipped.push((row.username, crate::session::SAVING.to_string()));
+                        continue;
+                    }
+                    (row.username.clone(), Some(row))
+                }
+                None => {
+                    let row = core.vault().and_then(|v| v.get(&prepared_name)).cloned();
+                    (prepared_name.clone(), row)
+                }
+            };
             let Some(mut row) = row else {
                 failed.push((target, "no profile".to_string()));
                 continue;
@@ -1164,7 +1240,7 @@ impl Scripts {
                 script::ScriptSel::Compiled(id) => {
                     let fields = excluded
                         .iter()
-                        .find(|(member, _)| member == &target)
+                        .find(|(member, _)| member == &prepared_name)
                         .map_or(&[][..], |(_, fields)| fields.as_slice());
                     match self.compiled_overrides(core, &target, CompiledCardId::from_script(*id)) {
                         Ok(current) => {
@@ -1253,12 +1329,15 @@ impl Scripts {
             unmarked,
             pending,
             copy_cancellation,
+            quiet: self.planned_run,
             text: String::new(),
         };
         report.refresh();
         // Shown now; `record` announces the final summary once writes settle.
         self.sync.announce = false;
-        self.show(report.text.clone());
+        if !report.quiet {
+            self.show(report.text.clone());
+        }
         self.sync.push(report);
         Ok(op)
     }
