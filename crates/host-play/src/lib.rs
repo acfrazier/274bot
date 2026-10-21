@@ -250,7 +250,7 @@ pub struct Play {
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: SharedLoginQueue,
     per_frame: SlotFrame,
-    #[cfg(any(feature = "live-harness", feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     post_native_player_info: Option<play_slots::PostNativePlayerInfo>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,

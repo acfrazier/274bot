@@ -48,10 +48,15 @@ its own evidence subdirectory, packs the inputs and starts `src/app.ts`.
 It requires absolute paths for `--engine-dir`, `--catalog-root`, `--nav-pack`,
 `--evidence-dir`, and `--isohome`; the evidence directory must be new.
 `--cells A B C` is the default. Use the reviewed revision-289 nav pack and a
-throwaway-HOME wrapper. Fresh accounts complete a real logout/login before
-setup. The driver then requires a fresh same-session tutorial-completion reply
-and bound inventory tab before it moves to the anchor or seeds the test
-inventory.
+throwaway-HOME wrapper. Before each scratch server starts, the runner hashes
+account usernames from the copied `db.sqlite.account` table and `.sav`
+basenames in `data/players/<profile>`; only SHA-256 fingerprints are retained.
+The driver rejects a minted name present in either pre-login set, then requires
+every account to complete a real logout/login before setup. These `.sav` files
+are release-289 binary `Player.save()` records (magic `0x2004`, version 7 and
+CRC32), not plaintext usernames in the manifest. The driver then requires a
+fresh same-session tutorial-completion reply and bound inventory tab before it
+moves to the anchor or seeds the test inventory.
 
 The runner never starts, stops or edits Engine A or Engine Q. Only one copy
 runs at a time; free disk must be at least 130 GiB before copying and starting
@@ -73,8 +78,8 @@ manifest. A root Engine A identity fact is not A/C capture authority.
 
 Development Prometheus statistics are disabled. Log-only hooks in each copied
 `World.ts`, `Obj.ts` and object-option handler record actual server cycles,
-completed lifecycle turns, player-processing order, active accounts and tiles,
-emitted PLAYER_INFO sequences, and server-side Take acceptance or rejection.
+completed lifecycle turns, player-processing order, active accounts, tiles and
+their latest PLAYER_INFO sequence, plus server-side Take acceptance or rejection.
 Static removal and respawn receipts each log one line containing the real server
 cycle, item ID and coordinates, immediately after the existing lifecycle action.
 They add no state, delay or packet, and product code never reads these receipts.
