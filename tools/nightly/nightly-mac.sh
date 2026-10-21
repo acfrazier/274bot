@@ -55,11 +55,13 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
 fi
 owned_lock=1
 
+quiet_stopped=0
 run_job() {
     local job="$1"
     if [ -e "$NIGHTLY_MAC_QUIET_LOCK" ]; then
-        write_status "$job" 'skipped: MAC-QUIET.lock present'
+        write_status "$job" 'skipped: MAC-QUIET.lock present' || return $?
         printf '%s\n' "nightly-mac: skipped $job; MAC-QUIET.lock appeared"
+        quiet_stopped=1
         return 0
     fi
     export NIGHTLY_ROOT="$NIGHTLY_MAC_ROOT"
@@ -100,21 +102,34 @@ run_job() {
         export NIGHTLY_RUN_SUFFIX=-mac-quest NIGHTLY_NAME_PREFIX=nq NIGHTLY_PANEL_NAME_PREFIX=nqp
         export NIGHTLY_PARALLEL=1 NIGHTLY_PANEL_PARALLEL=1
     fi
-    write_status "$job" running
+    write_status "$job" running || return $?
     printf '%s\n' "nightly-mac: starting $job for dev with steps $NIGHTLY_STEPS"
-    "$NIGHTLY_MAC_PYTHON" -u "$RUNNER" --branch dev
-    write_status "$job" completed
+    if "$NIGHTLY_MAC_PYTHON" -u "$RUNNER" --branch dev; then
+        write_status "$job" completed || return $?
+    else
+        local runner_status=$?
+        write_status "$job" "failed with exit $runner_status" || true
+        return "$runner_status"
+    fi
     if [ -e "$NIGHTLY_MAC_QUIET_LOCK" ]; then
-        write_status "$job" 'stopped at MAC-QUIET.lock'
+        write_status "$job" 'stopped at MAC-QUIET.lock' || true
         printf '%s\n' "nightly-mac: $job completed its current work; MAC-QUIET.lock prevents another job"
-        return 2
+        quiet_stopped=1
     fi
     return 0
 }
 
-run_job main || status=$?
-if [ "${status:-0}" -eq 2 ]; then
-    exit 0
+main_status=0
+quest_status=0
+run_job main || main_status=$?
+if [ "$quiet_stopped" -eq 1 ]; then
+    exit "$main_status"
 fi
-run_job quest || status=$?
-exit "${status:-0}"
+run_job quest || quest_status=$?
+if [ "$quiet_stopped" -eq 1 ]; then
+    exit "$main_status"
+fi
+if [ "$main_status" -ne 0 ]; then
+    exit "$main_status"
+fi
+exit "$quest_status"
