@@ -108,7 +108,6 @@ fn guardian_r1_lost_pickaxe_refused_send_does_not_abandon_recovery() {
     plant_player(&mut c, "Test", 0, 0);
     plant_inv_named(&mut c, 466, Some("Pickaxe handle"));
     clear_inv(&mut c);
-    plant_ground_obj(&mut c, 1, 0, 490, Some("Pickaxe head"));
     c.side_icon[4] = 710;
     c.set_iface(
         710,
@@ -149,6 +148,7 @@ fn guardian_r1_lost_pickaxe_refused_send_does_not_abandon_recovery() {
     let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
     assert!(guardian.tick(&mut driver, &snap, &settings, 0, None).hold);
+    plant_ground_obj(&mut c, 1, 0, 490, Some("Pickaxe head"));
     assert_eq!(driver.menus[0].1, MiniMenuAction::INV_BUTTON1);
 
     set_worn(&mut c, false);
