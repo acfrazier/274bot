@@ -13,7 +13,7 @@
 //! menu and never acts as a left click.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use frontend_core::{combined_bulk_scope, BulkScope};
+use frontend_core::MarkOp;
 
 use crate::app::{AppAction, TuiApp};
 use crate::commands::{
@@ -299,24 +299,11 @@ impl TuiApp {
     }
 
     /// Run `command` if it is available now; otherwise say why on the
-    /// message line. Fleet-wide commands first confirm their frozen scope.
+    /// message line. A fleet action goes to core as a plan; the dispatcher
+    /// asks for confirmation only when the plan says so.
     pub fn run_command(&mut self, command: Command) -> AppAction {
         if let Err(reason) = command.availability(self) {
             self.error = Some(format!("{}: {reason}", command.label(self)));
-            return AppAction::None;
-        }
-        if command.is_bulk() {
-            let marked = combined_bulk_scope(self.fleet_model.marks()) == BulkScope::Marked;
-            let members = if marked {
-                self.marked_names()
-            } else {
-                self.names.clone()
-            };
-            self.confirm(ConfirmKind::Bulk {
-                command,
-                members,
-                marked,
-            });
             return AppAction::None;
         }
         match command {
@@ -342,8 +329,14 @@ impl TuiApp {
                 self.focus_pane(Pane::Fleet);
                 self.table.editing = true;
             }
-            Command::MarkAllShown => {
-                return AppAction::MarkAll(self.fleet_model.shown_identities().collect());
+            Command::PickFleetCard => {
+                self.open_modal(Modal::FleetCard(crate::fleet_card::CardPicker::open(self)));
+            }
+            Command::MarkAllShown => return AppAction::MarkFleet(MarkOp::Shown),
+            Command::UnmarkShown => return AppAction::MarkFleet(MarkOp::UnmarkShown),
+            Command::InvertShown => return AppAction::MarkFleet(MarkOp::InvertShown),
+            Command::MarkWhere(predicate) => {
+                return AppAction::MarkFleet(MarkOp::Where(predicate));
             }
             Command::ClearMarks => return AppAction::ClearMarks,
             Command::MoveProfileUp | Command::MoveProfileDown => {
@@ -424,13 +417,7 @@ impl TuiApp {
             Command::LogSessionFile => {
                 return AppAction::SetSessionLog(LogPaneState::session_file_toggled());
             }
-            Command::ScriptApplyMarked => return AppAction::ScriptApplyMarkedPrepare,
-            Command::LoadLoginAll
-            | Command::LogoutAll
-            | Command::ScriptStartAll
-            | Command::ScriptStopAll
-            | Command::ScriptAssignMarked
-            | Command::ScriptRestartMarked => {}
+            Command::Fleet(action) => return AppAction::PlanFleet(action),
         }
         AppAction::None
     }

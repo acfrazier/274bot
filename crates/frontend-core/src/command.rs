@@ -370,6 +370,21 @@ pub enum OperatorCommand {
     /// view shows Load order. Settles `Done` when the saved order is
     /// durable (at once when nothing moved).
     ReorderProfiles,
+    /// Commit the fleet card the lent fleet model staged
+    /// ([`crate::FleetModel::stage_card`]): which card the fleet buttons
+    /// use. Changes no assignment, Browse pick, form or run.
+    SetFleetCard,
+    /// Mark, unmark or invert the shown fleet rows, or mark the shown rows
+    /// in a status ([`crate::MarkOp`]).
+    MarkFleet(crate::fleet::MarkOp),
+    /// Freeze a fleet action into a plan ([`crate::fleet_plan`]): the
+    /// marked profiles (hidden ones too), or the loaded shown rows with no
+    /// marks, the resolved card, the interrupted and skipped rows and the
+    /// prompt. The plan then runs with [`crate::Targets::Plan`].
+    PlanFleetAction(crate::fleet_plan::FleetAction),
+    /// Drop the pending fleet plan without running it (a settings copy's
+    /// start hold is released; nothing is written).
+    CancelFleetPlan,
 
     // --- Movement and game input ---
     /// Walk the focused member to the staged map destination (panel
@@ -694,7 +709,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 92] = [
+    pub const ALL: [OperatorCommand; 96] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -766,6 +781,10 @@ impl OperatorCommand {
         Self::MarkAll,
         Self::ClearMarks,
         Self::ReorderProfiles,
+        Self::SetFleetCard,
+        Self::MarkFleet(crate::fleet::MarkOp::Shown),
+        Self::PlanFleetAction(crate::fleet_plan::FleetAction::Start),
+        Self::CancelFleetPlan,
         Self::WalkTo,
         Self::GroupWalk,
         Self::Teleport,
@@ -836,6 +855,10 @@ impl OperatorCommand {
             | Self::MarkAll
             | Self::ClearMarks
             | Self::ReorderProfiles
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetMultiBox(_)
             | Self::SetDraw(..)
             | Self::SetNavPreference(..)
@@ -967,6 +990,10 @@ impl OperatorCommand {
             | Self::SetMark(_)
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetFleetFilter
             | Self::SetFleetSort(_)
             | Self::PickBrowseCard

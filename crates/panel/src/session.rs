@@ -918,12 +918,12 @@ pub struct Session {
     /// The draw policy the render mirror (`focus`) follows; changed by
     /// `SetDraw` only.
     pub(crate) draw: frontend_core::DrawPolicy,
-    pub fleet_report: Option<String>,
-    /// Set by a marked Start: the fleet report follows the running Start
-    /// report (and a later Stop all) until the next marked Stop.
-    pub(crate) fleet_report_follows_start: bool,
-    /// The Assign & restart confirmation is open (it names the bots).
-    pub(crate) fleet_restart_confirm: bool,
+    /// The Fleet window's card drop-down search text while it is open
+    /// (`None` while closed, so each opening starts with an empty search).
+    pub(crate) fleet_card_filter: Option<String>,
+    /// The Fleet window's count-bearing labels, rebuilt only when the fleet
+    /// model's generation moves.
+    pub(crate) fleet_labels: crate::fleet::FleetLabels,
     /// Core-owned map custody: staged actions, selected destination, cache
     /// demand, bake consent and panel input channel.
     pub(crate) map_desk: frontend_core::MapDesk,
@@ -1442,9 +1442,8 @@ impl Session {
                 focused_50_pref,
                 true,
             ),
-            fleet_report: None,
-            fleet_report_follows_start: false,
-            fleet_restart_confirm: false,
+            fleet_card_filter: None,
+            fleet_labels: crate::fleet::FleetLabels::default(),
             walkto_open: false,
             route_through_zones: false,
             walk_permissions,
@@ -3189,19 +3188,6 @@ impl Session {
         }
     }
 
-    /// Log in every marked fleet row (loading the ones not loaded yet)
-    /// through the panel's slot surface. Focus does not move.
-    pub(crate) fn login_marked_rows(&mut self) -> Option<String> {
-        self.submit_marked(OperatorCommand::Login)
-    }
-
-    /// Submit `command` for the marked rows (`Targets::Marked`); the
-    /// per-row summary the Fleet window shows.
-    pub(crate) fn submit_marked(&mut self, command: OperatorCommand) -> Option<String> {
-        let mut submitted = self.submit(command, Targets::Marked)?;
-        submitted.take_bulk().map(|report| report.summary())
-    }
-
     /// Credentials Log in: clear the logout latch, arm an explicit one-shot
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
@@ -3370,7 +3356,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return false;
         };
-        self.core.memory_relog_warning(&name) || self.scripts.start_queue_place(&name).is_some()
+        self.core.memory_relog_warning(&name) || self.scripts.start_waiting(&name)
     }
 
     /// Explicit Relog-now through the login FIFO. Running or queued script

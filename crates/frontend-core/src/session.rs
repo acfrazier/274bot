@@ -37,7 +37,7 @@ use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
-const SAVING: &str = "profile is still saving";
+pub(crate) const SAVING: &str = "profile is still saving";
 
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -569,6 +569,7 @@ impl MemoryNotice {
 
 mod commands;
 mod fleet;
+mod fleet_plan;
 mod form;
 mod loadouts;
 pub(crate) mod map;
@@ -2224,6 +2225,7 @@ impl<Io> OperatorSession<Io> {
         // (both halves of a split poll reach here).
         self.reconcile_profile_order();
         self.poll_order_writes();
+        self.refresh_fleet_result();
         self.transitions.clear();
         self.op_changes.clear();
         self.take_preparations(false);

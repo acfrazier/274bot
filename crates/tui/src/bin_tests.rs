@@ -1361,6 +1361,20 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     );
 }
 
+/// Flush writes and pump until the latest fleet result has settled.
+fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.core.flush_writes();
+        session.pump(app);
+        if session.core.fleet_result().is_some_and(|r| r.settled()) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the fleet result did not settle");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
@@ -3001,17 +3015,24 @@ fn marked_login_and_logout_show_the_report_of_the_command_over_the_marks() {
     let alice = session.core.profile_identity_or_synthetic("alice");
     app.fleet_model.set_mark_for_test(alice, true);
 
-    dispatch(&mut session, &mut app, AppAction::LoginMarked);
-    let report = app.error.clone().expect("the login report is shown");
-    assert!(report.starts_with("Log in marked: logging in "), "{report}");
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PlanFleet(frontend_core::FleetAction::Login),
+    );
+    assert!(app.modal.is_none(), "a marked Log in is one step");
+    let report = app.error.clone().expect("the login result is shown");
+    assert!(report.starts_with("Log in: "), "{report}");
+    assert!(report.contains("alice"), "{report}");
     assert!(!report.contains("bob"), "bob is not marked: {report}");
 
-    dispatch(&mut session, &mut app, AppAction::LogoutMarked);
-    let report = app.error.clone().expect("the logout report is shown");
-    assert!(
-        report.starts_with("Log out marked: logging out "),
-        "{report}"
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PlanFleet(frontend_core::FleetAction::Logout),
     );
+    let report = app.error.clone().expect("the logout result is shown");
+    assert!(report.starts_with("Log out: "), "{report}");
     assert!(!report.contains("bob"), "bob is not marked: {report}");
 }
 
@@ -3327,11 +3348,25 @@ fn multibox_key_logs_a_loaded_logged_out_member_back_in() {
     let mut app = TuiApp::new("tui");
     assert!(!alice.wants_login());
 
-    dispatch(&mut session, &mut app, AppAction::SpawnAll);
+    // alice is a vault profile with a logged-out slot arm: mark it, then
+    // Log in loads and re-arms it.
+    session.pump(&mut app);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown),
+    );
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PlanFleet(frontend_core::FleetAction::Login),
+    );
 
     assert!(
         alice.wants_login(),
-        "m must re-arm a member that is already loaded but logged out"
+        "m must re-arm a member that is already loaded but logged out: {:?} {:?}",
+        app.error,
+        app.modal
     );
     assert!(!alice.login_latched());
     assert!(session.core.fleet().contains("alice"));
@@ -3360,7 +3395,16 @@ fn load_all_keeps_focus_when_others_log_in() {
     session.pump(&mut app);
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
 
-    dispatch(&mut session, &mut app, AppAction::SpawnAll);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown),
+    );
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PlanFleet(frontend_core::FleetAction::Login),
+    );
     session.pump(&mut app);
     assert_eq!(
         session.core.members(),
@@ -3444,7 +3488,16 @@ fn load_all_picks_focus_when_none_was_focused() {
     assert_eq!(session.core.selected(), None);
     assert_eq!(app.focused_name(), None);
 
-    dispatch(&mut session, &mut app, AppAction::SpawnAll);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown),
+    );
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PlanFleet(frontend_core::FleetAction::Login),
+    );
     session.pump(&mut app);
     let picked = frontend_core::pick_focus(session.core.members(), None);
     assert_eq!(picked.as_deref(), Some("bob"));
@@ -3645,6 +3698,12 @@ const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', de
 /// A TUI session over a real vault and an empty play: members loaded
 /// (arms attached, no worker threads), library in the isolated home.
 fn tui_with_profiles(iso: &IsolatedStores, names: &[&str]) -> (TuiSession, TuiApp) {
+    tui_with_loaded(iso, names, names)
+}
+
+/// [`tui_with_profiles`] with only `loaded` of the vault's `names` loaded:
+/// the others are vault profiles that are not loaded.
+fn tui_with_loaded(iso: &IsolatedStores, names: &[&str], loaded: &[&str]) -> (TuiSession, TuiApp) {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
@@ -3657,7 +3716,7 @@ fn tui_with_profiles(iso: &IsolatedStores, names: &[&str]) -> (TuiSession, TuiAp
         iso.dir().join("js-scripts.json"),
         iso.dir().join("js-cache"),
     );
-    for name in names {
+    for name in loaded {
         session
             .submit(OperatorCommand::Load, Targets::Profile(name))
             .expect("load");
@@ -3707,6 +3766,25 @@ fn start_assigned_script(session: &mut TuiSession, app: &mut TuiApp, name: &str)
 fn focus_member(session: &mut TuiSession, app: &mut TuiApp, name: &str) {
     session.focus(name);
     session.pump(app);
+}
+
+/// Plan `action` as the keys do, and answer the confirm overlay with Enter
+/// when the plan asks first.
+fn run_fleet_action(
+    session: &mut TuiSession,
+    app: &mut TuiApp,
+    action: frontend_core::FleetAction,
+) {
+    session.pump(app);
+    dispatch(session, app, AppAction::PlanFleet(action));
+    if matches!(
+        &app.modal,
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(confirm.kind, crate::overlay::ConfirmKind::FleetPlan { .. })
+    ) {
+        let confirm = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+        dispatch(session, app, confirm);
+    }
 }
 
 #[test]
@@ -4274,9 +4352,9 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
     dispatch(session, app, action);
 }
 
-/// Start all, Reload (warn, then Confirm) and Stop all from the script
+/// Start fleet, Reload (warn, then Confirm) and Stop fleet from the script
 /// pane go through the same coordinator as the panel: assigned members
-/// start, the warning names both runs, Confirm replaces both, Stop all
+/// start, the warning names both runs, Confirm replaces both, Stop fleet
 /// stops both.
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
@@ -4288,10 +4366,22 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     assign(&mut session, "alice", &card);
     assign(&mut session, "bob", &card);
 
-    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
     let click = app.error.clone().unwrap_or_default();
-    assert_eq!(click, "Start all: started 1, queued 1, skipped 0");
+    assert!(click.starts_with("Start: "), "the result line: {click}");
+    assert!(
+        !click.contains("Start selected"),
+        "a planned run puts no Scripts tally on the banner: {click}"
+    );
     settle_starts(&mut session, &mut app);
+    settle_fleet_result(&mut session, &mut app);
+    let settled = app.error.clone().unwrap_or_default();
+    assert!(
+        settled.starts_with("Start: done 2:")
+            && settled.contains("alice")
+            && settled.contains("bob"),
+        "the one result line names both bots once settled: {settled}"
+    );
     let generation = |session: &TuiSession, name: &str| {
         session
             .core
@@ -4367,7 +4457,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     assert_ne!(generation(&session, "bob"), before.1);
     assert!(!app.reload_confirm);
 
-    dispatch(&mut session, &mut app, AppAction::ScriptStopAll);
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Stop);
     for name in ["alice", "bob"] {
         wait_script_state(
             session.core.play_for_test().unwrap(),
@@ -4490,14 +4580,14 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
         assign(&mut session, name, &card);
     }
 
-    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
     let starting = names
         .iter()
         .filter(|name| session.core.script_state(name) == ScriptRunState::Starting)
         .count();
     assert!(
         starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
-        "TUI Start all dispatched {starting} in the click frame"
+        "TUI Start fleet dispatched {starting} in the click frame"
     );
     assert!(starting > 0 || session.scripts.starts_pending());
     settle_starts(&mut session, &mut app);
@@ -4562,32 +4652,36 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
 
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
-    let command = crate::commands::Command::ScriptApplyMarked;
+    let command = crate::commands::Command::Fleet(frontend_core::FleetAction::CopySettings);
     assert_eq!(
         command.availability(&app),
-        Err("mark fleet rows first (Space)")
+        Err("pick a card first"),
+        "each bot's own card cannot be copied"
     );
+    // The fleet card follows the focused bot: alice's card.
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PickFleetCard(frontend_core::FleetCard::FOCUSED),
+    );
+    assert_eq!(command.availability(&app), Ok(()));
     // bob and carol take it; erin is marked but on another card; dave is not
     // marked.
     for name in ["bob", "carol", "erin"] {
         let id = session.core.profile_identity(name).unwrap();
         app.fleet_model.set_mark_for_test(id, true);
     }
-    assert_eq!(command.availability(&app), Ok(()));
 
     // The palette lists the command over the marked scope, at both sizes.
     for (w, h) in SIZES {
         app.modal = None;
         let open = app.run_command(crate::commands::Command::Palette);
         dispatch(&mut session, &mut app, open);
-        for c in "apply focused".chars() {
+        for c in "copy settings".chars() {
             app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
         }
         let shown = screen_text(&mut app, w, h);
-        assert!(
-            shown.contains("Apply focused bot's settings to marked"),
-            "{w}x{h}: {shown}"
-        );
+        assert!(shown.contains("Copy settings"), "{w}x{h}: {shown}");
     }
 
     // Running it freezes the scope and asks first; Esc drops it unwritten.
@@ -4597,20 +4691,24 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     app.modal = None;
     let action = app.run_command(command);
     dispatch(&mut session, &mut app, action);
-    let prompt = session.scripts.prepared_settings_sync().unwrap().prompt();
+    let prompt = session
+        .core
+        .fleet_plan()
+        .expect("a copy always waits for confirmation")
+        .prompt()
+        .to_owned();
     assert!(
-        prompt.contains("to 2 marked same-card bot(s)")
-            && prompt.contains("erin (assigned another card)")
-            && prompt.contains("1 unmarked bot(s) left unchanged"),
+        prompt.contains("to 2 marked bots: bob, carol") && prompt.contains("erin"),
         "{prompt}"
     );
     let shown = screen_text(&mut app, 80, 24);
     assert!(
-        shown.contains("marked same-card") && shown.contains("Apply y"),
+        shown.contains("2 marked bots") && shown.contains("Run y"),
         "{shown}"
     );
     let cancel = app.on_key(settings_key(crossterm::event::KeyCode::Esc));
     dispatch(&mut session, &mut app, cancel);
+    assert!(session.core.fleet_plan().is_none(), "Esc leaves no plan");
     assert!(session.scripts.prepared_settings_sync().is_none());
     session.core.flush_writes();
     assert_eq!(
@@ -4648,9 +4746,18 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     assert!(
         report.starts_with("Apply to marked ")
             && report.contains("saved 2")
-            && report.contains("erin: skipped, assigned another card")
-            && report.contains("1 unmarked unchanged"),
+            && report.contains("erin: skipped, assigned another card"),
         "{report}"
+    );
+    let result = session
+        .core
+        .fleet_result()
+        .expect("the copy's result view")
+        .text()
+        .to_owned();
+    assert!(
+        result.starts_with("Copy settings to: ") && result.contains("erin"),
+        "{result}"
     );
 }
 
@@ -4686,7 +4793,14 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     );
     let bytes_before = std::fs::read(&vault_file).unwrap();
 
-    let action = app.run_command(crate::commands::Command::ScriptApplyMarked);
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PickFleetCard(frontend_core::FleetCard::FOCUSED),
+    );
+    let action = app.run_command(crate::commands::Command::Fleet(
+        frontend_core::FleetAction::CopySettings,
+    ));
     dispatch(&mut session, &mut app, action);
     session.core.flush_writes();
     session.pump(&mut app);
@@ -4730,7 +4844,7 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
     for name in names {
         assign(&mut session, name, &card);
     }
-    dispatch(&mut session, &mut app, AppAction::ScriptStartAll);
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
     let queued = names
         .iter()
         .find(|name| session.scripts.start_queue_place(name).is_some())
@@ -4766,6 +4880,102 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
             .login_latched(),
         "nothing relogs before confirmation"
     );
+    session
+        .submit(OperatorCommand::StopScript, Targets::Everyone)
+        .unwrap();
+}
+
+/// Confirming Relog-now on a Start that is still queued cancels the queued
+/// Start, and the original fleet Start command's member for that bot
+/// settles cancelled (`ScopeInvalidated`: the relog retires the session it
+/// was issued under): it never starts later.
+#[test]
+fn confirmed_relog_settles_the_queued_start_member_and_it_never_starts() {
+    use api::identity::{Cancellation, Settlement};
+    use frontend_core::command::Subject;
+    let iso = IsolatedStores::enter("tui-relog-queued-start-confirmed");
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir().join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    let start = session
+        .core
+        .fleet_result()
+        .expect("the Start result")
+        .request()
+        .expect("the Start opened a command record");
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("more Starts than one frame admits")
+        .to_string();
+    assert_eq!(session.core.script_state(&queued), ScriptRunState::Idle);
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog(queued.clone()),
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if confirm.kind == crate::overlay::ConfirmKind::MemoryRelog(queued.clone())
+    ));
+    // The overlay's own confirm path.
+    press_key(
+        &mut session,
+        &mut app,
+        crate::test_support::key(crossterm::event::KeyCode::Enter),
+    );
+    assert!(app.modal.is_none());
+
+    let identity = session.core.profile_identity_or_synthetic(&queued);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.core.flush_writes();
+        session.pump(&mut app);
+        let member = session
+            .core
+            .commands()
+            .report(start)
+            .and_then(|report| report.member(Subject::Profile(identity)));
+        if let Some(terminal) = member.and_then(|member| member.terminal()) {
+            assert_eq!(
+                terminal,
+                // Relog-now in the same frame retires the session scope the
+                // queued Start was issued under, before the coordinator's
+                // next poll would settle it as NotLoggedIn.
+                &Settlement::Cancelled(Cancellation::ScopeInvalidated),
+                "the queued member of the original Start (detail {:?})",
+                member.and_then(|member| member.detail())
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the queued Start member never settled"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session.scripts.start_queue_place(&queued).is_none(),
+        "the queued Start is gone"
+    );
+    for _ in 0..20 {
+        session.core.flush_writes();
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            session.core.script_state(&queued),
+            ScriptRunState::Idle,
+            "the cancelled Start never starts"
+        );
+    }
     session
         .submit(OperatorCommand::StopScript, Targets::Everyone)
         .unwrap();
@@ -5002,20 +5212,31 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let alice = session.core.profile_identity("alice").unwrap();
     assert!(!app.fleet_model.marks().contains(alice));
 
-    // Assign the card to the marked bots through the bulk confirmation.
-    let action = app.run_command(crate::commands::Command::ScriptAssignMarked);
+    // Pin the card, then Assign it to the marked bots: marked and safe, so
+    // core's plan needs no confirmation and runs at once.
+    let card_choice = ScriptChoice::loaded(CardSource::File, card.identity_id());
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PickFleetCard(frontend_core::FleetCard::pinned(card_choice)),
+    );
+    let action = app.run_command(crate::commands::Command::Fleet(
+        frontend_core::FleetAction::Assign,
+    ));
     dispatch(&mut session, &mut app, action);
-    let run = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
-    dispatch(&mut session, &mut app, run);
-    session.core.flush_writes();
+    assert!(app.modal.is_none(), "a marked Assign is one step");
+    settle_fleet_result(&mut session, &mut app);
     let assigned =
         |name: &str| frontend_core::Scripts::test_assignment(&session.core, name).map(|a| a.key());
     assert_eq!(assigned("bob"), Some(card.identity_key().to_owned()));
     assert_eq!(assigned("bobby"), Some(card.identity_key().to_owned()));
     assert_eq!(assigned("alice"), None, "the filtered-out bot is untouched");
     assert_eq!(assigned("carol"), None, "the filtered-out bot is untouched");
-    let report = app.error.clone().expect("the assign report is shown");
-    assert!(report.contains("assigned"), "{report}");
+    let report = app.error.clone().expect("the result is shown");
+    assert!(
+        report.starts_with("Assign: ") && report.contains("bob, bobby"),
+        "{report}"
+    );
 }
 
 fn alt_key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
@@ -5284,4 +5505,474 @@ fn reorder_is_unavailable_outside_load_order() {
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
     let error = app.error.clone().expect("the refusal is shown");
     assert!(error.contains("choose Load order to reorder"), "{error}");
+}
+
+/// One key through the real path: `on_key`, then the dispatcher.
+fn press_key(session: &mut TuiSession, app: &mut TuiApp, key: crossterm::event::KeyEvent) {
+    let action = app.on_key(key);
+    dispatch(session, app, action);
+}
+
+/// Open the fleet-card picker with `c`, walk to `card` with Down and pick
+/// it with Enter.
+fn pick_fleet_card_with_keys(session: &mut TuiSession, app: &mut TuiApp, card: &ScriptChoice) {
+    use crate::test_support::{ch, key};
+    press_key(session, app, ch('c'));
+    let want = frontend_core::FleetCard::pinned(card.duplicate());
+    for _ in 0..200 {
+        let Some(crate::overlay::Modal::FleetCard(picker)) = &app.modal else {
+            panic!("the picker is open");
+        };
+        if picker.highlighted().as_ref() == Some(&want) {
+            break;
+        }
+        press_key(session, app, key(crossterm::event::KeyCode::Down));
+    }
+    press_key(session, app, key(crossterm::event::KeyCode::Enter));
+}
+
+/// `c` + navigation + Enter pins a card; Esc keeps the card; neither
+/// touches the Script tab's Browse pick, the focused bot's pending
+/// heading, an assignment or a run. The header names the card and
+/// follows the focus for the Focused card.
+#[test]
+fn c_picks_a_fleet_card_with_keys_and_esc_keeps_it_without_touching_the_browse_pick() {
+    use crate::test_support::{ch, key};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-fleet-card-pick");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let thiever_path = iso.dir().join("thiever.ts");
+    std::fs::write(&thiever_path, THIEVER_TS).unwrap();
+    let thiever = session.scripts.load_card(&thiever_path).unwrap();
+    assign(&mut session, "alice", &thiever);
+    focus_member(&mut session, &mut app, "alice");
+
+    // Registry cards have short labels that fit the header.
+    let compiled: Vec<ScriptChoice> = app
+        .script_card_choices
+        .iter()
+        .filter(|choice| choice.compiled_id().is_some())
+        .map(ScriptChoice::duplicate)
+        .collect();
+    assert!(compiled.len() >= 2, "the registry lists compiled cards");
+    // alice's heading is a pending Browse pick of the first one.
+    let pending = compiled[0].duplicate();
+    app.script_sel = Some(pending.duplicate());
+    app.browse_changed = true;
+    session.pump(&mut app);
+    let heading = |session: &TuiSession, name: &str| session.scripts.heading(&session.core, name);
+    assert_eq!(heading(&session, "alice"), Some(pending.duplicate()));
+    let assignment = |session: &TuiSession, name: &str| {
+        frontend_core::Scripts::test_assignment(&session.core, name).map(|a| a.key())
+    };
+    let browse_before = session
+        .scripts
+        .browse_selection()
+        .map(ScriptChoice::duplicate);
+
+    // Another registry card is pinned.
+    let target = compiled[1].duplicate();
+    pick_fleet_card_with_keys(&mut session, &mut app, &target);
+    session.pump(&mut app);
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.fleet_model.card(),
+        &frontend_core::FleetCard::pinned(target.duplicate()),
+        "Enter pinned the card"
+    );
+    let shown = screen_text(&mut app, 120, 40);
+    assert!(
+        shown.contains(&format!("card: {}", target.label())),
+        "the header names the pinned card: {shown}"
+    );
+    assert!(shown.contains("sort: Load order"), "{shown}");
+    let unchanged = |session: &TuiSession, app: &TuiApp| {
+        assert_eq!(
+            heading(session, "alice"),
+            Some(pending.duplicate()),
+            "the focused bot's pending heading"
+        );
+        assert_eq!(
+            session
+                .scripts
+                .browse_selection()
+                .map(ScriptChoice::duplicate),
+            browse_before.as_ref().map(ScriptChoice::duplicate),
+            "the Browse pick"
+        );
+        assert_eq!(
+            app.script_sel.as_ref(),
+            Some(&pending),
+            "the Script tab pick"
+        );
+        assert_eq!(
+            assignment(session, "alice"),
+            Some(thiever.identity_key().to_owned()),
+            "alice keeps her assignment"
+        );
+        assert_eq!(assignment(session, "bob"), None);
+        for name in ["alice", "bob"] {
+            assert_eq!(session.core.script_state(name), ScriptRunState::Idle);
+        }
+        assert!(session.core.fleet_plan().is_none(), "picking plans nothing");
+        assert!(session.core.fleet_result().is_none(), "and runs nothing");
+    };
+    unchanged(&session, &app);
+
+    // Esc keeps the pinned card.
+    press_key(&mut session, &mut app, ch('c'));
+    press_key(&mut session, &mut app, key(KeyCode::Down));
+    press_key(&mut session, &mut app, key(KeyCode::Esc));
+    session.pump(&mut app);
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.fleet_model.card(),
+        &frontend_core::FleetCard::pinned(target.duplicate()),
+        "Esc left the card"
+    );
+    unchanged(&session, &app);
+
+    // Focused follows the focus: alice's pending pick, then bob's none.
+    press_key(&mut session, &mut app, ch('c'));
+    press_key(&mut session, &mut app, key(KeyCode::Home));
+    press_key(&mut session, &mut app, key(KeyCode::Down));
+    press_key(&mut session, &mut app, key(KeyCode::Enter));
+    session.pump(&mut app);
+    assert_eq!(app.fleet_model.card(), &frontend_core::FleetCard::FOCUSED);
+    let shown = screen_text(&mut app, 120, 40);
+    // The 34-cell pane wraps the long label at its spaces.
+    assert!(shown.contains("card: Focused bot's card:"), "{shown}");
+    assert!(
+        shown.contains(pending.label()) && shown.contains("(pending)"),
+        "{shown}"
+    );
+    focus_member(&mut session, &mut app, "bob");
+    let shown = screen_text(&mut app, 120, 40);
+    assert!(
+        shown.contains("card: Focused bot's card: none"),
+        "the label follows the focus each loop: {shown}"
+    );
+}
+
+/// `a` and `A` mark and unmark only the shown rows: a mark the filter hides
+/// stays. A status mark from the palette marks the rows in that status.
+#[test]
+fn a_and_capital_a_mark_only_shown_rows_and_a_status_mark_picks_the_right_rows() {
+    use crate::test_support::{ch, ctrl, key};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-fleet-marks");
+    let (mut session, mut app) = tui_with_loaded(
+        &iso,
+        &["alice", "bob", "carol", "bobby", "zed"],
+        &["alice", "bob", "carol", "bobby"],
+    );
+    let id = |session: &TuiSession, name: &str| session.core.profile_identity(name).unwrap();
+    let marked = |session: &TuiSession, app: &TuiApp| {
+        ["alice", "bob", "carol", "bobby", "zed"]
+            .into_iter()
+            .filter(|name| app.fleet_model.marks().contains(id(session, name)))
+            .collect::<Vec<_>>()
+    };
+
+    // alice is marked, then hidden by a filter that shows bob and bobby.
+    press_key(&mut session, &mut app, ch(' '));
+    assert_eq!(marked(&session, &app), ["alice"]);
+    press_key(&mut session, &mut app, ch('/'));
+    for c in "bob".chars() {
+        press_key(&mut session, &mut app, ch(c));
+    }
+    press_key(&mut session, &mut app, key(KeyCode::Enter));
+    let shown: Vec<&str> = app
+        .fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
+        .collect();
+    assert_eq!(shown, ["bob", "bobby"]);
+
+    press_key(&mut session, &mut app, ch('a'));
+    assert_eq!(marked(&session, &app), ["alice", "bob", "bobby"]);
+    let text = screen_text(&mut app, 120, 40);
+    assert!(text.contains("3 marked"), "the header counts them: {text}");
+    assert_eq!(app.fleet_model.counts().hidden_marked(), 1);
+
+    press_key(&mut session, &mut app, ch('A'));
+    assert_eq!(
+        marked(&session, &app),
+        ["alice"],
+        "A unmarks the shown rows only; the hidden mark stays"
+    );
+
+    // Clear the filter (Esc) and mark by status from the palette.
+    press_key(&mut session, &mut app, key(KeyCode::Esc));
+    assert_eq!(app.fleet_model.shown().len(), 5);
+    let palette_run = |session: &mut TuiSession, app: &mut TuiApp, query: &str| {
+        press_key(session, app, ctrl('p'));
+        for c in query.chars() {
+            press_key(session, app, ch(c));
+        }
+        press_key(session, app, key(KeyCode::Enter));
+    };
+    palette_run(&mut session, &mut app, "status: not loaded");
+    assert_eq!(
+        marked(&session, &app),
+        ["alice", "zed"],
+        "only the profile that is not loaded joins the marks"
+    );
+    palette_run(&mut session, &mut app, "status: logged out");
+    assert_eq!(
+        marked(&session, &app),
+        ["alice", "bob", "carol", "bobby", "zed"],
+        "the loaded bots that are not logged in join too"
+    );
+    palette_run(&mut session, &mut app, "status: running");
+    assert_eq!(marked(&session, &app).len(), 5, "no bot runs a script");
+}
+
+/// Stop with nothing marked: with no script to stop core refuses and the
+/// message line says why; with two running scripts the overlay shows
+/// core's prompt as it is, Esc runs nothing and leaves no plan, and
+/// confirming runs the Stop and shows its settled result on the message
+/// line.
+#[test]
+fn e_with_nothing_marked_shows_the_core_prompt_and_confirm_runs_it() {
+    use crate::test_support::{ch, key};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-fleet-stop-all");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let path = iso.dir().join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    assign(&mut session, "alice", &card);
+    assign(&mut session, "bob", &card);
+    press_key(&mut session, &mut app, key(KeyCode::F(5)));
+    assert_eq!(app.screen, crate::layout::Screen::Script);
+
+    // Nothing runs: a refusal with its reason, no overlay, no plan.
+    press_key(&mut session, &mut app, ch('E'));
+    let refusal = app.error.clone().expect("the refusal shows");
+    assert!(refusal.starts_with("Stop: no bot to act on"), "{refusal}");
+    assert!(app.modal.is_none());
+    assert!(session.core.fleet_plan().is_none());
+
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    settle_starts(&mut session, &mut app);
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play_for_test().unwrap(),
+            name,
+            ScriptRunState::Running,
+        );
+    }
+    let started = session
+        .core
+        .fleet_result()
+        .expect("the Start result")
+        .request();
+
+    // E: two shown bots run a script, so core asks first with its prompt.
+    // The loop pumps every frame: the fleet rows now show both running.
+    session.pump(&mut app);
+    press_key(&mut session, &mut app, ch('E'));
+    let prompt = session
+        .core
+        .fleet_plan()
+        .expect("the plan waits for the answer")
+        .prompt()
+        .to_owned();
+    assert!(
+        prompt.starts_with("Stop 2 shown bots: alice, bob.")
+            && prompt.contains("This stops the running script of alice, bob"),
+        "{prompt}"
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if matches!(&confirm.kind, crate::overlay::ConfirmKind::FleetPlan { prompt: shown, .. } if *shown == prompt)
+    ));
+    let flat = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (w, h) in SIZES {
+        let shown = flat(screen_text(&mut app, w, h));
+        assert!(
+            shown.contains(&prompt),
+            "{w}x{h}: the prompt verbatim: {shown}"
+        );
+    }
+
+    // Esc runs nothing and leaves no plan.
+    press_key(&mut session, &mut app, key(KeyCode::Esc));
+    assert!(app.modal.is_none());
+    assert!(session.core.fleet_plan().is_none(), "Esc leaves no plan");
+    assert_eq!(
+        session.core.fleet_result().unwrap().request(),
+        started,
+        "nothing ran"
+    );
+    for name in ["alice", "bob"] {
+        assert_eq!(session.core.script_state(name), ScriptRunState::Running);
+    }
+
+    // Confirm runs it: the scripts stop and the message line shows the
+    // settled result, once.
+    press_key(&mut session, &mut app, ch('E'));
+    assert!(app.modal.is_some());
+    press_key(&mut session, &mut app, ch('y'));
+    assert!(session.core.fleet_plan().is_none(), "the plan was taken");
+    for name in ["alice", "bob"] {
+        wait_script_state(
+            session.core.play_for_test().unwrap(),
+            name,
+            ScriptRunState::Idle,
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.pump(&mut app);
+        if session.core.fleet_result().is_some_and(|r| r.settled()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the Stop result did not settle");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let result = session.core.fleet_result().unwrap();
+    assert_ne!(result.request(), started);
+    assert_eq!(result.action(), frontend_core::FleetAction::Stop);
+    let text = result.text().to_owned();
+    assert!(
+        text.starts_with("Stop: done 2: alice, bob"),
+        "the one result: {text}"
+    );
+    assert_eq!(app.error.as_deref(), Some(text.as_str()));
+    let rows = crate::test_support::draw(&mut app, 120, 40);
+    assert!(
+        rows.iter().any(|row| row.contains(&format!("msg: {text}"))),
+        "the message line shows it: {}",
+        crate::test_support::text(&rows)
+    );
+}
+
+/// A marked Assign with a pinned card needs no confirmation and assigns
+/// only the marked profiles. A plan made first does not take a profile
+/// marked after it: drive it plan, then mark, then confirm.
+#[test]
+fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
+    let iso = IsolatedStores::enter("tui-fleet-assign-plan");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob", "carol", "dave"]);
+    let path = iso.dir().join("looping.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    let pinned = ScriptChoice::loaded(CardSource::File, card.identity_id());
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::PickFleetCard(frontend_core::FleetCard::pinned(pinned)),
+    );
+    let assigned = |session: &mut TuiSession, name: &str| {
+        session.core.flush_writes();
+        frontend_core::Scripts::test_assignment(&session.core, name).map(|a| a.key())
+    };
+    let key = Some(card.identity_key().to_owned());
+    for name in ["alice", "bob"] {
+        let id = session.core.profile_identity(name).unwrap();
+        app.fleet_model.set_mark_for_test(id, true);
+    }
+
+    // Marked and safe: no overlay, no waiting plan, only the marked.
+    let action = app.run_command(crate::commands::Command::Fleet(
+        frontend_core::FleetAction::Assign,
+    ));
+    dispatch(&mut session, &mut app, action);
+    assert!(app.modal.is_none(), "a marked Assign runs at once");
+    assert!(session.core.fleet_plan().is_none());
+    assert_eq!(assigned(&mut session, "alice"), key);
+    assert_eq!(assigned(&mut session, "bob"), key);
+    assert_eq!(assigned(&mut session, "carol"), None);
+    assert_eq!(assigned(&mut session, "dave"), None);
+    settle_fleet_result(&mut session, &mut app);
+    let result = app.error.clone().expect("the result shows");
+    assert!(
+        result.starts_with("Assign: ") && result.contains("alice, bob"),
+        "{result}"
+    );
+
+    // Plan for carol only, then mark dave, then confirm.
+    dispatch(&mut session, &mut app, AppAction::ClearMarks);
+    let carol = session.core.profile_identity("carol").unwrap();
+    app.fleet_model.set_mark_for_test(carol, true);
+    session
+        .submit_with(
+            &mut app,
+            OperatorCommand::PlanFleetAction(frontend_core::FleetAction::Assign),
+            Targets::Application,
+        )
+        .expect("the plan is made");
+    assert!(session.core.fleet_plan().is_some());
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::SetMark("dave".into(), true),
+    );
+    dispatch(&mut session, &mut app, AppAction::RunFleetPlan);
+    assert_eq!(assigned(&mut session, "carol"), key, "the frozen target");
+    assert_eq!(
+        assigned(&mut session, "dave"),
+        None,
+        "a mark made after the plan never joins it"
+    );
+}
+
+/// Review F3 r2-2: two emptied plans with the same skip text each show
+/// their result, even when another message replaced the first between them
+/// (an emptied plan has no command record to tell the results apart).
+#[test]
+fn a_second_identical_emptied_plan_shows_its_result_again() {
+    let iso = IsolatedStores::enter("tui-emptied-plan-twice");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let alice = session
+        .core
+        .vault_mut()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    let emptied_login = |session: &mut TuiSession, app: &mut TuiApp| {
+        session.pump(app);
+        dispatch(
+            session,
+            app,
+            AppAction::PlanFleet(frontend_core::FleetAction::Login),
+        );
+        assert!(
+            matches!(
+                &app.modal,
+                Some(crate::overlay::Modal::Confirm(confirm))
+                    if matches!(confirm.kind, crate::overlay::ConfirmKind::FleetPlan { .. })
+            ),
+            "a no-marks Log in asks first"
+        );
+        // The plan's only target is gone before Confirm.
+        assert!(session
+            .core
+            .vault_mut()
+            .expect("vault")
+            .remove("alice")
+            .expect("remove"));
+        let confirm = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+        dispatch(session, app, confirm);
+    };
+    let skipped = "Log in: skipped 1: alice (profile no longer exists)";
+    emptied_login(&mut session, &mut app);
+    assert_eq!(app.error.as_deref(), Some(skipped));
+    // Another action replaces the message line.
+    app.error = Some("map: no tile selected".into());
+    session
+        .core
+        .vault_mut()
+        .expect("vault")
+        .upsert(alice)
+        .expect("alice again");
+    emptied_login(&mut session, &mut app);
+    assert_eq!(
+        app.error.as_deref(),
+        Some(skipped),
+        "the second emptied plan's result shows"
+    );
 }
