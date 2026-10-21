@@ -471,8 +471,8 @@ the PID, job and state for FLOOR controllers.
    plutil -lint ~/Library/LaunchAgents/local.274bot-nightly-mac.plist \
      ~/Library/LaunchAgents/local.274bot-nightly-malbec-pull.plist
    ```
-4. After Main has installed the restricted public key on malbec and both env
-   files are ready, bootstrap the schedules:
+4. Bootstrap both agents after the hand acceptance run. Confirm that Main installed
+   the restricted key on malbec and that both env files are ready.
    ```sh
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-mac.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-malbec-pull.plist
