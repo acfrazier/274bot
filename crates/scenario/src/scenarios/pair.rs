@@ -2265,8 +2265,9 @@ mod clue_witness_tests {
 
     #[test]
     fn clue_pen_witness_covers_each_engine_obstacle_arena_boundary() {
-        // 289 game_duelarena/configs/duelarena.dbrow:7-11; the server chooses
-        // any free obstacle arena, then any walkable square inside its bounds.
+        // 289 game_duelarena/configs/duelarena.dbrow:7-11.
+        // The server chooses the first obstacle pen with fewer than 24 players.
+        // It then chooses any walkable square inside that pen's bounds.
         for (min_x, max_x, min_z, max_z) in [
             (3364, 3388, 3244, 3258),
             (3333, 3357, 3225, 3239),
