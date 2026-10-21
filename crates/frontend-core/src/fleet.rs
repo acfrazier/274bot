@@ -290,6 +290,8 @@ mod tests {
     /// unloaded row and an unknown profile are outside it.
     #[test]
     fn the_unmarked_scope_is_the_loaded_shown_rows() {
+        use super::FleetModel;
+        use crate::selection::ProfileIdentity;
         let mut model = FleetModel::new();
         model.set_universe_for_test(
             vec![
