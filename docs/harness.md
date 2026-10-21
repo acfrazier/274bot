@@ -913,7 +913,7 @@ load another copy.
 |---|---|
 | `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` runs the native Gatherer at Draynor. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
+| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |

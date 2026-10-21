@@ -1692,7 +1692,8 @@ impl Run {
         );
 
         let gatherer_fleet = self.is_gatherer_fleet();
-        if gatherer_fleet && self.qualification_complete.is_none() {
+        let gatherer_active = gatherer_fleet && self.teardown.is_none() && !self.stopped;
+        if gatherer_active {
             if let Some(selected) = play.game_data() {
                 if let Some(catalog) = api::gather_methods::cached(&selected) {
                     crate::memory_diagnostics::gatherer_catalog(catalog);
@@ -1796,7 +1797,7 @@ impl Run {
                 }
             }
         }
-        if gatherer_fleet && self.qualification_complete.is_none() {
+        if gatherer_active {
             match crate::memory_diagnostics::gatherer_verdict_current() {
                 Some(crate::memory_diagnostics::GathererVerdict::Pending) => proved = 0,
                 Some(crate::memory_diagnostics::GathererVerdict::Pass { .. }) => {
