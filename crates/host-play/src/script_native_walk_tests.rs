@@ -653,17 +653,17 @@ fn add_selection_zone(
     carve: Option<nav::router::AvoidRect>,
 ) {
     let carves = carve.map_or_else(Vec::new, |carve| vec![(0, carve)]);
-    let vislevel = if zone.class == nav::zones::ZoneClass::LevelRule {
-        zone.cap / 2
+    let (npc_id, vislevel) = if zone.class == nav::zones::ZoneClass::LevelRule {
+        (0, zone.cap / 2)
     } else {
-        0
+        (-1, 0)
     };
     let table = nav::zones::ZoneTable::from_parts(
         vec![zone],
         vec![nav::zones::ZoneKind::new(
             "test-danger",
             "Test danger",
-            -1,
+            npc_id,
             vislevel,
             false,
             false,
