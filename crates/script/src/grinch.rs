@@ -876,6 +876,7 @@ impl Grinch {
                 } else if tick.cx.may_continue_this_tick() {
                     let request = WalkRequest {
                         target: anchor,
+                        candidate_goals: None,
                         loc_id: None,
                         radius: 0,
                         arrival: nav::contract::ArrivalKind::Reach,
