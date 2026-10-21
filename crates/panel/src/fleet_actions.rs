@@ -19,10 +19,21 @@ impl Session {
     /// [`Self::confirm_fleet_plan`] or [`Self::cancel_fleet_plan`]. A new
     /// plan replaces a waiting one.
     pub(crate) fn plan_fleet_action(&mut self, action: FleetAction) {
-        let Some(planned) = self.submit(
-            OperatorCommand::PlanFleetAction(action),
-            Targets::Application,
-        ) else {
+        if matches!(
+            action,
+            FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart
+        ) {
+            // The plan freezes the catalog root for the row that runs it.
+            let root = self.start_catalog_root();
+            self.scripts.stage_start_catalog_root(root);
+        }
+        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(action));
+    }
+
+    /// Submit a `PlanFleetAction` row and run the plan at once when it
+    /// needs no confirmation.
+    fn submit_fleet_plan(&mut self, plan: OperatorCommand) {
+        let Some(planned) = self.submit(plan, Targets::Application) else {
             return;
         };
         if let Some(reason) = self.core.command_failure(planned.request()) {
@@ -44,15 +55,7 @@ impl Session {
         let Some(plan) = self.core.fleet_plan() else {
             return;
         };
-        let action = plan.action();
         let command = plan.command();
-        if matches!(
-            action,
-            FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart
-        ) {
-            let root = self.start_catalog_root();
-            self.scripts.stage_start_catalog_root(root);
-        }
         self.submit(command, Targets::Plan);
         self.apply_script_notice();
     }
@@ -76,6 +79,6 @@ impl Session {
             return;
         };
         self.core.stage_plan_card(card);
-        self.plan_fleet_action(FleetAction::CopySettings);
+        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(FleetAction::CopySettings));
     }
 }

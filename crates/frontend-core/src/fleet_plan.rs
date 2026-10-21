@@ -103,6 +103,9 @@ pub struct FleetPlan {
     pub(crate) skipped: Vec<BulkRow>,
     pub(crate) prompt: String,
     pub(crate) needs_confirm: bool,
+    /// The catalog root staged with the click, for the Start or
+    /// assignment that runs the plan.
+    pub(crate) catalog_root: Option<std::path::PathBuf>,
 }
 
 impl FleetPlan {

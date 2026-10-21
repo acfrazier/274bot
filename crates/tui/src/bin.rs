@@ -2020,6 +2020,16 @@ impl TuiSession {
     /// otherwise the confirm overlay shows core's prompt. A refusal shows
     /// its reason on the message line.
     fn plan_fleet_action(&mut self, app: &mut TuiApp, action: frontend_core::FleetAction) {
+        if matches!(
+            action,
+            frontend_core::FleetAction::Start
+                | frontend_core::FleetAction::Assign
+                | frontend_core::FleetAction::AssignRestart
+        ) {
+            // The plan freezes the catalog root for the row that runs it.
+            let root = self.start_catalog_root();
+            self.scripts.stage_start_catalog_root(root);
+        }
         if let Err(error) = self.submit_with(
             app,
             OperatorCommand::PlanFleetAction(action),
@@ -2049,16 +2059,7 @@ impl TuiSession {
             app.error = Some("fleet: no plan is waiting".into());
             return;
         };
-        let (command, action) = (plan.command(), plan.action());
-        if matches!(
-            action,
-            frontend_core::FleetAction::Start
-                | frontend_core::FleetAction::Assign
-                | frontend_core::FleetAction::AssignRestart
-        ) {
-            let root = self.start_catalog_root();
-            self.scripts.stage_start_catalog_root(root);
-        }
+        let command = plan.command();
         match self.submit_raw_with(app, command, Targets::Plan) {
             Ok(_) => self.project_fleet_result(app),
             Err(error) => app.error = Some(error),

@@ -124,6 +124,17 @@ impl<Io> OperatorSession<Io> {
             return no_model("fleet");
         };
         let staged_card = self.commands.plan_card.take();
+        // The catalog root a front end staged with the click: frozen with
+        // the plan for the Start or assignment that runs it.
+        let staged_root = scripts
+            .as_deref_mut()
+            .and_then(Scripts::take_staged_start_catalog_root);
+        let catalog_root = matches!(
+            action,
+            FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart
+        )
+        .then_some(staged_root)
+        .flatten();
         let card = match (staged_card, fleet.card()) {
             (Some(card), _) => Some(card),
             (None, FleetCard::Own) => None,
@@ -275,6 +286,7 @@ impl<Io> OperatorSession<Io> {
             skipped,
             prompt,
             needs_confirm,
+            catalog_root,
         });
         Applied::Done
     }
