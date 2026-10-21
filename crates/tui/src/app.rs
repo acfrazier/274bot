@@ -1129,8 +1129,10 @@ impl TuiApp {
     }
 
     /// Focused ↔ Group. Entering Group with no eligible row marked marks
-    /// every eligible member (shown as `[x]` in the fleet): the returned
-    /// `MarkAll` marks them.
+    /// the bots a fleet action covers while nothing is marked (the loaded,
+    /// shown members) that can walk, shown as `[x]` in the fleet: the
+    /// returned `MarkAll` marks them. A member the fleet filter hides is not
+    /// added.
     pub(crate) fn toggle_walk_send_mode(&mut self) -> AppAction {
         self.walk_send.mode = match self.walk_send.mode {
             WalkSendMode::Focused => WalkSendMode::Group,
@@ -1143,7 +1145,9 @@ impl TuiApp {
                 .walk_send
                 .rows
                 .iter()
-                .filter(|row| row.status.is_eligible())
+                .filter(|row| {
+                    row.status.is_eligible() && self.fleet_model.in_unmarked_scope(row.identity)
+                })
                 .map(|row| row.identity)
                 .collect::<Vec<_>>();
             if !eligible_ids.is_empty() {

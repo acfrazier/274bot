@@ -305,7 +305,8 @@ stays in place while the tiles under it scroll.
   **Walk** (opens the WalkTo picker in group mode; each bot walks to the
   chosen tile from its own position, and bots that are logged out, have no
   position or run a script are skipped with that reason; with nothing
-  marked, group mode marks every bot that can walk), **Switch world** (opens
+  marked, group mode marks the loaded shown bots that can walk, never a bot
+  the filter hides), **Switch world** (opens
   the [world picker](#world-picker)) and **Copy settings to**. Each label
   names its scope: `Stop 3` with marks, `Stop all 12` with none. With marks,
   an action covers every marked profile, hidden marks included. With no
@@ -723,6 +724,9 @@ when the list is taller than the screen), that chooses **Focused bot**
 (default) or **Group** — a checklist of wall bots with **All eligible /
 None**. The checks are the shared marked-bots set (the rail, Grid and Fleet
 marks), so a mark made anywhere updates the **Walk N bots** count at once.
+Choosing **Group** while no bot that can walk is marked marks the loaded
+bots the fleet filter shows that can walk; **All eligible** marks every
+bot of the list.
 Ineligible bots stay listed,
 greyed, with a host reason (not logged in, no position yet, running a
 script). Group confirm reads **Walk N bots**; each eligible bot gets its

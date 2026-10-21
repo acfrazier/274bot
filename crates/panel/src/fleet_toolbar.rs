@@ -17,7 +17,10 @@
 //! fold, or lifecycle directly. The count-bearing labels are rebuilt only
 //! when the fleet model's generation moves.
 
-use dear_imgui_rs::{ItemHoveredFlags, StyleColor, TreeNodeFlags, Ui};
+use std::path::PathBuf;
+
+use dear_imgui_rs::{ImString, ItemHoveredFlags, StyleColor, TreeNodeFlags, Ui};
+use frontend_core::scripts::{BrowseCard, CardSource, ScriptChoice};
 use frontend_core::{
     contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, MarkOp, MarkPredicate,
     OperatorCommand, ReorderOp, ShownMarks, Targets, FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
@@ -243,8 +246,8 @@ fn action_tooltip(action: ToolbarAction, marked: bool) -> &'static str {
              from where it stands"
         }
         (Walk, false) => {
-            "open WalkTo for every bot that can walk (WalkTo marks them): pick a tile and \
-             each walks there from where it stands"
+            "open WalkTo for every loaded bot shown that can walk (WalkTo marks them): pick \
+             a tile and each walks there from where it stands"
         }
     }
 }
@@ -359,71 +362,174 @@ fn card_combo(ui: &Ui, session: &mut Session, site: Site) {
         }
         return;
     };
-    let mut filter = match session.fleet_card_filter.take() {
-        Some((owner, filter)) if owner == site => filter,
+    let mut search = match session.fleet_card_filter.take() {
+        Some((owner, search)) if owner == site => search,
         _ => {
             ui.set_keyboard_focus_here();
-            String::new()
+            CardSearch::new()
         }
     };
     ui.set_next_item_width(-1.0);
-    ui.input_text("##fleet-card-filter", &mut filter)
+    ui.input_text_imstr("##fleet-card-filter", &mut search.text)
         .hint("Filter cards")
         .build();
     ui.separator();
-    let picked = card_entries(ui, session, &filter);
-    session.fleet_card_filter = Some((site, filter));
+    search
+        .menu
+        .sync(&session.scripts, &session.ui.script_category_order);
+    let picked = card_entries(ui, session, &search);
+    session.fleet_card_filter = Some((site, search));
     if let Some(card) = picked {
         pick_card(session, card);
     }
 }
 
-/// The open card drop-down's entries that match `filter`; the one picked.
-fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
+/// The open card drop-down's search: the text its field edits in place and
+/// the Browse cards it narrows, kept while the drop-down stays open and
+/// dropped when it closes. A frame with the drop-down open edits, matches
+/// and draws; it allocates nothing until the text, the Browse cards or the
+/// category order change.
+#[derive(Debug)]
+pub(crate) struct CardSearch {
+    /// The search text (an `ImString`: ImGui edits it in place).
+    text: ImString,
+    /// The Browse cards in the drop-down's order.
+    menu: CardMenu,
+}
+
+impl CardSearch {
+    fn new() -> Self {
+        Self {
+            text: ImString::with_capacity(32),
+            menu: CardMenu::default(),
+        }
+    }
+}
+
+/// The Browse cards as the card drop-down lists them: the categories in the
+/// Browse window's order and, for each card in Browse order, its category's
+/// place in that order and its fleet card choice. It is built when the
+/// drop-down opens and again only when a Browse card or the saved category
+/// order changed, so an open drop-down's frame neither sorts the categories
+/// nor builds a choice (a file card's choice reads its canonical path).
+#[derive(Debug, Default)]
+struct CardMenu {
+    /// The saved category order `order` was resolved from.
+    saved: Vec<String>,
+    /// The categories of the Browse cards, in draw order.
+    order: Vec<String>,
+    /// One entry per Browse card, in Browse order.
+    cards: Vec<CardEntry>,
+}
+
+/// One Browse card of a [`CardMenu`].
+#[derive(Debug)]
+struct CardEntry {
+    /// The card's category, as its place in [`CardMenu::order`].
+    slot: usize,
+    /// The card as a fleet card choice.
+    choice: ScriptChoice,
+    /// A loaded card's source, name and file: what its choice was built
+    /// from (a compiled card's choice is its id).
+    loaded: Option<(CardSource, String, PathBuf)>,
+}
+
+impl CardEntry {
+    /// Whether `card` is still the card this entry was built from, under
+    /// category `category` of the menu.
+    fn describes(&self, card: BrowseCard<'_>, category: Option<&String>) -> bool {
+        let same_card = match (card.loaded(), &self.loaded) {
+            (None, None) => {
+                card.compiled_id().is_some() && card.compiled_id() == self.choice.compiled_id()
+            }
+            (Some(loaded), Some((source, name, path))) => {
+                loaded.source() == *source && loaded.name() == name && loaded.path() == path
+            }
+            _ => false,
+        };
+        same_card && category.is_some_and(|known| known == display_category(card.category()))
+    }
+}
+
+impl CardMenu {
+    /// Build the menu again when a Browse card or `saved` (the Browse
+    /// window's category order) changed since it was built.
+    fn sync(&mut self, scripts: &frontend_core::Scripts, saved: &[String]) {
+        let current = self.saved == saved
+            && scripts.browse_cards().count() == self.cards.len()
+            && scripts
+                .browse_cards()
+                .zip(&self.cards)
+                .all(|(card, entry)| entry.describes(card, self.order.get(entry.slot)));
+        if current {
+            return;
+        }
+        let mut present: Vec<String> = Vec::new();
+        for card in scripts.browse_cards() {
+            let category = display_category(card.category());
+            if !present.iter().any(|known| known == category) {
+                present.push(category.to_owned());
+            }
+        }
+        self.order = resolve_category_order(saved, &present);
+        self.saved.clear();
+        self.saved.extend_from_slice(saved);
+        self.cards.clear();
+        for card in scripts.browse_cards() {
+            let category = display_category(card.category());
+            // The resolved order holds every present category.
+            let slot = match self.order.iter().position(|known| known == category) {
+                Some(slot) => slot,
+                None => {
+                    self.order.push(category.to_owned());
+                    self.order.len() - 1
+                }
+            };
+            self.cards.push(CardEntry {
+                slot,
+                choice: card.selection(),
+                loaded: card.loaded().map(|loaded| {
+                    (
+                        loaded.source(),
+                        loaded.name().to_owned(),
+                        loaded.path().to_path_buf(),
+                    )
+                }),
+            });
+        }
+    }
+}
+
+/// The open card drop-down's entries that match `search`; the one picked.
+fn card_entries(ui: &Ui, session: &Session, search: &CardSearch) -> Option<FleetCard> {
+    let filter = search.text.to_str();
     let current = session.fleet_model.card();
     let matches = |text: &str| filter.is_empty() || contains_ci(text, filter);
-    let mut picked = None;
-    let entry = |label: &str, selected: bool, picked: &mut Option<FleetCard>, card| {
+    let entry = |label: &str, selected: bool| {
         let clicked = ui.selectable_config(label).selected(selected).build();
         #[cfg(test)]
         record(|layout| layout.card_entries.push((label.to_owned(), item_rect(ui))));
-        if clicked {
-            *picked = Some(card);
-        }
         if selected {
             ui.set_item_default_focus();
         }
+        clicked
     };
-    if matches(OWN_CARD_LABEL) {
-        entry(
-            OWN_CARD_LABEL,
-            current.is_own(),
-            &mut picked,
-            FleetCard::OWN,
-        );
+    let mut picked = None;
+    if matches(OWN_CARD_LABEL) && entry(OWN_CARD_LABEL, current.is_own()) {
+        picked = Some(FleetCard::OWN);
     }
-    if matches(FOCUSED_CARD_LABEL) {
-        entry(
-            FOCUSED_CARD_LABEL,
-            current.is_focused(),
-            &mut picked,
-            FleetCard::FOCUSED,
-        );
+    if matches(FOCUSED_CARD_LABEL) && entry(FOCUSED_CARD_LABEL, current.is_focused()) {
+        picked = Some(FleetCard::FOCUSED);
     }
     ui.separator();
-    let mut present: Vec<String> = Vec::new();
-    for card in session.scripts.browse_cards() {
-        let category = display_category(card.category());
-        if !present.iter().any(|known| known == category) {
-            present.push(category.to_owned());
-        }
-    }
-    let order = resolve_category_order(&session.ui.script_category_order, &present);
+    let menu = &search.menu;
     let mut any = false;
-    for category in &order {
+    for (slot, category) in menu.order.iter().enumerate() {
         let mut heading = false;
-        for (index, card) in session.scripts.browse_cards().enumerate() {
-            if display_category(card.category()) != category.as_str() || !matches(card.name()) {
+        for (index, (card, card_entry)) in
+            session.scripts.browse_cards().zip(&menu.cards).enumerate()
+        {
+            if card_entry.slot != slot || !matches(card.name()) {
                 continue;
             }
             if !heading {
@@ -432,14 +538,10 @@ fn card_entries(ui: &Ui, session: &Session, filter: &str) -> Option<FleetCard> {
             }
             any = true;
             let _id = ui.push_id(index);
-            let choice = card.selection();
-            let selected = current.pinned_card() == Some(&choice);
-            entry(
-                card.name(),
-                selected,
-                &mut picked,
-                FleetCard::pinned(choice),
-            );
+            let selected = current.pinned_card() == Some(&card_entry.choice);
+            if entry(card.name(), selected) {
+                picked = Some(FleetCard::pinned(card_entry.choice.duplicate()));
+            }
         }
     }
     if !any {

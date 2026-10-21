@@ -595,6 +595,67 @@ fn walk_opens_walkto_over_the_scope() {
     assert_eq!(rig.session.fleet_model.marks().len(), 1, "no mark added");
 }
 
+/// With nothing marked, the toolbar's Walk covers the bots its label
+/// counts: the loaded, shown ones. Two bots can walk and the filter shows
+/// one; a click on `Walk all 1` at the rail, the strip and the Fleet
+/// window marks that bot only, and the hidden one is not added.
+#[test]
+fn walk_without_marks_keeps_the_shown_scope() {
+    let all = names(2);
+    for place in [
+        Place::Rail(crate::rail::RAIL_W),
+        Place::Strip(330.0),
+        Place::Window([760.0, 460.0]),
+    ] {
+        let mut rig = Rig::new("toolbar-walk-shown", &all, &all, 1.0);
+        {
+            let play = rig.session.core.play_for_test().unwrap();
+            let mut statuses = play.statuses.lock().unwrap();
+            for name in &all {
+                statuses.push(host_play::SlotStatus {
+                    username: name.clone(),
+                    connected: true,
+                    ingame: true,
+                    tile_x: 3200,
+                    tile_z: 3200,
+                    ..Default::default()
+                });
+            }
+        }
+        rig.session.pump_status();
+        rig.session
+            .fleet_model
+            .staged_filter_mut()
+            .push_str(&all[0]);
+        rig.session
+            .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+        let layout = rig.settle(place);
+        assert!(rig.session.fleet_model.marks().is_empty(), "{place:?}");
+        assert_eq!(
+            layout.actions[6].label, "Walk all 1###fleet-action-6",
+            "{place:?}"
+        );
+        rig.click(place, Rig::button(&layout, ToolbarAction::Walk));
+        assert!(rig.session.walkto_open, "{place:?}");
+        let rows = rig.session.walk_send.rows();
+        assert!(
+            rows.len() == 2 && rows.iter().all(|row| row.status.is_eligible()),
+            "{place:?}: both bots are in the Send list and can walk"
+        );
+        let selected: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.checked(rig.session.fleet_model.marks()))
+            .map(|row| row.name())
+            .collect();
+        assert_eq!(
+            selected,
+            [all[0].as_str()],
+            "{place:?}: the hidden bot is not added"
+        );
+        assert_eq!(rig.session.fleet_model.marks().len(), 1, "{place:?}");
+    }
+}
+
 /// One frame that draws the toolbar at each of `sites` (open or folded),
 /// each in its own harness window; no site draws only the empty frame. No
 /// session sync: the frame draws only.
@@ -658,37 +719,291 @@ fn busy_rig(label: &str) -> Rig {
     rig
 }
 
-/// Warm toolbar frames make no allocation call at every site (the rail,
-/// the strip, the Fleet window, and the rail and the Fleet window on screen
-/// together), open or folded, with 100 bots in scope, a waiting 100-bot
-/// plan and a result: the labels are cached, the rows are borrowed from the
-/// one model, the filter field is edited in place and nothing is formatted
-/// per frame.
+/// A state a warm toolbar frame can show. Every state also shows the
+/// waiting plan's prompt and the result line ([`busy_rig`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    /// Nothing open, the pointer away.
+    Closed,
+    /// The filter holds `bot-01` (ten of the hundred bots shown); folded,
+    /// the summary shows it.
+    Filtered,
+    /// The card drop-down open, its search empty.
+    CardPicker,
+    /// The card drop-down open, `ga` typed in its search: some cards match.
+    CardSearch,
+    /// The card drop-down open, `zqx` typed in its search: no card matches.
+    CardSearchNoMatch,
+    /// The sort drop-down open.
+    SortPicker,
+    /// The Marks menu open.
+    MarksMenu,
+    /// The Marks menu's Mark by status submenu open.
+    StatusMenu,
+    /// The tooltip of the Marks menu's Move marked to top.
+    MoveToTopTooltip,
+    /// The Stop button's tooltip.
+    ButtonTooltip,
+    /// The result line's tooltip.
+    ResultTooltip,
+}
+
+impl Shown {
+    /// Every state of an open toolbar.
+    const OPEN: [Shown; 11] = [
+        Shown::Closed,
+        Shown::Filtered,
+        Shown::CardPicker,
+        Shown::CardSearch,
+        Shown::CardSearchNoMatch,
+        Shown::SortPicker,
+        Shown::MarksMenu,
+        Shown::StatusMenu,
+        Shown::MoveToTopTooltip,
+        Shown::ButtonTooltip,
+        Shown::ResultTooltip,
+    ];
+    /// Every state of a folded toolbar (the rail's and the strip's).
+    const FOLDED: [Shown; 3] = [Shown::Closed, Shown::Filtered, Shown::ResultTooltip];
+}
+
+/// Whether the last frame of `_rig` (whose context is the current one)
+/// drew a tooltip.
+fn tooltip_shown(_rig: &Rig) -> bool {
+    // SAFETY: the rig's context is the current ImGui context (its guard is
+    // held) and no frame is open; the window pointer, if any, belongs to
+    // that context and is read at once, not kept.
+    unsafe {
+        let window = dear_imgui_rs::sys::igFindWindowByName(c"##Tooltip_00".as_ptr());
+        !window.is_null() && (*window).Active
+    }
+}
+
+/// A press and release of the left button at `at` over toolbar frames of
+/// `sites`, the pointer left there.
+fn press_at(rig: &mut Rig, sites: &[Site], open: bool, at: [f32; 2]) {
+    for down in [false, true, false] {
+        rig.ctx.io_mut().add_mouse_pos_event(at);
+        rig.ctx
+            .io_mut()
+            .add_mouse_button_event(MouseButton::Left, down);
+        toolbar_frame(rig, sites, open);
+    }
+}
+
+/// The pointer to `at`, over enough frames for a hover tooltip to show.
+fn hover_at(rig: &mut Rig, sites: &[Site], open: bool, at: [f32; 2]) {
+    rig.ctx.io_mut().add_mouse_pos_event(at);
+    for _ in 0..40 {
+        toolbar_frame(rig, sites, open);
+    }
+}
+
+/// One recorded toolbar frame of `sites`: what the last site laid out.
+fn recorded_frame(rig: &mut Rig, sites: &[Site], open: bool) -> FleetLayout {
+    take_layout();
+    toolbar_frame(rig, sites, open);
+    take_layout()
+}
+
+/// Close whatever is open (a click away from every toolbar), clear the
+/// filter and rest the pointer away.
+fn reset_shown(rig: &mut Rig, sites: &[Site], open: bool) {
+    press_at(rig, sites, open, AWAY);
+    rig.session.fleet_model.staged_filter_mut().clear();
+    rig.session
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    for _ in 0..3 {
+        toolbar_frame(rig, sites, open);
+    }
+    assert!(
+        rig.session.fleet_card_filter.is_none(),
+        "every drop-down closed"
+    );
+}
+
+/// Bring the last of `sites` into `shown` through pointer and key input,
+/// as an operator would.
+fn enter_shown(rig: &mut Rig, sites: &[Site], open: bool, shown: Shown) {
+    let layout = recorded_frame(rig, sites, open);
+    let type_text = |rig: &mut Rig, text: &str| {
+        for c in text.chars() {
+            rig.ctx.io_mut().add_input_character(c);
+            toolbar_frame(rig, sites, open);
+        }
+    };
+    match shown {
+        Shown::Closed => {}
+        Shown::Filtered => {
+            rig.session
+                .fleet_model
+                .staged_filter_mut()
+                .push_str("bot-01");
+            rig.session
+                .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+        }
+        Shown::CardPicker | Shown::CardSearch | Shown::CardSearchNoMatch => {
+            press_at(rig, sites, open, centre(layout.card_combo));
+            rig.ctx.io_mut().add_mouse_pos_event(AWAY);
+            match shown {
+                Shown::CardSearch => type_text(rig, "ga"),
+                Shown::CardSearchNoMatch => type_text(rig, "zqx"),
+                _ => {}
+            }
+        }
+        Shown::SortPicker => {
+            press_at(rig, sites, open, centre(layout.sort_combo));
+            rig.ctx.io_mut().add_mouse_pos_event(AWAY);
+        }
+        Shown::MarksMenu | Shown::StatusMenu | Shown::MoveToTopTooltip => {
+            press_at(rig, sites, open, centre(layout.marks_button));
+            rig.ctx.io_mut().add_mouse_pos_event(AWAY);
+            let menu = recorded_frame(rig, sites, open);
+            match shown {
+                Shown::StatusMenu => {
+                    let (_, rect) = menu
+                        .marks_menu
+                        .iter()
+                        .find(|(label, _)| label == "Mark by status")
+                        .expect("the Marks menu lists Mark by status");
+                    hover_at(rig, sites, open, centre(*rect));
+                }
+                Shown::MoveToTopTooltip => hover_at(rig, sites, open, centre(menu.move_to_top)),
+                _ => {}
+            }
+        }
+        Shown::ButtonTooltip => {
+            let stop = Rig::button(&layout, ToolbarAction::Plan(FleetAction::Stop));
+            hover_at(rig, sites, open, centre(stop));
+        }
+        Shown::ResultTooltip => {
+            let (_, rect) = layout.result.expect("a result line");
+            hover_at(rig, sites, open, centre(rect));
+        }
+    }
+}
+
+/// Check that the last of `sites` still shows `shown` after the measured
+/// frames.
+fn assert_shown(rig: &mut Rig, sites: &[Site], open: bool, shown: Shown) {
+    let site = *sites.last().unwrap();
+    let case = format!("{sites:?} (open {open}) {shown:?}");
+    let layout = recorded_frame(rig, sites, open);
+    assert!(layout.plan.is_some(), "{case}: the prompt is drawn");
+    assert!(layout.result.is_some(), "{case}: the result is drawn");
+    // The open drop-down's search shows in the entries it narrows (below).
+    let picker_open = rig
+        .session
+        .fleet_card_filter
+        .as_ref()
+        .is_some_and(|(owner, _)| *owner == site);
+    let card_picker = matches!(
+        shown,
+        Shown::CardPicker | Shown::CardSearch | Shown::CardSearchNoMatch
+    );
+    assert_eq!(picker_open, card_picker, "{case}: card drop-down");
+    let tooltip = matches!(
+        shown,
+        Shown::MoveToTopTooltip | Shown::ButtonTooltip | Shown::ResultTooltip
+    );
+    assert_eq!(tooltip_shown(rig), tooltip, "{case}: tooltip");
+    let menu = matches!(
+        shown,
+        Shown::MarksMenu | Shown::StatusMenu | Shown::MoveToTopTooltip
+    );
+    assert_eq!(!layout.marks_menu.is_empty(), menu, "{case}: Marks menu");
+    let by_status = frontend_core::MarkPredicate::ALL[0].label();
+    assert_eq!(
+        layout
+            .marks_menu
+            .iter()
+            .any(|(label, _)| label == by_status),
+        shown == Shown::StatusMenu,
+        "{case}: Mark by status submenu"
+    );
+    assert_eq!(
+        layout.sort_choices.len(),
+        if shown == Shown::SortPicker { 3 } else { 0 },
+        "{case}: sort drop-down"
+    );
+    match shown {
+        Shown::Filtered => {
+            assert_eq!(rig.session.fleet_model.filter().text(), "bot-01", "{case}");
+            assert_eq!(rig.session.fleet_model.counts().shown(), 10, "{case}");
+        }
+        Shown::CardPicker => {
+            assert!(layout.card_entries.len() > 2, "{case}: Browse cards listed");
+        }
+        Shown::CardSearch => {
+            assert!(
+                !layout.card_entries.is_empty()
+                    && layout
+                        .card_entries
+                        .iter()
+                        .all(|(label, _)| frontend_core::contains_ci(label, "ga")),
+                "{case}: the search `ga` narrows the entries: {:?}",
+                layout.card_entries
+            );
+        }
+        Shown::CardSearchNoMatch => {
+            assert!(
+                layout.card_entries.is_empty(),
+                "{case}: the search `zqx` matches no card"
+            );
+        }
+        _ => assert!(layout.card_entries.is_empty(), "{case}"),
+    }
+}
+
+/// Warm toolbar frames make no allocation call at any site (the rail, the
+/// strip, the Fleet window, and two toolbars on screen together), open or
+/// folded, in every state a toolbar shows ([`Shown`]: a drop-down, the
+/// Marks menu or its submenu open, a search or a filter typed, a tooltip
+/// shown), with 100 bots in scope, a waiting 100-bot plan and a result.
+/// The labels are cached, the rows are borrowed from the one model, both
+/// text fields are edited in place, the open card drop-down keeps its card
+/// list, and nothing is formatted per frame. Each state is entered through
+/// pointer and key input (whose frames may allocate) and checked after the
+/// ten measured frames.
 #[test]
 fn a_warm_toolbar_frame_allocates_nothing_at_any_site() {
     let mut rig = busy_rig("toolbar-alloc");
     crate::fleet::set_recording(false);
     let empty = toolbar_frame_calls(&mut rig, &[], true);
-    let mut calls = Vec::new();
-    for (sites, open) in [
-        (&[Site::Rail][..], true),
-        (&[Site::Rail][..], false),
-        (&[Site::Strip][..], true),
-        (&[Site::Strip][..], false),
-        (&[Site::Window][..], true),
-        (&[Site::Rail, Site::Window][..], true),
-    ] {
-        calls.push((sites, open, toolbar_frame_calls(&mut rig, sites, open)));
-    }
     crate::fleet::set_recording(true);
-    eprintln!("FLEET-TOOLBAR-ALLOC empty={empty} sites={calls:?}");
-    assert_eq!(empty, 0, "the empty harness frame allocates nothing");
-    for (sites, open, count) in calls {
-        assert_eq!(
-            count, 0,
-            "{sites:?} (open {open}): {count} allocation calls over 10 warm frames"
+    let mut cases: Vec<(&[Site], bool, Shown)> = Vec::new();
+    for sites in [&[Site::Rail][..], &[Site::Strip][..], &[Site::Window][..]] {
+        cases.extend(Shown::OPEN.map(|shown| (sites, true, shown)));
+    }
+    for sites in [&[Site::Rail][..], &[Site::Strip][..]] {
+        cases.extend(Shown::FOLDED.map(|shown| (sites, false, shown)));
+    }
+    // Two toolbars on screen; the state is at the last one.
+    for sites in [
+        &[Site::Rail, Site::Window][..],
+        &[Site::Window, Site::Rail][..],
+    ] {
+        cases.extend(
+            [Shown::Closed, Shown::CardPicker, Shown::CardSearch].map(|shown| (sites, true, shown)),
         );
     }
+    let mut calls = Vec::new();
+    for (sites, open, shown) in cases {
+        reset_shown(&mut rig, sites, open);
+        enter_shown(&mut rig, sites, open, shown);
+        crate::fleet::set_recording(false);
+        let count = toolbar_frame_calls(&mut rig, sites, open);
+        crate::fleet::set_recording(true);
+        assert_shown(&mut rig, sites, open, shown);
+        calls.push((sites, open, shown, count));
+    }
+    eprintln!("FLEET-TOOLBAR-ALLOC empty={empty} cases={calls:?}");
+    assert_eq!(empty, 0, "the empty harness frame allocates nothing");
+    let failing: Vec<_> = calls.iter().filter(|(.., count)| *count != 0).collect();
+    assert!(
+        failing.is_empty(),
+        "allocation calls over 10 warm frames: {failing:?}"
+    );
 }
 
 /// Measured 2026-10-21: the one set of toolbar labels for 100 marked bots
