@@ -103,6 +103,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Copy settings to more than 64 bots now saves every bot. The copy saves a
   few dozen bots at a time and the rest wait their turn; Starts wait until
   the last bot is saved. Cancel stops the bots that are still waiting.
+- Fixed: with MultiBox off, the bot that unlocking logs in (the last
+  focused profile), or a bot picked in Profiles, is now a fleet member.
+  The Fleet window lists it as loaded, and a script can be started on
+  it. Before, Start refused it with `no slot: <name>`. Starting a script
+  on a profile that is not loaded now says `<name> is not loaded`. 0.2.4
+  has the same problem.
 
 ### Random events
 

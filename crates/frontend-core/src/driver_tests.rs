@@ -3431,6 +3431,56 @@ fn a_world_switch_saves_first_then_relogs_and_settles_on_the_new_session() {
     );
 }
 
+/// A world switch keeps the bot a fleet member, both for a bot loaded with
+/// Load and for one whose slot a single-bot focus opened (the unlock's
+/// auto-login with MultiBox off, which now loads it): the logout and the
+/// relog through the same slot never drop it from the fleet.
+#[test]
+fn a_world_switch_keeps_the_bot_a_fleet_member() {
+    let mut d = driver("f4-al-member", &["alice", "bob"]);
+    d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
+    load(&mut d, &["bob"]);
+    // alice's slot is opened by a focus, as the single-mode unlock does.
+    d.session_mut().stage_select_opens_slot();
+    d.submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    d.poll();
+    for name in ["alice", "bob"] {
+        log_in_on(&mut d, name, 1);
+    }
+    let members = |d: &HeadlessDriver| {
+        let mut members = d.session().members().to_vec();
+        members.sort();
+        members
+    };
+    assert_eq!(members(&d), ["alice", "bob"], "both are members");
+    for name in ["alice", "bob"] {
+        assert_eq!(plan_switch(&mut d, 2, Some(name)).0, Some(done()));
+        let run = confirm_switch(&mut d);
+        land_saves(&mut d);
+        assert!(
+            arm_of(&d, name).wants_logout(),
+            "{name}: the relog is posted"
+        );
+        assert_eq!(
+            members(&d),
+            ["alice", "bob"],
+            "{name}: a member while it relogs"
+        );
+        log_in_on(&mut d, name, 2);
+        assert_eq!(terminal(&d, run, name), Some(done()), "{name}");
+        assert_eq!(members(&d), ["alice", "bob"], "{name}: a member on world 2");
+        let row = d
+            .session()
+            .fleet_view()
+            .rows()
+            .iter()
+            .find(|row| row.name() == name)
+            .map(|row| row.loaded());
+        assert_eq!(row, Some(true), "{name}: the Fleet row stays loaded");
+    }
+}
+
 /// Review F4-SOL-1: the frontend's status rows can still describe the old
 /// session, in game on world 1, when the slot's new session begins. The
 /// switch settles only from the new session's own readiness and world:
