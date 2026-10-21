@@ -6,9 +6,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::named_banks::{AccessReach, Footprint};
-use crate::router::{
-    find_first_with_avoid_budgets, AvoidRect, FindOptions, FirstRouteSearch,
-};
+use crate::router::{find_first_with_avoid_budgets, AvoidRect, FindOptions, FirstRouteSearch};
 use crate::transport::TransportGraph;
 use crate::world_state::WorldState;
 
@@ -42,7 +40,8 @@ pub(crate) fn service_access_tiles<'a>(
     reach: AccessReach,
     sides: Sides,
 ) -> impl Iterator<Item = WorldTile> + 'a {
-    footprint.access_tiles(reach, |tile| collision.standable(tile))
+    footprint
+        .access_tiles(reach, |tile| collision.standable(tile))
         .filter(move |&tile| {
             let side = footprint_side(footprint, tile);
             sides.allows(side) && !wall_between(collision, tile, touched_tile(footprint, tile))
@@ -54,19 +53,33 @@ fn footprint_side(footprint: Footprint, tile: WorldTile) -> usize {
     let east = tile.x >= footprint.x + footprint.width;
     let south = tile.z < footprint.z;
     let north = tile.z >= footprint.z + footprint.length;
-    if north { 0 } else if east { 1 } else if south { 2 } else if west { 3 } else { 0 }
+    if north {
+        0
+    } else if east {
+        1
+    } else if south {
+        2
+    } else if west {
+        3
+    } else {
+        0
+    }
 }
 
 fn touched_tile(footprint: Footprint, tile: WorldTile) -> WorldTile {
     WorldTile {
         x: tile.x.clamp(footprint.x, footprint.x + footprint.width - 1),
-        z: tile.z.clamp(footprint.z, footprint.z + footprint.length - 1),
+        z: tile
+            .z
+            .clamp(footprint.z, footprint.z + footprint.length - 1),
         level: footprint.level,
     }
 }
 
 fn wall_between(collision: &WorldCollision, a: WorldTile, b: WorldTile) -> bool {
-    if a.level != b.level { return false; }
+    if a.level != b.level {
+        return false;
+    }
     let (a_face, b_face) = match (b.x - a.x, b.z - a.z) {
         (0, 1) => (CollisionFlag::W_N, CollisionFlag::W_S),
         (0, -1) => (CollisionFlag::W_S, CollisionFlag::W_N),
@@ -135,7 +148,10 @@ pub fn nearest_service_air<'a>(
             let key = air_rank(from, tile, candidate.width, candidate.length, access_tile);
             if best_key.is_none_or(|current| key < current) {
                 best_key = Some(key);
-                best = Some(ServicePick { index: candidate.index, access_tile });
+                best = Some(ServicePick {
+                    index: candidate.index,
+                    access_tile,
+                });
             }
         }
     }
@@ -145,7 +161,10 @@ pub fn nearest_service_air<'a>(
 /// Run one first-goal search over the complete target set, with teleports and
 /// bank fetching disabled. The owner decides candidate eligibility before
 /// constructing `targets`.
-#[expect(clippy::too_many_arguments, reason = "Complete routed service-search inputs.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Complete routed service-search inputs."
+)]
 pub fn nearest_service_routed(
     collision: &WorldCollision,
     graph: &TransportGraph,

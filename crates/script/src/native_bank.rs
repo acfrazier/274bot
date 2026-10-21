@@ -3025,16 +3025,14 @@ mod tests {
                 level: 0,
             },
             options: WalkOptions::default(),
-            facts: ServiceFacts::Bank(Arc::new(NamedBankFacts::from_banks(vec![
-                NamedBank::new(
-                    "service",
-                    WorldTile {
-                        x: 6,
-                        z: 5,
-                        level: 0,
-                    },
-                ),
-            ]))),
+            facts: ServiceFacts::Bank(Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
+                "service",
+                WorldTile {
+                    x: 6,
+                    z: 5,
+                    level: 0,
+                },
+            )]))),
             eligible: Arc::from(eligible),
             prefer_order: false,
         }
@@ -3090,10 +3088,7 @@ mod tests {
             let handle = with_tick(&snapshot, &mut ledger, 1, |frame| {
                 let handle = frame
                     .actions
-                    .begin::<SelectService>(
-                        service_request(ServiceKind::Bank, &[0]),
-                        &mut frame.cx,
-                    )
+                    .begin::<SelectService>(service_request(ServiceKind::Bank, &[0]), &mut frame.cx)
                     .unwrap();
                 assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
                 handle

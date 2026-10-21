@@ -75,7 +75,11 @@ impl ResolvedShopKeeper {
             index,
             keeper,
             tile,
-            access: [WorldTile { x: 0, z: 0, level: 0 }; 4],
+            access: [WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            }; 4],
             access_len: 0,
         };
         for stand in access {
@@ -127,10 +131,7 @@ impl ShopKeeperFacts {
     /// one-tile, all-sides-open footprint, excluding the footprint itself and
     /// walls on the shared edge. The pin bounds the row count to a `u16` index.
     /// This is world assembly, not a bot or per-request operation.
-    pub fn resolve<I>(
-        data: &SelectedGameData,
-        mut access: impl FnMut(WorldTile) -> I,
-    ) -> Self
+    pub fn resolve<I>(data: &SelectedGameData, mut access: impl FnMut(WorldTile) -> I) -> Self
     where
         I: IntoIterator<Item = WorldTile>,
     {
@@ -187,7 +188,9 @@ impl ShopKeeperFacts {
         item_id: i32,
         members: bool,
     ) -> impl Iterator<Item = ServiceCandidate<'a>> + 'a {
-        let alias = data.item_by_id(item_id).and_then(|item| item.alias.as_deref());
+        let alias = data
+            .item_by_id(item_id)
+            .and_then(|item| item.alias.as_deref());
         self.rows.iter().filter_map(move |row| {
             let item = row
                 .keeper
@@ -225,7 +228,10 @@ mod tests {
             );
             let big_net = data.item_by_alias("big_net").expect("members big net").id;
             let harpoon = data.item_by_alias("harpoon").expect("free harpoon").id;
-            let axe = data.item_by_alias("bronze_axe").expect("not Harry's stock").id;
+            let axe = data
+                .item_by_alias("bronze_axe")
+                .expect("not Harry's stock")
+                .id;
             let access = facts.rows()[0].access().as_ptr();
             let measured = allocation_counter::measure(|| {
                 assert!(facts.candidates_for(&data, big_net, false).next().is_none());
@@ -239,7 +245,10 @@ mod tests {
                     assert_eq!(candidate.tile, tile(10, 10));
                     assert_eq!((candidate.width, candidate.length), (1, 1));
                     assert_eq!(candidate.access.as_ptr(), access);
-                    assert!(candidates.next().is_none(), "an empty access row is excluded");
+                    assert!(
+                        candidates.next().is_none(),
+                        "an empty access row is excluded"
+                    );
                 }
             });
             assert_eq!(measured.count_total, 0, "{revision:?}");

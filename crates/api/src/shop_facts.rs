@@ -958,7 +958,13 @@ param=shop_title,Fishing shop 2"#,
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let catalog = data(revision);
             let keepers: BTreeSet<_> = super::keepers(&catalog)
-                .map(|keeper| (keeper.record.inv.as_str(), keeper.keeper_config, keeper.keeper_id))
+                .map(|keeper| {
+                    (
+                        keeper.record.inv.as_str(),
+                        keeper.keeper_config,
+                        keeper.keeper_id,
+                    )
+                })
                 .collect();
             let mut vendors = BTreeSet::new();
             for record in shops_for(&catalog) {

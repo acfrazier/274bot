@@ -188,9 +188,7 @@ pub fn nearest_bank_access(
     stands
         .iter()
         .flat_map(|stand| bank_access_tiles(collision, stand).map(move |tile| (stand, tile)))
-        .min_by_key(|(stand, tile)| {
-            crate::service_pick::air_rank(from, stand.tile, 1, 1, *tile)
-        })
+        .min_by_key(|(stand, tile)| crate::service_pick::air_rank(from, stand.tile, 1, 1, *tile))
         .map(|(_, tile)| tile)
 }
 

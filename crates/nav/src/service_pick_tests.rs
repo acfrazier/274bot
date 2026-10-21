@@ -5,11 +5,15 @@ use client::dash3d::CollisionFlag;
 use crate::collision::{pack_walk, WorldCollision};
 use crate::named_banks::{AccessReach, Footprint};
 use crate::router::{FindOptions, SearchRequest};
-use crate::service_pick::{nearest_service_air, nearest_service_routed, routed_request, service_access_tiles, Sides};
+use crate::service_pick::{
+    nearest_service_air, nearest_service_routed, routed_request, service_access_tiles, Sides,
+};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 use crate::world_state::WorldState;
 
-fn tile(x: i32, z: i32) -> WorldTile { WorldTile { x, z, level: 0 } }
+fn tile(x: i32, z: i32) -> WorldTile {
+    WorldTile { x, z, level: 0 }
+}
 
 fn collision(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCollision {
     let mut plane = vec![0u32; width * height];
@@ -19,67 +23,126 @@ fn collision(width: usize, height: usize, extras: &[(i32, i32, u32)]) -> WorldCo
     let mut flags = vec![0u32; plane.len() * 4];
     flags[..plane.len()].copy_from_slice(&plane);
     let (walk, blocked) = pack_walk(&flags);
-    WorldCollision { origin: tile(0, 0), width, height, walk, blocked, flags: None }
+    WorldCollision {
+        origin: tile(0, 0),
+        width,
+        height,
+        walk,
+        blocked,
+        flags: None,
+    }
 }
 
 #[test]
 fn packed_forceapproach_rotates_open_edge_for_a_one_by_two_footprint() {
     let wc = collision(8, 8, &[]);
-    let footprint = Footprint { x: 2, z: 2, level: 0, width: 1, length: 2 };
+    let footprint = Footprint {
+        x: 2,
+        z: 2,
+        level: 0,
+        width: 1,
+        length: 2,
+    };
     let east: Vec<_> = service_access_tiles(
-        &wc, footprint, AccessReach::InLine, Sides::from_approach(0b1101, 0),
-    ).collect();
+        &wc,
+        footprint,
+        AccessReach::InLine,
+        Sides::from_approach(0b1101, 0),
+    )
+    .collect();
     assert_eq!(east, vec![tile(3, 2), tile(3, 3)]);
 
     let south: Vec<_> = service_access_tiles(
-        &wc, footprint, AccessReach::InLine, Sides::from_approach(0b1101, 1),
-    ).collect();
+        &wc,
+        footprint,
+        AccessReach::InLine,
+        Sides::from_approach(0b1101, 1),
+    )
+    .collect();
     assert_eq!(south, vec![tile(2, 1)]);
 
     let west: Vec<_> = service_access_tiles(
-        &wc, footprint, AccessReach::InLine, Sides::from_approach(0b1101, 2),
-    ).collect();
+        &wc,
+        footprint,
+        AccessReach::InLine,
+        Sides::from_approach(0b1101, 2),
+    )
+    .collect();
     assert_eq!(west, vec![tile(1, 2), tile(1, 3)]);
 
     let north: Vec<_> = service_access_tiles(
-        &wc, footprint, AccessReach::InLine, Sides::from_approach(0b1101, 3),
-    ).collect();
+        &wc,
+        footprint,
+        AccessReach::InLine,
+        Sides::from_approach(0b1101, 3),
+    )
+    .collect();
     assert_eq!(north, vec![tile(2, 4)]);
 }
 
 #[test]
 fn approach_zero_allows_each_side_and_fire_like_footprint_excludes_its_tile() {
     let wc = collision(8, 8, &[]);
-    let footprint = Footprint { x: 2, z: 2, level: 0, width: 1, length: 2 };
-    let all: Vec<_> = service_access_tiles(&wc, footprint, AccessReach::Adjacent, Sides::from_approach(0, 0)).collect();
+    let footprint = Footprint {
+        x: 2,
+        z: 2,
+        level: 0,
+        width: 1,
+        length: 2,
+    };
+    let all: Vec<_> = service_access_tiles(
+        &wc,
+        footprint,
+        AccessReach::Adjacent,
+        Sides::from_approach(0, 0),
+    )
+    .collect();
     assert!(all.iter().any(|t| t.x < 2));
     assert!(all.iter().any(|t| t.x > 2));
     assert!(all.iter().any(|t| t.z < 2));
     assert!(all.iter().any(|t| t.z > 3));
 
     let one_tile = Footprint::tile(tile(4, 4));
-    let fire_access: Vec<_> = service_access_tiles(&wc, one_tile, AccessReach::Adjacent, Sides::ALL).collect();
+    let fire_access: Vec<_> =
+        service_access_tiles(&wc, one_tile, AccessReach::Adjacent, Sides::ALL).collect();
     assert!(!fire_access.contains(&tile(4, 4)));
 }
 
 #[test]
 fn service_access_excludes_a_walled_shared_edge() {
     let wc = collision(8, 8, &[(3, 2, CollisionFlag::W_W as u32)]);
-    let footprint = Footprint { x: 2, z: 2, level: 0, width: 1, length: 2 };
-    let access: Vec<_> = service_access_tiles(&wc, footprint, AccessReach::InLine, Sides::ALL).collect();
+    let footprint = Footprint {
+        x: 2,
+        z: 2,
+        level: 0,
+        width: 1,
+        length: 2,
+    };
+    let access: Vec<_> =
+        service_access_tiles(&wc, footprint, AccessReach::InLine, Sides::ALL).collect();
     assert!(!access.contains(&tile(3, 2)));
     assert!(access.contains(&tile(3, 3)));
 }
 
 fn candidate(index: u16, at: WorldTile, access: &[WorldTile]) -> ServiceCandidate<'_> {
-    ServiceCandidate { kind: ServiceKind::Bank, index, tile: at, width: 1, length: 1, access }
+    ServiceCandidate {
+        kind: ServiceKind::Bank,
+        index,
+        tile: at,
+        width: 1,
+        length: 1,
+        access,
+    }
 }
 
 #[test]
 fn air_pick_ranks_borrowed_candidates_without_allocating() {
     let near_access = [tile(2, 2)];
     let far_access = [tile(4, 3)];
-    let candidates = [candidate(1, tile(3, 3), &far_access), candidate(2, tile(3, 2), &near_access)];
+    let candidates = [
+        candidate(1, tile(3, 3), &far_access),
+        candidate(2, tile(3, 2), &near_access),
+    ];
     let mut result = None;
     let measured = allocation_counter::measure(|| {
         result = nearest_service_air(candidates.iter().copied(), tile(0, 0));
@@ -129,7 +192,14 @@ fn routed_pick_chooses_cheaper_route_than_air_nearest_candidate() {
     let graph = transport_to(from, cheap);
     let targets = [near, cheap];
     let result = nearest_service_routed(
-        &wc, &graph, from, &targets, FindOptions::default(), &WorldState::empty(), &[], (100, 100),
+        &wc,
+        &graph,
+        from,
+        &targets,
+        FindOptions::default(),
+        &WorldState::empty(),
+        &[],
+        (100, 100),
     );
     assert_eq!(result.route().expect("reachable candidate").dest, cheap);
 }
@@ -164,7 +234,10 @@ fn routed_pick_skips_isolated_keeper_access_in_the_complete_target_set() {
         (1000, 1000),
     );
     assert_eq!(
-        result.route().expect("the other keeper remains reachable").dest,
+        result
+            .route()
+            .expect("the other keeper remains reachable")
+            .dest,
         reachable,
     );
 }
@@ -174,19 +247,42 @@ fn routed_pick_searches_all_72_targets_and_air_pick_remains_air_nearest() {
     let wc = collision(48, 48, &[]);
     let from = tile(1, 1);
     let mut targets = Vec::with_capacity(72);
-    for n in 0..71 { targets.push(tile(10 + n % 12, 2 + n / 12)); }
+    for n in 0..71 {
+        targets.push(tile(10 + n % 12, 2 + n / 12));
+    }
     let last_by_air = tile(35, 35);
     targets.push(last_by_air);
     let graph = transport_to(from, last_by_air);
     let search = nearest_service_routed(
-        &wc, &graph, from, &targets, FindOptions::default(), &WorldState::empty(), &[], (1000, 1000),
+        &wc,
+        &graph,
+        from,
+        &targets,
+        FindOptions::default(),
+        &WorldState::empty(),
+        &[],
+        (1000, 1000),
     );
-    assert_eq!(search.route().expect("the final target is directly routed").dest, last_by_air);
+    assert_eq!(
+        search
+            .route()
+            .expect("the final target is directly routed")
+            .dest,
+        last_by_air
+    );
 
     let access_near = [targets[0]];
     let access_last = [last_by_air];
-    let candidates = [candidate(0, targets[0], &access_near), candidate(71, last_by_air, &access_last)];
-    assert_eq!(nearest_service_air(candidates.into_iter(), from).expect("air pick").index, 0);
+    let candidates = [
+        candidate(0, targets[0], &access_near),
+        candidate(71, last_by_air, &access_last),
+    ];
+    assert_eq!(
+        nearest_service_air(candidates.into_iter(), from)
+            .expect("air pick")
+            .index,
+        0
+    );
 }
 
 #[test]
@@ -196,23 +292,51 @@ fn routed_search_does_not_choose_a_quest_gated_last_target() {
     let near = tile(10, 2);
     let gated_last = tile(35, 35);
     let mut graph = transport_to(from, gated_last);
-    graph.edges[0].quest_req.push(String::from("Unfinished quest"));
+    graph.edges[0]
+        .quest_req
+        .push(String::from("Unfinished quest"));
     let targets = [near, gated_last];
     let search = nearest_service_routed(
-        &wc, &graph, from, &targets, FindOptions::default(), &WorldState::empty(), &[], (1000, 1000),
+        &wc,
+        &graph,
+        from,
+        &targets,
+        FindOptions::default(),
+        &WorldState::empty(),
+        &[],
+        (1000, 1000),
     );
-    assert_eq!(search.route().expect("ungated candidate remains reachable").dest, near);
+    assert_eq!(
+        search
+            .route()
+            .expect("ungated candidate remains reachable")
+            .dest,
+        near
+    );
 }
 
 #[test]
 fn cooperative_routed_request_owns_one_complete_target_set_with_teleports_off() {
     let targets: Box<[WorldTile]> = (0..72).map(|n| tile(n, 0)).collect();
     let request = routed_request(
-        tile(1, 1), targets, FindOptions { allow_teleports: true, allow_bank_fetch: true, ..FindOptions::default() },
-        Box::default(), 123,
+        tile(1, 1),
+        targets,
+        FindOptions {
+            allow_teleports: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        },
+        Box::default(),
+        123,
     );
     match request {
-        SearchRequest::First { targets, fallback, options, max_settles, .. } => {
+        SearchRequest::First {
+            targets,
+            fallback,
+            options,
+            max_settles,
+            ..
+        } => {
             assert_eq!(targets.len(), 72);
             assert!(fallback.is_empty());
             assert!(!options.allow_teleports);
@@ -227,15 +351,20 @@ fn cooperative_routed_request_owns_one_complete_target_set_with_teleports_off() 
 fn keeper_placement_cache_is_bound_once_per_world_and_shared_without_per_bot_rows() {
     use std::sync::Arc;
 
-    for revision in [api::selected::ClientRevision::R274, api::selected::ClientRevision::R289] {
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
         let data = api::game_data::for_revision(revision).expect("selected content");
-        let world = crate::NavWorld::from_parts(
+        let world = crate::world::NavWorld::from_parts(
             collision(8, 8, &[]),
             TransportGraph::default(),
             Vec::new(),
         );
         assert!(world.shop_keeper_facts().is_none());
-        world.bind_named_bank_facts(&data).expect("bind selected facts");
+        world
+            .bind_named_bank_facts(&data)
+            .expect("bind selected facts");
         let first = world.shop_keeper_facts().expect("bound shop keepers");
         let expected: usize = api::shop_facts::keepers(&data)
             .map(|keeper| {
@@ -278,11 +407,15 @@ fn reference_pack_routes_harpoon_to_harry_from_catherby_and_gerrant_from_port_sa
     assert_eq!(std::env::var_os("WORLD_NAV_PACK").as_ref(), Some(&pack));
     assert_eq!(std::env::var_os("NAV_ARRIVAL_PACK").as_ref(), Some(&pack));
     let bytes = std::fs::read(&pack).expect("read reviewed reference pack");
-    let world = crate::NavWorld::from_bytes(&bytes).expect("decode reviewed reference pack");
+    let world = crate::world::NavWorld::from_bytes(&bytes).expect("decode reviewed reference pack");
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
         .expect("selected 289 content");
-    world.bind_named_bank_facts(&data).expect("bind selected placements");
-    let facts = world.shop_keeper_facts().expect("shared resolved keeper rows");
+    world
+        .bind_named_bank_facts(&data)
+        .expect("bind selected placements");
+    let facts = world
+        .shop_keeper_facts()
+        .expect("shared resolved keeper rows");
     let item = data.item_by_alias("harpoon").expect("harpoon").id;
     let candidates: Vec<_> = facts.candidates_for(&data, item, true).collect();
     assert_eq!(candidates.len(), 2, "the pinned harpoon keeper domain");
@@ -290,18 +423,10 @@ fn reference_pack_routes_harpoon_to_harry_from_catherby_and_gerrant_from_port_sa
         .iter()
         .flat_map(|candidate| candidate.access.iter().copied())
         .collect();
-    let beach = &data
-        .gather_site("fishing", "fishing.catherby")
-        .expect("published Catherby beach")
-        .region;
-    let catherby = (beach.min_z..=beach.max_z)
-        .flat_map(|z| (beach.min_x..=beach.max_x).map(move |x| WorldTile {
-            x,
-            z,
-            level: beach.level,
-        }))
-        .find(|&tile| world.collision.standable(tile))
-        .expect("a standable tile inside the published Catherby beach");
+    // Use the account seed from host-play's real Catherby recovery cells,
+    // not the first collision-clear square of a region that includes sea.
+    let catherby = tile(2840, 3436);
+    assert!(world.collision.standable(catherby), "Catherby live seed");
     let port_sarim = tile(3020, 3230);
     assert!(world.collision.standable(port_sarim), "Port Sarim origin");
     let state = WorldState::empty().with_map_members(true);
@@ -318,9 +443,14 @@ fn reference_pack_routes_harpoon_to_harry_from_catherby_and_gerrant_from_port_sa
             FindOptions::default(),
             &state,
             &[],
-            (crate::router::BANK_TARGET_BUDGET, crate::router::NODE_BUDGET),
+            (
+                crate::router::BANK_TARGET_BUDGET,
+                crate::router::NODE_BUDGET,
+            ),
         );
-        let route = result.route().expect("a reachable pinned harpoon vendor");
+        let route = result.route().unwrap_or_else(|error| {
+            panic!("no routed vendor from {label} {from:?} to {targets:?}: {error:?}")
+        });
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.access.contains(&route.dest))

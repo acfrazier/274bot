@@ -3067,6 +3067,38 @@ mod bank_pick_capture {
     }
 
     #[test]
+    fn service_pick_excludes_quest_gated_keeper_and_chooses_nearer_reachable_keeper() {
+        let from = tile(2, 2);
+        let gated_access = tile(8, 2);
+        let near_access = tile(2, 6);
+        let far_access = tile(2, 12);
+        let (world, _) = gated_service_world(from, gated_access);
+        let facts = shop_facts_with_access([
+            (tile(8, 3), vec![gated_access]),
+            (tile(2, 13), vec![far_access]),
+            (tile(2, 7), vec![near_access]),
+        ]);
+        let (mut slot, input) = native_service_input(shop_request(facts, vec![0, 1, 2], from));
+        let (request, worker) = service_worker(&world, input, WorldState::empty(), 1, None);
+        assert_eq!(
+            request.order.len(),
+            3,
+            "all item-eligible keepers enter one complete gated search"
+        );
+        let result = finish_service_worker(worker);
+        assert_eq!(
+            result.service_outcome,
+            Some(script::native_bank::ServicePickOutcome::Routed {
+                index: 2,
+                access_tile: near_access,
+                cost: 2,
+            }),
+            "the closed one-tick quest gate cannot beat the nearer reachable keeper"
+        );
+        slot.stop();
+    }
+
+    #[test]
     fn service_pick_distinguishes_empty_access_no_path_and_closed_unknown_window() {
         use api::selected::QuestGate;
 
@@ -3301,7 +3333,10 @@ mod bank_pick_capture {
         );
         slot.stop();
     }
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "The regression test measures the former state layout without constructing or reading its obsolete fields."
+    )]
     struct FormerBankPickStateShape {
         generation: u64,
         last_id: u64,
@@ -3326,7 +3361,6 @@ mod bank_pick_capture {
     }
 
     #[repr(C)]
-    #[allow(dead_code)]
     struct FormerSplitReceiptSlots {
         bank: Option<(
             script::native::HostAuthority,

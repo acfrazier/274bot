@@ -112,9 +112,7 @@ impl HostAction {
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
             | HostEffect::ServicePick(_)
-            | HostEffect::AssessWalk(_) => {
-                self.owner.interaction_live(self.request_id)
-            }
+            | HostEffect::AssessWalk(_) => self.owner.interaction_live(self.request_id),
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
         }
     }
@@ -337,7 +335,11 @@ impl Ledger {
         self.complete_pick(authority, PickReceipt::Bank(receipt));
     }
 
-    pub fn complete_service_pick(&mut self, authority: &HostAuthority, receipt: ServicePickReceipt) {
+    pub fn complete_service_pick(
+        &mut self,
+        authority: &HostAuthority,
+        receipt: ServicePickReceipt,
+    ) {
         self.complete_pick(authority, PickReceipt::Service(receipt));
     }
 
@@ -346,7 +348,11 @@ impl Ledger {
         if !authority.live()
             || request.get() != receipt.request_id()
             || authority.run() != receipt.evidence().run
-            || self.pick_request != Some(PendingPick { request, channel: receipt.channel() })
+            || self.pick_request
+                != Some(PendingPick {
+                    request,
+                    channel: receipt.channel(),
+                })
             || self.pick.is_some()
             || !self.owner.as_ref().is_some_and(|owner| {
                 owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
@@ -700,17 +706,18 @@ mod tests {
         );
         ledger.revoke();
         ledger.complete_bank_pick(&current, receipt);
-        assert!(
-            ledger.pick.is_none(),
-            "a late pick revived cancelled work"
-        );
+        assert!(ledger.pick.is_none(), "a late pick revived cancelled work");
     }
 
     #[test]
     fn service_pick_receipts_require_matching_channel_owner_run_and_request() {
         use crate::native_bank::ServicePickOutcome;
 
-        let run = RunKey { slot: 1, run: 2, session: 3 };
+        let run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        };
         let mut ledger = Ledger::default();
         let owner = Owner::new(run, ledger.next_id().unwrap());
         ledger.owner = Some(Arc::clone(&owner));
@@ -731,10 +738,18 @@ mod tests {
         owner.set_interaction(current.request);
         let receipt = ServicePickReceipt {
             request_id: current.request.get(),
-            evidence: api::quest_progress::EvidenceStamp { run, tick: 4, sequence: 4 },
+            evidence: api::quest_progress::EvidenceStamp {
+                run,
+                tick: 4,
+                sequence: 4,
+            },
             outcome: ServicePickOutcome::Routed {
                 index: 7,
-                access_tile: api::snapshot::WorldTile { x: 100, z: 200, level: 0 },
+                access_tile: api::snapshot::WorldTile {
+                    x: 100,
+                    z: 200,
+                    level: 0,
+                },
                 cost: 11,
             },
         };
@@ -745,16 +760,26 @@ mod tests {
                 evidence: receipt.evidence,
                 selected: crate::native_bank::SelectedBank {
                     bank_index: 7,
-                    access_tile: api::snapshot::WorldTile { x: 100, z: 200, level: 0 },
+                    access_tile: api::snapshot::WorldTile {
+                        x: 100,
+                        z: 200,
+                        level: 0,
+                    },
                     kind: crate::native_bank::PickKind::Reachable,
                     access: None,
                 },
             },
         );
-        assert!(ledger.pick.is_none(), "a bank receipt cannot answer a service request");
+        assert!(
+            ledger.pick.is_none(),
+            "a bank receipt cannot answer a service request"
+        );
         ledger.complete_service_pick(
             &old,
-            ServicePickReceipt { request_id: old.request.get(), ..receipt.clone() },
+            ServicePickReceipt {
+                request_id: old.request.get(),
+                ..receipt.clone()
+            },
         );
         assert!(ledger.pick.is_none(), "the replaced request cannot answer");
         ledger.complete_service_pick(
@@ -771,12 +796,18 @@ mod tests {
         ledger.complete_service_pick(&current, receipt.clone());
         ledger.complete_service_pick(
             &current,
-            ServicePickReceipt { outcome: ServicePickOutcome::NotSettled, ..receipt.clone() },
+            ServicePickReceipt {
+                outcome: ServicePickOutcome::NotSettled,
+                ..receipt.clone()
+            },
         );
         assert_eq!(ledger.pick, Some(PickReceipt::Service(receipt.clone())));
         ledger.revoke();
         ledger.complete_service_pick(&current, receipt);
-        assert!(ledger.pick.is_none(), "a late receipt cannot revive cancelled work");
+        assert!(
+            ledger.pick.is_none(),
+            "a late receipt cannot revive cancelled work"
+        );
     }
 
     #[test]

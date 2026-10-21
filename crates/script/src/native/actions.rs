@@ -251,7 +251,10 @@ impl ActionContext<'_> {
         ledger.interaction = None;
         ledger.interaction_request = None;
         ledger.pick = None;
-        ledger.pick_request = Some(PendingPick { request: request_id, channel });
+        ledger.pick_request = Some(PendingPick {
+            request: request_id,
+            channel,
+        });
         ledger.outbox.push(HostAction {
             owner,
             request_id,
@@ -436,7 +439,10 @@ impl ActionContext<'_> {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
             }
-            if ledger.pick_request.is_some_and(|pending| pending.request == request_id) {
+            if ledger
+                .pick_request
+                .is_some_and(|pending| pending.request == request_id)
+            {
                 ledger.pick_request = None;
                 ledger.pick = None;
             }

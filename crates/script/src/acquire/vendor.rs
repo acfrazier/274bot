@@ -30,14 +30,14 @@ pub enum VendorDecision {
     Blocked(BlockReason),
 }
 
-/// Build the one retained index list for an account-eligible vendor request.
+/// Build the one retained index list for a vendor request.
 ///
-/// Stock and world membership come from pinned `data/shops/*.inv` joined to
-/// selected items. `allowed` applies the account's area/quest/skill facts to
-/// each selected keeper placement before any request. Both passes must read
-/// the same account snapshot. Access rings remain borrowed from the shared
-/// world facts. The exact-length collection makes one `Arc<[u16]>` allocation;
-/// sorting it in place allocates nothing and never narrows the routed domain.
+/// Pinned item membership and non-empty validated access filter candidates.
+/// `allowed` restricts explicit keeper identity or exhausted stock, never
+/// area-entry eligibility. Membership, quest and skill entry gates belong to
+/// the complete routed search. Access rings remain borrowed from shared world
+/// facts. The exact-length collection makes one `Arc<[u16]>` allocation;
+/// sorting it in place allocates nothing and never pages the routed domain.
 pub fn eligible_indices(
     facts: &ShopKeeperFacts,
     data: &SelectedGameData,
@@ -93,7 +93,11 @@ pub fn choose_vendor(
                 .get(usize::from(*index))
                 .filter(|row| eligible.contains(index) && row.access().contains(access_tile))
                 .ok_or(ActionError::Stale)?;
-            record_vendor(looked, row.keeper.keeper_id, VendorOutcome::Routed { cost: *cost });
+            record_vendor(
+                looked,
+                row.keeper.keeper_id,
+                VendorOutcome::Routed { cost: *cost },
+            );
             VendorDecision::Go {
                 index: *index,
                 access_tile: *access_tile,
@@ -167,10 +171,20 @@ mod tests {
 
     fn fixture() -> (Arc<SelectedGameData>, ShopKeeperFacts, i32) {
         let data = api::game_data::for_revision(ClientRevision::R289).expect("selected content");
-        let gerrant = keepers(&data).find(|row| row.keeper_config == "gerrant").unwrap();
-        let harry = keepers(&data).find(|row| row.keeper_config == "harry").unwrap();
-        let gerrant = KeeperFact { keeper_name: "Same keeper", ..gerrant };
-        let harry = KeeperFact { keeper_name: "Same keeper", ..harry };
+        let gerrant = keepers(&data)
+            .find(|row| row.keeper_config == "gerrant")
+            .unwrap();
+        let harry = keepers(&data)
+            .find(|row| row.keeper_config == "harry")
+            .unwrap();
+        let gerrant = KeeperFact {
+            keeper_name: "Same keeper",
+            ..gerrant
+        };
+        let harry = KeeperFact {
+            keeper_name: "Same keeper",
+            ..harry
+        };
         assert_ne!(gerrant.keeper_id, harry.keeper_id);
         let rows = vec![
             ResolvedShopKeeper::new(0, gerrant, tile(10, 10), [tile(9, 10)]),
@@ -179,7 +193,11 @@ mod tests {
             ResolvedShopKeeper::new(3, harry, tile(40, 40), []),
         ];
         let item = data.item_by_alias("harpoon").expect("harpoon").id;
-        (data, ShopKeeperFacts::from_rows(rows.into_boxed_slice()), item)
+        (
+            data,
+            ShopKeeperFacts::from_rows(rows.into_boxed_slice()),
+            item,
+        )
     }
 
     #[test]
@@ -188,17 +206,29 @@ mod tests {
         let access = facts.rows()[0].access().as_ptr();
         let mut result = None;
         let measured = allocation_counter::measure(|| {
-            result = Some(eligible_indices(&facts, &data, item, true, tile(20, 20), |_| true));
+            result = Some(eligible_indices(
+                &facts,
+                &data,
+                item,
+                true,
+                tile(20, 20),
+                |_| true,
+            ));
         });
         let indices = result.expect("index list");
         assert_eq!(&*indices, &[1, 0, 2]);
         assert_eq!(measured.count_total, 1);
         assert_eq!(facts.rows()[0].access().as_ptr(), access);
-        println!("A3 vendor indices: n={} allocations={} bytes={}", indices.len(), measured.count_total, measured.bytes_total);
+        println!(
+            "A3 vendor indices: n={} allocations={} bytes={}",
+            indices.len(),
+            measured.count_total,
+            measured.bytes_total
+        );
     }
 
     #[test]
-    fn account_eligibility_and_empty_access_filter_before_the_request() {
+    fn explicit_keeper_identity_and_empty_access_filter_before_the_request() {
         let (data, facts, item) = fixture();
         let indices = eligible_indices(&facts, &data, item, true, tile(0, 0), |row| {
             row.keeper.keeper_config != "harry"
@@ -216,12 +246,27 @@ mod tests {
         let choice = choose_vendor(
             &facts,
             &[0, 1, 2],
-            &ServicePickOutcome::Routed { index: 1, access_tile: tile(19, 20), cost: 7 },
+            &ServicePickOutcome::Routed {
+                index: 1,
+                access_tile: tile(19, 20),
+                cost: 7,
+            },
             &mut retry,
             &mut looked,
-        ).unwrap();
-        assert_eq!(choice, VendorDecision::Go { index: 1, access_tile: tile(19, 20), cost: 7 });
-        assert_eq!(looked.vendors[0].unwrap().keeper_id, facts.rows()[1].keeper.keeper_id);
+        )
+        .unwrap();
+        assert_eq!(
+            choice,
+            VendorDecision::Go {
+                index: 1,
+                access_tile: tile(19, 20),
+                cost: 7
+            }
+        );
+        assert_eq!(
+            looked.vendors[0].unwrap().keeper_id,
+            facts.rows()[1].keeper.keeper_id
+        );
         assert_eq!(looked.vendors.iter().flatten().count(), 1);
         assert_eq!(
             looked.vendors[0].unwrap().outcome,
@@ -234,13 +279,21 @@ mod tests {
     #[test]
     fn unrelated_or_non_access_routed_results_fail_closed() {
         let (_, facts, _) = fixture();
-        for (index, access_tile) in [(1, tile(19, 20)), (0, tile(10, 10)), (u16::MAX, tile(9, 10))] {
+        for (index, access_tile) in [
+            (1, tile(19, 20)),
+            (0, tile(10, 10)),
+            (u16::MAX, tile(9, 10)),
+        ] {
             let mut looked = Looked::default();
             assert!(matches!(
                 choose_vendor(
                     &facts,
                     &[0, 2],
-                    &ServicePickOutcome::Routed { index, access_tile, cost: 1 },
+                    &ServicePickOutcome::Routed {
+                        index,
+                        access_tile,
+                        cost: 1
+                    },
                     &mut false,
                     &mut looked,
                 ),
@@ -256,12 +309,26 @@ mod tests {
         let mut retry = false;
         let mut looked = Looked::default();
         assert_eq!(
-            choose_vendor(&facts, &[0, 1, 2], &ServicePickOutcome::NoCandidate, &mut retry, &mut looked).unwrap(),
+            choose_vendor(
+                &facts,
+                &[0, 1, 2],
+                &ServicePickOutcome::NoCandidate,
+                &mut retry,
+                &mut looked
+            )
+            .unwrap(),
             VendorDecision::Blocked(BlockReason::NoVendor)
         );
         let measured = allocation_counter::measure(|| {
             assert_eq!(
-                choose_vendor(&facts, &[0, 1, 2], &ServicePickOutcome::NoPath { unresolved: None }, &mut retry, &mut looked).unwrap(),
+                choose_vendor(
+                    &facts,
+                    &[0, 1, 2],
+                    &ServicePickOutcome::NoPath { unresolved: None },
+                    &mut retry,
+                    &mut looked
+                )
+                .unwrap(),
                 VendorDecision::Blocked(BlockReason::VendorUnreachable)
             );
         });
@@ -269,14 +336,24 @@ mod tests {
         assert!(!retry);
         assert_eq!(looked.vendors.iter().flatten().count(), 2);
         assert_eq!(looked.more_vendors, 0);
-        assert!(looked.vendors.iter().flatten().all(|row| row.outcome == VendorOutcome::NoPath));
+        assert!(looked
+            .vendors
+            .iter()
+            .flatten()
+            .all(|row| row.outcome == VendorOutcome::NoPath));
     }
 
     #[test]
     fn every_undecided_pair_retries_once_then_blocks_without_claiming_unreachable() {
         let (_, facts, _) = fixture();
-        for first in [ServicePickOutcome::BudgetExhausted, ServicePickOutcome::NotSettled] {
-            for second in [ServicePickOutcome::BudgetExhausted, ServicePickOutcome::NotSettled] {
+        for first in [
+            ServicePickOutcome::BudgetExhausted,
+            ServicePickOutcome::NotSettled,
+        ] {
+            for second in [
+                ServicePickOutcome::BudgetExhausted,
+                ServicePickOutcome::NotSettled,
+            ] {
                 let mut retry = false;
                 let mut looked = Looked::default();
                 assert_eq!(
@@ -289,7 +366,11 @@ mod tests {
                     choose_vendor(&facts, &[0, 1, 2], &second, &mut retry, &mut looked).unwrap(),
                     VendorDecision::Blocked(BlockReason::VendorPickUndecided)
                 );
-                assert!(looked.vendors.iter().flatten().all(|row| row.outcome == VendorOutcome::Undecided));
+                assert!(looked
+                    .vendors
+                    .iter()
+                    .flatten()
+                    .all(|row| row.outcome == VendorOutcome::Undecided));
             }
         }
     }
@@ -297,15 +378,31 @@ mod tests {
     #[test]
     fn diagnostic_records_keep_three_keepers_and_count_the_rest_without_allocating() {
         let data = api::game_data::for_revision(ClientRevision::R289).expect("selected content");
-        let rows: Box<[_]> = keepers(&data).take(5).enumerate().map(|(index, keeper)| {
-            let x = i32::try_from(index).unwrap() * 10 + 10;
-            ResolvedShopKeeper::new(u16::try_from(index).unwrap(), keeper, tile(x, 10), [tile(x - 1, 10)])
-        }).collect();
+        let rows: Box<[_]> = keepers(&data)
+            .take(5)
+            .enumerate()
+            .map(|(index, keeper)| {
+                let x = i32::try_from(index).unwrap() * 10 + 10;
+                ResolvedShopKeeper::new(
+                    u16::try_from(index).unwrap(),
+                    keeper,
+                    tile(x, 10),
+                    [tile(x - 1, 10)],
+                )
+            })
+            .collect();
         assert_eq!(rows.len(), 5);
         let facts = ShopKeeperFacts::from_rows(rows);
         let mut looked = Looked::default();
         let measured = allocation_counter::measure(|| {
-            choose_vendor(&facts, &[0, 1, 2, 3, 4], &ServicePickOutcome::NoPath { unresolved: None }, &mut false, &mut looked).unwrap();
+            choose_vendor(
+                &facts,
+                &[0, 1, 2, 3, 4],
+                &ServicePickOutcome::NoPath { unresolved: None },
+                &mut false,
+                &mut looked,
+            )
+            .unwrap();
         });
         assert_eq!(measured.count_total, 0);
         assert_eq!(looked.vendors.iter().flatten().count(), 3);
