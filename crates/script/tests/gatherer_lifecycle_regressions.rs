@@ -14,6 +14,21 @@ use script::{CompiledTick, ScriptCtx, SlotScript};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// These lifecycle fixtures provide walk receipts themselves and have no zones.
+struct AllowWalkDanger;
+
+impl script::native::WalkDangerQuery for AllowWalkDanger {
+    fn check(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+    ) -> script::native::WalkDanger<'_> {
+        script::native::WalkDanger::Allowed
+    }
+}
+
 #[derive(Default)]
 struct OutSink;
 impl Out for OutSink {
@@ -690,6 +705,7 @@ fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hol
         obj_names: None,
         compiled: CompiledTick {
             hold,
+            walk_danger: Some(&AllowWalkDanger),
             ..CompiledTick::default()
         },
     });
@@ -1108,7 +1124,10 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: CompiledTick::default(),
+        compiled: CompiledTick {
+            walk_danger: Some(&AllowWalkDanger),
+            ..CompiledTick::default()
+        },
     });
 }
 
