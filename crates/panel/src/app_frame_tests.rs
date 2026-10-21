@@ -1146,10 +1146,10 @@ fn picker_rows(rig: &mut Rig) -> Vec<crate::world_picker::EntryRecord> {
 
 /// A click on a world marker of the rail or of a Grid cell opens the one
 /// world picker for that bot, with its world ticked; picking another world
-/// plans a Switch world for that bot alone, and the Fleet window opens to
-/// show the plan's confirmation (Confirm and Cancel); nothing runs before
-/// Confirm. Picking the world the bot is on submits nothing. The marker was
-/// a plain disc.
+/// plans a Switch world for that bot alone, and the fleet toolbar on screen
+/// (the rail's, or the side panel's in Grid) shows the plan's confirmation
+/// (Confirm and Cancel); nothing runs before Confirm. Picking the world the
+/// bot is on submits nothing. The marker was a plain disc.
 fn a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(grid: bool) {
     let label = if grid { "grid-world" } else { "rail-world" };
     let Some((mut rig, _dir)) = world_rig(label, grid, Some(&[1, 2, 3])) else {
@@ -1206,7 +1206,9 @@ fn a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(grid: bool) {
         prompt.starts_with("Move 1 bot to world 1: bob."),
         "{prompt}"
     );
-    assert!(rig.session().fleet_open, "the Fleet window shows the plan");
+    // The rail's toolbar (Grid: the strip's fleet section) shows the plan,
+    // so the Fleet window stays closed.
+    assert!(!rig.session().fleet_open, "a toolbar shows the plan");
     rig.frame(Pointer::Away);
     assert!(
         rig.text.contains("Move 1 bot to world 1: bob.") && rig.text.contains("Confirm"),
@@ -1252,5 +1254,64 @@ fn a_world_marker_is_not_clickable_on_a_one_world_server() {
         assert!(rig.session().core.fleet_plan().is_none());
         assert!(!rig.session().fleet_open);
         assert_eq!(rig.session().error, None);
+    }
+}
+
+/// The real frame: the rail's fleet toolbar stays put while the tiles
+/// region under it scrolls (30 caps do not fit), open or folded; folded,
+/// the tiles region is taller and a waiting plan stays on screen.
+#[test]
+fn the_rail_tiles_scroll_under_the_sticky_toolbar() {
+    let names: Vec<String> = (0..30).map(|i| format!("bot{i:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (mut session, _dir) = session_with_play("rail-sticky", &refs);
+    session.multibox = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!("the_rail_tiles_scroll_under_the_sticky_toolbar: no headless GPU, skipped");
+        return;
+    };
+    rig.frames_until("every cap is drawn", |rig| {
+        drawn_caps(&rig.text, &refs).len() == refs.len()
+    });
+    // One frame's toolbar header and tiles region.
+    let frame = |rig: &mut Rig| {
+        crate::fleet::take_layout();
+        rig.frame(Pointer::Away);
+        let layout = crate::fleet::take_layout();
+        let tiles = super::TEST_RAIL_TILES.get().expect("the tiles region");
+        (layout, tiles)
+    };
+    for open in [true, false] {
+        rig.session().ui.fleet_toolbar_open = open;
+        let (before, tiles) = frame(&mut rig);
+        assert!(
+            tiles.scroll_max_y > 0.0,
+            "open {open}: 30 caps overflow the tiles region"
+        );
+        // Wheel over the tiles region until it scrolls.
+        let over = centre(tiles.rect);
+        for _ in 0..4 {
+            rig.ctx.io_mut().add_mouse_wheel_event([0.0, -3.0]);
+            rig.frame_at(over, false, Pointer::Away);
+        }
+        let (after, scrolled) = frame(&mut rig);
+        assert!(
+            scrolled.scroll_y > 0.0,
+            "open {open}: the tiles region scrolled"
+        );
+        assert_eq!(
+            after.fold_header, before.fold_header,
+            "open {open}: the toolbar did not move"
+        );
+        assert_eq!(after.site, Some(crate::fleet_toolbar::Site::Rail));
+        assert_eq!(after.actions.is_empty(), !open, "open {open}");
+        if !open {
+            // A plan stays visible under the folded header.
+            rig.session()
+                .plan_fleet_action(frontend_core::FleetAction::Login);
+            let (folded, folded_tiles) = frame(&mut rig);
+            assert!(folded.plan.is_some(), "the folded toolbar keeps the plan");
+            assert!(folded_tiles.rect[1] > folded.fold_header[3]);
+        }
     }
 }

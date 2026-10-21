@@ -128,8 +128,11 @@ pub fn multibox_tooltip(on: bool) -> &'static str {
 }
 
 /// Default strip heading order. Drag a collapsing header to reorder;
-/// unknown/missing ids are filled from this list.
-pub const HEADING_ORDER: &[&str] = &["status", "resource", "profile", "script", "debug", "log"];
+/// unknown/missing ids are filled from this list. "fleet" draws only while
+/// the rail is hidden (Grid, or MultiBox off).
+pub const HEADING_ORDER: &[&str] = &[
+    "status", "fleet", "resource", "profile", "script", "debug", "log",
+];
 
 /// Merge a saved order with [`HEADING_ORDER`]: drop unknown ids, append
 /// any missing defaults (so old prefs still show new headings).
@@ -186,7 +189,7 @@ mod tests {
         let saved = vec!["log".into(), "nope".into(), "status".into()];
         assert_eq!(
             resolve_heading_order(&saved),
-            ["log", "status", "resource", "profile", "script", "debug"]
+            ["log", "status", "fleet", "resource", "profile", "script", "debug"]
         );
         let mut order = resolve_heading_order(&[]);
         move_heading(&mut order, "profile", "status");
