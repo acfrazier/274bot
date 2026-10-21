@@ -4,16 +4,22 @@
 //! members, Load all and every fleet view; Name and Status are view sorts
 //! that never change it.
 //!
-//! The stored form is one small member per profile (`"<uid>": <key>`), so
-//! the preferences service writes a large order as one row per changed
-//! profile (a preference value is at most 4,096 bytes) and a move changes
-//! only the moved profiles' keys. Keys leave gaps; when two neighbours
-//! have none left the whole order is renumbered. A name is never stored:
-//! a rename keeps the profile's identity, so its place follows the vault
+//! The stored form is one small member per profile (`"<uid>": <key>`): a
+//! preference value is at most 4,096 bytes, so the preferences service
+//! holds a large order one row per profile, and one save replaces every
+//! changed row in one file replacement (all of them land or none does). A
+//! move changes only the moved profiles' keys. Keys leave gaps; when two
+//! neighbours have none left, or a key would leave the kept range
+//! (`±2^52`), the whole order is renumbered, and a stored key outside that
+//! range renumbers the order when it is read. A name is never stored: a
+//! rename keeps the profile's identity, so its place follows the vault
 //! whether the rename commits or fails. A profile new to the vault is
-//! appended; a deleted one's entry stays stored (the service never removes
-//! a member) and is ignored. Missing, the order is seeded in vault
-//! (alphabetical) order without a write.
+//! appended. A deleted profile's entry is kept, unordered, while its
+//! deletion is not durable (a failed deletion puts it back in its place),
+//! and removed by the next save once it is. A new profile's uid is above
+//! every uid the order has held, so it never takes a deleted profile's
+//! place. Missing, the order is seeded in vault (alphabetical) order
+//! without a write.
 
 use serde_json::Value;
 
@@ -52,6 +58,16 @@ pub enum ReorderOp {
 /// The gap between neighbouring sort keys of a seeded or renumbered order.
 const KEY_GAP: i64 = 1 << 16;
 
+/// The largest sort key magnitude kept. A stored key outside
+/// `-KEY_LIMIT..=KEY_LIMIT` renumbers the order when it is read, and a key
+/// a change would put past it renumbers instead, so no key arithmetic can
+/// overflow (and every key is an integer a JSON reader holds exactly).
+const KEY_LIMIT: i64 = 1 << 52;
+
+fn in_range(key: i64) -> bool {
+    (-KEY_LIMIT..=KEY_LIMIT).contains(&key)
+}
+
 /// One stored entry: a profile identity (vault uid) and its sort key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
@@ -68,9 +84,15 @@ pub struct ProfileOrder {
     /// The vault's profiles in order: name, uid and sort key (parallel).
     names: Vec<String>,
     live: Vec<Entry>,
-    /// Stored entries of profiles the vault no longer has (kept so a
-    /// write never needs a removal).
-    stale: Vec<Entry>,
+    /// Stored entries of profiles the vault lacks while their deletion is
+    /// not durable, so a failed deletion gets its place back.
+    held: Vec<Entry>,
+    /// The highest uid this order has held, never lowered: a new
+    /// profile's uid is above it.
+    max_uid: i32,
+    /// The stored keys were renumbered when read: the next reconcile asks
+    /// for a write.
+    renumbered: bool,
 }
 
 impl ProfileOrder {
@@ -79,20 +101,34 @@ impl ProfileOrder {
         Self {
             names: self.names.clone(),
             live: self.live.clone(),
-            stale: self.stale.clone(),
+            held: self.held.clone(),
+            max_uid: self.max_uid,
+            renumbered: self.renumbered,
         }
     }
 
-    /// Become a copy of `other`, reusing this order's buffers.
+    /// Become a copy of `other`, reusing this order's buffers (the
+    /// highest uid seen is kept).
     pub(crate) fn assign_from(&mut self, other: &Self) {
         self.names.clone_from(&other.names);
         self.live.clone_from(&other.live);
-        self.stale.clone_from(&other.stale);
+        self.held.clone_from(&other.held);
+        self.max_uid = self.max_uid.max(other.max_uid);
+        self.renumbered = other.renumbered;
+    }
+
+    /// Become `loaded` (a stored value just read), keeping the highest
+    /// uid seen.
+    pub(crate) fn replace(&mut self, loaded: Self) {
+        let max_uid = self.max_uid.max(loaded.max_uid);
+        *self = loaded;
+        self.max_uid = max_uid;
     }
 
     /// The order a stored preference value holds: its `"<uid>": <key>`
-    /// members (anything else is ignored), ordered by key. Names come from
-    /// the vault at [`Self::reconcile`].
+    /// members (anything else is ignored), ordered by key; renumbered when
+    /// a key is out of range. Names come from the vault at
+    /// [`Self::reconcile`].
     pub(crate) fn from_value(value: Option<&Value>) -> Self {
         let mut order = Self::default();
         if let Some(Value::Object(members)) = value {
@@ -100,17 +136,23 @@ impl ProfileOrder {
                 let (Ok(uid), Some(key)) = (uid.parse::<i32>(), key.as_i64()) else {
                     continue;
                 };
-                order.stale.push(Entry { uid, key });
+                order.held.push(Entry { uid, key });
             }
         }
-        order.stale.sort_by_key(|entry| (entry.key, entry.uid));
+        order.held.sort_by_key(|entry| (entry.key, entry.uid));
+        order.max_uid = order.held.iter().map(|entry| entry.uid).max().unwrap_or(0);
+        if !order.held.iter().all(|entry| in_range(entry.key)) {
+            order.renumber();
+            order.renumbered = true;
+        }
         order
     }
 
-    /// The stored preference value: every entry, live or stale.
+    /// The stored preference value: every live entry, and every entry
+    /// whose deletion is not durable yet.
     pub(crate) fn to_value(&self) -> Value {
-        let mut members = serde_json::Map::with_capacity(self.live.len() + self.stale.len());
-        for entry in self.live.iter().chain(&self.stale) {
+        let mut members = serde_json::Map::with_capacity(self.live.len() + self.held.len());
+        for entry in self.live.iter().chain(&self.held) {
             members.insert(entry.uid.to_string(), Value::from(entry.key));
         }
         Value::Object(members)
@@ -131,31 +173,60 @@ impl ProfileOrder {
         self.names.iter().position(|candidate| candidate == name)
     }
 
+    /// Whether an entry the vault lacks is held (its deletion is not
+    /// durable yet).
+    pub(crate) fn holds_deleted(&self) -> bool {
+        !self.held.is_empty()
+    }
+
+    /// The highest uid this order has held.
+    pub(crate) fn max_uid(&self) -> i32 {
+        self.max_uid
+    }
+
     /// Make the order hold exactly the vault's profiles (`vault`: uid and
     /// name, in vault order): a stored profile keeps its place under its
-    /// current name, a profile the order lacks is appended (seeded in
-    /// vault order when nothing is stored), and an entry the vault lacks
-    /// is kept stored but not ordered. Returns whether an entry was added
-    /// (a write is needed); a rename alone needs none.
-    pub(crate) fn reconcile<'a>(&mut self, vault: impl Iterator<Item = (i32, &'a str)>) -> bool {
-        let mut entries: Vec<Entry> = self.live.drain(..).chain(self.stale.drain(..)).collect();
+    /// current name, and a profile the order lacks is appended (seeded in
+    /// vault order when nothing is stored). An entry the vault lacks stays
+    /// stored, unordered, while `pending(uid)` says its deletion is not
+    /// durable, and is dropped otherwise. Returns whether the stored value
+    /// changed (an entry added or dropped, or the keys renumbered when
+    /// read): a write is needed. A rename alone needs none.
+    pub(crate) fn reconcile<'a>(
+        &mut self,
+        vault: impl Iterator<Item = (i32, &'a str)>,
+        pending: impl Fn(i32) -> bool,
+    ) -> bool {
+        let mut entries: Vec<Entry> = self.live.drain(..).chain(self.held.drain(..)).collect();
         entries.sort_by_key(|entry| (entry.key, entry.uid));
         let mut profiles: Vec<(i32, &str)> = vault.collect();
+        self.max_uid = profiles
+            .iter()
+            .map(|(uid, _)| *uid)
+            .chain(entries.iter().map(|entry| entry.uid))
+            .fold(self.max_uid, i32::max);
         let mut live: Vec<(Entry, String)> = Vec::with_capacity(profiles.len());
-        let mut stale = Vec::new();
+        let mut held = Vec::new();
+        let mut dropped = false;
         for entry in entries {
             match profiles.iter().position(|(uid, _)| *uid == entry.uid) {
                 Some(at) => {
                     let (_, name) = profiles.remove(at);
                     live.push((entry, name.to_string()));
                 }
-                None => stale.push(entry),
+                None if pending(entry.uid) => held.push(entry),
+                None => dropped = true,
             }
         }
         let added = !profiles.is_empty();
         let mut next = live.last().map_or(0, |(entry, _)| entry.key);
+        let mut spent = false;
         for (uid, name) in profiles {
-            next += KEY_GAP;
+            match next.checked_add(KEY_GAP).filter(|key| in_range(*key)) {
+                Some(key) => next = key,
+                // Renumbered below; the key is a placeholder until then.
+                None => spent = true,
+            }
             live.push((Entry { uid, key: next }, name.to_string()));
         }
         self.names.clear();
@@ -163,30 +234,58 @@ impl ProfileOrder {
             self.live.push(entry);
             self.names.push(name);
         }
-        self.stale = stale;
-        added
+        self.held = held;
+        if spent {
+            self.renumber();
+        }
+        let renumbered = std::mem::take(&mut self.renumbered);
+        added || dropped || renumbered
     }
 
-    /// Give every live entry an evenly spaced key (no gap left).
+    /// Give every entry an evenly spaced key (no gap left): the live
+    /// entries in their order, and each held entry where its key placed it
+    /// among them, so a failed deletion still gets its place back. The
+    /// keys stay far inside [`KEY_LIMIT`]: one gap per entry, and the
+    /// entries are bounded by the preferences file.
     fn renumber(&mut self) {
-        for (index, entry) in self.live.iter_mut().enumerate() {
-            entry.key = (index as i64 + 1) * KEY_GAP;
+        self.held.sort_by_key(|entry| (entry.key, entry.uid));
+        let mut held = std::mem::take(&mut self.held).into_iter().peekable();
+        let mut placed = Vec::with_capacity(held.len());
+        let mut key = 0;
+        for entry in &mut self.live {
+            while let Some(mut deleted) = held.next_if(|deleted| deleted.key < entry.key) {
+                key += KEY_GAP;
+                deleted.key = key;
+                placed.push(deleted);
+            }
+            key += KEY_GAP;
+            entry.key = key;
         }
+        for mut deleted in held {
+            key += KEY_GAP;
+            deleted.key = key;
+            placed.push(deleted);
+        }
+        self.held = placed;
     }
 
     /// The key for a profile placed at `at` (between `at - 1` and the
-    /// entry now at `at`), renumbering first when there is no gap.
+    /// entry now at `at`), renumbering first when there is no gap or the
+    /// key would leave the kept range.
     fn key_between(&mut self, at: usize) -> i64 {
         let gap_at = |live: &[Entry], at: usize| -> Option<i64> {
             let low = at.checked_sub(1).map(|i| live[i].key);
             let high = live.get(at).map(|entry| entry.key);
-            match (low, high) {
+            let key = match (low, high) {
                 (None, None) => Some(KEY_GAP),
-                (Some(low), None) => Some(low + KEY_GAP),
-                (None, Some(high)) => Some(high - KEY_GAP),
-                (Some(low), Some(high)) if high - low >= 2 => Some(low + (high - low) / 2),
-                _ => None,
-            }
+                (Some(low), None) => low.checked_add(KEY_GAP),
+                (None, Some(high)) => high.checked_sub(KEY_GAP),
+                (Some(low), Some(high)) => high
+                    .checked_sub(low)
+                    .filter(|gap| *gap >= 2)
+                    .map(|gap| low + gap / 2),
+            };
+            key.filter(|key| in_range(*key))
         };
         if let Some(key) = gap_at(&self.live, at) {
             return key;
@@ -224,7 +323,8 @@ impl ProfileOrder {
 
     /// Move the names `marked` accepts to the top, keeping their relative
     /// order and the others' relative order. Returns whether it changed.
-    /// Only the moved profiles' keys change.
+    /// Only the moved profiles' keys change (unless the order had to be
+    /// renumbered).
     pub(crate) fn move_to_top(&mut self, marked: impl Fn(&str) -> bool) -> bool {
         let first_unmarked = self.names.iter().position(|name| !marked(name));
         let Some(first_unmarked) = first_unmarked else {
@@ -255,29 +355,18 @@ impl ProfileOrder {
         self.names = names;
         self.live = live;
         // The leading marked entries already above every unmarked one keep
-        // their keys; the moved ones go just above the first unmarked.
-        let first_rest = self.live.get(top).map_or(0, |entry| entry.key);
-        let unmoved = first_unmarked;
-        let count = (top - unmoved) as i64;
-        let low = unmoved.checked_sub(1).map(|index| self.live[index].key);
-        let fits = match low {
-            Some(low) => first_rest - low > count,
-            None => true,
-        };
-        if !fits {
-            self.renumber();
-            return true;
-        }
-        let step = match low {
-            Some(low) => (first_rest - low) / (count + 1),
-            None => KEY_GAP,
-        };
-        for (offset, index) in (unmoved..top).enumerate() {
-            let key = match low {
-                Some(low) => low + step * (offset as i64 + 1),
-                None => first_rest - step * (count - offset as i64),
-            };
-            self.live[index].key = key;
+        // their keys; the moved ones go just above the first unmarked (an
+        // unmarked profile exists, so `top` is in range).
+        let low = first_unmarked
+            .checked_sub(1)
+            .map(|index| self.live[index].key);
+        match top_keys(low, self.live[top].key, top - first_unmarked) {
+            Some(keys) => {
+                for (entry, key) in self.live[first_unmarked..top].iter_mut().zip(keys) {
+                    entry.key = key;
+                }
+            }
+            None => self.renumber(),
         }
         true
     }
@@ -315,6 +404,7 @@ impl ProfileOrder {
                 .iter()
                 .enumerate()
                 .map(|(index, name)| (index as i32 + 1, *name)),
+            |_| false,
         );
         order
     }
@@ -326,9 +416,32 @@ impl ProfileOrder {
     }
 }
 
+/// The keys of `count` profiles moved between the key `low` (none: the
+/// top) and `high`, evenly spaced; `None` when they do not fit there in
+/// the kept range (the order is renumbered instead).
+fn top_keys(low: Option<i64>, high: i64, count: usize) -> Option<Vec<i64>> {
+    let count = i64::try_from(count).ok()?;
+    let step = match low {
+        Some(low) => high
+            .checked_sub(low)?
+            .checked_div(count.checked_add(1)?)
+            .filter(|step| *step > 0)?,
+        None => KEY_GAP,
+    };
+    (1..=count)
+        .map(|n| {
+            let key = match low {
+                Some(low) => low.checked_add(step.checked_mul(n)?)?,
+                None => high.checked_sub(step.checked_mul(count - n + 1)?)?,
+            };
+            Some(key).filter(|key| in_range(*key))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ProfileOrder;
+    use super::{ProfileOrder, KEY_LIMIT};
 
     fn order(names: &[&str]) -> ProfileOrder {
         ProfileOrder::of_names_for_test(names)
@@ -338,23 +451,33 @@ mod tests {
         order.names().iter().map(String::as_str).collect()
     }
 
-    fn vault<'a>(rows: &'a [(i32, &'a str)]) -> impl Iterator<Item = (i32, &'a str)> + 'a {
-        rows.iter().copied()
+    /// Reconcile with `rows`, every deletion durable.
+    fn sync(order: &mut ProfileOrder, rows: &[(i32, &str)]) -> bool {
+        order.reconcile(rows.iter().copied(), |_| false)
+    }
+
+    fn stored_len(order: &ProfileOrder) -> usize {
+        order.to_value().as_object().map_or(0, |o| o.len())
+    }
+
+    /// Keys strictly increase and stay in the kept range.
+    fn keys_ok(order: &ProfileOrder) {
+        let keys = order.keys();
+        assert!(keys.windows(2).all(|w| w[0] < w[1]), "{keys:?}");
+        assert!(keys.iter().all(|k| k.abs() <= KEY_LIMIT), "{keys:?}");
     }
 
     #[test]
     fn an_empty_order_is_seeded_in_vault_order_and_new_profiles_append() {
         let mut saved = ProfileOrder::default();
-        assert!(saved.reconcile(vault(&[(1, "alice"), (2, "bob"), (3, "carol")])));
+        assert!(sync(&mut saved, &[(1, "alice"), (2, "bob"), (3, "carol")]));
         assert_eq!(names(&saved), ["alice", "bob", "carol"]);
         let mut saved = order(&["alice", "bob", "carol"]);
         assert!(saved.move_to("carol", "alice", false));
-        assert!(saved.reconcile(vault(&[
-            (1, "alice"),
-            (2, "bob"),
-            (3, "carol"),
-            (4, "dave")
-        ])));
+        assert!(sync(
+            &mut saved,
+            &[(1, "alice"), (2, "bob"), (3, "carol"), (4, "dave")]
+        ));
         assert_eq!(
             names(&saved),
             ["carol", "alice", "bob", "dave"],
@@ -362,31 +485,144 @@ mod tests {
         );
     }
 
+    /// Review R3: a deletion that is not durable keeps the entry stored
+    /// and its place for a failed deletion; once durable the entry is
+    /// dropped (a write), and a stored value read later drops it too.
     #[test]
-    fn a_deleted_profile_leaves_the_order_but_stays_stored() {
+    fn a_deleted_profile_is_held_while_pending_and_dropped_once_durable() {
         let mut saved = order(&["alice", "bob", "carol"]);
-        assert!(!saved.reconcile(vault(&[(1, "alice"), (3, "carol")])));
+        assert!(!saved.reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2));
         assert_eq!(names(&saved), ["alice", "carol"]);
-        let stored = saved.to_value();
-        assert_eq!(
-            stored.as_object().map(|o| o.len()),
-            Some(3),
-            "never removed"
+        assert!(saved.holds_deleted());
+        assert_eq!(stored_len(&saved), 3, "pending: still stored");
+        // The deletion failed: bob is back in his place.
+        assert!(
+            !saved.reconcile([(1, "alice"), (2, "bob"), (3, "carol")].into_iter(), |_| {
+                false
+            })
         );
-        let restored = {
-            let mut restored = ProfileOrder::from_value(Some(&stored));
-            restored.reconcile(vault(&[(1, "alice"), (3, "carol")]));
-            restored
-        };
-        assert_eq!(names(&restored), ["alice", "carol"]);
+        assert_eq!(names(&saved), ["alice", "bob", "carol"]);
+        // Deleted again, now durable: dropped, and a write is needed.
+        assert!(!saved.reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2));
+        assert!(sync(&mut saved, &[(1, "alice"), (3, "carol")]));
+        assert!(!saved.holds_deleted());
+        assert_eq!(stored_len(&saved), 2);
+        // A stored value holding a deleted profile drops it when read.
+        let stale = serde_json::json!({"1": 10, "2": 20, "3": 30});
+        let mut read = ProfileOrder::from_value(Some(&stale));
+        assert!(sync(&mut read, &[(1, "alice"), (3, "carol")]), "a write");
+        assert_eq!(stored_len(&read), 2);
+    }
+
+    /// Review R3: the highest uid the order has held is never lowered, so
+    /// a fresh uid is above a deleted profile's.
+    #[test]
+    fn the_highest_uid_held_survives_its_deletion() {
+        let mut saved = order(&["alice", "bob", "carol"]);
+        assert_eq!(saved.max_uid(), 3);
+        assert!(sync(&mut saved, &[(1, "alice"), (2, "bob")]));
+        assert_eq!(saved.max_uid(), 3, "carol's uid stays taken");
+        let mut copy = ProfileOrder::default();
+        copy.assign_from(&saved);
+        assert_eq!(copy.max_uid(), 3);
+        let mut reread = order(&["zed"]);
+        reread.replace(ProfileOrder::from_value(Some(&serde_json::json!({"1": 1}))));
+        assert_eq!(reread.max_uid(), 1, "the stored value's");
+        saved.replace(ProfileOrder::from_value(None));
+        assert_eq!(saved.max_uid(), 3, "a reread never lowers it");
+    }
+
+    /// Review R3: a renumber while a deletion is pending keeps the held
+    /// entry between its neighbours.
+    #[test]
+    fn a_renumber_keeps_a_pending_deletions_place() {
+        let mut saved = order(&["a", "b", "c", "d"]);
+        saved.reconcile([(1, "a"), (2, "b"), (4, "d")].into_iter(), |uid| uid == 3);
+        saved.renumber();
+        keys_ok(&saved);
+        assert!(!sync(&mut saved, &[(1, "a"), (2, "b"), (3, "c"), (4, "d")]));
+        assert_eq!(names(&saved), ["a", "b", "c", "d"]);
+        keys_ok(&saved);
     }
 
     #[test]
     fn a_rename_keeps_its_place_without_a_write() {
         let mut saved = order(&["alice", "bob", "carol"]);
         assert!(saved.move_to("carol", "alice", false));
-        assert!(!saved.reconcile(vault(&[(1, "alicia"), (2, "bob"), (3, "carol")])));
+        assert!(!sync(
+            &mut saved,
+            &[(1, "alicia"), (2, "bob"), (3, "carol")]
+        ));
         assert_eq!(names(&saved), ["carol", "alicia", "bob"]);
+    }
+
+    /// Review R5: stored keys at `i64::MIN` and `i64::MAX` are renumbered
+    /// when read (their order kept, a write asked), and appending, moving
+    /// and marked moves then work in range.
+    #[test]
+    fn extreme_stored_keys_renumber_and_every_change_stays_in_range() {
+        let rows = [(1, "a"), (2, "b"), (3, "c"), (4, "d")];
+        let stored = serde_json::json!({"1": i64::MAX, "2": i64::MIN, "3": 0});
+        let read = || {
+            let mut read = ProfileOrder::from_value(Some(&stored));
+            assert!(sync(&mut read, &rows), "appended and renumbered: a write");
+            read
+        };
+        let mut saved = read();
+        assert_eq!(names(&saved), ["b", "c", "a", "d"], "MIN, 0, MAX, new");
+        keys_ok(&saved);
+        assert!(!sync(&mut saved, &rows), "settled");
+        let mut moved = read();
+        assert!(moved.move_to("a", "b", false));
+        assert_eq!(names(&moved), ["a", "b", "c", "d"]);
+        keys_ok(&moved);
+        let mut marked = read();
+        assert!(marked.move_to_top(|n| n == "d" || n == "a"));
+        assert_eq!(names(&marked), ["a", "d", "b", "c"]);
+        keys_ok(&marked);
+        // Unparseable keys are ignored, not renumbered into the order.
+        let mut junk = ProfileOrder::from_value(Some(&serde_json::json!({"1": 1.5e300})));
+        sync(&mut junk, &rows[..1]);
+        keys_ok(&junk);
+    }
+
+    /// Review R5: keys at the edge of the kept range: an append, a move
+    /// and a marked move that would leave it renumber instead.
+    #[test]
+    fn extreme_neighbouring_keys_renumber_instead_of_leaving_the_range() {
+        let high = serde_json::json!({"1": KEY_LIMIT - 1, "2": KEY_LIMIT});
+        let low = serde_json::json!({"1": -KEY_LIMIT, "2": -KEY_LIMIT + 1});
+        let rows = [(1, "a"), (2, "b"), (3, "c")];
+        // Append past the top.
+        let mut saved = ProfileOrder::from_value(Some(&high));
+        assert!(sync(&mut saved, &rows));
+        assert_eq!(names(&saved), ["a", "b", "c"]);
+        keys_ok(&saved);
+        // Move between two neighbours with no gap, and past the top.
+        let mut saved = ProfileOrder::from_value(Some(&high));
+        sync(&mut saved, &rows[..2]);
+        assert!(saved.move_to("a", "b", true));
+        assert_eq!(names(&saved), ["b", "a"]);
+        keys_ok(&saved);
+        // Move above the bottom of the range.
+        let mut saved = ProfileOrder::from_value(Some(&low));
+        sync(&mut saved, &rows[..2]);
+        assert!(saved.move_to("b", "a", false));
+        assert_eq!(names(&saved), ["b", "a"]);
+        keys_ok(&saved);
+        // A marked move to the top below the bottom of the range, and one
+        // into a spent gap.
+        let mut saved = ProfileOrder::from_value(Some(&low));
+        sync(&mut saved, &rows[..2]);
+        assert!(saved.move_to_top(|n| n == "b"));
+        assert_eq!(names(&saved), ["b", "a"]);
+        keys_ok(&saved);
+        let spent = serde_json::json!({"1": 0, "2": 1, "3": 2});
+        let mut saved = ProfileOrder::from_value(Some(&spent));
+        sync(&mut saved, &rows);
+        assert!(saved.move_to_top(|n| n == "a" || n == "c"));
+        assert_eq!(names(&saved), ["a", "c", "b"]);
+        keys_ok(&saved);
     }
 
     #[test]
@@ -468,14 +704,14 @@ mod tests {
         let mut saved = order(&["a", "b", "c"]);
         saved.move_to("c", "a", false);
         let mut restored = ProfileOrder::from_value(Some(&saved.to_value()));
-        restored.reconcile(vault(&[(1, "a"), (2, "b"), (3, "c")]));
+        sync(&mut restored, &[(1, "a"), (2, "b"), (3, "c")]);
         assert_eq!(names(&restored), ["c", "a", "b"]);
         let junk = serde_json::json!({"x": 1, "2": "no", "1": 5});
         let mut junk = ProfileOrder::from_value(Some(&junk));
-        junk.reconcile(vault(&[(1, "a"), (2, "b")]));
+        sync(&mut junk, &[(1, "a"), (2, "b")]);
         assert_eq!(names(&junk), ["a", "b"]);
         let mut array = ProfileOrder::from_value(Some(&serde_json::json!(["b", "a"])));
-        array.reconcile(vault(&[(1, "a"), (2, "b")]));
+        sync(&mut array, &[(1, "a"), (2, "b")]);
         assert_eq!(names(&array), ["a", "b"], "an array is not an order");
     }
 }

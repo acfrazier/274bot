@@ -508,7 +508,7 @@ impl<Io> OperatorSession<Io> {
     /// Stage a new profile with `username`, `password`, a fresh uid and
     /// default settings for the next [`OperatorCommand::CreateProfile`].
     pub fn stage_new_profile(&mut self, username: &str, password: &str) {
-        let uid = self.vault.as_ref().map_or(274_000_001, crate::fresh_uid);
+        let uid = self.fresh_uid();
         let profile = vault::Profile {
             username: username.to_string(),
             password: password.into(),

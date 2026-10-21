@@ -1937,4 +1937,256 @@ fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pendi
     assert_eq!(result.counts().done, 1, "{}", result.text());
     assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
     assert_eq!(assignment(&d, "bobby"), None, "never a competing write");
+/// The stored Load order's members (`"<uid>"` keys, sorted), once every
+/// quiet write has landed: waits until they are exactly the vault's uids.
+fn stored_uids_settled(d: &mut HeadlessDriver) -> Vec<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        d.session_mut().flush_writes();
+        d.poll();
+        let mut vault: Vec<i32> = d
+            .session()
+            .vault()
+            .expect("vault")
+            .profiles()
+            .map(|profile| profile.uid)
+            .collect();
+        vault.sort_unstable();
+        let stored: Option<Vec<i32>> = preferences_file_now(d).and_then(|file| {
+            let members = file.get(crate::PROFILE_ORDER_KEY)?.as_object()?.clone();
+            let mut uids: Vec<i32> = members.keys().filter_map(|uid| uid.parse().ok()).collect();
+            uids.sort_unstable();
+            Some(uids)
+        });
+        if stored.as_ref() == Some(&vault) {
+            return vault;
+        }
+        assert!(
+            start.elapsed() < SETTLE_HANG_GUARD,
+            "the stored order never matched the vault: {stored:?} vs {vault:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn uid_of(d: &HeadlessDriver, name: &str) -> i32 {
+    d.session()
+        .vault()
+        .and_then(|vault| vault.get(name))
+        .map(|profile| profile.uid)
+        .expect("a vault row")
+}
+
+/// Create `name` the way the TUI does (a staged new profile, no form), so
+/// its uid is the session's fresh uid.
+fn create_profile(d: &mut HeadlessDriver, name: &str) {
+    d.session_mut().stage_new_profile(name, "pw");
+    let create = d
+        .session_mut()
+        .submit(
+            OperatorCommand::CreateProfile,
+            Targets::Application,
+            &mut crate::HeadlessSurface::new(),
+        )
+        .expect("create");
+    assert_eq!(settled_app(d, create.request()), Some(done()), "{name}");
+    d.session_mut().flush_writes();
+    d.poll();
+}
+
+fn delete_profile(d: &mut HeadlessDriver, name: &str) {
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile(name))
+        .expect("delete");
+    settle(d, delete.request());
+    d.session_mut().flush_writes();
+    d.poll();
+}
+
+/// Review R3: a durable deletion drops the profile's stored member, and a
+/// profile created next never reuses its uid (the highest one), so it is
+/// appended instead of taking the deleted profile's place; a restart
+/// keeps that.
+#[test]
+fn a_deleted_profiles_member_is_pruned_and_its_uid_never_reused() {
+    let dir = scratch("order-uid-reuse");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    let carol = uid_of(&d, "carol");
+    delete_profile(&mut d, "carol");
+    let stored = stored_uids_settled(&mut d);
+    assert_eq!(stored.len(), 2);
+    assert!(!stored.contains(&carol), "pruned: {stored:?}");
+    create_profile(&mut d, "dave");
+    assert!(
+        uid_of(&d, "dave") > carol,
+        "a fresh uid above every uid held"
+    );
+    assert_eq!(order_names(&d), ["alice", "bob", "dave"], "appended");
+    assert_eq!(stored_uids_settled(&mut d).len(), 3);
+    assert_eq!(stored_order(&d), ["alice", "bob", "dave"]);
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(
+        order_names(&again),
+        ["alice", "bob", "dave"],
+        "after a restart"
+    );
+}
+
+/// Review R3: repeated create and delete with a fixed number of profiles
+/// keeps the stored order to the vault's profiles: no deleted history is
+/// retained.
+#[test]
+fn repeated_create_and_delete_keeps_the_stored_order_to_the_vault() {
+    let mut d = driver("order-churn", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let mut previous = "bob".to_string();
+    for round in 0..8 {
+        let name = format!("churn{round}");
+        create_profile(&mut d, &name);
+        delete_profile(&mut d, &previous);
+        let stored = stored_uids_settled(&mut d);
+        assert_eq!(stored.len(), 3, "round {round}: {stored:?}");
+        assert_eq!(order_names(&d), ["carol", "alice", name.as_str()]);
+        previous = name;
+    }
+}
+
+/// Review R3: while a deletion is not durable its member stays stored, and
+/// a failed deletion puts the profile back in its saved place; the stored
+/// order never changes and a restart keeps it.
+#[test]
+fn a_pending_or_failed_deletion_keeps_the_saved_place() {
+    let dir = scratch("order-delete-fail");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let saved = ["carol", "alice", "bob"].map(String::from);
+    let stored_before = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    // Pending: the vault write is held.
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(order_names(&d), ["carol", "bob"], "staged away");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "pending: the member stays stored"
+    );
+    // Failed: block the vault file, then let the write run.
+    let vault_path = dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).expect("aside");
+    std::fs::create_dir(&vault_path).expect("block");
+    drop(held);
+    settle(&mut d, delete.request());
+    d.session_mut().flush_writes();
+    std::fs::remove_dir(&vault_path).expect("unblock");
+    std::fs::rename(&aside, &vault_path).expect("restore");
+    d.poll();
+    assert_eq!(order_names(&d), saved, "failed: back in place");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "the stored order never changed"
+    );
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
+}
+
+/// Review R4: a 600-profile marked move whose order write fails inside the
+/// file replacement (the state directory refuses the new file) fails the
+/// command, puts the durable order back, and leaves the stored order byte
+/// for byte as before: no member of the move lands, before or after a
+/// restart. A reorder is one file write.
+#[cfg(unix)]
+#[test]
+fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("order-600-fail");
+    let names: Vec<String> = (0..600).map(|i| format!("bot{i:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver_in(&dir, &refs);
+    d.poll();
+    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let refuse = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let path = d.session().preferences().expect("prefs").path();
+    let state_dir = path.parent().expect("a state directory").to_path_buf();
+    {
+        let writes = std::sync::Arc::clone(&writes);
+        let refuse = std::sync::Arc::clone(&refuse);
+        let state_dir = state_dir.clone();
+        d.session()
+            .local_state()
+            .expect("the driver binds the process service")
+            .set_write_stall_for_test(std::sync::Arc::new(move || {
+                writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if refuse.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = std::fs::set_permissions(
+                        &state_dir,
+                        std::fs::Permissions::from_mode(0o500),
+                    );
+                }
+            }));
+    }
+    let op = move_op(&d, "bot599", "bot000", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(
+        writes.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one reorder, one file write"
+    );
+    let saved = order_names(&d);
+    let bytes_before = std::fs::read(&path).expect("file");
+    for name in ["bot300", "bot010", "bot500"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    refuse.store(true, std::sync::atomic::Ordering::SeqCst);
+    let terminal = reorder(&mut d, crate::ReorderOp::MarkedToTop);
+    refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700)).expect("unblock");
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write fails: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(order_names(&d), saved, "the durable order back");
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        bytes_before,
+        "byte for byte"
+    );
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
 }

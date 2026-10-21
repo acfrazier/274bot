@@ -225,11 +225,6 @@ const CORE: &[(&str, Decision)] = &[
         "prefs.rs::UiPreferences::update",
         Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
     ),
-    // profiles.rs
-    (
-        "profiles.rs::fresh_uid",
-        Excluded("derives the next profile UID from the vault; identity calculation only"),
-    ),
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
