@@ -2576,6 +2576,335 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
 }
 
 #[test]
+fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
+    use script::native::{WalkDanger, WalkDangerQuery};
+
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let target = at(20, 20);
+    let denied = at(19, 20);
+    let world = selection_zone_world(
+        target,
+        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        None,
+        nav::transport::WildernessRules::default(),
+    );
+    let snapshot = selection_snapshot(target, 3, 0, None);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let query = crate::walk_permissions::SelectionDangerQuery::new(
+        &navs,
+        "alice",
+        &world,
+        Some(&snapshot),
+        None,
+    );
+
+    assert_eq!(
+        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        WalkDanger::Allowed,
+        "one safe live loc stand keeps the mixed-stand resource eligible"
+    );
+    let goals = query
+        .safe_access_goals(target, Some(1276), 1, nav::contract::ArrivalKind::Reach, None)
+        .unwrap()
+        .expect("the partial denied set must restrict the approach");
+    let expected = [
+        at(19, 21),
+        at(20, 19),
+        at(20, 20),
+        at(20, 21),
+        at(20, 22),
+        at(21, 19),
+        at(21, 20),
+        at(21, 21),
+        at(21, 22),
+        at(22, 20),
+        at(22, 21),
+    ];
+    assert_eq!(goals.as_slice(), expected.as_slice());
+    assert!(!goals.as_slice().contains(&denied));
+}
+
+#[test]
+fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
+    use script::native::{WalkDangerQuery, WalkGoals, WalkPermissions};
+
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let target = at(20, 20);
+    let denied = at(19, 20);
+    let world = selection_zone_world(
+        target,
+        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        None,
+        nav::transport::WildernessRules::default(),
+    );
+    let snapshot = selection_snapshot(target, 3, 0, None);
+
+    for (global, card) in [(false, true), (true, false)] {
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".to_owned(),
+            NavBot {
+                walk_globals: Some(Arc::new(Mutex::new(WalkGlobals {
+                    allow_danger_zones: global,
+                    ..Default::default()
+                }))),
+                ..NavBot::default()
+            },
+        )])));
+        let query = crate::walk_permissions::SelectionDangerQuery::new(
+            &navs,
+            "alice",
+            &world,
+            Some(&snapshot),
+            Some(WalkPermissions {
+                allow_danger_zones: card,
+                ..Default::default()
+            }),
+        );
+        assert!(matches!(
+            query.safe_access_goals(
+                target,
+                Some(1276),
+                1,
+                nav::contract::ArrivalKind::Reach,
+                None
+            ),
+            Ok(None)
+        ), "global={global}, card={card}: permitted danger preserves the original approach");
+    }
+
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let query = crate::walk_permissions::SelectionDangerQuery::new(
+        &navs,
+        "alice",
+        &world,
+        Some(&snapshot),
+        None,
+    );
+    let safe_in_table = at(20, 20);
+    let uncovered = at(50, 50);
+    let existing = WalkGoals::with_preferred(vec![safe_in_table, uncovered], &[uncovered]).unwrap();
+    assert!(matches!(
+        query.safe_access_goals(
+            target,
+            Some(1276),
+            1,
+            nav::contract::ArrivalKind::Reach,
+            Some(&existing)
+        ),
+        Ok(None)
+    ), "safe and zone-table-uncovered goals are unchanged when none is denied");
+    assert_eq!(existing.preferred(), &[uncovered]);
+    assert_eq!(existing.fallback(), &[safe_in_table]);
+    assert!(!existing.as_slice().contains(&denied));
+}
+
+#[test]
+fn selection_safe_access_goals_filter_existing_goal_tiers() {
+    use script::native::{WalkDangerQuery, WalkGoals};
+
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let target = at(20, 20);
+    let denied_preferred = at(19, 20);
+    let safe_preferred = at(20, 20);
+    let safe_fallback = at(21, 20);
+    let uncovered_fallback = at(50, 50);
+    let world = selection_zone_world(
+        target,
+        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        None,
+        nav::transport::WildernessRules::default(),
+    );
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let query = crate::walk_permissions::SelectionDangerQuery::new(
+        &navs, "alice", &world, None, None,
+    );
+    let existing = WalkGoals::with_preferred(
+        vec![
+            denied_preferred,
+            safe_preferred,
+            safe_fallback,
+            uncovered_fallback,
+        ],
+        &[denied_preferred, safe_preferred],
+    )
+    .unwrap();
+
+    let filtered = query
+        .safe_access_goals(
+            target,
+            Some(1276),
+            1,
+            nav::contract::ArrivalKind::Reach,
+            Some(&existing),
+        )
+        .unwrap()
+        .expect("the denied preferred goal must be removed");
+    assert_eq!(filtered.preferred(), &[safe_preferred]);
+    assert_eq!(filtered.fallback(), &[safe_fallback, uncovered_fallback]);
+    assert!(!filtered.as_slice().contains(&denied_preferred));
+    assert_eq!(existing.preferred(), &[denied_preferred, safe_preferred]);
+}
+
+#[test]
+fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
+    use script::native::{WalkDangerQuery, WalkGoalsError};
+
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let target = at(20, 20);
+    let world = selection_zone_world(
+        target,
+        nav::zones::Zone::hazard(avoid_rect(19, 22, 19, 22), 0, 0),
+        None,
+        nav::transport::WildernessRules::default(),
+    );
+    let snapshot = selection_snapshot(target, 3, 0, None);
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let query = crate::walk_permissions::SelectionDangerQuery::new(
+        &navs,
+        "alice",
+        &world,
+        Some(&snapshot),
+        None,
+    );
+    assert!(
+        matches!(
+            query.safe_access_goals(
+                target,
+                Some(1276),
+                1,
+                nav::contract::ArrivalKind::Reach,
+                None
+            ),
+            Err(WalkGoalsError::Empty)
+        ),
+        "an all-denied generated restriction must fail closed"
+    );
+
+    let large_target = at(30, 30);
+    let mut large_world = open_world(60, 60);
+    add_selection_zone(
+        &mut large_world,
+        nav::zones::Zone::hazard(avoid_rect(30, 30, 30, 30), 0, 0),
+        None,
+    );
+    let large_query = crate::walk_permissions::SelectionDangerQuery::new(
+        &navs,
+        "alice",
+        &large_world,
+        None,
+        None,
+    );
+    assert!(matches!(
+        large_query.safe_access_goals(
+            large_target,
+            None,
+            40,
+            nav::contract::ArrivalKind::Area,
+            None
+        ),
+        Err(WalkGoalsError::TooMany {
+            count,
+            limit: script::native::WalkGoals::MAX
+        }) if count > limit
+    ), "oversized generated restrictions must not be truncated or dropped");
+}
+
+#[test]
+fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() {
+    use script::native::{WalkDanger, WalkDangerQuery};
+
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let start = at(0, 0);
+    let target = at(20, 20);
+    let denied = at(19, 20);
+    let mut world = open_world(40, 40);
+    add_selection_zone(
+        &mut world,
+        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        None,
+    );
+    let world = Arc::new(world);
+    let mut rig = rig(Some(Arc::clone(&world)), false);
+
+    let mut snapshot = selection_snapshot(target, 3, 0, None);
+    let mut player = snapshot
+        .local_player()
+        .expect("selection fixture player")
+        .clone();
+    player.player.actor.tile = start;
+    snapshot.seed_local_player(player);
+    rig.snapshot = snapshot;
+
+    let query = crate::walk_permissions::SelectionDangerQuery::new(
+        &rig.navs,
+        "alice",
+        &world,
+        Some(&rig.snapshot),
+        None,
+    );
+    assert_eq!(
+        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        WalkDanger::Allowed,
+        "a safe legal live stand leaves the resource selectable"
+    );
+    let safe_goals = query
+        .safe_access_goals(target, Some(1276), 1, nav::contract::ArrivalKind::Reach, None)
+        .unwrap()
+        .expect("the native request must receive the safe live stands");
+    let expected_goals = safe_goals.as_slice().to_vec();
+    assert!(!expected_goals.contains(&denied));
+
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(target);
+        shared.radius = 0;
+        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.candidate_goals = Some(safe_goals);
+    }
+    rig.observe_with_here(1, start);
+    rig.wait_routed();
+
+    let (destination, route_positions) = {
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        let route = bot.route_path_for_follow().expect("native route path");
+        let mut positions = Vec::new();
+        if let Some(view) = route.view() {
+            for leg in view.legs() {
+                if let Some(tiles) = leg.walk_tiles() {
+                    positions.extend_from_slice(tiles);
+                }
+            }
+        } else {
+            for leg in &route.legacy_route().expect("legacy route backing").legs {
+                if let nav::router::Leg::Walk { tiles } = leg {
+                    positions.extend_from_slice(tiles);
+                }
+            }
+        }
+        (bot.route_destination().expect("native destination"), positions)
+    };
+    assert!(expected_goals.contains(&destination));
+    assert_ne!(destination, denied);
+    assert!(!route_positions.is_empty(), "the native walk has a real route");
+    assert!(
+        route_positions.iter().all(|&position| position != denied),
+        "no routed walk position may enter denied access stand {denied:?}"
+    );
+
+    for position in route_positions {
+        rig.step_at(position);
+        let navs = rig.navs.lock().unwrap();
+        assert_ne!(
+            navs["alice"].traveller.current_aim(),
+            Some(denied),
+            "the active follow aim must not enter the denied access stand"
+        );
+        assert_ne!(rig.snapshot.tile(), denied);
+    }
+}
+
+#[test]
 fn selection_query_uses_area_and_reach_candidates_off_scene() {
     use nav::contract::ArrivalKind;
 
