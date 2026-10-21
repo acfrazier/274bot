@@ -1054,8 +1054,8 @@ impl OperatorCommand {
 
     /// What a member this row supersedes ([`Self::supersedes`]) reads as
     /// its reason in a result: what the book knows when this row is
-    /// posted, in the operator's words. A Quit posted to a slot is still
-    /// pending (it settles when the slot retires), so it reads as
+    /// posted, in the operator's words. A posted Remove or Quit is still
+    /// pending (each settles when the slot retires), so it reads as
     /// requested, not as done. `None` for a row that supersedes nothing.
     pub const fn took_over_words(self) -> Option<&'static str> {
         match self {
@@ -1063,7 +1063,7 @@ impl OperatorCommand {
             Self::Logout => Some("a later Log out took over"),
             Self::RelogNow => Some("a later Relog now took over"),
             Self::SwitchWorld(_) => Some("a later Switch world took over"),
-            Self::Remove => Some("the bot was removed"),
+            Self::Remove => Some("Remove was requested"),
             Self::Quit => Some("Quit was requested"),
             _ => None,
         }
@@ -1758,17 +1758,20 @@ impl CommandBook {
 
     /// Why a login the slot no longer wants was withdrawn, in the
     /// operator's words, from the snapshot's park reason alone: a lifecycle
-    /// fact (the repeat guard, a saved logged-out hold) or a Log out row
-    /// the slot's mailbox applied, which this book did not post (a row it
-    /// posts settles the members it supersedes when posted). `None` when
-    /// the snapshot names no cause (the result then says only
-    /// "cancelled") and for a world error, which fails the member instead.
+    /// fact (the repeat guard, a saved logged-out hold) or a logout row the
+    /// slot's mailbox applied, which this book did not post (a row it posts
+    /// settles the members it supersedes when posted). A logout row comes
+    /// from more than the Log out command (Remove logs the bot out first)
+    /// and may still be under way, so it reads as requested and names no
+    /// command. `None` when the snapshot names no cause (the result then
+    /// says only "cancelled") and for a world error, which fails the member
+    /// instead.
     pub(crate) const fn withdrawn_words(reason: Option<ParkReason>) -> Option<&'static str> {
         match reason {
             Some(ParkReason::RepeatGuard) => {
                 Some("the automatic login guard stopped repeated logins")
             }
-            Some(ParkReason::OperatorLogout) => Some("a Log out turned login off"),
+            Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
             Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
             Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
         }

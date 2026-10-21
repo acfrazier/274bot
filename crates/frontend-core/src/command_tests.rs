@@ -1750,8 +1750,8 @@ fn a_withdrawn_snapshot_settles_only_its_own_slots_members() {
 
 /// Review F4 r3 (Sol 1): every row that can supersede a pending Switch
 /// world records, when it is posted, only what the book knows then. A
-/// posted Quit is still pending (it settles when the slot retires), so it
-/// reads as requested.
+/// posted Remove or Quit is still pending (each settles when the slot
+/// retires), so it reads as requested.
 #[test]
 fn a_superseded_member_records_what_the_book_knows_when_the_row_is_posted() {
     for (replacement, words) in [
@@ -1762,7 +1762,7 @@ fn a_superseded_member_records_what_the_book_knows_when_the_row_is_posted() {
             OperatorCommand::SwitchWorld(3),
             "a later Switch world took over",
         ),
-        (OperatorCommand::Remove, "the bot was removed"),
+        (OperatorCommand::Remove, "Remove was requested"),
         (OperatorCommand::Quit, "Quit was requested"),
     ] {
         let mut f = Fixture::new();
@@ -1781,11 +1781,11 @@ fn a_superseded_member_records_what_the_book_knows_when_the_row_is_posted() {
             "{replacement:?}"
         );
         assert_eq!(replacement.took_over_words(), Some(words));
-        if replacement == OperatorCommand::Quit {
+        if matches!(replacement, OperatorCommand::Remove | OperatorCommand::Quit) {
             assert_eq!(
                 f.terminal(later, ALICE),
                 None,
-                "the Quit itself is still pending"
+                "{replacement:?} itself is still pending"
             );
         }
     }
@@ -1837,7 +1837,7 @@ fn a_login_withdrawn_without_a_later_command_names_why() {
 
     // Rows the mailbox applied that this book did not post.
     for (row, words) in [
-        (Intent::Logout, Some("a Log out turned login off")),
+        (Intent::Logout, Some("a logout was requested")),
         (
             Intent::HoldLoggedOut,
             Some("the bot is set to stay logged out"),
