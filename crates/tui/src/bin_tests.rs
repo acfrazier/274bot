@@ -1348,6 +1348,39 @@ fn pump_leaves_app_world_none_when_no_pack_loaded() {
 
 /// Pump the TUI's Start settle (the public observe path) until every
 /// pending Start has settled. Start returns before V8 setup.
+/// The TUI boot logs in the focused `--user` (or the vault's first
+/// profile): it is a fleet member, and a loaded script starts on it.
+/// The same check as the panel's unlock focus (F4 rs2b2t live session:
+/// `script: no slot: <name>` on the auto-logged-in bot).
+#[test]
+fn the_boot_focus_is_a_fleet_member_and_starts_a_loaded_script() {
+    let iso = IsolatedStores::enter("tui-boot-focus");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7).auto_login(true));
+    vault.put(FixtureProfile::new("bob", "pw").uid(8));
+    session.start_play(vault).unwrap();
+    let focus = session.bootstrap_interactive_profiles(&[]).unwrap();
+    assert_eq!(focus, "alice");
+    assert!(session.load_and_login(&focus));
+    session.focus(&focus);
+    assert_eq!(session.core.members(), ["alice".to_string()]);
+    let mut app = TuiApp::new("boot focus");
+    app.names = session.names.clone();
+    app.focused = Some(0);
+    let path = iso.dir().join("boot-focus.ts");
+    std::fs::write(
+        &path,
+        "export default class T extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
+    session.scripts.load_card(&path).unwrap();
+    let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
+    session.script_start(&mut app, &sel);
+    assert_eq!(app.error, None, "a loaded script starts on the boot's bot");
+}
+
 fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while session.scripts.starts_pending() && Instant::now() < deadline {
@@ -1487,7 +1520,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     assert_eq!(retained_failure(&session).as_ref(), Some(&retained));
     app.focused = Some(2);
     session.script_start(&mut app, &sel);
-    assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
+    assert_eq!(app.error.as_deref(), Some("script: missing is not loaded"));
     assert_eq!(retained_failure(&session).as_ref(), Some(&retained));
 
     std::fs::write(&helper, "export const fail = false;").unwrap();

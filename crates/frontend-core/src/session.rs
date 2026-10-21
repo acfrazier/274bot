@@ -1548,6 +1548,11 @@ impl<Io> OperatorSession<Io> {
     /// Bring `name`'s worker up without changing login intent: cancel a
     /// pending removal and spawn with the profile's saved arm. A terminal
     /// lifetime is kept (its failure stays visible) until explicit Log in.
+    /// The running bot is a fleet member, as every running lifetime is
+    /// ([`Self::seed_running`]): a single-bot focus (the unlock's
+    /// auto-login of the last focused profile, a chooser pick with MultiBox
+    /// off) is loaded like a Load, so the Fleet window lists it and a
+    /// loaded script can start on it.
     pub(crate) fn open_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
@@ -1555,7 +1560,11 @@ impl<Io> OperatorSession<Io> {
     ) -> Result<(), String> {
         self.cancel_removal(name);
         let arm = self.arm_for_profile(name);
-        self.ensure_slot(name, arm, false, surface)
+        self.ensure_slot(name, arm, false, surface)?;
+        if self.fleet.add(name) {
+            self.sort_members_by_order();
+        }
+        Ok(())
     }
 
     /// Add `name` to the fleet and bring its worker up. Login intent follows

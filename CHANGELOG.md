@@ -73,6 +73,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
   **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
   **Start all** / **Stop all** until the combined fleet toolbar.
+- Fixed: with MultiBox off, the bot that unlocking logs in (the last
+  focused profile), or a bot picked in Profiles, is now a fleet member.
+  The Fleet window lists it as loaded, and a script can be started on
+  it. Before, Start refused it with `no slot: <name>`. Starting a script
+  on a profile that is not loaded now says `<name> is not loaded`. 0.2.4
+  has the same problem.
 
 ### Random events
 
