@@ -8998,6 +8998,89 @@ mod bank_conservation_tests {
         slot.observe_running(Some(observation.clone()), observation)
     }
 
+    fn coin_runes_empty_slot() -> GatherSlot {
+        let mut slot = open_bank_slot(&[]);
+        slot.case = LiveCase::CoinRunesEmpty;
+        let baseline = slot.capture();
+        slot.baseline = Some(baseline.clone());
+        slot.latest = Some(baseline);
+        slot
+    }
+
+    fn coin_runes_empty_status(step: &str, code: &str) -> script::native::ScriptStatus {
+        let mut status = soak_status(step, "bank trip due", 0, 0);
+        status.phase = script::native::NativePhase::Blocked;
+        status.failure = Some(script::native::ScriptFailure {
+            code: code.into(),
+            message: "no Fire rune in the pack, worn, or in the bank".into(),
+        });
+        status
+    }
+
+    #[test]
+    fn coin_runes_empty_accepts_a_loaded_supply_shortage() {
+        let mut slot = coin_runes_empty_slot();
+        slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .unwrap();
+        slot.qualifies().unwrap();
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_the_retired_withdraw_stage() {
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Withdraw", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unloaded_bank() {
+        let mut slot = coin_runes_empty_slot();
+        slot.snapshot = GameSnapshot::new();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_an_unselected_bank() {
+        let mut slot = coin_runes_empty_slot();
+        let mut status = coin_runes_empty_status("Supply", "supply-missing");
+        let mut fields = status.fields.to_vec();
+        fields
+            .iter_mut()
+            .find(|field| field.key == "bank")
+            .unwrap()
+            .value = script::native::StatusValue::Text("—".into());
+        status.fields = fields.into();
+        assert!(slot.apply_status(&status).is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_a_different_failure() {
+        let mut slot = coin_runes_empty_slot();
+        assert!(slot
+            .apply_status(&coin_runes_empty_status("Supply", "return-failed"))
+            .is_err());
+        assert!(slot.qualifies().is_err());
+    }
+
+    #[test]
+    fn coin_runes_empty_rejects_any_trip_yield_or_xp_progress() {
+        for (trips, yielded, xp) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+            let mut slot = coin_runes_empty_slot();
+            slot.apply_status(&coin_runes_empty_status("Supply", "supply-missing"))
+                .unwrap();
+            slot.witness.status_trips = trips;
+            slot.witness.last_status_yielded = yielded;
+            slot.latest.as_mut().unwrap().xp = xp;
+            assert!(slot.qualifies().is_err(), "{trips}/{yielded}/{xp}");
+        }
+    }
+
     #[test]
     fn bank_selection_observes_the_projection_without_a_retired_event() {
         for kind in ["Reachable", "AirFallback", "NearShortcut"] {
