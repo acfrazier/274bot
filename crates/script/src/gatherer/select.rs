@@ -1988,6 +1988,27 @@ pub(crate) mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+        snapshot.seed_inventory(
+            vec![api::snapshot::ItemView {
+                def: crate::quester::families::tests::def(1351, "Bronze axe"),
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        snapshot.seed_equipment(vec![]);
+        snapshot.seed_stats(vec![api::snapshot::StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 1,
+            base: 1,
+            xp: 0,
+            used: true,
+        }]);
         let observed_id = if class == PlacementClass::Depleted {
             known_targets(method)
                 .unwrap()
@@ -2013,6 +2034,9 @@ pub(crate) mod tests {
         };
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert_eq!(view.walk_loc_arrived(here, tile, 1, id), arrived);
+        if quest {
+            assert_eq!(super::super::supply::method_ready(view, method, true), Ok(true));
+        }
         let mut fishing = FishingSurvey::default();
         let world = scene_around(tile);
         let observation = SelectionObservation {
