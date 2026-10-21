@@ -820,8 +820,8 @@ fn shown_names(d: &HeadlessDriver) -> Vec<String> {
         .collect()
 }
 
-/// Every vault profile and every loaded slot is one row: the loaded ones
-/// in load order, then the rest in vault order. Loaded is its own flag,
+/// Every vault profile and every loaded slot is one row, in the saved Load
+/// order (seeded in vault order), loaded or not. Loaded is its own flag,
 /// not the phase: a loaded bot that is offline is still loaded.
 #[test]
 fn the_fleet_universe_is_every_profile_once_with_an_explicit_loaded_flag() {
@@ -835,14 +835,14 @@ fn the_fleet_universe_is_every_profile_once_with_an_explicit_loaded_flag() {
         .iter()
         .map(|row| (row.name(), row.loaded()))
         .collect();
-    assert_eq!(rows, [("bob", true), ("alice", false), ("carol", false)]);
-    let bob = &fleet.rows()[0];
+    assert_eq!(rows, [("alice", false), ("bob", true), ("carol", false)]);
+    let bob = &fleet.rows()[1];
     assert_eq!(bob.phase(), crate::Phase::Offline, "loaded, not logged in");
     assert_eq!(
         fleet.identities(),
         [
-            d.session().profile_identity_or_synthetic("bob"),
             d.session().profile_identity_or_synthetic("alice"),
+            d.session().profile_identity_or_synthetic("bob"),
             d.session().profile_identity_or_synthetic("carol"),
         ],
         "one row per identity: the loaded vault profile is not listed twice"
@@ -879,11 +879,11 @@ fn empty_locked_and_orphan_universes_have_one_row_per_identity() {
         .collect();
     assert_eq!(
         names,
-        [("alice", true), ("bob", false)],
-        "orphan stays one row"
+        [("bob", false), ("alice", true)],
+        "the orphan stays one row, after the ordered profiles"
     );
     assert_eq!(
-        d.models().fleet().identity(0),
+        d.models().fleet().identity(1),
         Some(crate::ProfileIdentity::synthetic("alice"))
     );
 
@@ -1042,4 +1042,282 @@ fn delete_profile_settles_done_when_its_write_lands() {
         .and_then(|member| member.terminal())
         .cloned();
     assert_eq!(terminal, Some(done()));
+}
+
+// ---- F2: the saved Load order -------------------------------------------
+
+fn order_names(d: &HeadlessDriver) -> Vec<String> {
+    d.session().profile_order().names().to_vec()
+}
+
+fn row_names(d: &HeadlessDriver) -> Vec<String> {
+    d.models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| row.name().to_string())
+        .collect()
+}
+
+fn id(d: &HeadlessDriver, name: &str) -> crate::ProfileIdentity {
+    d.session().profile_identity_or_synthetic(name)
+}
+
+/// Stage and submit one reorder; its settled terminal.
+fn reorder(d: &mut HeadlessDriver, op: crate::ReorderOp) -> Option<Terminal> {
+    d.session_mut().stage_reorder(op);
+    let submitted = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("admitted");
+    settled_app(d, submitted.request())
+}
+
+fn move_op(d: &HeadlessDriver, moving: &str, to: &str, after: bool) -> crate::ReorderOp {
+    let target = id(d, to);
+    crate::ReorderOp::Move {
+        moving: id(d, moving),
+        to: if after {
+            crate::Placement::After(target)
+        } else {
+            crate::Placement::Before(target)
+        },
+    }
+}
+
+/// With no saved order the order is the vault's (alphabetical). A drag
+/// saves the new order: the file, the fleet rows, the members and Load
+/// all follow it.
+#[test]
+fn a_reorder_saves_the_load_order_and_every_view_follows_it() {
+    let mut d = driver("order-move", &["alice", "bob", "carol"]);
+    d.poll();
+    assert_eq!(order_names(&d), ["alice", "bob", "carol"], "seeded");
+    assert!(
+        preferences_file_now(&d).is_none_or(|file| file.get(crate::PROFILE_ORDER_KEY).is_none()),
+        "seeding writes nothing"
+    );
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        serde_json::json!(["carol", "alice", "bob"])
+    );
+    d.poll();
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load all");
+    settle(&mut d, load.request());
+    assert_eq!(d.session().members(), ["carol", "alice", "bob"], "Load all");
+    let op = move_op(&d, "bob", "carol", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(
+        d.session().members(),
+        ["bob", "carol", "alice"],
+        "members follow"
+    );
+}
+
+/// Reorder only applies in Load order; Name and Status are view sorts and
+/// leave the saved order byte for byte.
+#[test]
+fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
+    let mut d = driver("order-sorts", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::read(&path).expect("file");
+    for order in [crate::FleetOrder::Name, crate::FleetOrder::Status] {
+        d.submit(OperatorCommand::SetFleetSort(order), Targets::Application)
+            .expect("sort");
+        let op = move_op(&d, "alice", "bob", true);
+        assert_eq!(
+            reorder(&mut d, op),
+            Some(rejected(crate::command::Rejection::NotApplicable)),
+            "{order:?}"
+        );
+    }
+    assert_eq!(std::fs::read(&path).expect("file"), before, "byte for byte");
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// A drag while a filter hides rows lands relative to its target in the
+/// full order; hidden profiles keep their relative order. Move marked to
+/// top keeps the marked profiles' order. Nothing moved: no write.
+#[test]
+fn filtered_moves_and_marked_to_top_keep_the_other_profiles_in_order() {
+    let mut d = driver("order-filtered", &["alice", "bob", "carol", "dave"]);
+    d.poll();
+    d.models_mut().fleet_mut().staged_filter_mut().push_str("c");
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    assert_eq!(shown_names(&d), ["alice", "carol"], "bob and dave hidden");
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "alice", "bob", "dave"]);
+    for name in ["dave", "alice"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    assert_eq!(order_names(&d), ["alice", "dave", "carol", "bob"]);
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::read(&path).expect("file");
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        before,
+        "no move, no write"
+    );
+}
+
+/// A new profile is appended, a rename keeps its place (and is saved), a
+/// deleted profile leaves the order, and a new session restores it.
+#[test]
+fn the_order_follows_create_rename_delete_and_survives_a_restart() {
+    let dir = scratch("order-lifecycle");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    d.session_mut()
+        .vault_mut()
+        .expect("vault")
+        .upsert(Profile {
+            username: "dave".into(),
+            password: "pw".into(),
+            uid: 40,
+            settings: ProfileSettings::default(),
+        })
+        .expect("dave");
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alice", "bob", "dave"],
+        "appended"
+    );
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alicia", "bob", "dave"],
+        "in place"
+    );
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("bob"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    d.poll();
+    assert_eq!(order_names(&d), ["carol", "alicia", "dave"]);
+    assert_eq!(row_names(&d), ["carol", "alicia", "dave"]);
+    // Let every quiet write land, then a new session over the same state
+    // and vault restores the order.
+    d.session_mut().flush_writes();
+    let start = std::time::Instant::now();
+    while preferences_file_now(&d).and_then(|file| file.get(crate::PROFILE_ORDER_KEY).cloned())
+        != Some(serde_json::json!(["carol", "alicia", "dave"]))
+    {
+        assert!(start.elapsed() < SETTLE_HANG_GUARD, "the order write hung");
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), ["carol", "alicia", "dave"]);
+    assert_eq!(row_names(&again), ["carol", "alicia", "dave"]);
+}
+
+/// A reorder the disk holds stays pending and settles Done when it lands.
+#[test]
+fn a_held_order_write_stays_pending_until_durable() {
+    let mut d = driver("order-held", &["alice", "bob"]);
+    d.poll();
+    let release = hold_first_write(&d);
+    let op = move_op(&d, "bob", "alice", false);
+    d.session_mut().stage_reorder(op);
+    let submitted = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("admitted");
+    assert_eq!(terminal_app(&d, submitted.request()), None, "pending");
+    d.poll();
+    assert_eq!(terminal_app(&d, submitted.request()), None);
+    release.send(()).unwrap();
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        serde_json::json!(["bob", "alice"])
+    );
+}
+
+/// A refused write fails the command and puts back the last durable
+/// order: a failure never shows as the saved order.
+#[test]
+fn a_failed_order_write_reports_failure_and_restores_the_durable_order() {
+    let mut d = driver("order-failed", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let path = d.session().preferences().expect("prefs").path();
+    std::fs::write(
+        &path,
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .expect("oversize the preferences file");
+    let _ = d.session().preferences().expect("prefs").reload();
+    let op = move_op(&d, "bob", "carol", false);
+    let terminal = reorder(&mut d, op);
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write is refused: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alice", "bob"],
+        "durable order back"
+    );
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// Removing a wall member keeps its place in the saved order; loading it
+/// again puts it back in that place among the members.
+#[test]
+fn removing_a_member_keeps_its_saved_place() {
+    let mut d = driver("order-remove", &["alice", "bob", "carol"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load all");
+    settle(&mut d, load.request());
+    let remove = d
+        .submit(OperatorCommand::Remove, Targets::Profile("bob"))
+        .expect("remove");
+    settle(&mut d, remove.request());
+    assert_eq!(order_names(&d), ["alice", "bob", "carol"]);
+    assert_eq!(row_names(&d), ["alice", "bob", "carol"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Profile("bob"))
+        .expect("load bob");
+    settle(&mut d, load.request());
+    assert_eq!(
+        d.session().members(),
+        ["alice", "bob", "carol"],
+        "back in place"
+    );
 }

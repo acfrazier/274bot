@@ -363,6 +363,13 @@ pub enum OperatorCommand {
     MarkAll,
     /// Clear the marks (`MarkedSelection::clear`).
     ClearMarks,
+    /// Reorder the saved Load order with the staged
+    /// [`crate::profile_order::ReorderOp`] (a rail or Fleet-row drag, the
+    /// TUI move keys, Move marked to top;
+    /// [`crate::OperatorSession::stage_reorder`]). Refused unless the fleet
+    /// view shows Load order. Settles `Done` when the saved order is
+    /// durable (at once when nothing moved).
+    ReorderProfiles,
 
     // --- Movement and game input ---
     /// Walk the focused member to the staged map destination (panel
@@ -687,7 +694,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 91] = [
+    pub const ALL: [OperatorCommand; 92] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -758,6 +765,7 @@ impl OperatorCommand {
         Self::SetMark(true),
         Self::MarkAll,
         Self::ClearMarks,
+        Self::ReorderProfiles,
         Self::WalkTo,
         Self::GroupWalk,
         Self::Teleport,
@@ -827,6 +835,7 @@ impl OperatorCommand {
             | Self::DeleteLoadout
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::ReorderProfiles
             | Self::SetMultiBox(_)
             | Self::SetDraw(..)
             | Self::SetNavPreference(..)
