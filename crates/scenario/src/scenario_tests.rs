@@ -1268,10 +1268,26 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
         "further-egg arm is not loosened"
     );
-    let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
-    assert_eq!(
-        newt.settings.deadline, SCRIPT_GOLD_DEADLINE,
-        "newt deadline stays 180s"
+}
+
+#[test]
+fn herblore_newt_deadline_covers_measured_route_with_headroom() {
+    // B2's completed HerbloreSecondaries cycle needed 412 game ticks.
+    // Use that measured cycle as a conservative budget for the newt branch.
+    let measured_cycle = Duration::from_millis(412 * 600);
+    let scenario = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("newt Start");
+    for step in &scenario.steps[start + 1..] {
+        assert_eq!(step.wait.budget_ticks, 150, "{}", step.name);
+    }
+    let runner = runner::ScenarioRunner::new(scenario);
+    assert!(
+        runner.deadline() >= measured_cycle + measured_cycle / 2,
+        "newt needs the measured cycle plus 50% headroom, not the short gold deadline"
     );
 }
 
@@ -8247,7 +8263,7 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
 
     let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
     assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
-    assert_eq!(buy.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(buy.settings.deadline, HERBLORE_NEWT_DEADLINE);
     let inject = settings_inject_map(buy.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("secondary"),
@@ -9891,7 +9907,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "flax_aio",
         "flax_aio_pick",
         "flax_aio_spin",
-        "herblore_secondaries_newt",
         "chaos_druid",
         "moss_giant",
         "hill_giant",
