@@ -52,6 +52,7 @@ pub struct NeedObservation {
 
 pub struct Planner<'a> {
     counts: &'a dyn Counts,
+    data: Option<&'a SelectedGameData>,
     plan: AcquirePlan,
     first_withdrawal: Option<NeedObservation>,
     scan: Option<NeedObservation>,
@@ -61,9 +62,10 @@ pub struct Planner<'a> {
 }
 
 impl<'a> Planner<'a> {
-    pub fn new(counts: &'a dyn Counts, _world: WorldFacts<'_>) -> Self {
+    pub fn new(counts: &'a dyn Counts, world: WorldFacts<'a>) -> Self {
         Self {
             counts,
+            data: world.data,
             plan: AcquirePlan::empty(),
             first_withdrawal: None,
             scan: None,
@@ -136,7 +138,7 @@ impl<'a> Planner<'a> {
                 .unwrap_or(0)
                 .max(0)
                 .saturating_add(take);
-            self.add_withdrawal(id, &need.name, held_target)?;
+            self.add_withdrawal(id, need, held_target)?;
             if self.first_withdrawal.is_none() {
                 self.first_withdrawal = Some(detail.clone());
             }
@@ -232,7 +234,7 @@ impl<'a> Planner<'a> {
         }
     }
 
-    fn add_withdrawal(&mut self, id: i32, name: &Arc<str>, target: i32) -> Result<(), ActionError> {
+    fn add_withdrawal(&mut self, id: i32, need: &Need, target: i32) -> Result<(), ActionError> {
         if let Some(row) = self.plan.withdrawals[..self.plan.withdrawal_count]
             .iter_mut()
             .flatten()
@@ -246,11 +248,24 @@ impl<'a> Planner<'a> {
                 "provision withdrawal exceeds the bank batch",
             )));
         }
-        self.plan.withdrawals[self.plan.withdrawal_count] = Some(Withdrawal {
-            id,
-            name: Arc::clone(name),
-            target,
-        });
+        // An admitted tier need keeps its primary name while live stock can
+        // select another id. Dispatch validates the chosen id and name.
+        let name = if id == need.item {
+            Arc::clone(&need.name)
+        } else {
+            let name = self
+                .data
+                .and_then(|data| data.item_by_id(id))
+                .and_then(|item| item.name.as_deref())
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| {
+                    ActionError::Unavailable(Arc::from(format!(
+                        "selected cache has no name for acquisition alternative {id}"
+                    )))
+                })?;
+            Arc::from(name)
+        };
+        self.plan.withdrawals[self.plan.withdrawal_count] = Some(Withdrawal { id, name, target });
         self.plan.withdrawal_count += 1;
         Ok(())
     }

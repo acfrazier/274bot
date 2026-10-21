@@ -61,7 +61,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Gatherer supply trips now share the native acquisition flow. A full pack
   is still deposited before a missing supply is reported, and a held tool
   that can be wielded is equipped without a bank trip. Bank refusals keep
-  their specific reason.
+  their specific reason. A refill can withdraw a lower usable tool tier when
+  that is what the bank holds.
 
 #### Scenario checks
 

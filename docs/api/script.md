@@ -1145,7 +1145,9 @@ and a shortage predicted only by the saved hint still earns one verifying trip.
 Only a bank seen open this login that cannot serve a required tool, bait,
 configured food or complete reserve cast fails in place with `supply-missing`,
 without a walk. At the open bank the live rows are planned afresh and win over
-the memory. A wielded tool counts as carried, and so does a worn required item;
+the memory. A lower usable tool tier uses that item's selected-cache name for
+its withdrawal, even when the trip was admitted before the bank was known.
+A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
 
 The `bank_seen` status field states where that bank information came from
