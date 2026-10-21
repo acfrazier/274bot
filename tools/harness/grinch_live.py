@@ -207,6 +207,56 @@ def run_owned(command: list[str], *, cwd: Path, env: dict[str, str], log: Path,
             raise RuntimeError(f"command exited {code}: {command}; see {log}")
 
 
+def username_sha256(username: object) -> str:
+    if not isinstance(username, str) or not username or not username.isascii():
+        raise RuntimeError("scratch account store contains an unsupported non-ASCII username")
+    return hashlib.sha256(username.lower().encode("ascii")).hexdigest()
+
+
+def account_store_prelogin(engine: Path, config: dict) -> dict:
+    node = config.get("node")
+    if not isinstance(node, dict):
+        raise RuntimeError("scratch world config lacks its node profile")
+    profile = node.get("profile", "main")
+    if (not isinstance(profile, str) or not profile or profile in (".", "..")
+            or "/" in profile or "\\" in profile):
+        raise RuntimeError("scratch world config has an invalid node.profile")
+
+    database_path = engine / "db.sqlite"
+    try:
+        with contextlib.closing(sqlite3.connect(
+                f"file:{database_path.as_posix()}?mode=ro", uri=True)) as database:
+            database_usernames = sorted({
+                username_sha256(row[0])
+                for row in database.execute("SELECT username FROM account")
+            })
+    except sqlite3.Error as error:
+        raise RuntimeError(f"read pre-login db.sqlite.account usernames: {error}") from error
+
+    save_directory = engine / "data/players" / profile
+    if save_directory.exists() and not save_directory.is_dir():
+        raise RuntimeError(f"pre-login player-save path is not a directory: {save_directory}")
+    profile_save_names = set()
+    if save_directory.is_dir():
+        for entry in save_directory.iterdir():
+            if entry.name.endswith(".sav"):
+                profile_save_names.add(username_sha256(entry.name[:-4]))
+
+    return {
+        "captured_before_server_start": True,
+        "database_path": "db.sqlite",
+        "account_table": "account",
+        "database_username_sha256": database_usernames,
+        "profile": profile,
+        "save_directory": f"data/players/{profile}",
+        "save_directory_exists": save_directory.is_dir(),
+        "save_suffix": ".sav",
+        "username_hash_scheme": "sha256-utf8-ascii-lowercase",
+        "profile_save_name_sha256": sorted(profile_save_names),
+        "save_representation": "R289 binary Player.save() (magic 0x2004, version 7, CRC32)",
+    }
+
+
 def copy_inputs(source: Path, destination: Path, source_content: Path) -> tuple[Path, Path]:
     engine = destination / "engine"
     content = destination / "content"
@@ -402,6 +452,7 @@ def instrument_cycles(engine: Path, directory: Path) -> None:
         active_actors: [] as {
             actor: { account_id: string; player_name: string };
             active: boolean;
+            player_info_sequence: number;
             tile: { x: number; z: number; plane: number };
         }[],
         player_processing_order: [] as string[]
@@ -431,6 +482,7 @@ def instrument_cycles(engine: Path, directory: Path) -> None:
             this.grinchCycle.active_actors = Array.from(this.playerLoop.all(), player => ({
                 actor: { account_id: player.username, player_name: player.displayName },
                 active: true,
+                player_info_sequence: this.grinchOutputSequences.get(player.username) ?? 0,
                 tile: { x: player.x, z: player.z, plane: player.level }
             }));
             console.log("GRINCH_CYCLE " + JSON.stringify(this.grinchCycle));
@@ -478,6 +530,8 @@ def instrument_cycles(engine: Path, directory: Path) -> None:
         "cycle_prefix": "GRINCH_CYCLE ",
         "client_output_prefix": "GRINCH_CLIENT_OUTPUT ",
         "player_info_sequence_origin": 1,
+        "active_actor_sequence_field": "player_info_sequence",
+        "active_actor_sequence_origin": "grinchOutputSequences_after_processClientsOut",
         "object_turn_origin": "first_completed_processZones_is_1",
         "phase_hook_count": len(replacements),
     })
@@ -653,6 +707,7 @@ def capture_scratch(args: argparse.Namespace, case: tuple[str, str, int], base_e
         elif content_identity(content) != source_content_identity:
             raise RuntimeError("unpatched scratch content changed during pack")
         authority["content_identity"] = content_identity(content)
+        authority["account_store_prelogin"] = account_store_prelogin(engine, config)
         check_disk(directory, "start")
         for endpoint in reservations:
             endpoint.close()
@@ -762,6 +817,23 @@ def self_test(engine: Path | None = None) -> None:
             raise AssertionError("an empty, ignored or failed live-test result was accepted")
     with tempfile.TemporaryDirectory(prefix="grinch-runner-self-test-") as temporary:
         directory = Path(temporary)
+        account_store_fixture = directory / "account-store"
+        save_directory = account_store_fixture / "data/players/main"
+        save_directory.mkdir(parents=True)
+        with contextlib.closing(sqlite3.connect(account_store_fixture / "db.sqlite")) as database:
+            database.execute("CREATE TABLE account (username TEXT NOT NULL)")
+            database.execute("INSERT INTO account(username) VALUES (?)", ("DbExisting",))
+            database.commit()
+        (save_directory / "SaveExisting.sav").write_bytes(b"binary-save-fixture")
+        snapshot = account_store_prelogin(
+            account_store_fixture,
+            {"node": {"profile": "main"}},
+        )
+        assert snapshot["database_username_sha256"] == [username_sha256("DbExisting")]
+        assert snapshot["profile_save_name_sha256"] == [username_sha256("SaveExisting")]
+        assert snapshot["save_representation"].startswith("R289 binary Player.save()")
+        assert "DbExisting" not in json.dumps(snapshot)
+        assert "SaveExisting" not in json.dumps(snapshot)
         for name, source, timeout, expected_error in [
                 ("success", "print('owned process success')", 5, None),
                 ("failure", "raise SystemExit(7)", 5, RuntimeError),
