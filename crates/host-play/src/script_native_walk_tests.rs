@@ -2604,7 +2604,13 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
         "one safe live loc stand keeps the mixed-stand resource eligible"
     );
     let goals = query
-        .safe_access_goals(target, Some(1276), 1, nav::contract::ArrivalKind::Reach, None)
+        .safe_access_goals(
+            target,
+            Some(1276),
+            1,
+            nav::contract::ArrivalKind::Reach,
+            None,
+        )
         .unwrap()
         .expect("the partial denied set must restrict the approach");
     let expected = [
@@ -2660,16 +2666,19 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
                 ..Default::default()
             }),
         );
-        assert!(matches!(
-            query.safe_access_goals(
-                target,
-                Some(1276),
-                1,
-                nav::contract::ArrivalKind::Reach,
-                None
+        assert!(
+            matches!(
+                query.safe_access_goals(
+                    target,
+                    Some(1276),
+                    1,
+                    nav::contract::ArrivalKind::Reach,
+                    None
+                ),
+                Ok(None)
             ),
-            Ok(None)
-        ), "global={global}, card={card}: permitted danger preserves the original approach");
+            "global={global}, card={card}: permitted danger preserves the original approach"
+        );
     }
 
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -2683,16 +2692,19 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
     let safe_in_table = at(20, 20);
     let uncovered = at(50, 50);
     let existing = WalkGoals::with_preferred(vec![safe_in_table, uncovered], &[uncovered]).unwrap();
-    assert!(matches!(
-        query.safe_access_goals(
-            target,
-            Some(1276),
-            1,
-            nav::contract::ArrivalKind::Reach,
-            Some(&existing)
+    assert!(
+        matches!(
+            query.safe_access_goals(
+                target,
+                Some(1276),
+                1,
+                nav::contract::ArrivalKind::Reach,
+                Some(&existing)
+            ),
+            Ok(None)
         ),
-        Ok(None)
-    ), "safe and zone-table-uncovered goals are unchanged when none is denied");
+        "safe and zone-table-uncovered goals are unchanged when none is denied"
+    );
     assert_eq!(existing.preferred(), &[uncovered]);
     assert_eq!(existing.fallback(), &[safe_in_table]);
     assert!(!existing.as_slice().contains(&denied));
@@ -2715,9 +2727,8 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
         nav::transport::WildernessRules::default(),
     );
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    let query = crate::walk_permissions::SelectionDangerQuery::new(
-        &navs, "alice", &world, None, None,
-    );
+    let query =
+        crate::walk_permissions::SelectionDangerQuery::new(&navs, "alice", &world, None, None);
     let existing = WalkGoals::with_preferred(
         vec![
             denied_preferred,
@@ -2794,19 +2805,22 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
         None,
         None,
     );
-    assert!(matches!(
-        large_query.safe_access_goals(
-            large_target,
-            None,
-            40,
-            nav::contract::ArrivalKind::Area,
-            None
+    assert!(
+        matches!(
+            large_query.safe_access_goals(
+                large_target,
+                None,
+                40,
+                nav::contract::ArrivalKind::Area,
+                None
+            ),
+            Err(WalkGoalsError::TooMany {
+                count,
+                limit: script::native::WalkGoals::MAX
+            }) if count > script::native::WalkGoals::MAX
         ),
-        Err(WalkGoalsError::TooMany {
-            count,
-            limit: script::native::WalkGoals::MAX
-        }) if count > script::native::WalkGoals::MAX
-    ), "oversized generated restrictions must not be truncated or dropped");
+        "oversized generated restrictions must not be truncated or dropped"
+    );
 }
 
 #[test]
@@ -2848,7 +2862,13 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
         "a safe legal live stand leaves the resource selectable"
     );
     let safe_goals = query
-        .safe_access_goals(target, Some(1276), 1, nav::contract::ArrivalKind::Reach, None)
+        .safe_access_goals(
+            target,
+            Some(1276),
+            1,
+            nav::contract::ArrivalKind::Reach,
+            None,
+        )
         .unwrap()
         .expect("the native request must receive the safe live stands");
     let expected_goals = safe_goals.as_slice().to_vec();
@@ -2882,11 +2902,17 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
                 }
             }
         }
-        (bot.route_destination().expect("native destination"), positions)
+        (
+            bot.route_destination().expect("native destination"),
+            positions,
+        )
     };
     assert!(expected_goals.contains(&destination));
     assert_ne!(destination, denied);
-    assert!(!route_positions.is_empty(), "the native walk has a real route");
+    assert!(
+        !route_positions.is_empty(),
+        "the native walk has a real route"
+    );
     assert!(
         route_positions.iter().all(|&position| position != denied),
         "no routed walk position may enter denied access stand {denied:?}"

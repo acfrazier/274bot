@@ -364,8 +364,30 @@ impl<'a> DangerCheck<'a> {
         entity: EntityId,
         snapshot: Option<api::snapshot::SnapshotView<'_>>,
     ) -> bool {
-        resource_arrived(snapshot, entity, tile)
-            || self.allows(tile, Some(entity), nav::contract::ArrivalKind::Reach)
+        if !resource_arrived(snapshot, entity, tile) {
+            return self.allows(tile, Some(entity), nav::contract::ArrivalKind::Reach);
+        }
+        let Some(query) = self.query else {
+            return true;
+        };
+        let loc_id = match entity {
+            EntityId::Loc(id) => Some(id),
+            _ => None,
+        };
+        let decision = query.check(
+            tile,
+            loc_id,
+            RESOURCE_APPROACH_RADIUS,
+            nav::contract::ArrivalKind::Reach,
+        );
+        if matches!(decision, WalkDanger::Denied { .. }) {
+            self.rejected.get_or_insert(decision);
+            false
+        } else {
+            // An arrived operation needs no navigation data, but physical
+            // arrival must not override a known denied access policy.
+            true
+        }
     }
 
     fn failure(&self) -> Option<DangerFailure> {
@@ -403,13 +425,14 @@ pub(super) fn resource_arrived(
 
 impl SelectedTarget {
     /// One approach policy for Gatherer and finite quest gathering.
-    /// Live NPC ops own client-side approach; locs settle at their footprint.
+    /// Unrestricted live NPC ops own client-side approach; locs settle at
+    /// their footprint. Restricted approaches use only admitted access goals.
     /// Arrival uses the observed server position, never the rendered actor pose.
     pub(crate) fn approach(
         &self,
         snapshot: api::snapshot::SnapshotView<'_>,
         required_after: api::quest_progress::EvidenceStamp,
-        _walk_danger: Option<&dyn WalkDangerQuery>,
+        walk_danger: Option<&dyn WalkDangerQuery>,
     ) -> Result<Option<crate::native::WalkRequest>, WalkGoalsError> {
         let observation_approach =
             self.class == PlacementClass::Unloaded && matches!(self.plan.entity, EntityId::Npc(_));
@@ -417,34 +440,66 @@ impl SelectedTarget {
             EntityId::Loc(id) => Some(id),
             _ => None,
         };
+        let radius = if self.observation_goals.is_some() {
+            0
+        } else {
+            RESOURCE_APPROACH_RADIUS
+        };
+        let arrival = if observation_approach {
+            nav::contract::ArrivalKind::Area
+        } else {
+            nav::contract::ArrivalKind::Reach
+        };
+        let arrived = resource_arrived(Some(snapshot), self.plan.entity, self.plan.tile);
+        let safe_goals = match walk_danger {
+            Some(query) => match query.safe_access_goals(
+                self.plan.tile,
+                loc_id,
+                radius,
+                arrival,
+                self.observation_goals.as_ref(),
+            ) {
+                Ok(goals) => goals,
+                Err(_)
+                    if arrived
+                        && query.check(self.plan.tile, loc_id, radius, arrival)
+                            == WalkDanger::Unavailable =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            },
+            None => None,
+        };
         let needs_walk = if self.class == PlacementClass::Unloaded {
             true
-        } else if self.plan.npc_index >= 0 {
-            false
+        } else if let Some(goals) = safe_goals.as_ref() {
+            snapshot
+                .local_player()
+                .is_none_or(|player| !goals.as_slice().contains(&player.value.player.network))
         } else {
-            !resource_arrived(Some(snapshot), self.plan.entity, self.plan.tile)
+            self.plan.npc_index < 0 && !arrived
         };
-        Ok(needs_walk.then(|| crate::native::WalkRequest {
-            target: self.plan.tile,
-            candidate_goals: self.observation_goals.clone(),
-            loc_id,
-            radius: if self.observation_goals.is_some() {
-                0
-            } else {
-                RESOURCE_APPROACH_RADIUS
-            },
-            arrival: if observation_approach {
-                nav::contract::ArrivalKind::Area
-            } else {
-                nav::contract::ArrivalKind::Reach
-            },
-            options: crate::native::WalkOptions::default(),
-            required_after,
-            evidence: None,
-            cross: Vec::new().into_boxed_slice(),
-            protect: false,
-            food_guard: false,
-            allow: Default::default(),
+        Ok(needs_walk.then(|| {
+            let restricted = safe_goals.is_some();
+            crate::native::WalkRequest {
+                target: self.plan.tile,
+                candidate_goals: safe_goals.or_else(|| self.observation_goals.clone()),
+                loc_id: if restricted { None } else { loc_id },
+                radius: if restricted { 0 } else { radius },
+                arrival: if restricted {
+                    nav::contract::ArrivalKind::Area
+                } else {
+                    arrival
+                },
+                options: crate::native::WalkOptions::default(),
+                required_after,
+                evidence: None,
+                cross: Vec::new().into_boxed_slice(),
+                protect: false,
+                food_guard: false,
+                allow: Default::default(),
+            }
         }))
     }
 }
@@ -2135,7 +2190,11 @@ pub(crate) mod tests {
         };
         let (selected, snapshot, stamp) = safe_access_fixture(denied);
         let view = api::snapshot::SnapshotView::new(Some(&snapshot), stamp);
-        assert!(resource_arrived(Some(view), selected.plan.entity, selected.plan.tile));
+        assert!(resource_arrived(
+            Some(view),
+            selected.plan.entity,
+            selected.plan.tile
+        ));
         let request = selected
             .approach(view, stamp, Some(&query))
             .unwrap()
@@ -2205,8 +2264,15 @@ pub(crate) mod tests {
         });
         selected.class = PlacementClass::Unloaded;
         selected.plan.entity = EntityId::Npc(1);
-        let preferred = WorldTile { x: 3110, z: 3228, level: 0 };
-        let fallback = WorldTile { x: 3111, ..preferred };
+        let preferred = WorldTile {
+            x: 3110,
+            z: 3228,
+            level: 0,
+        };
+        let fallback = WorldTile {
+            x: 3111,
+            ..preferred
+        };
         selected.observation_goals =
             Some(WalkGoals::with_preferred(vec![preferred, fallback], &[preferred]).unwrap());
         let request = selected
@@ -2244,6 +2310,61 @@ pub(crate) mod tests {
             ),
             Err(WalkGoalsError::Empty)
         ));
+    }
+
+    #[test]
+    fn safe_access_goals_unavailable_data_keeps_arrived_operation_only() {
+        struct UnavailableAccess;
+
+        impl WalkDangerQuery for UnavailableAccess {
+            fn check(
+                &self,
+                _target: WorldTile,
+                _loc_id: Option<i32>,
+                _radius: u16,
+                _arrival: nav::contract::ArrivalKind,
+            ) -> WalkDanger<'_> {
+                WalkDanger::Unavailable
+            }
+
+            fn safe_access_goals(
+                &self,
+                _target: WorldTile,
+                _loc_id: Option<i32>,
+                _radius: u16,
+                _arrival: nav::contract::ArrivalKind,
+                _existing: Option<&WalkGoals>,
+            ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+                Err(WalkGoalsError::Empty)
+            }
+        }
+
+        for arrived in [false, true] {
+            let here = if arrived {
+                WorldTile {
+                    x: 3115,
+                    z: 3229,
+                    level: 0,
+                }
+            } else {
+                WorldTile {
+                    x: 3109,
+                    z: 3228,
+                    level: 0,
+                }
+            };
+            let (selected, snapshot, stamp) = safe_access_fixture(here);
+            let result = selected.approach(
+                api::snapshot::SnapshotView::new(Some(&snapshot), stamp),
+                stamp,
+                Some(&UnavailableAccess),
+            );
+            if arrived {
+                assert!(matches!(result, Ok(None)));
+            } else {
+                assert!(matches!(result, Err(WalkGoalsError::Empty)));
+            }
+        }
     }
 
     struct DenyOneTile(WorldTile);
