@@ -1181,6 +1181,7 @@ pub fn choose_npc<'a>(
 #[derive(Clone, Copy)]
 pub enum GroundIds<'a> {
     One(i32),
+    /// At most 32 prepared IDs. A longer selection is rejected as a whole.
     Selected {
         ids: &'a [i32],
         /// Excluded positions in `ids`, stored without a per-run ID copy.
@@ -1204,11 +1205,11 @@ impl GroundIds<'_> {
                 excluded,
                 failures,
             } => {
-                ids.iter()
-                    .position(|id| *id == key.id)
-                    .is_some_and(|index| {
-                        excluded & 1u32.checked_shl(index as u32).unwrap_or(0) == 0
-                    })
+                ids.len() <= u32::BITS as usize
+                    && ids
+                        .iter()
+                        .position(|id| *id == key.id)
+                        .is_some_and(|index| excluded & (1u32 << index) == 0)
                     && failures.is_none_or(|failures| failures.is_eligible(key, tick))
             }
         }
