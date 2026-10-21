@@ -2790,8 +2790,9 @@ fn run_cells(
 
 /// One Path-backed fixture cell (`scenario::quester::quester_stage`): the
 /// quest's `FIXTURE_PROFILES` row, its varp-hinted stage, the chosen kit and
-/// extras, the stand tile, and Start with the fixture's own settings. The
-/// fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
+/// extras, and an explicitly selected stand tile that may differ from the
+/// Path's authored not-started anchor. Start uses the fixture's own settings;
+/// the fixture seed's `observe_start` proves the exact stats/kit/tile at Start.
 pub struct PathCell<'a> {
     /// Content quest id; the Path body comes from the release index, or from
     /// the folder the `FolderSource` registry currently serves.
@@ -2807,6 +2808,7 @@ pub struct PathCell<'a> {
     /// varp and value, recorded like every other cheat). See
     /// `scenario::quester::quester_stage_with_seeds`.
     pub seed_vars: &'a [(&'a str, i32)],
+    /// Selected starting tile; may be a bank instead of the Path anchor.
     pub stand: WorldTile,
     pub mode: Mode,
     /// Auxiliary pre-Start setup (bank stock, prerequisite quest flags),

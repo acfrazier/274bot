@@ -2251,6 +2251,99 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "path-schema")]
+    #[test]
+    fn released_path_fixes_match_content_backed_facts() {
+        fn path(id: &str) -> serde_json::Value {
+            serde_json::from_slice(path_bytes(id).expect("released Path")).expect("valid Path JSON")
+        }
+
+        fn step_by_id<'a>(value: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+            if value.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+                return Some(value);
+            }
+            match value {
+                serde_json::Value::Array(values) => {
+                    values.iter().find_map(|value| step_by_id(value, id))
+                }
+                serde_json::Value::Object(values) => {
+                    values.values().find_map(|value| step_by_id(value, id))
+                }
+                _ => None,
+            }
+        }
+
+        let demon = path("demon");
+        assert_eq!(
+            step_by_id(&demon, "receive-silverlight").unwrap()["args"]["gap_ticks"],
+            3
+        );
+
+        let hunt = path("hunt");
+        assert!(
+            step_by_id(&hunt, "hunt-read-pirate-message").unwrap()["args"]
+                .get("dialogue")
+                .is_none()
+        );
+        let apron = step_by_id(&hunt, "apron-buy-thessalia").unwrap();
+        assert_eq!(apron["args"]["est_gp"], 100);
+        assert_eq!(
+            apron["comment"],
+            "content/scripts/areas/area_varrock/configs/varrock.inv:166 stocks white_apron for 100 gp."
+        );
+        let rum = step_by_id(&hunt, "rum-buy-zambo").unwrap();
+        assert_eq!(rum["args"]["est_gp"], 100);
+        assert_eq!(
+            rum["comment"],
+            "content/scripts/areas/area_karamja/configs/karamja.inv:10 stocks karamja_rum for 100 gp."
+        );
+        let totem = path("totem");
+        assert_eq!(
+            step_by_id(&totem, "start").unwrap()["comment"],
+            "A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85)."
+        );
+
+        let seaslug = path("seaslug");
+        let swamppaste = seaslug["quest"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["obj"] == "swamppaste")
+            .unwrap();
+        assert!(swamppaste["acquire"].is_null());
+
+        let prince = path("prince");
+        let nearby_guard_predicate = serde_json::json!({
+            "Not": {
+                "Fact": {
+                    "kind": "npc_near",
+                    "version": 1,
+                    "args": {"npc": "jailguard", "radius": 4}
+                }
+            }
+        });
+        assert_eq!(
+            step_by_id(&prince, "key-jail-approach").unwrap()["settle"],
+            nearby_guard_predicate
+        );
+        let clear_guards = step_by_id(&prince, "jail-clear-guards").unwrap();
+        assert_eq!(clear_guards["args"]["until"], nearby_guard_predicate);
+        assert_eq!(clear_guards["skip_if"], nearby_guard_predicate);
+        assert_eq!(clear_guards["settle"], nearby_guard_predicate);
+
+        let fluffs = path("fluffs");
+        assert_eq!(fluffs["quest"]["areas"]["yard"]["boxes"][0][1], 3493);
+
+        let drunkmonk = path("drunkmonk");
+        let walk = step_by_id(&drunkmonk, "walk-to-ring-stones").unwrap();
+        let skip_facts = walk["skip_if"]["Any"].as_array().unwrap();
+        assert!(skip_facts.iter().any(|predicate| {
+            predicate["Fact"]["kind"] == "near"
+                && predicate["Fact"]["args"]["tile"] == serde_json::json!([2561, 3222, 0])
+                && predicate["Fact"]["args"]["radius"] == 2
+        }));
+    }
+
     #[test]
     fn schema_three_accepts_schema_reference_and_rejects_schema_two() {
         let _home = crate::IsolatedEnv::enter("quester-schema-three");
