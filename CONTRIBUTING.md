@@ -3,7 +3,7 @@
 274bot is in **beta**: 0.2.4 is Beta 1 (host workspace crate versions
 `0.2.4`, no crates.io publish; public release tags such as `0.1.9.1` and `0.2.0`). The host, API,
 nav execute, random-event guardian, headless TUI, panel, script kernel
-(Browse / Start / Pause / Stop / Load / Reload, bulk Start all / Stop all,
+(Browse / Start / Pause / Stop / Load / Reload, fleet Start / Stop,
 catalog refresh), revision profiles, the native Quester / Gatherer /
 Sherlock cards, and the shared panel+TUI Fleet are in-tree. Catalog
 compatibility remains **partial** — unsupported helpers fail closed; do not

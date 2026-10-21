@@ -796,8 +796,9 @@ has released it.
 | `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
-| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | the wide table over the shared fleet model (every profile, loaded or not): the fleet card combo, the tri-state shown-marks box and marks menu, one button per fleet action labelled with its scope (labels rebuilt only when the model's generation moves), the core plan's prompt with Confirm/Cancel and its one result line, toggleable status columns. `fleet_actions.rs` submits `PlanFleetAction`, then the plan's command with `Targets::Plan`; the Scripts window's copy entry uses the same flow. The rail and the Grid draw the same model's shown loaded rows (`app.rs`) |
-| `world_picker.rs` | world picker | the one popup every Switch world entry opens (a rail or Grid world marker, the Fleet World/login cell, the Marks menu's Switch world…); lists the core's cached public worlds with the bot's own ticked, labels built when it opens; a pick plans `FleetAction::SwitchWorld` through the Fleet window's plan row |
+| `fleet_toolbar.rs`, `fleet_toolbar_tests.rs` | fleet toolbar | the one toolbar draw function for the rail's top (sticky over the scrolling tiles), the strip's `fleet` section (while the rail is hidden: Grid, MultiBox off) and the Fleet window: the fleet card combo, the tri-state shown-marks box and Marks menu (with Move marked to top), filter and sort, the nine buttons labelled with their scope (labels rebuilt only when the model's generation moves; equal columns, pairs or one per row by width, never cut), the core plan's prompt with Confirm/Cancel and its one result line; a fold header (`fleet_toolbar_open`) keeps the summary, plan and result. Walk opens WalkTo in Group mode, Switch world the world picker; the rest plan through `fleet_actions.rs` |
+| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | the wide table over the shared fleet model (every profile, loaded or not) under the fleet toolbar: a name click focuses a loaded bot, its checkbox only marks it; toggleable status columns. `fleet_actions.rs` submits `PlanFleetAction`, then the plan's command with `Targets::Plan`; the Scripts window's copy entry uses the same flow and draws the plan row only while no toolbar is on screen. The rail and the Grid draw the same model's shown loaded rows (`app.rs`) |
+| `world_picker.rs` | world picker | the one popup every Switch world entry opens (a rail or Grid world marker, the Fleet World/login cell, the toolbar's Switch world button); lists the core's cached public worlds with the bot's own ticked, labels built when it opens; a pick plans `FleetAction::SwitchWorld` through the toolbars' plan row |
 | `rail.rs` | sidecar rail chrome | geometry and the status-dot colour of a row's light |
 | `chrome.rs` | app chrome | menus and banners |
 | `overlay.rs` | queue-card overlay | each image's own queue card from its fleet row |
@@ -818,6 +819,7 @@ has released it.
 | `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
 | `srgb_present.rs` | present-path test helper | test-only |
 | `manual_click_live_tests.rs`, `test_support.rs` | live regressions and fixtures | grouped, not owners |
+| `test_alloc.rs` | test allocator | the panel test binary's allocator: counts allocation calls per thread for the warm-frame checks; test-only |
 
 ### tui
 
@@ -831,7 +833,7 @@ has released it.
 | `shell.rs` | shell drawing | header (fleet counts, compact meter), fleet and detail panes, log drawer, footer naming the keyboard scope |
 | `input.rs` | key and mouse routing | one model: popup/overlay, then text field, then global chords, then the focused pane; mouse hit-tests the last draw |
 | `commands.rs` | operator command vocabulary | labels, target scope, availability and reason, per-pane shortcut tables shared by keys, buttons, palette and help |
-| `fleet.rs` | fleet table | cursor, scroll and filter edit over the core fleet model's shown rows (marks, filter and order are the model's); the cached header line (card, sort, marked count) |
+| `fleet.rs` | fleet table | cursor, scroll and filter edit over the core fleet model's shown rows (marks, filter and order are the model's); the cached header line (card, sort, marked count) with the cells of its card and sort parts, which a click opens or cycles |
 | `fleet_card.rs` | fleet card picker | Own, Focused, then the Browse cards by category; Enter pins, Esc keeps the card |
 | `world_picker.rs` | world picker | `W` on the cursor row or the palette's Switch world of marked…; the core's cached public worlds with the row's own ticked; Enter plans `FleetAction::SwitchWorld`, whose prompt shows in the plan overlay |
 | `overlay.rs` | app overlays | help, palette, the fleet plan's confirmation (the core prompt verbatim), context menus, message viewer, manual walk |

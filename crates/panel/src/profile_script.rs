@@ -153,18 +153,6 @@ impl Session {
         self.script_start_profile(profile)
     }
 
-    pub fn script_start_all(&mut self) {
-        let root = self.start_catalog_root();
-        self.scripts.stage_start_catalog_root(root);
-        self.submit_script_command(OperatorCommand::StartScript, Targets::Everyone);
-        self.apply_script_notice();
-    }
-
-    pub fn script_stop_all(&mut self) {
-        self.submit_script_command(OperatorCommand::StopScript, Targets::Everyone);
-        self.apply_script_notice();
-    }
-
     /// Fold settled script work (reload validation, Start setup, parameter
     /// writes) once per UI frame, after the core poll.
     pub fn poll_scripts(&mut self) {

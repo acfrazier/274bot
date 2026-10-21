@@ -37,30 +37,95 @@ pub enum FilterEdit {
 /// Between header parts that share a row.
 const HEADER_SEP: &str = " · ";
 
+/// A clickable part of the fleet header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderPart {
+    /// `card: <card>`: a click opens the card picker.
+    Card,
+    /// `sort: <order>`: a click shows the next order.
+    Sort,
+}
+
+/// The header parts in display order. The marked count is not clickable.
+const PART_KINDS: [Option<HeaderPart>; 3] = [Some(HeaderPart::Card), Some(HeaderPart::Sort), None];
+
+/// Where one clickable header part sits, relative to the header's first
+/// cell. A part that wraps has one segment per header row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HeaderSegment {
+    part: HeaderPart,
+    line: u16,
+    x: u16,
+    width: u16,
+}
+
 /// The fleet header and what it was built from.
 #[derive(Debug, Default)]
 struct Header {
     /// The wrapped rows.
     lines: Vec<String>,
+    /// The cells of the clickable parts.
+    segments: Vec<HeaderSegment>,
     card: String,
     order: Option<FleetOrder>,
     marked: usize,
     width: usize,
 }
 
+/// Record that `part` covers `width` cells from column `x` of header row
+/// `line`. Pieces of one part on one row merge into one segment.
+fn note_segment(
+    segments: &mut Vec<HeaderSegment>,
+    part: Option<HeaderPart>,
+    line: usize,
+    x: usize,
+    width: usize,
+) {
+    let Some(part) = part else {
+        return;
+    };
+    if width == 0 {
+        return;
+    }
+    let (line, x, width) = (
+        u16::try_from(line).unwrap_or(u16::MAX),
+        u16::try_from(x).unwrap_or(u16::MAX),
+        u16::try_from(width).unwrap_or(u16::MAX),
+    );
+    if let Some(last) = segments.last_mut() {
+        if last.part == part && last.line == line {
+            last.width = (x + width).saturating_sub(last.x);
+            return;
+        }
+    }
+    segments.push(HeaderSegment {
+        part,
+        line,
+        x,
+        width,
+    });
+}
+
 /// Lay the header `parts` out in rows of at most `width` cells: parts
 /// share a row while they fit and move whole to the next row when they do
 /// not; a part wider than a row wraps at its spaces (a word wider than a
-/// row is cut).
-fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
+/// row is cut). `segments` receives the cells of the clickable parts.
+fn wrap_header(
+    parts: [String; 3],
+    width: usize,
+    lines: &mut Vec<String>,
+    segments: &mut Vec<HeaderSegment>,
+) {
     lines.clear();
+    segments.clear();
     let width = width.max(1);
     let sep = HEADER_SEP.chars().count();
     let mut line = String::new();
     let mut used = 0usize;
-    for part in &parts {
+    for (part, kind) in parts.iter().zip(PART_KINDS) {
         let part_width = part.chars().count();
         if used > 0 && used + sep + part_width <= width {
+            note_segment(segments, kind, lines.len(), used + sep, part_width);
             line.push_str(HEADER_SEP);
             line.push_str(part);
             used += sep + part_width;
@@ -71,6 +136,7 @@ fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
             used = 0;
         }
         if part_width <= width {
+            note_segment(segments, kind, lines.len(), 0, part_width);
             line.push_str(part);
             used = part_width;
             continue;
@@ -78,6 +144,7 @@ fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
         for word in part.split(' ') {
             let mut word_width = word.chars().count();
             if used > 0 && used + 1 + word_width <= width {
+                note_segment(segments, kind, lines.len(), used + 1, word_width);
                 line.push(' ');
                 line.push_str(word);
                 used += 1 + word_width;
@@ -92,10 +159,12 @@ fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
                     .char_indices()
                     .nth(width)
                     .map_or(rest.len(), |(at, _)| at);
+                note_segment(segments, kind, lines.len(), 0, width);
                 lines.push(rest[..cut].to_owned());
                 rest = &rest[cut..];
                 word_width -= width;
             }
+            note_segment(segments, kind, lines.len(), 0, word_width);
             line.push_str(rest);
             used = word_width;
         }
@@ -103,6 +172,13 @@ fn wrap_header(parts: [String; 3], width: usize, lines: &mut Vec<String>) {
     if used > 0 {
         lines.push(line);
     }
+}
+
+/// The order after `order` in the Sort choices, wrapping at the end.
+pub fn next_order(order: FleetOrder) -> FleetOrder {
+    let choices = FleetOrder::CHOICES;
+    let at = choices.iter().position(|&choice| choice == order);
+    choices[at.map_or(0, |at| (at + 1) % choices.len())]
 }
 
 /// Renderer-local fleet state: presentation only. The rows, marks, filter
@@ -159,9 +235,16 @@ impl FleetState {
                 ],
                 width,
                 &mut header.lines,
+                &mut header.segments,
             );
         }
         &header.lines
+    }
+
+    /// The cells of the clickable header parts, from the last
+    /// [`Self::header`] call.
+    fn header_segments(&self) -> &[HeaderSegment] {
+        &self.header.segments
     }
 
     /// Fit the cursor to `model`'s shown rows: keep it on the same profile
@@ -269,6 +352,9 @@ pub struct FleetTable<'a> {
     pub selected: Option<ProfileIdentity>,
     pub keys: bool,
     pub class: SizeClass,
+    /// Receives the cells of the clickable header parts. The caller clears
+    /// it before the draw; a steady draw reuses its capacity.
+    pub header_parts: &'a mut Vec<(Rect, HeaderPart)>,
 }
 
 /// What the table drew: its row area and the shown-row position on its
@@ -321,6 +407,7 @@ impl FleetTable<'_> {
             restart_badges,
             keys,
             class,
+            header_parts,
         } = self;
         state.sync(model);
         if area.height == 0 || area.width < 12 {
@@ -337,6 +424,20 @@ impl FleetTable<'_> {
             let mut x = area.x;
             put(buf, &mut x, y, right, line, dim);
             y += 1;
+        }
+        for segment in state.header_segments() {
+            let line_y = area.y.saturating_add(segment.line);
+            if line_y < y {
+                header_parts.push((
+                    Rect::new(
+                        area.x + segment.x.min(area.width),
+                        line_y,
+                        segment.width.min(area.width.saturating_sub(segment.x)),
+                        1,
+                    ),
+                    segment.part,
+                ));
+            }
         }
         let filter = model.filter();
         if state.editing || !filter.text().is_empty() {
