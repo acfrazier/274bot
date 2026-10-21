@@ -1670,6 +1670,10 @@ impl Gatherer {
             self.fail(block.code(), Arc::clone(&block.message));
             return;
         }
+        if matches!(error, ActionError::BankDeposit(_)) {
+            self.deposit_failure(error);
+            return;
+        }
         if let ActionError::Failed(message) = &error {
             for code in [
                 "tool-missing",
