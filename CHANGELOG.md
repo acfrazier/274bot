@@ -66,6 +66,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   takes it. Prince Ali Rescue clears only nearby guards before it talks to
   Keli. Gertrude's Cat includes the fence landing tile in its yard. Monk's
   Friend skips the ring-stone walk after it reaches the ladder.
+- Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
+  fixtures may start at an explicit seeded stand such as a bank instead of
+  requiring the Path's authored start anchor.
 
 #### Scenario checks
 

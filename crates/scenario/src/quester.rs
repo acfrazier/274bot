@@ -1354,10 +1354,9 @@ pub fn reload_quester_path_source(
     loaded
 }
 
-/// The initial sequence is the sequence corresponding to the Path's
-/// `not_started` colour. Teleporting to its first authored approach anchor
-/// gives the headed Path run the same deterministic starting point as its
-/// fixture builder.
+/// The first authored approach in the Path's not-started sequence. Path
+/// scenarios use this as their default stand; an explicit seed stand may
+/// override it.
 pub fn quester_path_start_anchor(path: &PathDocument) -> Result<WorldTile, String> {
     let role = path
         .roles
@@ -1382,6 +1381,14 @@ pub fn quester_path_start_anchor(path: &PathDocument) -> Result<WorldTile, Strin
     Err(format!(
         "Path not-started sequence {not_started} has no authored anchor.tile"
     ))
+}
+
+fn quester_path_stand(path_start: WorldTile, seeds: Option<&QuesterPathSeeds>) -> WorldTile {
+    seeds.map_or(path_start, |seeds| WorldTile {
+        x: seeds.stand[0],
+        z: seeds.stand[1],
+        level: seeds.stand[2],
+    })
 }
 
 fn find_anchor_tile(value: &Value) -> Result<Option<WorldTile>, String> {
@@ -1454,22 +1461,7 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
             return Err(format!("unknown smoke mode {mode:?}"));
         }
     }
-    let stand = if let Some(seeds) = &seeds {
-        let stand = WorldTile {
-            x: seeds.stand[0],
-            z: seeds.stand[1],
-            level: seeds.stand[2],
-        };
-        if stand != start {
-            return Err(format!(
-                "QUESTER_SEEDS stand ({},{},{}) must match Path start anchor ({},{},{})",
-                stand.x, stand.z, stand.level, start.x, start.z, start.level
-            ));
-        }
-        stand
-    } else {
-        start
-    };
+    let stand = quester_path_stand(start, seeds.as_ref());
     let loadout = match &seeds {
         Some(seeds) => seeds.fixture_loadout()?,
         None => None,
@@ -2057,6 +2049,8 @@ mod tests {
         let path = raw_cook();
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let start = quester_path_start_anchor(&path).unwrap();
+        let stand = quester_path_stand(start, None);
+        assert_eq!(stand, start);
         assert_eq!(
             start,
             WorldTile {
@@ -2074,7 +2068,7 @@ mod tests {
             loadout: None,
             extra_items: &[],
             seed_vars: &[],
-            stand: start,
+            stand,
             before_relog: vec![command_step(
                 "pre-relog fixture seed",
                 "givebank egg 1".into(),
@@ -2111,11 +2105,44 @@ mod tests {
         assert_eq!(
             fixture.scenario.steps[relog + 1].wait.arm,
             Proof::Arrived {
-                x: start.x,
-                z: start.z,
-                level: start.level,
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
             }
         );
+    }
+
+    #[test]
+    fn quester_path_seeds_allow_totem_bank_stand_with_only_banked_coins() {
+        let path: PathDocument =
+            serde_json::from_str(include_str!("../../script/paths/289/totem.json")).unwrap();
+        let start = quester_path_start_anchor(&path).unwrap();
+        assert_eq!(
+            start,
+            WorldTile {
+                x: 2791,
+                z: 3182,
+                level: 0,
+            }
+        );
+
+        let seeds = parse_quester_path_seeds(
+            r#"{"stage":"totem:0","stand":[2655,3283,0],"before_relog":["givebank coins 90"],"mode":"clean"}"#,
+            "totem test",
+        )
+        .unwrap();
+        let bank = WorldTile {
+            x: 2655,
+            z: 3283,
+            level: 0,
+        };
+        assert_eq!(quester_path_stand(start, None), start);
+        assert_eq!(quester_path_stand(start, Some(&seeds)), bank);
+        assert_eq!(seeds.before_relog, vec![String::from("givebank coins 90")]);
+        assert!(seeds.extra_items.is_empty());
+        assert!(seeds.seed_vars.is_empty());
+        assert!(seeds.loadout.is_none());
+        assert!(seeds.expect.is_empty());
     }
 
     #[test]
