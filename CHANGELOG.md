@@ -101,8 +101,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   `W` to choose a world; a click on the header's card or sort does the
   same. The palette offers the same Fleet actions.
 - Walk with nothing marked (the fleet toolbar's Walk, WalkTo's **Group**
-  and the TUI Map's `g`) marks the loaded bots the filter shows that can
-  walk, the bots the Walk button counts. A bot the filter hides is not
+  and the TUI Map's `g`) marks only the loaded bots the filter shows, and
+  of those only the bots that can walk. A bot the filter hides is not
   added.
 - Copy settings to more than 64 bots now saves every bot. The copy saves a
   few dozen bots at a time and the rest wait their turn; Starts wait until

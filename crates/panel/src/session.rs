@@ -4118,9 +4118,10 @@ impl Session {
     /// The fleet toolbar's Walk: open (or bring forward) the WalkTo picker in
     /// Group mode over the toolbar's scope. With bots marked, the Send list
     /// is checked from the marks and no mark is added. With nothing marked,
-    /// Group mode marks the loaded, shown bots that can walk (the bots the
-    /// button counts), so the Send list names who walks before the operator
-    /// picks a tile; a bot the fleet filter hides is not added.
+    /// Group mode marks the loaded, shown bots that can walk (the button
+    /// counts every loaded, shown bot; a bot that cannot walk is skipped),
+    /// so the Send list names who walks before the operator picks a tile; a
+    /// bot the fleet filter hides is not added.
     pub fn open_walkto_for_fleet(&mut self) {
         self.open_window(PanelWindow::WalkTo);
         self.refresh_walk_send();
