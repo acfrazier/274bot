@@ -3515,29 +3515,57 @@ fn inv_box_still_beats_a_proved_lost_net() {
 }
 
 #[test]
-fn lost_tool_takes_ground_head_before_reattaching_held_pieces() {
-    for (head_id, handle_id, head_name, handle_name) in [
-        (520, 492, "Axe head", "Axe handle"),
-        (490, 466, "Pickaxe head", "Pickaxe handle"),
+fn lost_tool_picks_the_dropped_tier_not_a_preexisting_same_kind_head() {
+    let data = event_game_data();
+    for (tool_id, head_id, distractor_id, handle_id, tool_name, head_name, handle_name) in [
+        (1351, 508, 520, 492, "Bronze axe", "Axe head", "Axe handle"),
+        (
+            1275,
+            490,
+            480,
+            466,
+            "Rune pickaxe",
+            "Pickaxe head",
+            "Pickaxe handle",
+        ),
     ] {
         let mut c = new_client();
         ingame_scene(&mut c);
         plant_player(&mut c, "Test", 0, 0);
-        plant_ground_obj(&mut c, 0, 0, head_id, Some(head_name));
-        plant_inv_named(&mut c, handle_id, Some(handle_name));
+        plant_inv_named(&mut c, tool_id, Some(tool_name));
+        plant_ground_obj(&mut c, 0, 0, distractor_id, Some(head_name));
         let mut g = Guardian::new();
         let mut drv = FakeDriver::default();
         let settings = ProfileSettings::default();
         let mut snap = GameSnapshot::new();
 
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        let baseline = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert_ne!(baseline.kind, Some(RandomKind::LostTool));
+        assert!(drv.menus.is_empty());
+
+        plant_inv_named(&mut c, handle_id, Some(handle_name));
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
         assert_eq!(status.kind, Some(RandomKind::LostTool));
         assert!(status.hold);
-        assert_eq!(drv.menus.len(), 1, "pick up the head, do not use on ground");
-        assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+        assert!(
+            drv.menus.is_empty(),
+            "the unrelated same-kind tier is not the lost head"
+        );
 
-        c.ground_obj[0][0][0] = None;
+        plant_ground_obj(&mut c, 1, 0, head_id, Some(head_name));
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert!(status.hold);
+        assert_eq!(drv.menus.len(), 1);
+        assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+        assert_eq!(
+            drv.menus[0].2, head_id,
+            "take the tier-matched event head, not the nearby distractor"
+        );
+
+        c.ground_obj[0][1][0] = None;
         plant_inv_named(&mut c, head_id, Some(head_name));
         c.set_iface_mut(
             301,
@@ -3550,19 +3578,23 @@ fn lost_tool_takes_ground_head_before_reattaching_held_pieces() {
         c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
         drv.menus.clear();
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 600, None);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
         assert!(
             status.hold,
             "wait for the server to combine the held pieces"
         );
-        assert_eq!(drv.menus.len(), 2);
-        assert_eq!(drv.menus[0].1, MiniMenuAction::USEHELD_START);
-        assert_eq!(drv.menus[1].1, MiniMenuAction::USEHELD_ONHELD);
+        assert_eq!(
+            drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+            vec![
+                MiniMenuAction::USEHELD_START,
+                MiniMenuAction::USEHELD_ONHELD
+            ]
+        );
 
-        plant_inv_named(&mut c, 1359, Some("Rune axe"));
+        plant_inv_named(&mut c, tool_id, Some(tool_name));
         drv.menus.clear();
         tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, 1200, None);
+        let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
         assert_eq!(status.kind, None);
         assert!(!status.hold && !status.ours);
         assert!(drv.menus.is_empty());
@@ -3570,29 +3602,35 @@ fn lost_tool_takes_ground_head_before_reattaching_held_pieces() {
 }
 
 #[test]
-fn lost_tool_unsettled_recovery_releases_gatherer_before_watchdog() {
+fn lost_tool_spawn_grace_uses_content_ticks_not_wall_clock() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
     plant_inv_named(&mut c, 492, Some("Axe handle"));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
+
     tick_at(&mut c, &mut snap);
-    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
-    for now in [12_000, 12_600, 600_000] {
-        drv.menus.clear();
-        tick_at(&mut c, &mut snap);
-        let status = g.tick(&mut drv, &snap, &settings, now, None);
-        assert_eq!(status.kind, Some(RandomKind::LostTool));
-        assert!(
-            !status.hold && !status.ours,
-            "release the missing-tool bank trip"
-        );
-        assert!(drv.menus.is_empty(), "do not repeat a failed recovery");
-    }
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(status.kind, Some(RandomKind::LostTool));
+    assert!(status.hold);
+    assert!(drv.menus.is_empty());
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 600_000, None);
+    assert!(
+        status.hold,
+        "wall time cannot expire a content-tick spawn grace"
+    );
+    assert!(drv.menus.is_empty());
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 600_001, None);
+    assert_eq!(status.kind, Some(RandomKind::LostTool));
+    assert!(!status.hold && !status.ours);
+    assert!(drv.menus.is_empty(), "no head means no refit action");
 }
 
 #[test]
@@ -3600,7 +3638,31 @@ fn lost_tool_full_pack_drops_a_product_before_taking_the_head() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_inv_ops(
+        &mut c,
+        1623,
+        Some("Uncut sapphire"),
+        [None, None, None, None, Some("Drop")],
+    );
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![1352, 1624]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert_ne!(
+        g.tick(&mut drv, &snap, &settings, 0, None).kind,
+        Some(RandomKind::LostTool)
+    );
+
     plant_inv_named(&mut c, 492, Some("Axe handle"));
     plant_inv_ops(
         &mut c,
@@ -3616,13 +3678,14 @@ fn lost_tool_full_pack_drops_a_product_before_taking_the_head() {
             ..Default::default()
         },
     );
-    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
-    let mut g = Guardian::new();
-    let mut drv = FakeDriver::default();
-    let settings = ProfileSettings::default();
-    let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold);
+    assert!(drv.menus.is_empty(), "wait for the event projectile");
+
+    plant_ground_obj(&mut c, 0, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 600, None);
     assert!(status.hold);
     assert_eq!(drv.menus.len(), 1);
     assert_eq!(drv.menus[0].1, MiniMenuAction::OP_HELD5);
@@ -3631,52 +3694,166 @@ fn lost_tool_full_pack_drops_a_product_before_taking_the_head() {
     plant_inv_named(&mut c, 492, Some("Axe handle"));
     drv.menus.clear();
     tick_at(&mut c, &mut snap);
-    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    assert!(g.tick(&mut drv, &snap, &settings, 1_200, None).hold);
     assert_eq!(drv.menus.len(), 1);
     assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+    assert_eq!(drv.menus[0].2, 508);
 }
 
 #[test]
-fn lost_tool_never_attaches_an_axe_handle_to_a_pickaxe_head() {
+fn lost_tool_full_pack_without_drop_waits_for_content_expiry() {
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_ground_obj(&mut c, 0, 0, 490, Some("Pickaxe head"));
-    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    plant_inv_named(&mut c, 7000, Some("Quest token"));
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![1352, 7001]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
-    assert_eq!(status.kind, Some(RandomKind::LostTool));
-    assert!(status.hold, "wait boundedly for the matching axe head");
+    g.tick(&mut drv, &snap, &settings, 0, None);
+
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    plant_inv_named(&mut c, 7000, Some("Quest token"));
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![493, 7001]),
+            link_obj_number: Some(vec![1, 1]),
+            ..Default::default()
+        },
+    );
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+
+    plant_ground_obj(&mut c, 0, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    assert!(drv.menus.is_empty(), "no unrelated item is dropped");
+
+    for age in 1..LOST_TOOL_GROUND_LIFETIME_TICKS {
+        tick_at(&mut c, &mut snap);
+        let now_ms = 12_000 + u64::from(age) * 600;
+        let status = g.tick(&mut drv, &snap, &settings, now_ms, None);
+        assert!(
+            status.hold,
+            "still within content ground lifetime at age {age}"
+        );
+        assert!(drv.menus.is_empty());
+        if age == 20 {
+            assert!(now_ms > 12_000, "the wall-clock bound has passed");
+        }
+    }
+    tick_at(&mut c, &mut snap);
+    let expired = g.tick(
+        &mut drv,
+        &snap,
+        &settings,
+        12_000 + u64::from(LOST_TOOL_GROUND_LIFETIME_TICKS) * 600,
+        None,
+    );
+    assert_eq!(expired.kind, Some(RandomKind::LostTool));
+    assert!(!expired.hold && !expired.ours);
     assert!(drv.menus.is_empty());
 }
 
 #[test]
-fn lost_tool_without_ground_head_sends_no_reattach() {
+fn lost_tool_missing_from_visible_tile_releases_the_gatherer() {
+    let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
-    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
 
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 0, None);
-    assert_eq!(status.kind, Some(RandomKind::LostTool));
-    assert!(drv.menus.is_empty(), "no head: no fake reattach");
-    assert!(drv.actions.is_empty());
-    assert!(status.hold, "allow the flying head to land before banking");
-    plant_ground_obj(&mut c, 0, 0, 520, Some("Axe head"));
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
     tick_at(&mut c, &mut snap);
-    let status = g.tick(&mut drv, &snap, &settings, 600, None);
-    assert!(status.hold);
+    assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+
+    plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+    assert_eq!(drv.menus[0].2, 508);
+
+    c.ground_obj[0][1][0] = None;
+    drv.menus.clear();
+    tick_at(&mut c, &mut snap);
+    let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert_eq!(status.kind, Some(RandomKind::LostTool));
+    assert!(!status.hold && !status.ours);
+    assert!(drv.menus.is_empty());
+}
+
+#[test]
+fn lost_tool_refit_rejection_releases_the_gatherer() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    g.tick(&mut drv, &snap, &settings, 0, None);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    plant_ground_obj(&mut c, 0, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 1_200, None).hold);
     assert_eq!(drv.menus.len(), 1);
     assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+    assert_eq!(drv.menus[0].2, 508);
+
+    c.ground_obj[0][0][0] = None;
+    plant_inv_named(&mut c, 508, Some("Axe head"));
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![493, 509, 0]),
+            link_obj_number: Some(vec![1, 1, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    drv.menus.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 1_800, None);
+    assert!(status.hold);
+    assert_eq!(
+        drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+        vec![
+            MiniMenuAction::USEHELD_START,
+            MiniMenuAction::USEHELD_ONHELD
+        ]
+    );
+
+    drv.menus.clear();
+    c.add_chat(0, "Nothing interesting happens.", "");
+    tick_at(&mut c, &mut snap);
+    let rejected = g.tick(&mut drv, &snap, &settings, 2_400, None);
+    assert_eq!(rejected.kind, Some(RandomKind::LostTool));
+    assert!(!rejected.hold && !rejected.ours);
+    assert!(
+        drv.menus.is_empty(),
+        "do not repeat a refit the game rejected"
+    );
 }
 
 #[test]
