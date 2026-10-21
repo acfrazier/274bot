@@ -663,8 +663,7 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// 2.5 dirty snapshots/s; 575 old-counter snapshots informed the existing
 /// 600-game-tick (360s) deposit budget.
 /// The reverse dungeon wait remains 240 game ticks (144s). First-egg,
-/// empty, close and further-egg waits remain 150 game ticks. The newt cell
-/// keeps its 180s deadline and 150-game-tick ordinary watch.
+/// empty, close and further-egg waits remain 150 game ticks.
 ///
 /// **Deadline:** the estimated run needs about 385s. The fixed deadline is
 /// 420s. The 600- and 240-game-tick waits allow 504s together, so the whole-run
@@ -677,6 +676,13 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
+/// B2's completed HerbloreSecondaries cycle needed 412 observed game ticks
+/// (`FIX-025/integrate-b2/engine-a-600ms-b2/cells/herblore_secondaries/receipt.json`).
+/// The newt branch still returned from Draynor at its old 180s deadline.
+/// Use the completed cycle as a conservative bound: 412 ticks × 600ms,
+/// plus 50% headroom for preparation and scene settling (618 ticks, 370.8s).
+/// Per-step newt watches remain 150 game ticks.
+const HERBLORE_NEWT_DEADLINE: Duration = Duration::from_millis(412 * 600 * 3 / 2);
 /// ArdyCakes first cake → Ardougne bank arrival: the Baker stall fill of the
 /// 6 free slots (22 Knife ballast) plus the bank walk.
 ///
