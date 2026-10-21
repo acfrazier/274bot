@@ -76,10 +76,17 @@ fn exact_rank_at(view: &ReachQueryView, tile: WorldTile) -> Option<u16> {
     (rank != u16::MAX).then_some(rank)
 }
 
-/// Best stand for a footprint: the earliest flood rank that is exact on, or
-/// wall-valid orthogonally beside, a footprint tile. Returns its walking
-/// depth and rank; `None` when the flood reaches no stand.
-pub(crate) fn route_steps(view: &ReachQueryView, fp: Footprint) -> Option<(u32, u16)> {
+/// A legal stand from the posted flood, with its walking depth and dequeue rank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RouteStand {
+    pub tile: WorldTile,
+    pub steps: u32,
+    pub rank: u16,
+}
+
+/// Best stand on, or wall-valid orthogonally beside, the footprint.
+/// This reads the posted flood. It does not create another search.
+pub(crate) fn route_stand(view: &ReachQueryView, fp: Footprint) -> Option<RouteStand> {
     let (rank, stand) = fp
         .tiles()
         .filter_map(|tile| {
@@ -90,10 +97,16 @@ pub(crate) fn route_steps(view: &ReachQueryView, fp: Footprint) -> Option<(u32, 
             (rank != u16::MAX).then(|| (rank, stand_for(view, tile, rank)))
         })
         .min_by_key(|(rank, _)| *rank)?;
-    Some((
-        flood_depth(view, stand, rank).unwrap_or(u32::from(rank)),
+    Some(RouteStand {
+        tile: stand,
+        steps: flood_depth(view, stand, rank).unwrap_or(u32::from(rank)),
         rank,
-    ))
+    })
+}
+
+/// Walking depth and rank of the footprint's best legal stand.
+pub(crate) fn route_steps(view: &ReachQueryView, fp: Footprint) -> Option<(u32, u16)> {
+    route_stand(view, fp).map(|stand| (stand.steps, stand.rank))
 }
 
 /// The tile whose exact rank produced `rank`: the tile itself or one of its

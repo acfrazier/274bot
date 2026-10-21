@@ -87,6 +87,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/ground_take.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/hostlog.rs",
       "owner": "T1"
     },
@@ -3295,6 +3299,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/ground_take.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/host_js.rs",
       "owner": "T1"
     },
@@ -3816,6 +3824,10 @@
     },
     {
       "path": "crates/script/src/quester/families/extension_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/ground_tests.rs",
       "owner": "T2"
     },
     {

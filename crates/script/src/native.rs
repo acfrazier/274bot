@@ -381,6 +381,14 @@ pub trait Script: Send {
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         RandomClaim::Host
     }
+    /// A safe wait on new world evidence rather than elapsed time. Return true
+    /// only when a fresh observation could enable work and this script has no
+    /// foreground action in flight. The slot additionally validates readiness,
+    /// session, hold and action ownership before suspending gameplay-idle
+    /// recovery. Scheduler and missing-packet watchdogs remain active.
+    fn waits_for_evidence(&self) -> bool {
+        false
+    }
     fn recovery_anchor(&self) -> Option<WorldTile> {
         None
     }
@@ -436,6 +444,13 @@ impl<'frame> NativeTick<'frame> {
             Some(state) => state.operator_loadouts(),
             None => Ok(crate::local_state::OperatorLoadouts::absent()),
         }
+    }
+    /// Report one confirmed gameplay change for the current run and session.
+    /// The slot consumes it once through the progress watchdog. This sends no
+    /// interaction and spends no event budget; call only after observing a
+    /// successful outcome, never for a click or an expected result.
+    pub fn note_progress(&mut self) {
+        self.cx.note_progress();
     }
 }
 
@@ -532,6 +547,7 @@ pub struct ActionContext<'a> {
     pub(crate) active_now: Duration,
     pub(crate) wall_now: Instant,
     pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
+    pub(crate) pending_note_progress: Option<&'a mut Option<RunKey>>,
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
     pub(crate) observed_walk_outcome_seq: u64,
@@ -793,6 +809,14 @@ impl<'a> ActionContext<'a> {
     pub fn action_id(&self) -> u64 {
         self.action_id
     }
+    pub(crate) fn note_progress(&mut self) {
+        if !self.eligible {
+            return;
+        }
+        if let Some(pending) = self.pending_note_progress.as_deref_mut() {
+            *pending = Some(self.evidence.run);
+        }
+    }
 }
 
 /// Non-Clone guard. Dropping it revokes host work before local cleanup.
@@ -841,6 +865,8 @@ pub enum ActionError {
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
     NeedsEvidence(Arc<[QuestGate]>),
+    /// Typed capacity or duplicate refusal from exact ground-item Take.
+    GroundTake(api::ground_take::GroundRefusal),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
@@ -1087,6 +1113,7 @@ mod defer_budget_tests {
             ActionError::Failed(Arc::from("failed")),
             ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
+            ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];
         for error in errors {
