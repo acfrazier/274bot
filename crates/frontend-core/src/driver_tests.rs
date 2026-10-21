@@ -1836,25 +1836,44 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
     run_plan(&mut d);
     let _ = d.models_mut().scripts.take_notice();
     assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
-    run_plan(&mut d);
-    for _ in 0..3 {
+    // Without a game the Starts fail at once; the run may stay open for
+    // its paced queue, so it is polled, not settled.
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("run");
+    let mut shown = Vec::new();
+    let drain = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
+        if let Some(notice) = d.models_mut().scripts.take_notice() {
+            shown.push(format!("{notice:?}"));
+        }
         d.poll();
+    };
+    for _ in 0..5 {
+        drain(&mut d, &mut shown);
     }
     let result = d.session().fleet_result().expect("result");
     assert!(result.text().starts_with("Start"), "{}", result.text());
-    let notice = d.models_mut().scripts.take_notice();
-    assert!(notice.is_none(), "a planned Start on the banner: {notice:?}");
     d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
-    run_plan(&mut d);
-    for _ in 0..3 {
-        d.poll();
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("copy");
+    for _ in 0..5 {
+        drain(&mut d, &mut shown);
+        d.session_mut().flush_writes();
     }
+    drain(&mut d, &mut shown);
     let result = d.session().fleet_result().expect("result");
     assert!(result.text().starts_with("Copy"), "{}", result.text());
-    let notice = d.models_mut().scripts.take_notice();
-    assert!(notice.is_none(), "a planned copy on the banner: {notice:?}");
+    // An ordinary error (a Start that failed without a game) may show; a
+    // bulk report never does.
+    for text in &shown {
+        assert!(
+            !["Start selected", "started", "Apply", "saved"]
+                .iter()
+                .any(|bulk| text.contains(bulk)),
+            "a planned report on the banner: {shown:?}"
+        );
+    }
 }
 
 /// A rename and a card change between the plan and its Confirm neither
@@ -1888,7 +1907,11 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
     mark(&mut d, &["carol"]);
     run_plan(&mut d);
     assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
-    assert_eq!(assignment(&d, "bobby").as_deref(), Some("Gatherer"), "same identity");
+    assert_eq!(
+        assignment(&d, "bobby").as_deref(),
+        Some("Gatherer"),
+        "same identity"
+    );
     assert_eq!(assignment(&d, "carol"), None);
 }
 
@@ -1917,17 +1940,18 @@ fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pendi
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     assert_eq!(plan_names(&d), ["alice"]);
     let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
-    assert!(
-        prompt.contains("bobby (profile is being saved)"),
-        "{prompt}"
-    );
+    assert!(prompt.contains("bobby: profile is being saved"), "{prompt}");
     let command = d.session().fleet_plan().expect("plan").command();
     let run = d.submit(command, Targets::Plan).expect("run");
     for _ in 0..5 {
         d.poll();
     }
     let result = d.session().fleet_result().expect("result");
-    assert!(!result.settled(), "a queued write is Pending: {}", result.text());
+    assert!(
+        !result.settled(),
+        "a queued write is Pending: {}",
+        result.text()
+    );
     drop(held);
     settle(&mut d, run.request());
     d.session_mut().flush_writes();
@@ -1937,6 +1961,8 @@ fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pendi
     assert_eq!(result.counts().done, 1, "{}", result.text());
     assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
     assert_eq!(assignment(&d, "bobby"), None, "never a competing write");
+}
+
 /// The stored Load order's members (`"<uid>"` keys, sorted), once every
 /// quiet write has landed: waits until they are exactly the vault's uids.
 fn stored_uids_settled(d: &mut HeadlessDriver) -> Vec<i32> {

@@ -629,8 +629,16 @@ impl<Io> OperatorSession<Io> {
         self.commands.recording = command.settles() == Settles::IntentApplied;
         let planned = self.commands.planned.is_some();
         if planned {
+            let root = self
+                .commands
+                .planned
+                .as_ref()
+                .and_then(|plan| plan.catalog_root.clone());
             if let Some(scripts) = surface.models().scripts.as_deref_mut() {
                 scripts.set_planned_run(true);
+                if root.is_some() {
+                    scripts.stage_start_catalog_root(root);
+                }
             }
         }
         self.dispatch(command, targets, now, surface, &mut submitted);
