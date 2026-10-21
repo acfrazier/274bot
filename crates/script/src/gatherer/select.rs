@@ -1924,6 +1924,15 @@ pub(crate) mod tests {
         walk_danger: Option<&dyn crate::native::WalkDangerQuery>,
         arrived: bool,
     ) -> SelectionResult {
+        danger_tree_selection_case(walk_danger, arrived, PlacementClass::Live, false)
+    }
+
+    fn danger_tree_selection_case(
+        walk_danger: Option<&dyn crate::native::WalkDangerQuery>,
+        arrived: bool,
+        class: PlacementClass,
+        quest: bool,
+    ) -> SelectionResult {
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
         use api::snapshot::{GameSnapshot, SnapshotView};
@@ -1970,7 +1979,19 @@ pub(crate) mod tests {
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
-        let locs = [loc(id, tile)];
+        let observed_id = if class == PlacementClass::Depleted {
+            known_targets(method)
+                .unwrap()
+                .iter()
+                .find_map(|target| match (target.class, target.entity) {
+                    (TargetClass::Depleted, EntityId::Loc(id)) => Some(id),
+                    _ => None,
+                })
+                .expect("normal trees publish a depleted stump")
+        } else {
+            id
+        };
+        let locs = [loc(observed_id, tile)];
         snapshot.seed_locs(locs.to_vec());
         let stamp = EvidenceStamp {
             run: RunKey {
@@ -1983,29 +2004,36 @@ pub(crate) mod tests {
         };
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert_eq!(view.walk_loc_arrived(here, tile, 1, id), arrived);
-        select(
-            &catalog,
-            &[method_index(&catalog, method)],
-            &GathererSettings::default(),
-            WorkArea {
-                mode: super::super::area::AreaMode::Custom,
-                anchor: tile,
-                radius: 0,
-            },
-            &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                world: &scene_around(tile),
-                locs: &locs,
-                npcs: &[],
-                here,
-                now: 1,
-                skill_stat: 8,
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                snapshot: Some(view),
-                walk_danger,
-            },
-        )
+        let mut fishing = FishingSurvey::default();
+        let world = scene_around(tile);
+        let observation = SelectionObservation {
+            world: &world,
+            locs: &locs,
+            npcs: &[],
+            here,
+            now: 1,
+            skill_stat: 8,
+            fishing: &mut fishing,
+            collision: None,
+            snapshot: Some(view),
+            walk_danger,
+        };
+        let indices = [method_index(&catalog, method)];
+        let settings = GathererSettings::default();
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: tile,
+            radius: 0,
+        };
+        if quest {
+            select_for_quest(&catalog, &indices, &settings, area, observation, view)
+        } else {
+            let mut avoided = [AvoidedTile::EMPTY; MAX_AVOID];
+            if class == PlacementClass::Avoided {
+                avoided[0] = AvoidedTile { tile, until: 81 };
+            }
+            select(&catalog, &indices, &settings, area, &avoided, observation)
+        }
     }
 
     #[test]
@@ -2047,6 +2075,45 @@ pub(crate) mod tests {
             result.target.is_some(),
             "an arrived loc operation does not need walk admission"
         );
+    }
+
+    #[test]
+    fn danger_without_navigation_waits_for_depleted_tree_in_gatherer_and_quester() {
+        for quest in [false, true] {
+            let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, quest);
+            let allowed = danger_tree_selection_case(
+                Some(&crate::native::AllowWalkDanger),
+                true,
+                PlacementClass::Depleted,
+                quest,
+            );
+            assert_eq!(result.outcome, allowed.outcome, "quest={quest}");
+            assert!(matches!(
+                result.outcome,
+                Selection::Exhausted { wait_until: 200, absent: 0 }
+            ));
+        }
+    }
+
+    #[test]
+    fn danger_without_navigation_waits_for_avoided_tree_in_operating_range() {
+        let result = danger_tree_selection_case(None, true, PlacementClass::Avoided, false);
+        assert_eq!(result.outcome, Selection::Exhausted { wait_until: 81, absent: 0 });
+    }
+
+    #[test]
+    fn danger_non_live_tree_still_requires_permission_when_not_arrived_or_denied() {
+        for quest in [false, true] {
+            let distant = danger_tree_selection_case(None, false, PlacementClass::Depleted, quest);
+            assert_eq!(distant.outcome, Selection::Danger(DangerFailure::Unavailable));
+            let denied = danger_tree_selection_case(
+                Some(&DenyDanger),
+                true,
+                PlacementClass::Depleted,
+                quest,
+            );
+            assert!(matches!(denied.outcome, Selection::Danger(DangerFailure::Denied { .. })));
+        }
     }
 
     #[test]
