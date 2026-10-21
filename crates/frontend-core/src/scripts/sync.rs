@@ -1328,6 +1328,18 @@ impl Scripts {
             let Some(report) = self.sync.report_mut(slot) else {
                 continue;
             };
+            let Some(waiting) = report.queued.as_ref() else {
+                continue;
+            };
+            let cancelled = report
+                .copy_cancellation
+                .as_ref()
+                .is_some_and(|c| c.is_cancelled());
+            // Nothing to write until room frees: leave the queue as it is
+            // and copy nothing (this runs every poll).
+            if !cancelled && (waiting.remaining.is_empty() || core.native_copy_room() == 0) {
+                continue;
+            }
             let Some(mut queue) = report.queued.take() else {
                 continue;
             };

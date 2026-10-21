@@ -37,6 +37,35 @@ fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> Granted
     GrantedReservation::new(queue, arm.queue_owner)
 }
 
+/// The ready session carries the key, the readiness and the world of one
+/// session: absent until that session's scene is ready, bound to the world
+/// configured for its handshake (not to a world configured later), and
+/// absent again once it ends.
+#[test]
+fn the_ready_session_binds_its_key_and_world_to_one_session() {
+    let arm = SlotArm::new(7, true);
+    arm.configure_world_for_test(1);
+    arm.complete_login_for_test();
+    let first = arm.session_key().expect("a session");
+    assert_eq!(arm.ready_session(), None, "not ready before its scene");
+    arm.scene_ready_for_test();
+    assert_eq!(arm.ready_session(), Some((first, Some(1))));
+    // The next login's world is configured while this session runs.
+    arm.configure_world_for_test(2);
+    assert_eq!(arm.ready_session(), Some((first, Some(1))));
+
+    arm.switch_world(2);
+    arm.complete_login_for_test();
+    let second = arm.session_key().expect("a new session");
+    assert_ne!(second, first);
+    assert_eq!(arm.ready_session(), None, "the new session is not ready");
+    arm.scene_ready_for_test();
+    assert_eq!(arm.ready_session(), Some((second, Some(2))));
+
+    arm.observe_session_exit(SessionEndCause::ServerLogout, false);
+    assert_eq!(arm.ready_session(), None, "no session");
+}
+
 #[test]
 fn logout_after_grant_before_publication_does_not_charge_spacing_or_settlement() {
     let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::default()));

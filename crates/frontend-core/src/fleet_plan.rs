@@ -204,6 +204,9 @@ pub struct ResultCounts {
     pub done: usize,
     pub skipped: usize,
     pub failed: usize,
+    /// Members a later command replaced, or that the operator or the
+    /// bot's removal withdrew, before they finished.
+    pub cancelled: usize,
     pub pending: usize,
 }
 

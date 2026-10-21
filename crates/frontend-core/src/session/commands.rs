@@ -2397,14 +2397,15 @@ impl<Io> OperatorSession<Io> {
 
     /// Feed the watched arms' lifecycle events to the book and drop arms
     /// with nothing left to settle. A watched arm that is no longer its
-    /// slot's current arm retired its slot.
+    /// slot's current arm retired its slot. The list is filtered in place
+    /// and the slot rows are read in place: a poll with nothing new
+    /// allocates nothing, however many relogs wait.
     fn drain_watched(&mut self) {
         if self.commands.watched.is_empty() {
             return;
         }
-        let watched = std::mem::take(&mut self.commands.watched);
-        let mut kept = Vec::with_capacity(watched.len());
-        for arm in watched {
+        let mut watched = std::mem::take(&mut self.commands.watched);
+        watched.retain(|arm| {
             loop {
                 let (event, _) = arm.take_lifecycle_event();
                 let Some(event) = event else {
@@ -2413,16 +2414,11 @@ impl<Io> OperatorSession<Io> {
                 self.commands.book.observe(&event);
             }
             let slot = arm.slot();
-            let current = self.play.as_ref().is_some_and(|play| {
-                play.statuses()
-                    .iter()
-                    .filter_map(|status| play.arm(&status.username))
-                    .any(|live| Arc::ptr_eq(&live, &arm))
-            });
+            let current = self.play.as_ref().is_some_and(|play| play.holds_arm(arm));
             if !current {
                 self.commands.book.slot_retired(slot);
             }
-            let waiting = self.commands.book.reports().any(|report| {
+            self.commands.book.reports().any(|report| {
                 report.members().iter().any(|member| {
                     member.scope() == Scope::Slot(slot)
                         && matches!(
@@ -2430,12 +2426,10 @@ impl<Io> OperatorSession<Io> {
                             Some(crate::command::Pending::Posted { .. })
                         )
                 })
-            });
-            if waiting {
-                kept.push(arm);
-            }
-        }
-        self.commands.watched = kept;
+            })
+        });
+        debug_assert!(self.commands.watched.is_empty());
+        self.commands.watched = watched;
     }
 
     /// Settle owner-reported members from their operation outcomes.

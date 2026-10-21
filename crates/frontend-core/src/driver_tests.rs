@@ -3294,13 +3294,16 @@ fn publish(d: &mut HeadlessDriver, name: &str, edit: impl FnOnce(&mut host_play:
     d.poll();
 }
 
-/// A finished login: a new owner session for `name`, in game on `world`.
+/// A finished login: a new owner session for `name` on `world`, its scene
+/// ready, and the status row the slot publishes for it.
 fn log_in_on(d: &mut HeadlessDriver, name: &str, world: u16) {
     let arm = arm_of(d, name);
     if !arm.login_wanted() {
         arm.arm_explicit_login();
     }
+    arm.configure_world_for_test(world);
     arm.complete_login_for_test();
+    arm.scene_ready_for_test();
     publish(d, name, |row| {
         row.connected = true;
         row.ingame = true;
@@ -3425,6 +3428,80 @@ fn a_world_switch_saves_first_then_relogs_and_settles_on_the_new_session() {
     assert_eq!(
         d.session().fleet_result().expect("result").text(),
         "Switch world: done 1: alice"
+    );
+}
+
+/// Review F4-SOL-1: the frontend's status rows can still describe the old
+/// session, in game on world 1, when the slot's new session begins. The
+/// switch settles only from the new session's own readiness and world:
+/// a stale row never fails it, and a ready new session settles it even
+/// before its row is published.
+#[test]
+fn a_stale_status_row_never_settles_the_new_session() {
+    let mut d = world_driver("f4-stale-row", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    let alice = arm_of(&d, "alice");
+    assert!(alice.wants_logout(), "the relog is posted");
+    // The new session logs in on world 2; its scene is not ready yet and
+    // the row still reads the old session, in game on world 1.
+    alice.configure_world_for_test(2);
+    alice.complete_login_for_test();
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        None,
+        "a new key with the old row settles nothing"
+    );
+    alice.scene_ready_for_test();
+    d.poll();
+    d.poll();
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: alice"
+    );
+}
+
+/// Review F4 Grok 2: a slot restarted between admission and the post is
+/// not the slot the command was for. The member is cancelled and the new
+/// slot's mailbox never receives the switch.
+#[test]
+fn a_switch_never_posts_to_a_slot_it_was_not_admitted_on() {
+    let mut d = world_driver("f4-restarted-slot", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    d.poll();
+    // The restarted slot logged in again on world 1 (a SwitchWorld posted
+    // to it would log it out).
+    let restarted = host_play::SlotArm::new(1, true);
+    restarted.configure_world_for_test(1);
+    restarted.complete_login_for_test();
+    restarted.scene_ready_for_test();
+    d.session_mut()
+        .play_mut_for_test()
+        .expect("play")
+        .attach_arm("alice", std::sync::Arc::clone(&restarted));
+    drop(held);
+    land_saves(&mut d);
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::ScopeInvalidated
+        ))
+    );
+    assert!(
+        !restarted.wants_logout(),
+        "nothing reached the restarted slot"
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (the bot's slot restarted)"
     );
 }
 
@@ -3624,6 +3701,35 @@ fn a_logout_during_the_switch_cancels_it_and_nothing_logs_back_in() {
         assert!(arm.login_latched(), "{name} stays logged out");
         assert!(!arm.wants_login(), "{name}: nothing logs back in");
     }
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 2: alice (a later Log in, Log out or Remove took over), \
+         bob (a later Log in, Log out or Remove took over)"
+    );
+}
+
+/// Review F4 Grok 1: a Log in after the relog was posted takes the slot
+/// over; the result names the switch cancelled, in words.
+#[test]
+fn a_log_in_during_the_switch_cancels_it_in_words() {
+    let mut d = world_driver("f4-login", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    assert!(arm_of(&d, "alice").wants_logout(), "the relog is posted");
+    d.submit(OperatorCommand::Login, Targets::Profile("alice"))
+        .expect("login");
+    d.poll();
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::Superseded
+        ))
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (a later Log in, Log out or Remove took over)"
+    );
 }
 
 /// Removing a bot whose relog is posted cancels its member.
