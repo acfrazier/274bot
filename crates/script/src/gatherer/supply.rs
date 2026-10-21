@@ -1344,7 +1344,12 @@ mod tests {
                     .unwrap();
                 let mut held = vec![item(tool.item, name, 1, ItemContainer::Inventory)];
                 if let Some(bait) = &prepared.supply.bait {
-                    held.push(item(bait.id, &bait.name, 1, ItemContainer::Inventory));
+                    held.push(item(
+                        bait.id,
+                        &bait.name,
+                        prepared.settings.bait_target,
+                        ItemContainer::Inventory,
+                    ));
                 }
                 let stock = pages(&held, &[]);
                 let choice = best_tool(prepared, &stats, &held, &[]).unwrap();
@@ -1541,7 +1546,7 @@ mod tests {
     fn coins_never_admit_a_trip_and_optional_coin_shortage_never_blocks() {
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
+        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op1"));
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
         let (tool_id, tool_name) = known_tool(&prepared);
@@ -1573,7 +1578,7 @@ mod tests {
 
         let mut zero_settings = crate::native::SettingsBag::new();
         zero_settings.insert("skill".into(), json!("Fishing"));
-        zero_settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
+        zero_settings.insert("fishingMethod".into(), json!("fishing.saltfish.op1"));
         zero_settings.insert("coinTarget".into(), json!(0));
         let no_coins = prepare(zero_settings);
         let zero_stats = stats(&no_coins);
@@ -1691,6 +1696,7 @@ mod tests {
             .clone();
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("reserveTeleport".into(), json!(spell.name));
+        settings.insert("reserveCasts".into(), json!(1));
         let mut prepared = prepare(settings);
         Arc::get_mut(&mut prepared)
             .expect("the test owns its prepared configuration")

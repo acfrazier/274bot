@@ -2516,8 +2516,9 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
+        // The inline core replaces the trip handlers: 1,400 B measured, 40 B headroom.
         assert!(
-            size_of::<Gatherer>() <= 1024,
+            size_of::<Gatherer>() <= 1440,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
         );
@@ -2850,7 +2851,16 @@ mod tests {
                     1,
                     Arc::new(bag),
                     selected,
-                    Arc::default(),
+                    Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+                        api::named_banks::NamedBank::new(
+                            "Test bank",
+                            WorldTile {
+                                x: 3092,
+                                z: 3243,
+                                level: 0,
+                            },
+                        ),
+                    ])),
                     None,
                 )
             })
@@ -3204,8 +3214,17 @@ mod tests {
         };
         assert_eq!(run.progress().2, "Withdraw");
         assert!(
-            ledger.as_ref().unwrap().outbox.is_empty(),
-            "starting the withdrawal child does not itself send an interaction"
+            matches!(
+                ledger.as_ref().unwrap().outbox.as_slice(),
+                [action]
+                    if matches!(
+                        action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::SetNoteMode { on: false }
+                        )
+                    )
+            ),
+            "the second request immediately starts its one withdrawal child"
         );
     }
 
@@ -3230,8 +3249,15 @@ mod tests {
         };
         assert_eq!(run.progress().2, "Close");
         assert!(
-            ledger.as_ref().unwrap().outbox.is_empty(),
-            "starting Close does not issue the close operation until a later poll"
+            matches!(
+                ledger.as_ref().unwrap().outbox.as_slice(),
+                [action]
+                    if matches!(
+                        action.effect,
+                        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Close)
+                    )
+            ),
+            "an empty withdrawal starts only the core's close operation"
         );
     }
 
@@ -3264,6 +3290,7 @@ mod tests {
             })
             .collect();
         fixture.snapshot.seed_inventory(pack, 28);
+        fixture.snapshot.seed_main_modal(10, Vec::new());
         fixture
             .snapshot
             .seed_bank_observation(10, 1, Some(Vec::new()), side);

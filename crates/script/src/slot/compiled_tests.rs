@@ -975,13 +975,20 @@ fn gatherer_bank_seen_status_demotes_to_a_saved_hint_after_relog() {
     };
     gatherer_tick_with_bank(&mut slot, &snapshot, 1, Some(&memory));
     assert_eq!(bank_seen(&slot).as_ref(), "Session, 3 days ago, 1 rows");
+    let before = slot.native_run().expect("the compiled run is active");
 
     memory.relogged();
     snapshot.seed_main_modal(-1, Vec::new());
     snapshot.seed_bank_observation(-1, 2, None, Vec::new());
-    assert!(slot.reconnect_session_work());
+    slot.reconnect_session_work();
     slot.on_is_up(true);
     gatherer_tick_with_bank(&mut slot, &snapshot, 2, Some(&memory));
+    assert_ne!(
+        slot.native_run()
+            .expect("the rekeyed run is active")
+            .session,
+        before.session,
+    );
     assert_eq!(
         bank_seen(&slot).as_ref(),
         "Hint (saved), 3 days ago, 1 rows"
@@ -2234,8 +2241,8 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Typed RouteTooLarge adds 40 B to inline receipts: 8,206 B measured, 242 B headroom.
-        assert!(exclusive <= 8448, "exclusive API seat exceeds 8.25KiB");
+        // Inline acquisition and bank provenance: 8,662 B measured, 298 B headroom.
+        assert!(exclusive <= 8960, "exclusive API seat exceeds 8.75KiB");
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
         assert!(!slot.api_owns_foreground());
