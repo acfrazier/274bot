@@ -34,7 +34,9 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
-use frontend_core::scripts::{CardSource, LoadoutForm, SchemaRef, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{
+    CardSource, LoadoutForm, PaintFrame, SchemaRef, ScriptChoice, ScriptRunState,
+};
 use frontend_core::surface::{FrameBuf, InputEv, InputSender, SlotInput};
 use frontend_core::walk_map::{
     select_walk_route_source, RouteProjectionView, WalkMapDemand, WalkMapJobState, WalkMapStage,
@@ -4425,16 +4427,19 @@ impl Session {
         }
     }
 
-    /// One-shot script-local paint button on the focused slot.
-    pub fn script_paint_click(&mut self, id: &str, generation: u64) {
+    /// The `index`-th button of the paint `frame` drawn for the focused
+    /// slot. The core decides what it does: a script-local one-shot click,
+    /// or a host Pause/Resume/Stop control bound to the profile and run the
+    /// frame was read for (a control shown for another profile or an ended
+    /// run is refused, not retargeted).
+    pub fn script_paint_activate(&mut self, frame: &PaintFrame, index: usize) {
         let Some(name) = self.focused_name() else {
             return;
         };
-        self.scripts
-            .stage_paint_input(frontend_core::scripts::PaintInput::click(
-                id.to_owned(),
-                generation,
-            ));
+        let Some(input) = frame.view().activate(index) else {
+            return;
+        };
+        self.scripts.stage_paint_input(input);
         self.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(&name));
     }
 

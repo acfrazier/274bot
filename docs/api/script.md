@@ -1392,6 +1392,23 @@ commit together only after native preparation succeeds.
 Script paint (`ScriptPaint`) draws over the Game chatbox in the panel and
 replaces the chat pane in the TUI (`p` toggles back to the game ring).
 
+**Pause/Resume and Stop on a script's paint.** `ScriptRunner.paintControls(p)`
+(the standard helper rs2b0t catalogue scripts call at the end of `onPaint`)
+advertises two paint buttons with fixed host ids, `__rs2b0t.pause` and
+`__rs2b0t.stop`, through the ordinary `p.buttons` API. It adds no text rows and
+no JS pause logic. The operator front ends own these two buttons: the first
+reads **Pause** while the run is starting or running and **Resume** while it is
+paused, and the second reads **Stop**. The label follows the run's lifecycle
+state, so a paused script still offers Resume on its retained frame without
+painting again. Activating one issues the same Pause, Resume or Stop command as
+the toolbar, for the profile and run the frame was drawn for. A click that
+arrives after the focus moved to another profile, after the run ended or was
+replaced, or after the run's state changed (a second Pause, a second Stop) is
+refused and controls nothing. These two ids never reach the script's
+`p.buttons` click result. Ordinary script buttons keep their one-shot click,
+and a click while the script is paused is still dropped. Native cards do not
+get these controls; the native paint builder has no buttons.
+
 **Live gold example:** `panel-play --live script_bone_burier` (and its TUI
 twin) can start the real `$RS2B0T` BoneBurier card on a unique minted
 account when the catalog and engine are present — a supported-path proof,
