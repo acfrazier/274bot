@@ -1123,3 +1123,11 @@ fn exclusive_strip_follows_the_trip_without_a_separate_close() {
         );
     });
 }
+
+#[test]
+fn loadout_acquisition_owner_stays_within_one_kibibyte() {
+    let run = std::mem::size_of::<LoadoutRun>();
+    let wait = std::mem::size_of::<LoadoutObservationWait>();
+    eprintln!("LoadoutRun={run} LoadoutObservationWait={wait}");
+    assert!(run <= 1024, "LoadoutRun is {run} bytes");
+}

@@ -330,6 +330,8 @@ pub struct BankCount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankReceipt {
     pub complete: bool,
+    /// Units whose deposit the bank machine confirmed in the observed rows.
+    pub deposited: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1649,7 +1651,7 @@ impl NativeMachine for BankMachine {
                         current.is_some_and(|now| now < before)
                     };
                     if moved {
-                        if let BankAction::DepositProducts { .. } = &self.request.action {
+                        if !withdrawing {
                             let after = current.unwrap_or(before);
                             self.deposited = self
                                 .deposited
@@ -2029,9 +2031,7 @@ impl BankMachine {
             before_slots.saturating_sub(pack_rows(pack))
         });
         if fell > 0 {
-            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
-                self.deposited = self.deposited.saturating_add(fell as u32);
-            }
+            self.deposited = self.deposited.saturating_add(fell as u32);
             self.capacity_freed = self.capacity_freed.saturating_add(freed);
             self.deposits = self.deposits.saturating_add(1);
         }
@@ -2194,12 +2194,10 @@ impl BankMachine {
                 "main-count-fell",
                 api::hostlog::Level::Debug,
             );
-            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
-                let after = main_now.unwrap_or(before);
-                self.deposited = self
-                    .deposited
-                    .saturating_add(before.saturating_sub(after).max(0) as u32);
-            }
+            let after = main_now.unwrap_or(before);
+            self.deposited = self
+                .deposited
+                .saturating_add(before.saturating_sub(after).max(0) as u32);
             if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
                 let freed = before_slots.saturating_sub(pack_rows(pack));
                 self.capacity_freed = self.capacity_freed.saturating_add(freed);
@@ -2406,7 +2404,10 @@ impl BankMachine {
     }
 
     fn receipt(&self, complete: bool) -> BankReceipt {
-        BankReceipt { complete }
+        BankReceipt {
+            complete,
+            deposited: self.deposited,
+        }
     }
 }
 
@@ -2583,7 +2584,7 @@ impl NativeMachine for Deposit {
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         match self.core.poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(self.core.deposited)),
+            Poll::Ready(Ok(receipt)) => Poll::Ready(Ok(receipt.deposited)),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
         }
     }
@@ -4523,7 +4524,7 @@ mod tests {
         );
         assert!(matches!(
             poll,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
@@ -4577,7 +4578,7 @@ mod tests {
         });
         assert!(matches!(
             settled,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -4715,7 +4716,7 @@ mod tests {
         };
         assert!(matches!(
             settled_at_boundary,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -6095,7 +6096,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "{settled:?}"
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -6731,7 +6732,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "one row was already freed; the delta is delivered: {settled:?}"
         );
         assert!(
@@ -6846,7 +6847,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "the shrimp row and the anchovy row are the two slots: {settled:?}"
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -6929,7 +6930,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "the held target is already met: {settled:?}"
         );
         assert!(
