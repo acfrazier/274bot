@@ -1846,6 +1846,25 @@ fn first_ready_anchor_does_not_wait_for_the_reach_flood() {
     assert_eq!(latest_obj(&driver).unwrap().1, ITEM);
 }
 
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn retained_layouts_stay_within_reviewed_per_bot_budgets() {
+    // The measured 64-bit runtime is 896 B; allow 128 B of layout headroom.
+    const RUNTIME_BUDGET: usize = 1024;
+    // Prepared is 56 B, excluding Arc/shared payloads; allow 8 B of headroom.
+    const PREPARED_BUDGET: usize = 64;
+    let runtime = std::mem::size_of::<super::Grinch>();
+    let prepared = std::mem::size_of::<super::Prepared>();
+    println!(
+        "Grinch retained runtime={runtime}B budget={RUNTIME_BUDGET}B prepared={prepared}B budget={PREPARED_BUDGET}B"
+    );
+    assert!(runtime <= RUNTIME_BUDGET, "Grinch runtime is {runtime} B");
+    assert!(
+        prepared <= PREPARED_BUDGET,
+        "Grinch prepared value is {prepared} B"
+    );
+}
+
 #[test]
 fn steady_empty_and_crowded_wait_ticks_allocate_nothing() {
     let config = prepare(settings(&[ITEM])).unwrap();
