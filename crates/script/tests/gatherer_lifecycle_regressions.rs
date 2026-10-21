@@ -2160,6 +2160,30 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         assert_ne!(slot.native_status().unwrap().phase, NativePhase::Blocked);
     }
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
+    let first = &spell.runes[0];
+    if matches!(rune_stock, RuneStock::Empty) {
+        for _ in 0..8 {
+            now += 1;
+            tick(&mut slot, &frame, now);
+            assert!(
+                slot.take_native_action().is_none(),
+                "a blocked acquisition batch must not withdraw any supply"
+            );
+            if slot
+                .native_status()
+                .is_some_and(|status| status.phase == NativePhase::Blocked)
+            {
+                break;
+            }
+        }
+        let status = slot.native_status().unwrap();
+        assert_eq!(status.phase, NativePhase::Blocked);
+        let failure = status.failure.as_ref().unwrap();
+        assert_eq!(failure.code.as_ref(), "supply-missing");
+        assert!(failure.message.contains(first.name.as_str()));
+        slot.stop();
+        return;
+    }
     // The trip's own open started this session in Item mode (`bank.rs2:18-19`
     // resets `%bankcert`), so the first withdraw needs no Item press
     // (TICK-FIX #11).
@@ -2184,30 +2208,6 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     bank_stock.remove(0);
     frame.seed_inventory(held.clone(), 28);
     frame.seed_bank_observation(1, 1, Some(bank_stock.clone()), held.clone());
-    let first = &spell.runes[0];
-    if matches!(rune_stock, RuneStock::Empty) {
-        for _ in 0..8 {
-            now += 1;
-            tick(&mut slot, &frame, now);
-            assert!(
-                slot.take_native_action().is_none(),
-                "zero-rune stock must block after the tool withdrawal"
-            );
-            if slot
-                .native_status()
-                .is_some_and(|status| status.phase == NativePhase::Blocked)
-            {
-                break;
-            }
-        }
-        let status = slot.native_status().unwrap();
-        assert_eq!(status.phase, NativePhase::Blocked);
-        let failure = status.failure.as_ref().unwrap();
-        assert_eq!(failure.code.as_ref(), "supply-missing");
-        assert!(failure.message.contains(first.name.as_str()));
-        slot.stop();
-        return;
-    }
     let first_withdrawal = match rune_stock {
         RuneStock::Full => first.count * 5,
         RuneStock::Partial => PARTIAL_BANK_RUNES
