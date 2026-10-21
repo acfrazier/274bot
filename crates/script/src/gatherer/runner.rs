@@ -1312,7 +1312,18 @@ impl Gatherer {
         }
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
-        if let Some(request) = selected.approach(tick.cx.snapshot(), tick.cx.evidence()) {
+        let approach =
+            match selected.approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger) {
+                Ok(approach) => approach,
+                Err(error) => {
+                    self.fail(
+                        "resource-unavailable",
+                        format!("safe resource access goals: {error}"),
+                    );
+                    return;
+                }
+            };
+        if let Some(request) = approach {
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
                     self.scratch.observation_walk = selected.observation_goals.is_some();
@@ -1978,7 +1989,12 @@ impl Gatherer {
             };
             if enabled
                 && observation == Some(TargetObservation::Active)
-                && selected.approach(snapshot, tick.cx.evidence()).is_none()
+                && (selected.plan.npc_index >= 0
+                    || super::select::resource_arrived(
+                        Some(snapshot),
+                        selected.plan.entity,
+                        selected.plan.tile,
+                    ))
             {
                 self.wait_until = None;
                 self.absent = 0;

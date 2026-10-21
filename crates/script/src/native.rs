@@ -130,6 +130,20 @@ pub trait WalkDangerQuery {
         radius: u16,
         arrival: nav::contract::ArrivalKind,
     ) -> WalkDanger<'_>;
+
+    /// Restrict only the chosen target's access goals after eligibility checks.
+    /// `None` preserves the existing approach, including its preferred tier.
+    /// Implementations must not allocate goals when no access tile is denied.
+    fn safe_access_goals(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+        _existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+        Ok(None)
+    }
 }
 
 /// Bare unit fixtures explicitly opt out of host danger policy.
