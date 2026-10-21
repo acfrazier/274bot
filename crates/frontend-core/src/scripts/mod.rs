@@ -3183,9 +3183,9 @@ impl Scripts {
             };
             let terminal = match reason.as_str() {
                 "cancelled" => Settlement::Cancelled(api::identity::Cancellation::Operator),
-                "already active" => Settlement::Completed(Completion::Skipped(
-                    crate::command::SkipReason::AlreadyActive,
-                )),
+                "already active" | "script already active" => Settlement::Completed(
+                    Completion::Skipped(crate::command::SkipReason::AlreadyActive),
+                ),
                 "logged out" | "disconnected" => Settlement::Completed(Completion::Skipped(
                     crate::command::SkipReason::NotLoggedIn,
                 )),

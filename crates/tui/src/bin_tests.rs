@@ -4723,7 +4723,8 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
 
 /// Confirming Relog-now on a Start that is still queued cancels the queued
 /// Start, and the original fleet Start command's member for that bot
-/// settles as skipped (not logged in): it never starts later.
+/// settles cancelled (`ScopeInvalidated`: the relog retires the session it
+/// was issued under): it never starts later.
 #[test]
 fn confirmed_relog_settles_the_queued_start_member_and_it_never_starts() {
     use api::identity::{Cancellation, Settlement};
@@ -5752,5 +5753,62 @@ fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
         assigned(&mut session, "dave"),
         None,
         "a mark made after the plan never joins it"
+    );
+}
+
+/// Review F3 r2-2: two emptied plans with the same skip text each show
+/// their result, even when another message replaced the first between them
+/// (an emptied plan has no command record to tell the results apart).
+#[test]
+fn a_second_identical_emptied_plan_shows_its_result_again() {
+    let iso = IsolatedStores::enter("tui-emptied-plan-twice");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let alice = session
+        .core
+        .vault_mut()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    let emptied_login = |session: &mut TuiSession, app: &mut TuiApp| {
+        session.pump(app);
+        dispatch(
+            session,
+            app,
+            AppAction::PlanFleet(frontend_core::FleetAction::Login),
+        );
+        assert!(
+            matches!(
+                &app.modal,
+                Some(crate::overlay::Modal::Confirm(confirm))
+                    if matches!(confirm.kind, crate::overlay::ConfirmKind::FleetPlan { .. })
+            ),
+            "a no-marks Log in asks first"
+        );
+        // The plan's only target is gone before Confirm.
+        assert!(session
+            .core
+            .vault_mut()
+            .expect("vault")
+            .remove("alice")
+            .expect("remove"));
+        let confirm = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+        dispatch(session, app, confirm);
+    };
+    let skipped = "Log in: skipped 1: alice (profile no longer exists)";
+    emptied_login(&mut session, &mut app);
+    assert_eq!(app.error.as_deref(), Some(skipped));
+    // Another action replaces the message line.
+    app.error = Some("map: no tile selected".into());
+    session
+        .core
+        .vault_mut()
+        .expect("vault")
+        .upsert(alice)
+        .expect("alice again");
+    emptied_login(&mut session, &mut app);
+    assert_eq!(
+        app.error.as_deref(),
+        Some(skipped),
+        "the second emptied plan's result shows"
     );
 }

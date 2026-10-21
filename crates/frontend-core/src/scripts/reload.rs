@@ -1731,18 +1731,24 @@ impl Scripts {
         }
     }
 
+    /// A preparation withdrawn before its Start ran. Its tally row (when a
+    /// bulk Start holds it) or its notice says why, and every Start command
+    /// waiting on it settles, tallied or not: a single Start and a fleet
+    /// Start that joined it share the preparation.
     fn skip_preparing_start(&mut self, profile: &str, demand: &StartDemand, reason: &str) {
         if demand.tallied {
             self.skip_unstarted_tally(profile, reason);
-        } else {
-            match demand.kind {
-                StartKind::Start => self.show(format!("script: {reason}")),
-                StartKind::Reload => self.show(format!("reload: {profile}: {reason}")),
-                StartKind::RestartSettings => {
-                    self.show(format!("Restart skipped for {profile}: {reason}"))
-                }
+            return;
+        }
+        match demand.kind {
+            StartKind::Start => self.show(format!("script: {reason}")),
+            StartKind::Reload => self.show(format!("reload: {profile}: {reason}")),
+            StartKind::RestartSettings => {
+                self.show(format!("Restart skipped for {profile}: {reason}"))
             }
         }
+        self.start_command_skips
+            .push((profile.to_string(), reason.to_string()));
     }
     pub(crate) fn has_start_preparation(&self, profile: &str) -> bool {
         self.async_work.starts.contains_key(profile)
