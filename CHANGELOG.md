@@ -70,7 +70,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Gatherer applies the card's danger permission before choosing a
   resource. It skips resources with no access tile outside a denied danger
   zone, including trees beside the Draynor jail. A safe access tile keeps a
-  resource eligible. If none remain, the failure names the danger zone.
+  resource eligible, but the walk uses only safe access tiles. The same rule
+  applies to finite resource steps in the Quester. If none remain, the failure
+  names the danger zone. Allowed or uncovered approaches keep their existing
+  access tiles.
 
 ### Navigation checks
 

@@ -826,14 +826,20 @@ mod tests {
         };
         assert_eq!(request.target, loc.tile);
         if restricted {
-            assert_eq!(request.candidate_goals.as_ref().unwrap().as_slice(), &[safe]);
+            assert_eq!(
+                request.candidate_goals.as_ref().unwrap().as_slice(),
+                &[safe]
+            );
             assert_eq!(request.loc_id, None);
             assert_eq!(request.radius, 0);
             assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
         } else {
             assert!(request.candidate_goals.is_none());
             assert_eq!(request.loc_id, Some(loc.id));
-            assert_eq!(request.radius, crate::gatherer::select::RESOURCE_APPROACH_RADIUS);
+            assert_eq!(
+                request.radius,
+                crate::gatherer::select::RESOURCE_APPROACH_RADIUS
+            );
             assert_eq!(request.arrival, nav::contract::ArrivalKind::Reach);
         }
     }

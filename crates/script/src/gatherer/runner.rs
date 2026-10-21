@@ -1317,7 +1317,11 @@ impl Gatherer {
                 Ok(approach) => approach,
                 Err(error) => {
                     self.fail(
-                        "resource-unavailable",
+                        if self.trip == TripStep::Return {
+                            "return-failed"
+                        } else {
+                            "resource-unavailable"
+                        },
                         format!("safe resource access goals: {error}"),
                     );
                     return;
@@ -1995,6 +1999,20 @@ impl Gatherer {
                         selected.plan.entity,
                         selected.plan.tile,
                     ))
+                && tick.walk_danger.is_none_or(|query| {
+                    !matches!(
+                        query.check(
+                            selected.plan.tile,
+                            match selected.plan.entity {
+                                api::selected::EntityId::Loc(id) => Some(id),
+                                _ => None,
+                            },
+                            super::select::RESOURCE_APPROACH_RADIUS,
+                            ArrivalKind::Reach,
+                        ),
+                        crate::native::WalkDanger::Denied { .. }
+                    )
+                })
             {
                 self.wait_until = None;
                 self.absent = 0;
