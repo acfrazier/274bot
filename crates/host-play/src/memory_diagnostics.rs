@@ -537,11 +537,7 @@ fn sample_position(
     }
 }
 
-pub(crate) fn gatherer_frame(
-    c: &client::client::Client,
-    name: &str,
-    run_state: Option<RunState>,
-) {
+pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str, run_state: Option<RunState>) {
     if !GATHERER_ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -592,15 +588,16 @@ pub(crate) fn gatherer_frame(
         match sampled {
             SampledPosition::Missing(reason) => {
                 bot.missing_position_samples = bot.missing_position_samples.saturating_add(1);
-                bot.first_missing_position.get_or_insert(MissingPositionSample {
-                    tick,
-                    reason,
-                    run_state,
-                    ingame: c.ingame,
-                    scene_state: c.scene_state,
-                    raw_tile: crate::player_here_tile(c),
-                    planned_restart: bot.planned_restart,
-                });
+                bot.first_missing_position
+                    .get_or_insert(MissingPositionSample {
+                        tick,
+                        reason,
+                        run_state,
+                        ingame: c.ingame,
+                        scene_state: c.scene_state,
+                        raw_tile: crate::player_here_tile(c),
+                        planned_restart: bot.planned_restart,
+                    });
             }
             SampledPosition::Allowed => {
                 bot.sampled_positions = bot.sampled_positions.saturating_add(1);
