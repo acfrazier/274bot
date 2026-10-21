@@ -268,7 +268,8 @@ User units run only while the user has a session, unless lingering is enabled
 ### Revision-274 pull (review machine)
 
 The 274 lane runs on a Mac review machine, so its pull is a launchd agent, not a
-user unit. The committed plist and script carry no machine-specific path.
+user unit. The committed plist uses the `__HOME__` placeholder, and the script
+carries no machine-specific path.
 
 1. `ssh-keygen -t ed25519 -N '' -C '274bot-nightly-274-pull' -f ~/.ssh/274bot_nightly274_pull_ed25519`
    and add the public key to the guest user `bot`'s `authorized_keys` (see
@@ -284,10 +285,33 @@ user unit. The committed plist and script carry no machine-specific path.
    ```
    `NIGHTLY274_USER` defaults to `bot`. `NIGHTLY274_RSYNC` overrides the rsync
    binary.
-3. Copy `pull-274.sh` to `~/.local/lib/274bot-nightly/pull-274.sh` and
-   `launchd/local.274bot-nightly-274-pull.plist` to `~/Library/LaunchAgents/`, then run
-   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist`.
-   The agent writes `~/.local/state/274bot-nightly-274/pull.log`.
+3. Build the launcher, install it with the script, and render the plist. launchd
+   starts this binary, not `/bin/bash`, so the removable-volume grant at step 4
+   applies to it:
+   ```sh
+   mkdir -p ~/.local/libexec/274bot-nightly ~/.local/lib/274bot-nightly \
+     ~/.local/state/274bot-nightly-274
+   clang -O2 -Wall -o ~/.local/libexec/274bot-nightly/nightly274-launch \
+     tools/nightly/launchd/nightly274-launch.c
+   cp tools/nightly/pull-274.sh ~/.local/lib/274bot-nightly/pull-274.sh
+   sed "s#__HOME__#$HOME#g" tools/nightly/launchd/local.274bot-nightly-274-pull.plist \
+     > ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+   ```
+   launchd does not expand `$HOME`, and the repository carries no operator path,
+   so the plist uses `__HOME__` and the `sed` fills it in. The log folder must
+   exist before step 4, because launchd opens
+   `~/.local/state/274bot-nightly-274/pull.log` at start.
+4. Load the agent, run it once, and allow the access prompt:
+   ```sh
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+   launchctl kickstart gui/$(id -u)/local.274bot-nightly-274-pull
+   ```
+   macOS asks for access to removable volumes on the first run. Allow it. If that
+   run failed with an access error, run `launchctl kickstart` again and read
+   `~/.local/state/274bot-nightly-274/pull.log`. To grant the access without the
+   prompt, add `~/.local/libexec/274bot-nightly/nightly274-launch` in System
+   Settings → Privacy & Security → Files and Folders (Removable Volumes) or Full
+   Disk Access. A rebuilt launcher has a new code hash, so allow it again.
 
 ### Windows nightly host (BotTest, no elevation)
 

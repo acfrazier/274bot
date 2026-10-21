@@ -4,9 +4,11 @@
 # mirror folder. Runs land as <mirror>/<run>-274/ beside the 289 runs.
 #
 # Runs from launchd (launchd/local.274bot-nightly-274-pull.plist),
-# hourly. The key is a dedicated read-only rrsync key on the guest. It
-# cannot open a shell or read outside /srv/nightly/runs/. The guest
-# holds no key for any other machine.
+# hourly, through the nightly274-launch binary. That binary holds the
+# macOS removable-volume grant, not /bin/bash. The key is a dedicated
+# read-only rrsync key on the guest. It cannot open a shell or read
+# outside /srv/nightly/runs/. The guest holds no key for any other
+# machine.
 #
 # Host, key, pinned host key and destination come from a local file,
 # ~/.config/274bot-nightly/pull-274.env, which is not committed. The
@@ -18,6 +20,11 @@
 # is pruned here: there is no archive-host copy of a 274 run, so this
 # folder is the record. The guest prunes its own runs after 14 days.
 set -euo pipefail
+
+# launchd opens the log file before it starts the launcher, so the folder
+# must exist already (README.md creates it at install time). Make it here
+# too, so a run by hand leaves it ready for the next scheduled start.
+mkdir -p "$HOME/.local/state/274bot-nightly-274"
 
 ENV_FILE="$HOME/.config/274bot-nightly/pull-274.env"
 if [ -f "$ENV_FILE" ]; then
@@ -37,9 +44,16 @@ log() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
 
 lock="$DEST/.pull-274.lock"
 mkdir -p "$DEST"
-if ! mkdir "$lock" 2>/dev/null; then
-    log "another pull holds $lock; exiting"
-    exit 0
+if ! lock_err=$(mkdir "$lock" 2>&1); then
+    # An existing lock directory means a live pull owns it. Any other
+    # failure is a real error (a read-only or blocked volume, a file in
+    # the way): report mkdir's message instead of blaming another pull.
+    if [ -d "$lock" ]; then
+        log "another pull holds $lock; exiting"
+        exit 0
+    fi
+    log "cannot create $lock: $lock_err"
+    exit 1
 fi
 trap 'rmdir "$lock"' EXIT
 
