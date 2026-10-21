@@ -623,6 +623,115 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 }
 
 #[test]
+fn live_replan_withdraws_an_alternative_by_its_selected_name_after_deposit() {
+    const BRONZE_AXE: i32 = 1351;
+    const RUNE_AXE: i32 = 1359;
+    let (mut snapshot, bank, banks) = fixture();
+    snapshot.seed_inventory(
+        vec![item(
+            PRODUCT,
+            "Product",
+            2,
+            ItemContainer::Inventory,
+            &["Use"],
+        )],
+        28,
+    );
+    open_bank(
+        &mut snapshot,
+        Some(vec![bank_row(BRONZE_AXE, "Bronze axe", 3)]),
+        vec![side_row(PRODUCT, "Product", 2)],
+    );
+    let mut tool = need(
+        RUNE_AXE,
+        "Rune axe",
+        1,
+        1,
+        Presence::Carried,
+        NeedKind::Required,
+        SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+    );
+    tool.alternatives = Arc::from([RUNE_AXE, BRONZE_AXE]);
+    let request = request(
+        BankStage::Planned,
+        vec![tool],
+        Some(DepositSpec::Ids {
+            products: Arc::from([PRODUCT]),
+            keep: Arc::from([]),
+        }),
+        Some(bank),
+        false,
+        false,
+        CloseBank::LeaveOpen,
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
+    ));
+    snapshot.seed_inventory(Vec::new(), 28);
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(BRONZE_AXE, "Bronze axe", 3),
+            bank_row(PRODUCT, "Product", 2),
+        ]),
+        Vec::new(),
+    );
+    let mut withdrawal_tick = None;
+    for tick in 2..=5 {
+        assert!(poll_at(&mut run, &snapshot, None, &mut ledger, tick, OpenGate::Open).is_pending());
+        if ledger.as_ref().unwrap().outbox.is_empty() {
+            continue;
+        }
+        match complete_interaction(&mut ledger, tick) {
+            HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                on: false, ..
+            }) => {}
+            HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                name,
+                bank_item_id,
+                count,
+                ..
+            }) => {
+                assert_eq!(bank_item_id, BRONZE_AXE);
+                assert_eq!(
+                    name, "Bronze axe",
+                    "the host validates both the id and name"
+                );
+                assert_eq!(count, 1);
+                withdrawal_tick = Some(tick);
+                break;
+            }
+            _ => panic!("live re-plan dispatched an unexpected effect"),
+        }
+    }
+    let withdrawal_tick = withdrawal_tick.expect("the alternative must be withdrawn");
+    snapshot.seed_inventory(
+        vec![item(
+            BRONZE_AXE,
+            "Bronze axe",
+            1,
+            ItemContainer::Inventory,
+            &["Wield"],
+        )],
+        28,
+    );
+    let receipt = done(poll_at(
+        &mut run,
+        &snapshot,
+        None,
+        &mut ledger,
+        withdrawal_tick + 1,
+        OpenGate::Open,
+    ));
+    assert!(receipt.complete && receipt.withdrew_any && receipt.bank_open);
+    assert_eq!(receipt.deposited, 2);
+}
+
+#[test]
 fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
