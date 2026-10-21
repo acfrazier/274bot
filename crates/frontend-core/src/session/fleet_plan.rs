@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use api::identity::{RequestId, Settlement};
+use api::identity::{Cancellation, RequestId, Settlement};
 
 use super::commands::Applied;
 use crate::bulk::{BulkOutcome, BulkRow};
@@ -20,6 +20,17 @@ use crate::OperatorSession;
 
 /// Names a prompt or report spells out before "+N more".
 const NAMES_SHOWN: usize = 8;
+
+/// A cancelled member's reason in the result line when its owner gave
+/// none: what took it over, in the operator's words.
+fn cancellation_words(cause: Cancellation) -> &'static str {
+    match cause {
+        Cancellation::Superseded => "a later Log in, Log out or Remove took over",
+        Cancellation::Operator => "cancelled",
+        Cancellation::ScopeInvalidated => "no longer applies",
+        Cancellation::Shutdown => "shutting down",
+    }
+}
 
 fn script_active(state: RunState) -> bool {
     matches!(
@@ -416,14 +427,17 @@ impl<Io> OperatorSession<Io> {
                 None => counts.pending += 1,
                 Some(Settlement::Completed(Completion::Done)) => counts.done += 1,
                 Some(Settlement::Completed(_)) => counts.skipped += 1,
-                Some(_) => counts.failed += 1,
+                Some(Settlement::Cancelled(_)) => counts.cancelled += 1,
+                Some(Settlement::Failed(_)) => counts.failed += 1,
             }
         }
         if counts == result.counts {
             return;
         }
-        // Rebuild the text: failures, then skips, then done.
+        // Rebuild the text: failures, then cancellations, then skips, then
+        // done.
         let mut failed = Vec::new();
+        let mut cancelled: Vec<(String, String)> = Vec::new();
         let mut skipped: Vec<(String, String)> = Vec::new();
         let mut done = Vec::new();
         for row in &result.extra {
@@ -448,6 +462,13 @@ impl<Io> OperatorSession<Io> {
                         .map(str::to_owned)
                         .unwrap_or_else(|| format!("{other:?}"));
                     skipped.push((name, why));
+                }
+                Some(Settlement::Cancelled(cause)) => {
+                    let why = member
+                        .detail()
+                        .unwrap_or_else(|| cancellation_words(*cause))
+                        .to_owned();
+                    cancelled.push((name, why));
                 }
                 Some(other) => {
                     let why = member
@@ -485,6 +506,7 @@ impl<Io> OperatorSession<Io> {
             }
         };
         part(&mut text, "failed", &failed);
+        part(&mut text, "cancelled", &cancelled);
         part(&mut text, "skipped", &skipped);
         if !done.is_empty() {
             if !first {

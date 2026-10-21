@@ -223,7 +223,9 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Post the member's `SwitchWorld` row: `false` when it settled
-    /// instead (no slot, a closed lifetime).
+    /// instead (no slot, a closed lifetime, a slot the command was not
+    /// admitted on). The book is asked first, so a refused member never
+    /// reaches the slot's mailbox.
     fn post_world_switch(&mut self, switch: &mut WorldSwitch) -> bool {
         let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&switch.name)) else {
             self.settle_switch(
@@ -233,20 +235,10 @@ impl<Io> OperatorSession<Io> {
             );
             return false;
         };
-        let previous = arm.session_key();
-        let Some(receipt) = arm.post_intent(Intent::SwitchWorld(switch.world)) else {
-            self.settle_switch(
-                switch,
-                Settlement::Cancelled(Cancellation::ScopeInvalidated),
-                Some("the bot was removed"),
-            );
-            return false;
-        };
-        // Supersedes the member's older pending Log in / Log out / Relog.
         if self
             .commands
             .book
-            .posted(switch.request, switch.subject, arm.slot(), receipt)
+            .may_post(switch.request, switch.subject, arm.slot())
             .is_err()
         {
             // The slot was replaced since admission: this lifetime is not
@@ -258,6 +250,22 @@ impl<Io> OperatorSession<Io> {
             );
             return false;
         }
+        let previous = arm.session_key();
+        let Some(receipt) = arm.post_intent(Intent::SwitchWorld(switch.world)) else {
+            self.settle_switch(
+                switch,
+                Settlement::Cancelled(Cancellation::ScopeInvalidated),
+                Some("the bot was removed"),
+            );
+            return false;
+        };
+        // Supersedes the member's older pending Log in / Log out / Relog.
+        // The book allowed this post just above, so it records it.
+        let recorded =
+            self.commands
+                .book
+                .posted(switch.request, switch.subject, arm.slot(), receipt);
+        debug_assert!(recorded.is_ok(), "{recorded:?}");
         self.commands.watch_arm(arm);
         if let Some(play) = self.play.as_ref() {
             play.wake(&switch.name);
@@ -266,7 +274,11 @@ impl<Io> OperatorSession<Io> {
         true
     }
 
-    /// Settle a posted member from its slot: `false` once settled.
+    /// Settle a posted member from its slot: `false` once settled. Success
+    /// and a wrong world are read from the slot's ready session, whose key,
+    /// readiness and world the slot reports together; the status row only
+    /// carries the failures (a refused world, a startup error, an ended
+    /// worker), which belong to no session.
     fn settle_relog(&mut self, switch: &WorldSwitch, previous: Option<SessionKey>) -> bool {
         let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&switch.name)) else {
             self.settle_switch(
@@ -276,14 +288,11 @@ impl<Io> OperatorSession<Io> {
             );
             return false;
         };
-        let Some(status) = self.statuses.iter().find(|s| s.username == switch.name) else {
-            return true;
-        };
-        let new_session = arm
-            .session_key()
-            .is_some_and(|current| Some(current) != previous);
-        let (terminal, detail) = if status.ingame && new_session {
-            match status.world {
+        if let Some((_, world)) = arm
+            .ready_session()
+            .filter(|(key, _)| Some(*key) != previous)
+        {
+            let (terminal, detail) = match world {
                 Some(world) if world == switch.world => {
                     (Settlement::Completed(Completion::Done), None)
                 }
@@ -294,8 +303,14 @@ impl<Io> OperatorSession<Io> {
                         None => "logged in without a public world".to_owned(),
                     }),
                 ),
-            }
-        } else if arm.login_held_by_error() {
+            };
+            self.settle_switch(switch, terminal, detail.as_deref());
+            return false;
+        }
+        let Some(status) = self.statuses.iter().find(|s| s.username == switch.name) else {
+            return true;
+        };
+        let (terminal, detail) = if arm.login_held_by_error() {
             (
                 Settlement::Failed(CommandFailure::Failed(FailureKind::WorldRejected)),
                 Some(
@@ -320,10 +335,13 @@ impl<Io> OperatorSession<Io> {
                         .unwrap_or_else(|| "worker ended".to_owned()),
                 ),
             )
-        } else if !arm.login_wanted() {
+        } else if !arm.login_wanted() && arm.session_key().is_none_or(|key| Some(key) == previous) {
+            // No login is owed and no new session began: a Log out took
+            // the slot before it reconnected. (A new session that is not
+            // ready yet owes no login either; it settles above once ready.)
             (
                 Settlement::Cancelled(Cancellation::Superseded),
-                Some("the login was withdrawn".to_owned()),
+                Some("logged out before it reconnected".to_owned()),
             )
         } else {
             return true;
