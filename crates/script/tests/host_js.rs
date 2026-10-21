@@ -18,6 +18,8 @@ fn ground_identity_request_layout_measurement() {
     let size = std::mem::size_of::<script::shim::InteractReq>();
     let alignment = std::mem::align_of::<script::shim::InteractReq>();
     println!("InteractReq layout: size={size} alignment={alignment}");
+    assert_eq!(size, 128, "InteractReq must remain 128 bytes");
+    assert_eq!(alignment, 8, "InteractReq must remain 8-byte aligned");
 }
 
 #[test]

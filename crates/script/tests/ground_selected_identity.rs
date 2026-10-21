@@ -167,6 +167,44 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+fn assert_cold_input_take_obj_request_has_fast_properties_on_posted_page() {
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = Input.takeObj(2737, 3440, 1053, 1);
+        globalThis.__cold_input_request = __rs2b0t_host.interact[0];
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let take = ["Take".to_string()];
+    let ground = [ground_row(1053, "Coins", &take)];
+    let mut snap = base_snapshot();
+    snap.ground = &ground;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.probe("new Function('o', 'return %HasFastProperties(o)')(__cold_input_request)")
+            .unwrap(),
+        true,
+        "cold Input.takeObj binding request must have fast properties"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Obj {
+            x: 2737,
+            z: 3440,
+            level: 0,
+            name: Some("Coins".into()),
+            action: "Take".into(),
+            id: Some(1053),
+        }],
+        "Input.takeObj must select the posted ground row"
+    );
+    iso.join();
+}
 
 fn ground_item_interact_emits_the_selected_posted_id_through_flatbuffer() {
     assert_cold_ground_request_has_fast_properties();
@@ -286,9 +324,12 @@ fn object_id_round_trips_as_some_and_none_and_defaults_when_omitted() {
     );
 }
 fn main() {
+    // V8 must enable native syntax before process-main bootstrap for `%HasFastProperties`.
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     script::bootstrap_v8_platform().expect("process-main V8 bootstrap");
 
+    assert_cold_input_take_obj_request_has_fast_properties_on_posted_page();
+    println!("PASS cold Input.takeObj binding fast properties on posted ground page");
     ground_item_interact_emits_the_selected_posted_id_through_flatbuffer();
     println!("PASS ground identity, FlatBuffer batch, and cold fast properties");
     ground_item_interact_with_missing_action_returns_false_without_queueing();
