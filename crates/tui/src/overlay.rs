@@ -20,6 +20,7 @@ use crate::help::{filter_rows, help_rows, render_help, HelpState};
 use crate::layout::{contains, Screen};
 use crate::palette::{palette_commands, render_palette, PaletteState};
 use crate::profile_import::{ImportAction, ImportView};
+use crate::world_picker::WorldPicker;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Modal {
@@ -37,6 +38,9 @@ pub enum Modal {
     ProfileImport(ImportView),
     /// Pick the card the fleet actions use (Enter picks, Esc keeps).
     FleetCard(CardPicker),
+    /// Pick the world a bot (or the marked bots) moves to (Enter picks, Esc
+    /// cancels). Picking asks core for a plan; it moves nothing itself.
+    WorldPicker(WorldPicker),
 }
 
 impl Modal {
@@ -51,6 +55,7 @@ impl Modal {
             Modal::Manual => "Manual walk",
             Modal::ProfileImport(_) => "rs2b0t import",
             Modal::FleetCard(_) => "Fleet card",
+            Modal::WorldPicker(_) => "World picker",
         }
     }
 
@@ -64,6 +69,7 @@ impl Modal {
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
             Modal::ProfileImport(view) => view.hints(),
             Modal::FleetCard(_) => "Up/Down · Enter pick · Esc keep the card",
+            Modal::WorldPicker(_) => "Up/Down · Enter pick · Esc cancel",
         }
     }
 }
@@ -301,6 +307,22 @@ impl TuiApp {
                     (Some(Modal::FleetCard(picker)), AppAction::None)
                 }
             },
+            Modal::WorldPicker(mut picker) => match key.code {
+                KeyCode::Enter => (None, picker.pick(picker.cursor())),
+                KeyCode::Esc => (None, AppAction::None),
+                other => {
+                    match other {
+                        KeyCode::Up | KeyCode::Char('k') => picker.step(-1),
+                        KeyCode::Down | KeyCode::Char('j') => picker.step(1),
+                        KeyCode::PageUp => picker.step(-10),
+                        KeyCode::PageDown => picker.step(10),
+                        KeyCode::Home => picker.jump(false),
+                        KeyCode::End => picker.jump(true),
+                        _ => {}
+                    }
+                    (Some(Modal::WorldPicker(picker)), AppAction::None)
+                }
+            },
             Modal::Context(menu) => self.context_key(menu, key),
             Modal::Message { scroll } => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => (
@@ -515,6 +537,12 @@ impl TuiApp {
                 // A click outside leaves the card as it was, like Esc.
                 None => (None, AppAction::None),
             },
+            Modal::WorldPicker(picker) => match item {
+                Some(index) => (None, picker.pick(index)),
+                None if inside => (Some(Modal::WorldPicker(picker)), AppAction::None),
+                // A click outside leaves everything as it was, like Esc.
+                None => (None, AppAction::None),
+            },
             Modal::Help(state) if inside => (Some(Modal::Help(state)), AppAction::None),
             Modal::Help(_) | Modal::Message { .. } => (None, AppAction::None),
             Modal::Manual => (Some(Modal::Manual), AppAction::None),
@@ -547,6 +575,7 @@ impl TuiApp {
             }
             Some(Modal::ProfileImport(view)) => view.scroll_by(delta),
             Some(Modal::FleetCard(picker)) => picker.step(delta as isize),
+            Some(Modal::WorldPicker(picker)) => picker.step(delta as isize),
             _ => {}
         }
     }
@@ -575,6 +604,9 @@ impl TuiApp {
                 let (rect, hits) = picker.render(area, buf);
                 self.regions.modal = rect;
                 self.regions.modal_items = hits;
+            }
+            Modal::WorldPicker(picker) => {
+                self.regions.modal = picker.render(area, buf, &mut self.regions.modal_items);
             }
             Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
             Modal::Manual => self.draw_manual(area, buf),

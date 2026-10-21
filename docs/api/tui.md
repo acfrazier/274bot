@@ -98,7 +98,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 
 | Pane | Keys |
 | --- | --- |
-| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `m` Load + log in and `U` Log out (a fleet plan: marked rows, else the loaded shown bots); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `m` Load + log in and `U` Log out (a fleet plan: marked rows, else the loaded shown bots); `W` opens the world picker for the cursor row's profile (palette: **Switch world of marked…** for the marked rows); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
 | rs2b0t import (palette **Import rs2b0t profiles…**) | type the path of rs2b0t's `rs2b0t-profiles.json`, `Enter` previews; in the preview `o` switches Skip/Overwrite for existing profiles, `u` (when the file has accounts the 289 client cannot log in with) imports those too or leaves them out, `Enter`/`y` imports, `Esc` goes back; in the report `d` asks to delete the export file (`y` deletes, `n` keeps; offered only once every chosen account is confirmed saved), `Esc` closes. See [vault.md](vault.md#importing-profiles-from-rs2b0t) |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
@@ -131,6 +131,30 @@ Browse card, grouped by category as the Script tab's Browse groups them.
 highlighted card, `Esc` (or a click outside) keeps the card as it was.
 Picking changes no assignment, no Browse pick, no profile form and no run.
 
+**Switch world.** `W` (palette **Switch world of cursor row…**) opens the
+world picker for the profile under the fleet cursor, not the selected bot.
+The palette's **Switch world of marked…** opens the same picker for the
+marked rows, or the loaded shown rows when none is marked. The picker lists
+the worlds of the server the session is bound to, as that server's world
+list was read when the session started (opening it fetches nothing), and
+ticks the bot's own world with `[x]`. `Up` / `Down` / `j` / `k` / PgUp PgDn
+Home End move; `Enter` or a click picks; `Esc` (or a click outside) leaves
+everything as it was. Picking the world the bot is already on closes the
+picker and does nothing. Picking another world asks core for a Switch world
+plan over that profile alone (a marked row does not join a `W` pick) or over
+the marks, and the confirm overlay shows core's prompt as written: a Switch
+world plan always asks, `Enter` / `y` runs it and `Esc` / `n` cancels it
+(nothing is saved or relogged before the plan runs). A confirmed switch saves
+the bot's world on its profile and only then logs the bot out and back in on
+the new world through the login queue; a failed save leaves the bot logged
+in. A running script continues after the bot reconnects and a script that
+was already paused stays paused. The message line shows the result, with
+each bot's real outcome rather than that the relog started. A bot that is
+queued for login, logging in, logged out or not loaded is refused with its
+reason on the message line (`Switch world: no bot to act on (alice: queued
+for login)`). On a server with one world (a local one) `W` and the palette
+entries say `Switch world: this server has one world` and open nothing.
+
 **Fleet actions.** `m` Load + log in, `U` Log out, `T` Start fleet and `E`
 Stop fleet (Script tab), and the palette's **Assign**, **Assign & restart** and **Copy
 settings** each ask core for a plan. With rows marked the plan covers every
@@ -153,7 +177,10 @@ first; **Copy settings** copies the focused bot's parameters for the card to
 the targets on that card (the prompt names them and each skip).
 
 **Result.** Each action ends in one result on the message line (`msg:`),
-failures first, then skips, then done, with a `pending N` tail until every
+failures first, then cancellations (each with its reason when one is known,
+such as `a later Relog now took over` or `the automatic login guard stopped
+repeated logins`; otherwise `cancelled`), then skips, then
+done, with a `pending N` tail until every
 member settles (a paced Start settles with its last queued bot). It is
 written once, not repeated as a banner; core also writes one log line when
 it settles.

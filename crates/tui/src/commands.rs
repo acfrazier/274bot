@@ -28,6 +28,12 @@ pub enum Command {
     FilterFleet,
     /// Choose the card the fleet actions use (opens the card picker).
     PickFleetCard,
+    /// Choose the world the fleet row under the cursor moves to (opens the
+    /// world picker over that profile).
+    PickWorld,
+    /// Choose the world the marked rows move to (opens the same picker, no
+    /// profile staged; with nothing marked, the loaded shown rows).
+    PickWorldMarked,
     /// Mark every shown row (`MarkFleet(Shown)`).
     MarkAllShown,
     /// Unmark every shown row; hidden marks stay (`MarkFleet(UnmarkShown)`).
@@ -106,6 +112,7 @@ pub const FLEET_KEYS: &[(char, Command)] = &[
     ('A', Command::UnmarkShown),
     ('m', Command::Fleet(FleetAction::Login)),
     ('U', Command::Fleet(FleetAction::Logout)),
+    ('W', Command::PickWorld),
 ];
 
 /// Overview shortcuts: they act on the selected bot, shown in the pane.
@@ -209,6 +216,8 @@ impl Command {
         Command::MoveMarkedToTop,
         Command::Fleet(FleetAction::Login),
         Command::Fleet(FleetAction::Logout),
+        Command::PickWorld,
+        Command::PickWorldMarked,
         Command::ImportProfiles,
         Command::Login,
         Command::Logout,
@@ -260,6 +269,8 @@ impl Command {
             | Command::SelectPrevBot
             | Command::FilterFleet
             | Command::PickFleetCard
+            | Command::PickWorld
+            | Command::PickWorldMarked
             | Command::MarkAllShown
             | Command::UnmarkShown
             | Command::InvertShown
@@ -268,7 +279,9 @@ impl Command {
             | Command::MoveProfileUp
             | Command::MoveProfileDown
             | Command::MoveMarkedToTop
-            | Command::Fleet(FleetAction::Login | FleetAction::Logout)
+            | Command::Fleet(
+                FleetAction::Login | FleetAction::Logout | FleetAction::SwitchWorld(_),
+            )
             | Command::ImportProfiles => Group::Fleet,
             Command::Login
             | Command::Logout
@@ -320,6 +333,8 @@ impl Command {
             Command::ShowMessage => "Show full message",
             Command::FilterFleet => "Filter fleet",
             Command::PickFleetCard => "Pick fleet card…",
+            Command::PickWorld => "Switch world of cursor row…",
+            Command::PickWorldMarked => "Switch world of marked…",
             Command::MarkAllShown => "Mark shown rows",
             Command::UnmarkShown => "Unmark shown rows",
             Command::InvertShown => "Invert shown",
@@ -335,6 +350,7 @@ impl Command {
             Command::Fleet(FleetAction::Login) => "Load + log in fleet",
             Command::Fleet(FleetAction::Logout) => "Log out fleet",
             Command::Fleet(FleetAction::CopySettings) => "Copy settings",
+            Command::Fleet(FleetAction::SwitchWorld(_)) => "Switch world",
             Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
@@ -423,6 +439,11 @@ impl Command {
             }
             Command::Fleet(_) => fleet_scope(),
             Command::PickFleetCard => "fleet card".into(),
+            Command::PickWorld => match app.cursor_profile() {
+                Some(name) => format!("BOT {name}"),
+                None => "no row under the cursor".to_string(),
+            },
+            Command::PickWorldMarked => fleet_scope(),
             Command::MarkAllShown
             | Command::UnmarkShown
             | Command::InvertShown
@@ -489,6 +510,14 @@ impl Command {
             Command::ClearMarks => (!app.fleet_model.marks().is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
+            Command::PickWorld => app
+                .cursor_profile()
+                .map(|_| ())
+                .ok_or("no fleet row under the cursor"),
+            Command::PickWorldMarked => (!app.fleet_model.marks().is_empty()
+                || !app.fleet_model.shown().is_empty())
+            .then_some(())
+            .ok_or("no rows shown or marked"),
             Command::Fleet(action) => (!action.needs_card() || !app.fleet_model.card().is_own())
                 .then_some(())
                 .ok_or("pick a card first"),

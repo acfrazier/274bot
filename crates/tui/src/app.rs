@@ -230,6 +230,15 @@ pub enum AppAction {
     /// Make this the card the fleet actions use (`SetFleetCard`). Changes
     /// no Browse pick, form or run.
     PickFleetCard(frontend_core::FleetCard),
+    /// Open the world picker: `Some(name)` for that profile (`W` over the
+    /// fleet row under the cursor), `None` for the marked rows (the
+    /// palette's Switch world of marked…). The dispatcher reads the worlds
+    /// from the core; a server with one world gets a message instead.
+    PickWorld(Option<String>),
+    /// Plan moving `profile` (`None`: the marked rows) to this public
+    /// world: the dispatcher stages the profile, then plans
+    /// `SwitchWorld` through the fleet plan flow.
+    PlanSwitchWorld(Option<String>, u16),
     /// Move profiles in the saved Load order (`ReorderProfiles`): the
     /// dispatcher stages the op and submits it with the fleet model lent.
     ReorderProfiles(frontend_core::ReorderOp),

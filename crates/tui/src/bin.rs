@@ -2052,12 +2052,21 @@ impl TuiSession {
         }
     }
 
-    /// A fleet action: core freezes it (`PlanFleetAction`: the marked
-    /// profiles, hidden ones too, else the loaded shown rows; the card;
-    /// the skips). A plan that needs no confirmation runs at once;
-    /// otherwise the confirm overlay shows core's prompt. A refusal shows
-    /// its reason on the message line.
-    fn plan_fleet_action(&mut self, app: &mut TuiApp, action: frontend_core::FleetAction) {
+    /// A fleet action: core freezes it (`PlanFleetAction`: `target` alone
+    /// when one profile is named, else the marked profiles, hidden ones
+    /// too, else the loaded shown rows; the card; the skips). A plan that
+    /// needs no confirmation runs at once; otherwise the confirm overlay
+    /// shows core's prompt. A refusal shows its reason on the message
+    /// line.
+    fn plan_fleet_action(
+        &mut self,
+        app: &mut TuiApp,
+        action: frontend_core::FleetAction,
+        target: Option<&str>,
+    ) {
+        if let Some(name) = target {
+            self.core.stage_plan_target(name);
+        }
         if matches!(
             action,
             frontend_core::FleetAction::Start
@@ -2087,6 +2096,30 @@ impl TuiSession {
         } else {
             self.run_fleet_plan(app);
         }
+    }
+
+    /// Open the world picker over the bound server's public worlds, as
+    /// the core cached them when the play started (nothing is fetched or
+    /// read here). `profile` is the bot it moves (`W` over the fleet row
+    /// under the cursor), or `None` for the marked rows. A server with
+    /// one world has no switching: the message line says so, as core's
+    /// plan refusal would.
+    fn pick_world(&mut self, app: &mut TuiApp, profile: Option<String>) {
+        let Some(worlds) = self
+            .core
+            .switch_world_choices()
+            .filter(|worlds| worlds.len() > 0)
+        else {
+            app.error = Some("Switch world: this server has one world".into());
+            return;
+        };
+        let current = profile
+            .as_deref()
+            .and_then(|name| app.fleet_model.rows().iter().find(|row| row.name() == name))
+            .and_then(|row| row.world());
+        app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+            profile, current, worlds,
+        )));
     }
 
     /// Run the waiting fleet plan (`Targets::Plan`). The plan's frozen
@@ -4005,7 +4038,13 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => session.open_params(app),
-        AppAction::PlanFleet(action) => session.plan_fleet_action(app, action),
+        AppAction::PlanFleet(action) => session.plan_fleet_action(app, action, None),
+        AppAction::PickWorld(profile) => session.pick_world(app, profile),
+        AppAction::PlanSwitchWorld(profile, world) => session.plan_fleet_action(
+            app,
+            frontend_core::FleetAction::SwitchWorld(world),
+            profile.as_deref(),
+        ),
         AppAction::RunFleetPlan => session.run_fleet_plan(app),
         AppAction::CancelFleetPlan => session.cancel_fleet_plan(app),
         AppAction::ScriptReload => session.script_reload(app),

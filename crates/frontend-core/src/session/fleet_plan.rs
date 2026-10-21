@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use api::identity::{RequestId, Settlement};
+use api::identity::{Cancellation, RequestId, Settlement};
 
 use super::commands::Applied;
 use crate::bulk::{BulkOutcome, BulkRow};
@@ -20,6 +20,20 @@ use crate::OperatorSession;
 
 /// Names a prompt or report spells out before "+N more".
 const NAMES_SHOWN: usize = 8;
+
+/// A cancelled member's reason in the result line when its owner gave
+/// none, in the operator's words. A member a posted row superseded names
+/// that row (`OperatorCommand::took_over_words`) and a login the slot's own
+/// latch withdrew names the latch (`CommandBook::observe_intent`); with no
+/// recorded cause a superseded member says only "cancelled", since neither
+/// a later command nor any other cause is known.
+fn cancellation_words(cause: Cancellation) -> &'static str {
+    match cause {
+        Cancellation::Superseded | Cancellation::Operator => "cancelled",
+        Cancellation::ScopeInvalidated => "the session or slot it was for ended",
+        Cancellation::Shutdown => "shutting down",
+    }
+}
 
 fn script_active(state: RunState) -> bool {
     matches!(
@@ -65,6 +79,13 @@ impl<Io> OperatorSession<Io> {
     /// window's copy shortcut, which copies the focused bot's own card.
     pub fn stage_plan_card(&mut self, card: ScriptChoice) {
         self.commands.plan_card = Some(card);
+    }
+
+    /// Stage the one profile the next
+    /// [`crate::OperatorCommand::PlanFleetAction`] acts on instead of the
+    /// marks or the shown rows: a world bubble's bot, the TUI's cursor row.
+    pub fn stage_plan_target(&mut self, name: &str) {
+        self.commands.plan_target = Some(self.profile_identity_or_synthetic(name));
     }
 
     /// A copy of the running plan's frozen mark set, if a planned command
@@ -120,9 +141,15 @@ impl<Io> OperatorSession<Io> {
             );
             replaced = Some(old.action);
         }
+        let staged_target = self.commands.plan_target.take();
         let Some(fleet) = models.fleet.as_deref() else {
             return no_model("fleet");
         };
+        if let FleetAction::SwitchWorld(world) = action {
+            if let Some(why) = self.switch_world_unavailable(world) {
+                return reject(format!("{}: {why}", action.verb()));
+            }
+        }
         let staged_card = self.commands.plan_card.take();
         // The catalog root a front end staged with the click: frozen with
         // the plan for the Start or assignment that runs it.
@@ -156,12 +183,18 @@ impl<Io> OperatorSession<Io> {
             return no_model("scripts");
         }
 
-        // Freeze the candidates: every mark (hidden too), else the loaded
-        // shown rows.
+        // Freeze the candidates: the staged profile, else every mark
+        // (hidden too), else the loaded shown rows.
         let marks = fleet.marks();
         let mut skipped = Vec::new();
         let mut candidates: Vec<(ProfileIdentity, usize)> = Vec::new();
-        let scope = if marks.is_empty() {
+        let scope = if let Some(identity) = staged_target {
+            let Some(index) = fleet.index_of(identity) else {
+                return reject(format!("{}: the profile is gone", action.verb()));
+            };
+            candidates.push((identity, index));
+            PlanScope::One
+        } else if marks.is_empty() {
             for (index, row) in fleet.shown_rows() {
                 if row.loaded() {
                     candidates.push((fleet.identities()[index], index));
@@ -263,7 +296,10 @@ impl<Io> OperatorSession<Io> {
         frozen.mark_all(targets.iter().map(|(identity, _)| *identity));
         let needs_confirm = matches!(scope, PlanScope::AllShown)
             || !interrupted.is_empty()
-            || action == FleetAction::CopySettings;
+            || matches!(
+                action,
+                FleetAction::CopySettings | FleetAction::SwitchWorld(_)
+            );
         let mut prompt = String::new();
         if let Some(old) = replaced {
             let _ = write!(prompt, "Replaces the waiting {} plan. ", old.verb());
@@ -394,14 +430,17 @@ impl<Io> OperatorSession<Io> {
                 None => counts.pending += 1,
                 Some(Settlement::Completed(Completion::Done)) => counts.done += 1,
                 Some(Settlement::Completed(_)) => counts.skipped += 1,
-                Some(_) => counts.failed += 1,
+                Some(Settlement::Cancelled(_)) => counts.cancelled += 1,
+                Some(Settlement::Failed(_)) => counts.failed += 1,
             }
         }
         if counts == result.counts {
             return;
         }
-        // Rebuild the text: failures, then skips, then done.
+        // Rebuild the text: failures, then cancellations, then skips, then
+        // done.
         let mut failed = Vec::new();
+        let mut cancelled: Vec<(String, String)> = Vec::new();
         let mut skipped: Vec<(String, String)> = Vec::new();
         let mut done = Vec::new();
         for row in &result.extra {
@@ -426,6 +465,13 @@ impl<Io> OperatorSession<Io> {
                         .map(str::to_owned)
                         .unwrap_or_else(|| format!("{other:?}"));
                     skipped.push((name, why));
+                }
+                Some(Settlement::Cancelled(cause)) => {
+                    let why = member
+                        .detail()
+                        .unwrap_or_else(|| cancellation_words(*cause))
+                        .to_owned();
+                    cancelled.push((name, why));
                 }
                 Some(other) => {
                     let why = member
@@ -463,6 +509,7 @@ impl<Io> OperatorSession<Io> {
             }
         };
         part(&mut text, "failed", &failed);
+        part(&mut text, "cancelled", &cancelled);
         part(&mut text, "skipped", &skipped);
         if !done.is_empty() {
             if !first {
@@ -567,6 +614,11 @@ fn classify<Io>(
                 Err("not logged in")
             }
         }
+        // The relog keeps a running script's run: nothing is interrupted.
+        FleetAction::SwitchWorld(world) => match super::world_switch::refusal(Some(row), world) {
+            Some((_, why)) => Err(why),
+            None => Ok(false),
+        },
     }
 }
 
@@ -582,7 +634,7 @@ fn prepare_copy<Io>(
     scope: PlanScope,
 ) -> Result<(), String> {
     match scope {
-        PlanScope::Marked { .. } => {
+        PlanScope::Marked { .. } | PlanScope::One => {
             crate::marked::prepare_apply_settings_marked(frozen, core, scripts, source, card)
                 .map(|_| ())
         }
@@ -623,6 +675,7 @@ fn prompt_text(
     let noun = match scope {
         PlanScope::Marked { .. } => "marked bot",
         PlanScope::AllShown => "shown bot",
+        PlanScope::One => "bot",
     };
     let mut text = String::new();
     match action {
@@ -672,6 +725,13 @@ fn prompt_text(
                 plural(count)
             );
         }
+        FleetAction::SwitchWorld(world) => {
+            let _ = write!(
+                text,
+                "Move {count} {noun}{} to world {world}",
+                plural(count)
+            );
+        }
     }
     if let PlanScope::Marked { hidden } = scope {
         if hidden > 0 {
@@ -685,6 +745,11 @@ fn prompt_text(
         text.push_str(" This stops the running script of ");
         write_names(&mut text, interrupted.iter().map(String::as_str));
         text.push('.');
+    }
+    if matches!(action, FleetAction::SwitchWorld(_)) {
+        text.push_str(
+            " Each logs out and back in through the login queue; a running script continues after it reconnects.",
+        );
     }
     if !skipped.is_empty() {
         let _ = write!(text, " Skipped {}: ", skipped.len());
@@ -707,7 +772,7 @@ fn no_model(what: &str) -> Applied {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, prompt_text};
+    use super::{cancellation_words, classify, prompt_text};
     use crate::bulk::{BulkOutcome, BulkRow};
     use crate::fleet_plan::{FleetAction, PlanScope};
     use crate::scripts::ScriptRunState as RunState;
@@ -759,6 +824,15 @@ mod tests {
             classify(FleetAction::Login, &unloaded, true, None, &core),
             Ok(false)
         );
+    }
+
+    /// Review F4 r3 (Sol 2): a cancelled member with no recorded cause
+    /// names no command; a superseded one reads only "cancelled".
+    #[test]
+    fn a_cancellation_without_a_recorded_cause_names_no_command() {
+        use api::identity::Cancellation;
+        assert_eq!(cancellation_words(Cancellation::Superseded), "cancelled");
+        assert_eq!(cancellation_words(Cancellation::Operator), "cancelled");
     }
 
     #[test]

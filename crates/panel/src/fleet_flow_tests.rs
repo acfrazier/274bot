@@ -3,12 +3,13 @@
 //! window laid out, and every decision read back is the core's.
 
 use dear_imgui_rs::{Condition, FramePrepareOptions, MouseButton};
+use frontend_core::command::Subject;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::scripts::Assignment;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use frontend_core::{
-    FleetAction, FleetCard, MarkPredicate, OperatorCommand, ShownMarks, Targets,
+    FleetAction, FleetCard, MarkPredicate, OperatorCommand, PlanScope, ShownMarks, Targets,
     FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
 };
 use std::time::{Duration, Instant};
@@ -272,6 +273,124 @@ impl Rig {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(self.session.core.script_state(name), want, "{name}");
+    }
+
+    /// The profiles `names`, of which those of `worlds` are loaded and in
+    /// game on the world given, on a server with worlds 1, 2 and 3.
+    fn with_worlds(label: &str, names: &[&str], worlds: &[(&str, u16)]) -> Self {
+        let loaded: Vec<&str> = worlds.iter().map(|(name, _)| *name).collect();
+        let mut rig = Self::with_play(label, names, &loaded);
+        rig.session.core.set_public_worlds_for_test(&[1, 2, 3]);
+        for (name, world) in worlds {
+            rig.publish_in_game(name, *world);
+        }
+        rig.settle();
+        rig
+    }
+
+    /// Publish `name` as a bot in game on `world`, as its slot does: into
+    /// the host's shared status rows. The next frame's pump projects it.
+    fn publish_in_game(&mut self, name: &str, world: u16) {
+        let mut rows = self
+            .session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
+        rows.retain(|row| row.username != name);
+        rows.push(host_play::SlotStatus {
+            username: name.into(),
+            world: Some(world),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..host_play::SlotStatus::default()
+        });
+    }
+
+    /// `name`'s World / login cell, which must be clickable.
+    fn world_cell(&self, name: &str) -> [f32; 4] {
+        self.layout
+            .world_cells
+            .iter()
+            .find(|(cell, _)| cell == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{name}'s World / login cell is not clickable: {:?}",
+                    self.layout.world_cells
+                )
+            })
+            .1
+    }
+
+    /// The open picker's rows: each world and whether it is ticked.
+    fn picker(&self) -> Vec<(u16, bool)> {
+        self.layout
+            .world_picker
+            .iter()
+            .map(|entry| (entry.world, entry.ticked))
+            .collect()
+    }
+
+    /// The open picker's row for `world`.
+    fn picker_row(&self, world: u16) -> [f32; 4] {
+        self.layout
+            .world_picker
+            .iter()
+            .find(|entry| entry.world == world)
+            .unwrap_or_else(|| {
+                panic!(
+                    "world {world} is not listed: {:?}",
+                    self.layout.world_picker
+                )
+            })
+            .rect
+    }
+
+    /// Open the world picker from `name`'s World / login cell.
+    fn open_picker_of(&mut self, name: &str) {
+        self.click(self.world_cell(name));
+        self.settle();
+        assert_eq!(self.session.world_picker.target(), Some(name));
+    }
+
+    /// Open the world picker from the Marks menu's Switch world… entry.
+    fn open_picker_of_marks(&mut self) {
+        self.click(self.layout.marks_button);
+        self.settle();
+        self.click(self.menu_item("Switch world…"));
+        self.settle();
+        assert!(self.session.world_picker.is_open());
+        assert_eq!(self.session.world_picker.target(), None);
+    }
+
+    /// How many commands the session has recorded.
+    fn commands(&self) -> usize {
+        self.session.core.commands().reports().count()
+    }
+
+    /// The members of every Switch world command to `world`, one list of
+    /// subjects per command.
+    fn switch_world_members(&self, world: u16) -> Vec<Vec<Subject>> {
+        self.session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == OperatorCommand::SwitchWorld(world))
+            .map(|report| report.members().iter().map(|m| m.subject()).collect())
+            .collect()
+    }
+
+    /// The world `name`'s vault row saves for its next login.
+    fn saved_world(&self, name: &str) -> Option<u16> {
+        self.session
+            .core
+            .profile(name)
+            .expect("a vault profile")
+            .settings_draft()
+            .world()
     }
 }
 
@@ -715,4 +834,305 @@ fn the_copy_confirmation_is_drawn_once() {
     for _ in 0..3 {
         assert_eq!(rig.frame_with_scripts_section(), 1, "Fleet window closed");
     }
+}
+
+/// The World / login cell of a bot on a public world is clickable and opens
+/// the one world picker, which lists the server's worlds (core's cached
+/// list) with the bot's own ticked. Rows that cannot switch (a profile that
+/// is not loaded, a bot with no world yet) have no clickable cell, and a
+/// click away closes the picker having changed nothing. Before, the cell was
+/// plain text.
+#[test]
+fn the_world_cell_opens_the_world_picker_with_the_bots_own_world_ticked() {
+    let mut rig = Rig::with_worlds(
+        "fleet-world-cell",
+        &["alice", "bob", "carol", "dave"],
+        &[("alice", 2), ("bob", 3), ("carol", 1)],
+    );
+    // dave is not loaded; carol is loaded but publishes no world yet.
+    rig.session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .retain(|row| row.username != "carol");
+    rig.settle();
+    let clickable: Vec<&str> = rig
+        .layout
+        .world_cells
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(clickable, ["alice", "bob"]);
+    assert!(
+        !rig.session.world_picker.is_open(),
+        "nothing opens by itself"
+    );
+    let commands = rig.commands();
+
+    rig.open_picker_of("alice");
+    assert_eq!(rig.picker(), [(1, false), (2, true), (3, false)]);
+    let labels: Vec<&str> = rig
+        .layout
+        .world_picker
+        .iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(labels, ["World 1", "World 2", "World 3"]);
+    assert!(
+        rig.session.core.fleet_plan().is_none() && rig.commands() == commands,
+        "opening the picker plans and submits nothing"
+    );
+
+    // A click away closes it, and picks nothing.
+    rig.click([1200.0, 700.0, 1202.0, 702.0]);
+    assert!(!rig.session.world_picker.is_open());
+    assert!(rig.layout.world_picker.is_empty());
+    assert_eq!(rig.commands(), commands);
+
+    // bob's cell ticks his own world.
+    rig.open_picker_of("bob");
+    assert_eq!(rig.picker(), [(1, false), (2, false), (3, true)]);
+}
+
+/// Picking the world the bot is already on closes the picker and does
+/// nothing: no plan, no command, no write, no banner.
+#[test]
+fn picking_the_bots_own_world_submits_nothing() {
+    let mut rig = Rig::with_worlds("fleet-world-same", &["alice"], &[("alice", 2)]);
+    let commands = rig.commands();
+    rig.open_picker_of("alice");
+    rig.click(rig.picker_row(2));
+
+    assert!(!rig.session.world_picker.is_open());
+    assert!(rig.session.core.fleet_plan().is_none());
+    assert!(rig.layout.plan.is_none());
+    assert_eq!(rig.commands(), commands);
+    assert_eq!(rig.session.error, None);
+    rig.session.core.flush_writes();
+    assert_eq!(rig.saved_world("alice"), None, "nothing was saved");
+}
+
+/// Picking another world stages that bot alone and plans a Switch world for
+/// it. The Fleet window's plan row shows core's prompt (Confirm and Cancel),
+/// and nothing runs or is saved before Confirm; Cancel drops the plan and
+/// writes nothing; Confirm runs one command over that bot only, and the one
+/// result line follows it. A marked bot is not added to a bot's own pick.
+#[test]
+fn picking_another_world_plans_that_bot_and_runs_only_on_confirm() {
+    let mut rig = Rig::with_worlds(
+        "fleet-world-plan",
+        &["alice", "bob"],
+        &[("alice", 2), ("bob", 2)],
+    );
+    rig.mark(&["bob"]);
+    let alice = rig.session.core.profile_identity("alice").unwrap();
+
+    rig.open_picker_of("alice");
+    rig.click(rig.picker_row(3));
+    assert!(!rig.session.world_picker.is_open(), "a pick closes it");
+    let plan = rig.session.core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.action(), FleetAction::SwitchWorld(3));
+    assert!(plan.needs_confirm(), "a Switch world plan always asks");
+    assert!(matches!(plan.scope(), PlanScope::One));
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice"]);
+    let prompt = plan.prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 bot to world 3: alice."),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("bob"), "the mark did not join: {prompt}");
+    let row = rig.layout.plan.clone().expect("the plan row is drawn");
+    assert_eq!(
+        row.prompt, prompt,
+        "the row draws the core's prompt verbatim"
+    );
+    assert!(rig.switch_world_members(3).is_empty(), "nothing ran yet");
+
+    // Cancel: the plan goes; nothing ran and nothing was saved.
+    rig.click(row.cancel);
+    assert!(rig.session.core.fleet_plan().is_none());
+    assert!(rig.layout.plan.is_none());
+    rig.session.core.flush_writes();
+    assert!(rig.switch_world_members(3).is_empty());
+    assert_eq!(rig.saved_world("alice"), None);
+    assert!(rig.session.core.fleet_result().is_none());
+
+    // Again, then Confirm: one command with one member, alice.
+    rig.open_picker_of("alice");
+    rig.click(rig.picker_row(3));
+    let row = rig
+        .layout
+        .plan
+        .clone()
+        .expect("the plan row is drawn again");
+    rig.click(row.confirm);
+    assert!(rig.session.core.fleet_plan().is_none());
+    assert_eq!(rig.switch_world_members(3), [[Subject::Profile(alice)]]);
+    rig.session.core.flush_writes();
+    assert_eq!(rig.saved_world("alice"), Some(3), "saved before the relog");
+    assert_eq!(rig.saved_world("bob"), None);
+    rig.settle();
+    let result = rig.session.core.fleet_result().expect("one result");
+    assert_eq!(result.action(), FleetAction::SwitchWorld(3));
+    assert_eq!(result.counts().pending, 1, "{}", result.text());
+    let (line, _) = rig.layout.result.clone().expect("the result line is drawn");
+    assert_eq!(line, result.text());
+}
+
+/// A pick from the rail or the Grid plans while the Fleet window is closed:
+/// the window opens so the plan row shows, and nothing else changes.
+#[test]
+fn a_pick_opens_the_fleet_window_to_show_the_confirmation() {
+    let mut rig = Rig::with_worlds("fleet-world-opens", &["alice"], &[("alice", 2)]);
+    // The rail's click path: the session opens the picker for the bot.
+    rig.session.fleet_open = false;
+    assert!(rig.session.open_world_picker(Some("alice")));
+    rig.settle();
+    assert_eq!(rig.picker(), [(1, false), (2, true), (3, false)]);
+    assert!(!rig.session.fleet_open);
+    rig.click(rig.picker_row(1));
+    assert!(rig.session.fleet_open, "the Fleet window opened");
+    assert!(rig.session.core.fleet_plan().is_some());
+    let drawn = rig
+        .layout
+        .plan
+        .clone()
+        .expect("the window draws the plan row");
+    assert_eq!(
+        Some(drawn.prompt.as_str()),
+        rig.session.core.fleet_plan().map(|plan| plan.prompt())
+    );
+}
+
+/// The Marks menu's Switch world… opens the same picker for the marked
+/// bots (every loaded bot shown when none is marked): no world is ticked,
+/// a pick plans one command over the marks, hidden ones too, and names the
+/// bots already on that world as skipped. Before, the window had no world
+/// action.
+#[test]
+fn the_marks_menu_switch_world_plans_over_the_marks() {
+    let mut rig = Rig::with_worlds(
+        "fleet-world-marked",
+        &["alice", "bob", "carol", "dave"],
+        &[("alice", 2), ("bob", 2), ("carol", 3), ("dave", 2)],
+    );
+    rig.mark(&["alice", "bob", "carol"]);
+    rig.session.fleet_model.set_filter_for_test("alice");
+    rig.settle();
+    assert_eq!(rig.layout.marks_text, "3 marked, 2 not shown");
+
+    rig.open_picker_of_marks();
+    assert_eq!(rig.picker(), [(1, false), (2, false), (3, false)]);
+    rig.click(rig.picker_row(3));
+    let plan = rig.session.core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.action(), FleetAction::SwitchWorld(3));
+    assert!(plan.needs_confirm());
+    assert!(matches!(plan.scope(), PlanScope::Marked { hidden: 2 }));
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice", "bob"]);
+    let prompt = plan.prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 2 marked bots to world 3 (2 not shown): alice, bob."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("Skipped 1: carol: already on this world."),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("dave"), "dave is not marked: {prompt}");
+    assert!(rig.switch_world_members(3).is_empty(), "nothing ran yet");
+    let row = rig.layout.plan.clone().expect("the plan row is drawn");
+    assert_eq!(row.prompt, prompt);
+    rig.click(row.confirm);
+    let members = rig.switch_world_members(3);
+    assert_eq!(members.len(), 1, "one command");
+    let alice = rig.session.core.profile_identity("alice").unwrap();
+    let bob = rig.session.core.profile_identity("bob").unwrap();
+    assert_eq!(
+        members[0],
+        [Subject::Profile(alice), Subject::Profile(bob)],
+        "the marked bots that can move, in order"
+    );
+    rig.session.core.flush_writes();
+    assert_eq!(rig.saved_world("alice"), Some(3));
+    assert_eq!(rig.saved_world("bob"), Some(3));
+    assert_eq!(rig.saved_world("carol"), None, "already there: no write");
+    assert_eq!(rig.saved_world("dave"), None, "not marked");
+}
+
+/// With nothing marked the Marks menu's entry covers the loaded bots the
+/// filter shows, and the plan asks first.
+#[test]
+fn with_nothing_marked_switch_world_covers_the_loaded_shown_bots() {
+    let mut rig = Rig::with_worlds(
+        "fleet-world-shown",
+        &["alice", "bob", "carol"],
+        &[("alice", 2), ("bob", 2)],
+    );
+    assert!(rig.session.fleet_model.marks().is_empty());
+    rig.open_picker_of_marks();
+    rig.click(rig.picker_row(1));
+    let plan = rig.session.core.fleet_plan().expect("the plan waits");
+    assert!(matches!(plan.scope(), PlanScope::AllShown));
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice", "bob"]);
+    assert!(
+        plan.prompt()
+            .starts_with("Move 2 shown bots to world 1: alice, bob."),
+        "{}",
+        plan.prompt()
+    );
+    assert!(rig.switch_world_members(1).is_empty());
+}
+
+/// A server with one world offers no switching anywhere in the window: no
+/// World / login cell is clickable (the column is plain text), and the Marks
+/// menu's entry is disabled, so a click on it opens nothing and plans
+/// nothing.
+#[test]
+fn a_server_with_one_world_offers_no_picker() {
+    let mut rig = Rig::with_play("fleet-world-local", &["alice", "bob"], &["alice", "bob"]);
+    rig.publish_in_game("alice", 2);
+    rig.publish_in_game("bob", 2);
+    rig.mark(&["alice"]);
+    assert!(rig.session.core.switch_world_choices().is_none());
+    assert!(!rig.session.can_switch_world());
+    assert!(
+        rig.layout.world_cells.is_empty(),
+        "{:?}",
+        rig.layout.world_cells
+    );
+    let commands = rig.commands();
+
+    rig.click(rig.layout.marks_button);
+    rig.settle();
+    rig.click(rig.menu_item("Switch world…"));
+    rig.settle();
+    assert!(!rig.session.world_picker.is_open());
+    assert!(rig.layout.world_picker.is_empty());
+    assert!(rig.session.core.fleet_plan().is_none());
+    assert_eq!(rig.commands(), commands);
+    assert_eq!(rig.session.error, None);
+    assert!(!rig.session.open_world_picker(Some("alice")));
+    assert!(!rig.session.open_world_picker(None));
+}
+
+/// A steady frame with the picker open rebuilds no label (the cached
+/// buffers keep their addresses) and submits nothing.
+#[test]
+fn a_steady_frame_with_the_picker_open_keeps_its_labels_and_submits_nothing() {
+    let mut rig = Rig::with_worlds("fleet-world-steady", &["alice"], &[("alice", 2)]);
+    rig.open_picker_of("alice");
+    let buffers = rig.session.world_picker.buffers();
+    assert_eq!(buffers.len(), 4, "three worlds and the heading");
+    let commands = rig.commands();
+    for _ in 0..8 {
+        rig.frame(AWAY, false);
+    }
+    assert_eq!(rig.session.world_picker.buffers(), buffers);
+    assert_eq!(rig.commands(), commands);
+    assert!(rig.session.world_picker.is_open());
+    assert!(rig.session.core.fleet_plan().is_none());
+    assert_eq!(rig.picker(), [(1, false), (2, true), (3, false)]);
 }
