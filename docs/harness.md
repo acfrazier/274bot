@@ -913,7 +913,7 @@ load another copy.
 |---|---|
 | `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start` and `duel_arena`. |
+| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` runs the native Gatherer at Draynor. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
@@ -923,8 +923,8 @@ load another copy.
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
 `idle` only logs clients in. `seeded-idle` performs the ordinary Thiever seed
-without starting the catalog script. `active` starts the selected real catalog
-script; `lifecycle` additionally alternates Stop and restart every 60
+without starting the catalog script. `active` starts the scenario's native or
+catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
 
@@ -936,6 +936,19 @@ requires seed/proof completion and running scripts for active workloads.
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
 scenario's final Strength-XP-since-Start proof remains mandatory.
+
+Multi-slot `gatherer` uses a fleet qualification for the contended Draynor
+normal trees. Every bot must reach a safe legal tree stand and send a real
+`Chop down` request within its unchanged post-Start tick budget. No sampled
+position may enter a denied zone. A death, native failure or final `Blocked`
+phase fails the cell. The fleet must gain Woodcutting XP. A bot with no XP must
+also show a genuine resource-exhaustion wait. Generic `Waiting`, idle and paused
+states do not supply that evidence. The qualifier collects its evidence even
+when the optional diagnostic sidecar is disabled.
+
+The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
+Gatherer live cells retain their individual gates. They do not use this fleet's
+shared-tree fixture.
 
 `duel_arena` is the pair-script cell: every slot runs the frozen Duel Arena
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is
