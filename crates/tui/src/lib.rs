@@ -40,6 +40,7 @@ pub mod status;
 pub(crate) mod stderr_capture;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod world_picker;
 
 pub use app::{AppAction, TuiApp};
 pub use bin::RunMode;

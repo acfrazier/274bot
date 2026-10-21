@@ -21,8 +21,7 @@
 //!   is that row's handler; every other one must be registered as a
 //!   composition, a dispatcher or an exclusion.
 //! - **Rows:** every row of [`OperatorCommand::ALL`] is reached by at least
-//!   one registered entry, or is a normative row with no current entry
-//!   point (`SwitchWorld`).
+//!   one registered entry.
 //!
 //! The scan is syntactic (comments and literals blanked, braces tracked);
 //! it reads the sibling crates' sources through `CARGO_MANIFEST_DIR`.
@@ -77,9 +76,6 @@ const PATH_READ: &str = "resolves an operator file location; no state change";
 const SETTINGS_KIND: &str = "the card kind of the selection decides the row";
 const RELEASE_BUNDLE: &str =
     "release packaging of the shipped map bundle; no interactive operator decision";
-
-/// Rows the contract keeps although no current entry point issues them.
-const NORMATIVE_ONLY: &[OperatorCommand] = &[C::SwitchWorld(1)];
 
 /// Every reachable core entry point outside the by-class exclusions.
 const CORE: &[(&str, Decision)] = &[
@@ -690,6 +686,10 @@ const CORE: &[(&str, Decision)] = &[
         "session/fleet_plan.rs::OperatorSession::stage_plan_card",
         Staged(C::PlanFleetAction(crate::fleet_plan::FleetAction::CopySettings)),
     ),
+    (
+        "session/fleet_plan.rs::OperatorSession::stage_plan_target",
+        Staged(C::PlanFleetAction(crate::fleet_plan::FleetAction::SwitchWorld(1))),
+    ),
     ("fleet.rs::FleetModel::refresh", Excluded(PROJECTION)),
     ("driver.rs::HeadlessDriver::unlock", Rows(&[C::UnlockVault, C::CreateVault], "stages the vault and the play launch, then submits UnlockVault or, for a new file, CreateVault")),
     ("driver.rs::HeadlessDriver::session_mut", Excluded(ACCESSOR)),
@@ -781,6 +781,14 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[C::MarkFleet(crate::MarkOp::Shown), C::SetMark(true)],
             "the Mark column header is the tri-state shown-marks box; each row's checkbox sets that row's mark",
+        ),
+    ),
+    // --- panel: fleet plan flow ---
+    (
+        "panel/fleet_actions.rs::Session::confirm_fleet_plan",
+        Rows(
+            &[C::SwitchWorld(1)],
+            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan",
         ),
     ),
     // --- panel: session compositions ---
@@ -1070,6 +1078,13 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(&[C::PauseScript, C::ResumeScript], RUN_STATE),
     ),
     (
+        "tui/bin.rs::TuiSession::run_fleet_plan",
+        Rows(
+            &[C::SwitchWorld(1)],
+            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan",
+        ),
+    ),
+    (
         "tui/bin.rs::TuiSession::script_start",
         Rows(
             &[C::PickBrowseCard, C::SelectScriptCard, C::StartScript],
@@ -1289,7 +1304,6 @@ fn every_row_is_reached_by_an_entry_point() {
     }
     let unlisted: Vec<OperatorCommand> = reached
         .iter()
-        .chain(NORMATIVE_ONLY)
         .copied()
         .filter(|row| !OperatorCommand::ALL.iter().any(|r| same_row(*r, *row)))
         .collect();
@@ -1317,19 +1331,12 @@ fn every_row_is_reached_by_an_entry_point() {
     }
     let unreached: Vec<OperatorCommand> = OperatorCommand::ALL
         .into_iter()
-        .filter(|row| !NORMATIVE_ONLY.iter().any(|n| same_row(*n, *row)))
         .filter(|row| !reached.iter().any(|r| same_row(*r, *row)))
         .collect();
     assert!(
         unreached.is_empty(),
         "rows no entry point issues: {unreached:?}"
     );
-    for row in NORMATIVE_ONLY {
-        assert!(
-            !reached.iter().any(|r| same_row(*r, *row)),
-            "{row:?} is listed as normative-only but an entry point issues it"
-        );
-    }
 }
 
 /// Every panel/TUI function that calls into this crate or hits an effect

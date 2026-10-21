@@ -64,6 +64,10 @@ const FLEET_NAV: &[(&str, &str)] = &[
         "palette",
         "Move marked to top: the marked profiles lead the Load order",
     ),
+    (
+        "palette",
+        "Switch world of marked…: move the marked bots to another world",
+    ),
 ];
 
 const MAP_NAV: &[(&str, &str)] = &[

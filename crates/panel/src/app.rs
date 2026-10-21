@@ -1525,6 +1525,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         });
     }
     let debug_actions = state.session.debug_ui();
+    let switch_world = state.session.can_switch_world();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
     let mut clicked = None;
@@ -1552,7 +1553,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         );
         let mut marked = model.is_marked(index);
         let restart_required = state.session.scripts.has_restart_badge(name);
-        let (cap_select, cap_remove, cap_fold) = rail_cap(
+        let CapClicks {
+            select: cap_select,
+            remove: cap_remove,
+            fold: cap_fold,
+            world: cap_world,
+        } = rail_cap(
             ui,
             row,
             labels,
@@ -1562,6 +1568,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 preview,
                 restart_required,
                 debug_actions,
+                switch_world,
             },
             &mut marked,
             None,
@@ -1617,6 +1624,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
+        } else if cap_world {
+            clicked = Some(TileClick::World(index));
         } else if cap_select || body_clicked {
             clicked = Some(TileClick::Select(index));
         }
@@ -1641,6 +1650,8 @@ enum TileClick {
     Mark(usize, bool),
     Remove(usize),
     Select(usize),
+    /// A world marker: open the world picker for the row's bot.
+    World(usize),
     /// A tile dropped on another: the reorder it asks for.
     Move(ReorderOp),
 }
@@ -1651,7 +1662,10 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         return;
     };
     let index = match clicked {
-        TileClick::Mark(index, _) | TileClick::Remove(index) | TileClick::Select(index) => index,
+        TileClick::Mark(index, _)
+        | TileClick::Remove(index)
+        | TileClick::Select(index)
+        | TileClick::World(index) => index,
         TileClick::Move(op) => {
             session.reorder_profiles(op);
             return;
@@ -1671,6 +1685,9 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         }
         TileClick::Remove(_) => session.rail_remove(&name),
         TileClick::Select(_) => session.select(&name),
+        TileClick::World(_) => {
+            session.open_world_picker(Some(&name));
+        }
         TileClick::Move(_) => {}
     }
 }
@@ -5129,6 +5146,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let model = std::mem::take(&mut state.session.fleet_model);
     let labels = std::mem::take(&mut state.fleet_labels);
     let debug_actions = state.session.debug_ui();
+    let switch_world = state.session.can_switch_world();
     let only_selected = state.session.focus.lock().unwrap().only_render_selected;
     {
         let focus = state.session.focus.lock().unwrap();
@@ -5165,7 +5183,12 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             dropped: None,
             dragging: false,
         });
-        let (cap_select, cap_remove, cap_fold) = rail_cap(
+        let CapClicks {
+            select: cap_select,
+            remove: cap_remove,
+            fold: cap_fold,
+            world: cap_world,
+        } = rail_cap(
             ui,
             row,
             labels,
@@ -5175,6 +5198,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 preview,
                 restart_required,
                 debug_actions,
+                switch_world,
             },
             &mut marked,
             drag.as_mut(),
@@ -5198,6 +5222,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             crate::ui_state::save(&state.session.preferences, &state.session.ui);
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
+        } else if cap_world {
+            clicked = Some(TileClick::World(index));
         } else if cap_select || body_clicked {
             clicked = Some(TileClick::Select(index));
         }
@@ -5239,6 +5265,23 @@ struct CapDrawState {
     restart_required: bool,
     /// The profile's server allows Debug, so a mark also feeds Debug actions.
     debug_actions: bool,
+    /// The bound server has public worlds, so the world marker opens the
+    /// world picker (a local server's marker is not clickable).
+    switch_world: bool,
+}
+
+/// What a click on a cap asked for. At most one is set in a frame: they are
+/// separate items.
+#[derive(Default)]
+struct CapClicks {
+    /// The name: focus the member.
+    select: bool,
+    /// The ✗: drop the member from the wall.
+    remove: bool,
+    /// The fold button: fold or show the preview.
+    fold: bool,
+    /// The world marker: open the world picker.
+    world: bool,
 }
 
 /// One rail cap's reorder gesture, offered only while the fleet shows Load
@@ -5259,7 +5302,7 @@ fn rail_cap(
     draw: CapDrawState,
     marked: &mut bool,
     drag: Option<&mut CapDrag>,
-) -> (bool, bool, bool) {
+) -> CapClicks {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     const MARK_W: f32 = 18.0;
@@ -5279,11 +5322,16 @@ fn rail_cap(
         0.0
     };
     let marker_x = ui.cursor_pos_x();
+    let mut world = false;
     if labels.world.is_empty() {
         draw_status_dot(ui, light, dot_w);
     } else {
-        world_marker(ui, &labels.world, colour, dot_w);
-        ui.set_item_tooltip(&labels.world_tip);
+        world = world_marker(ui, &labels.world, colour, dot_w, draw.switch_world);
+        if draw.switch_world {
+            world_switch_tooltip(ui, &labels.world_tip);
+        } else {
+            ui.set_item_tooltip(&labels.world_tip);
+        }
     }
     #[cfg(test)]
     record_test_rail_item(ui);
@@ -5337,7 +5385,12 @@ fn rail_cap(
     record_test_rail_item(ui);
     red.pop();
     ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
-    (clicked, removed, folded)
+    CapClicks {
+        select: clicked,
+        remove: removed,
+        fold: folded,
+        world,
+    }
 }
 
 #[cfg(test)]
@@ -5373,6 +5426,7 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
             preview: false,
             restart_required: false,
             debug_actions: true,
+            switch_world: false,
         },
         &mut marked,
         None,
@@ -5416,6 +5470,7 @@ fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
             preview: false,
             restart_required: false,
             debug_actions,
+            switch_world: false,
         },
         &mut marked,
         None,
@@ -5480,8 +5535,11 @@ fn draw_test_nav_routing(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) ->
 /// `width`-wide status cell and on the text line, with the world number
 /// knocked out in the background colour. Drawn as geometry so the digit is
 /// the rail's own font and the disc size does not depend on glyph metrics.
-/// Occupies one text line, like the local-profile status marker.
-fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32) {
+/// Occupies one text line, like the local-profile status marker. With
+/// `clickable` (the server has public worlds to switch to) it is the world
+/// bubble: a button that rings in the accent colour under the pointer, and
+/// a click returns `true`.
+fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32, clickable: bool) -> bool {
     let line_h = ui.text_line_height();
     let [x, y] = ui.cursor_screen_pos();
     let center = [x + width * 0.5, y + line_h * 0.5];
@@ -5489,18 +5547,41 @@ fn world_marker(ui: &Ui, number: &str, colour: [f32; 4], width: f32) {
     let [text_w, text_h] =
         ui.current_font()
             .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, number);
-    let dl = ui.get_window_draw_list();
-    dl.add_circle(center, radius, colour).filled(true).build();
-    dl.add_text(
-        [
-            (center[0] - text_w * 0.5).round(),
-            (center[1] - text_h * 0.5).round(),
-        ],
-        crate::theme::BG,
-        number,
-    );
-    drop(dl);
-    ui.dummy([width, line_h]);
+    {
+        let dl = ui.get_window_draw_list();
+        dl.add_circle(center, radius, colour).filled(true).build();
+        dl.add_text(
+            [
+                (center[0] - text_w * 0.5).round(),
+                (center[1] - text_h * 0.5).round(),
+            ],
+            crate::theme::BG,
+            number,
+        );
+    }
+    if !clickable {
+        ui.dummy([width, line_h]);
+        return false;
+    }
+    let clicked = ui.invisible_button("##world", [width, line_h]);
+    if ui.is_item_hovered() {
+        ui.get_window_draw_list()
+            .add_circle(center, radius + scale_px(ui, 1.0), crate::theme::ACCENT)
+            .thickness(scale_px(ui, 1.5))
+            .build();
+    }
+    clicked
+}
+
+/// The world marker's tooltip while it opens the world picker: the usual
+/// `wN · status` line, and that a click switches world.
+fn world_switch_tooltip(ui: &Ui, tip: &str) {
+    if ui.is_item_hovered() {
+        ui.tooltip(|| {
+            ui.text(tip);
+            ui.text_disabled("click to switch world");
+        });
+    }
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a
@@ -7419,6 +7500,7 @@ fn ui_frame(
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     restart_settings_popup(ui, &mut state.session);
+    crate::world_picker::popup(ui, &mut state.session);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);

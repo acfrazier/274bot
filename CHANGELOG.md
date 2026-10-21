@@ -73,6 +73,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
   **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
   **Start all** / **Stop all** until the combined fleet toolbar.
+- Switch a bot's world: click its world marker on a MultiBox tile, Grid
+  cell or Fleet row and pick a public world, or press `W` on a TUI fleet
+  row. To move several bots, mark them and choose **Switch world…** in the
+  Fleet window's Marks menu or **Switch world of marked…** in the TUI
+  palette. Fleet asks first and names the bots. Each bot saves its new
+  world, logs out and logs back in through the login queue; a running
+  script continues after it reconnects, and a paused script stays paused.
+  A bot that is queued, logging in, not logged in or already on that world
+  is skipped with the reason, and a bot whose world could not be saved
+  stays logged in. A server with one world offers no switch.
+- Copy settings to more than 64 bots now saves every bot. The copy saves a
+  few dozen bots at a time and the rest wait their turn; Starts wait until
+  the last bot is saved. Cancel stops the bots that are still waiting.
+- Fixed: with MultiBox off, the bot that unlocking logs in (the last
+  focused profile), or a bot picked in Profiles, is now a fleet member.
+  The Fleet window lists it as loaded, and a script can be started on
+  it. Before, Start refused it with `no slot: <name>`. Starting a script
+  on a profile that is not loaded now says `<name> is not loaded`. 0.2.4
+  has the same problem.
 
 ### Random events
 

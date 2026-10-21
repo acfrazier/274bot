@@ -3,7 +3,9 @@
 //! the fleet card drop-down, the marks row (tri-state box, marks menu and
 //! count), the action bar (Start / Stop, Assign, Assign & restart, log in /
 //! out, Copy settings, group walk) with its plan confirmation and result
-//! line, and toggleable status columns.
+//! line, and toggleable status columns. A loaded bot's World / login cell
+//! and the marks menu's Switch world… entry open the shared world picker
+//! (`crate::world_picker`); its plan shows in the same plan row.
 //!
 //! The window draws the same rows, order, filter and marks as the MultiBox
 //! rail and the Grid: all three read [`Session::fleet_model`]. Every decision
@@ -16,12 +18,12 @@
 use std::cell::RefCell;
 
 use dear_imgui_rs::{
-    Condition, DragDropTargetFlags, SelectableFlags, StyleColor, TableColumnFlags, TableFlags,
-    TableOptions, TableRowFlags, TableSizingPolicy, Ui, WindowFlags,
+    Condition, DragDropTargetFlags, ItemHoveredFlags, SelectableFlags, StyleColor,
+    TableColumnFlags, TableFlags, TableOptions, TableRowFlags, TableSizingPolicy, Ui, WindowFlags,
 };
 use frontend_core::progress::{self, NONE};
 use frontend_core::{
-    contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, MarkOp, MarkPredicate,
+    contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, FleetRow, MarkOp, MarkPredicate,
     OperatorCommand, Placement, ProfileIdentity, ReorderOp, Scripts, ShownMarks, Targets,
     FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
 };
@@ -137,6 +139,11 @@ pub(crate) struct FleetLayout {
     pub plan: Option<PlanRecord>,
     /// The result line's text and rect, when one is drawn.
     pub result: Option<(String, [f32; 4])>,
+    /// The World / login cell of each shown row that opens the world picker
+    /// when clicked, in row order: the profile's name and the cell.
+    pub world_cells: Vec<(String, [f32; 4])>,
+    /// The open world picker's rows.
+    pub world_picker: Vec<crate::world_picker::EntryRecord>,
 }
 
 /// One fleet action button as a test sees it.
@@ -233,12 +240,17 @@ fn record_window_layout(ui: &Ui) {
     LAYOUT.with_borrow_mut(|layout| layout.scroll_max_x = ui.scroll_max_x());
 }
 
-/// Draw the Fleet window for a test and return what it laid out.
+/// Draw the Fleet window for a test and return what it laid out. The shared
+/// world picker is drawn after it, as `ui_frame` does.
 #[cfg(test)]
 pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
     LAYOUT.with_borrow_mut(|layout| *layout = FleetLayout::default());
     window(ui, session);
-    LAYOUT.with_borrow_mut(std::mem::take)
+    crate::world_picker::popup(ui, session);
+    LAYOUT.with_borrow_mut(|layout| {
+        layout.world_picker = crate::world_picker::take_entries();
+        std::mem::take(layout)
+    })
 }
 
 const MOVE_TO_TOP_LABEL: &str = "Move marked to top";
@@ -248,6 +260,10 @@ const MARKS_MENU_POPUP: &str = "##fleet-marks-menu";
 const PICK_A_CARD: &str = "pick a card above";
 /// The tooltip of a fleet button with no bot to act on.
 const NOTHING_TO_ACT_ON: &str = "mark bots, or show loaded ones, first";
+/// The Marks menu's entry that opens the world picker over the marked bots.
+const SWITCH_WORLD_LABEL: &str = "Switch world…";
+/// Why the world picker is not offered: a local server has one world.
+const NO_WORLDS: &str = "this server has one world";
 
 /// The window's count-bearing labels (the marks count and the action
 /// buttons), rebuilt only when the fleet model's generation moves, never
@@ -373,6 +389,12 @@ fn action_tooltip(action: FleetAction, marked: bool) -> &'static str {
         (FleetAction::CopySettings, false) => {
             "copy the focused bot's settings for the fleet card to the loaded bots shown \
              that are on that card, after asking first"
+        }
+        (FleetAction::SwitchWorld(_), true) => {
+            "move every marked bot to the world you pick; a confirmation names them first"
+        }
+        (FleetAction::SwitchWorld(_), false) => {
+            "move every loaded bot shown to the world you pick; a confirmation names them first"
         }
     }
 }
@@ -536,6 +558,7 @@ fn marks_row(ui: &Ui, session: &mut Session) {
     let state = session.fleet_model.shown_marks();
     let no_rows = session.fleet_model.counts().shown() == 0;
     let mut op = None;
+    let mut switch_world = false;
     {
         let _disabled = no_rows.then(|| ui.begin_disabled());
         if tri_state_box(ui, "##fleet-mark-all", state) {
@@ -551,7 +574,9 @@ fn marks_row(ui: &Ui, session: &mut Session) {
     }
     #[cfg(test)]
     LAYOUT.with_borrow_mut(|layout| layout.marks_button = item_rect(ui));
-    ui.set_item_tooltip("mark or unmark the shown bots, or mark them by status");
+    ui.set_item_tooltip(
+        "mark or unmark the shown bots, mark them by status, or switch their world",
+    );
     if let Some(_menu) = ui.begin_popup(MARKS_MENU_POPUP) {
         let item = |label: &str| {
             let clicked = ui.menu_item(label);
@@ -584,6 +609,30 @@ fn marks_row(ui: &Ui, session: &mut Session) {
                 }
             }
         }
+        ui.separator();
+        // The same scope rule as the action buttons: the marked bots, or
+        // the loaded shown ones when none is marked.
+        let reason = if !session.can_switch_world() {
+            Some(NO_WORLDS)
+        } else if session.fleet_labels.scope == 0 {
+            Some(NOTHING_TO_ACT_ON)
+        } else {
+            None
+        };
+        let clicked =
+            ui.menu_item_enabled_selected_no_shortcut(SWITCH_WORLD_LABEL, false, reason.is_none());
+        #[cfg(test)]
+        LAYOUT.with_borrow_mut(|layout| {
+            layout
+                .marks_menu
+                .push((SWITCH_WORLD_LABEL.to_owned(), item_rect(ui)));
+        });
+        if ui.is_item_hovered_with_flags(ItemHoveredFlags::ALLOW_WHEN_DISABLED) {
+            ui.tooltip_text(reason.unwrap_or_else(|| {
+                action_tooltip(FleetAction::SwitchWorld(0), session.fleet_labels.marked > 0)
+            }));
+        }
+        switch_world |= clicked;
     }
     ui.same_line();
     ui.text(&session.fleet_labels.marks);
@@ -591,6 +640,9 @@ fn marks_row(ui: &Ui, session: &mut Session) {
     LAYOUT.with_borrow_mut(|layout| layout.marks_text = session.fleet_labels.marks.clone());
     if let Some(op) = op {
         session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
+    }
+    if switch_world {
+        session.open_world_picker(None);
     }
 }
 
@@ -808,6 +860,27 @@ fn cell(ui: &Ui, write: impl FnOnce(&mut String)) {
     });
 }
 
+/// The World / login cell of a bot on a public world: [`cell`]'s text, but a
+/// click opens the world picker. The `###` suffix keeps the cell's identity
+/// while its text follows the phase. Returns whether it was clicked.
+fn world_cell(ui: &Ui, row: &FleetRow) -> bool {
+    let _id = ui.push_id(row.name());
+    let clicked = CELL.with_borrow_mut(|buffer| {
+        buffer.clear();
+        row.write_world_login(buffer);
+        buffer.push_str("###world");
+        ui.selectable(&*buffer)
+    });
+    #[cfg(test)]
+    LAYOUT.with_borrow_mut(|layout| {
+        layout
+            .world_cells
+            .push((row.name().to_owned(), item_rect(ui)));
+    });
+    ui.set_item_tooltip("click to switch world");
+    clicked
+}
+
 /// The table over the model's shown rows. A mark click is submitted after
 /// the rows are drawn (the rows are borrowed from the session's model).
 fn table(ui: &Ui, session: &mut Session) {
@@ -821,6 +894,8 @@ fn table(ui: &Ui, session: &mut Session) {
     let mut mark_click: Option<(usize, bool)> = None;
     let mut header_op: Option<MarkOp> = None;
     let mut dropped: Option<(u64, usize)> = None;
+    let can_switch = session.can_switch_world();
+    let mut world_click: Option<usize> = None;
     // Dragging reorders the saved Load order, so only that view offers it.
     let reorder = session.fleet_model.order() == FleetOrder::LoadOrder;
     // Every column stretches with the window, so the table is never wider
@@ -943,7 +1018,15 @@ fn table(ui: &Ui, session: &mut Session) {
                 #[cfg(test)]
                 record_cell(ui);
                 match column {
-                    FleetColumn::State => cell(ui, |out| row.write_world_login(out)),
+                    FleetColumn::State => {
+                        if can_switch && row.loaded() && row.world().is_some() {
+                            if world_cell(ui, row) {
+                                world_click = Some(index);
+                            }
+                        } else {
+                            cell(ui, |out| row.write_world_login(out));
+                        }
+                    }
                     FleetColumn::Card => cell(ui, |out| {
                         match Scripts::assignment_name(&session.core, row.name()) {
                             Some(name) => out.push_str(name),
@@ -1005,6 +1088,16 @@ fn table(ui: &Ui, session: &mut Session) {
     if let Some((moving, target)) = dropped {
         if let Some(op) = drop_op(&session.fleet_model, moving, target) {
             session.reorder_profiles(op);
+        }
+    }
+    if let Some(index) = world_click {
+        let name = session
+            .fleet_model
+            .rows()
+            .get(index)
+            .map(|row| row.name().to_owned());
+        if let Some(name) = name {
+            session.open_world_picker(Some(&name));
         }
     }
 }

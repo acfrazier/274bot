@@ -859,6 +859,7 @@ fn skip_label(reason: SkipReason) -> &'static str {
         SkipReason::WalkExcluded => "walk excluded",
         SkipReason::NothingSelected => "nothing selected",
         SkipReason::DecisionStaged => "decision staged",
+        SkipReason::AlreadyOnWorld => "already on this world",
     }
 }
 
