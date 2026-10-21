@@ -120,9 +120,10 @@ starts at the first post-Start frame with its exact sampled RunKey and native
 state. Earlier queued-Start observations remain in the raw metadata.
 Generation and RunKey are read together under the slot lock after native work
 and same-frame walk completion on every main PLAYER_INFO edge. This read-only
-observer and its storage exist only in live/test-support builds. The control
-thread sends Start after an observed completed frame; that frame is the
-pre-Start fence. Batched outputs keep their own runtime references; timer
+observer and its storage exist only in unit tests or explicit `test-support`
+builds, not in normal panel/TUI `live-harness` builds. The control thread sends
+Start after an observed completed frame; that frame is the pre-Start fence.
+Batched outputs keep their own runtime references; timer
 samples never backfill missing frame authority.
 Each completed sample also records the synchronous host-log ordinal fence.
 Only rows emitted by that fence may describe its status. Later non-PI evidence
