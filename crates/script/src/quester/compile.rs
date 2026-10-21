@@ -2286,17 +2286,21 @@ mod tests {
                 .is_none()
         );
         let apron = step_by_id(&hunt, "apron-buy-thessalia").unwrap();
-        assert_eq!(apron["args"]["est_gp"], 100);
+        assert_eq!(apron["args"]["est_gp"], 2);
         assert_eq!(
             apron["comment"],
-            "content/scripts/areas/area_varrock/configs/varrock.inv:166 stocks white_apron for 100 gp."
+            "white_apron has base cost 2 gp (content/scripts/_unpack/225/all.obj:437-440); Thessalia's shop_sell_multiplier is 1000 (content/scripts/areas/area_varrock/configs/varrock.npc:291-294), so its full-stock price is 2 gp (content/scripts/shop/scripts/shop.rs2:139-147,182-192)."
         );
         let rum = step_by_id(&hunt, "rum-buy-zambo").unwrap();
-        assert_eq!(rum["args"]["est_gp"], 100);
+        assert_eq!(rum["args"]["est_gp"], 30);
         assert_eq!(
             rum["comment"],
-            "content/scripts/areas/area_karamja/configs/karamja.inv:10 stocks karamja_rum for 100 gp."
+            "Karamjan rum has base cost 30 gp (content/scripts/quests/quest_hunt/configs/quest_hunt.obj:1-10); Zambo's shop_sell_multiplier is 1000 (content/scripts/areas/area_karamja/configs/karamja.npc:160-166), so its full-stock price is 30 gp (content/scripts/shop/scripts/shop.rs2:139-147,182-192)."
         );
+        let coin_float = hunt["quest"]["coin_float"].as_u64().unwrap();
+        let purchase_total =
+            coin_float + 4 * 30 + apron["args"]["est_gp"].as_u64().unwrap() + rum["args"]["est_gp"].as_u64().unwrap();
+        assert_eq!(purchase_total, 282);
         let totem = path("totem");
         assert_eq!(
             step_by_id(&totem, "start").unwrap()["comment"],
