@@ -1544,3 +1544,290 @@ fn the_fleet_keys_line_names_the_reorder_keys_only_while_they_work() {
     assert!(!app.key_hints().contains(wanted));
     assert!(!text(&draw(&mut app, 120, 40)).contains(wanted));
 }
+
+/// An app with the world picker open for `alice`, who is on world 2 of
+/// worlds 1, 2 and 3.
+fn picker_app() -> TuiApp {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        Some("alice".into()),
+        Some(2),
+        [1, 2, 3].into_iter(),
+    )));
+    app
+}
+
+/// `W` names the fleet row under the cursor (not the selected bot), and the
+/// palette's Switch world of marked… names no profile: the marks. Neither
+/// opens the picker itself: the dispatcher reads the worlds from core.
+#[test]
+fn w_names_the_cursor_row_and_the_palette_entry_names_none() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    assert_eq!(
+        app.on_key(ch('W')),
+        AppAction::PickWorld(Some("alice".into()))
+    );
+    assert!(app.modal.is_none(), "the worlds are core's to list");
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(ch('W')),
+        AppAction::PickWorld(Some("bob".into())),
+        "the cursor row, whichever bot is selected"
+    );
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.run_command(Command::PickWorldMarked),
+        AppAction::PickWorld(None)
+    );
+
+    // With no row there is nothing for W to name; the reason shows.
+    let mut empty = fleet_app(&[]);
+    assert_eq!(empty.on_key(ch('W')), AppAction::None);
+    let shown = empty.error.take().expect("the reason shows");
+    assert!(shown.ends_with("no fleet row under the cursor"), "{shown}");
+    assert_eq!(empty.run_command(Command::PickWorldMarked), AppAction::None);
+    assert!(empty
+        .error
+        .take()
+        .expect("the reason shows")
+        .ends_with("no rows shown or marked"));
+}
+
+/// The palette lists both commands (the cursor one with its `W` key), help
+/// lists `W` and the palette entry, and the Fleet KEYS line names `W`.
+#[test]
+fn the_palette_help_and_footer_list_the_world_picker_commands() {
+    let mut app = fleet_app(&["alice"]);
+    app.on_key(ctrl('p'));
+    for c in "switch world".chars() {
+        app.on_key(ch(c));
+    }
+    let palette = text(&draw(&mut app, 120, 40));
+    for want in ["Switch world of cursor row…", "Switch world of marked…"] {
+        assert!(palette.contains(want), "{want}: {palette}");
+    }
+    assert_eq!(crate::palette::key_text(Command::PickWorld), "W");
+    assert_eq!(crate::palette::key_text(Command::PickWorldMarked), "");
+    app.on_key(key(KeyCode::Esc));
+
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.keys == "W" && row.what == "Switch world of cursor row…"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.what.contains("Switch world of marked…")),
+        "{rows:?}"
+    );
+    assert!(app.key_hints().contains("W world"), "{}", app.key_hints());
+}
+
+/// The picker lists every world, ticks the bot's own, and takes the keys of
+/// an overlay: Up/Down (and `j`/`k`, PgUp/PgDn, Home/End) move, Enter picks,
+/// Esc leaves everything as it was. Picking the world the bot is on closes
+/// it and asks for nothing.
+#[test]
+fn the_world_picker_ticks_the_current_world_and_enter_picks_another() {
+    let mut app = picker_app();
+    let shown = text(&draw(&mut app, 120, 40));
+    for want in [
+        "Switch world of alice",
+        "[ ] World 1",
+        "[x] World 2",
+        "[ ] World 3",
+    ] {
+        assert!(shown.contains(want), "{want}: {shown}");
+    }
+    assert_eq!(app.key_scope(), "World picker");
+    assert_eq!(app.key_hints(), "Up/Down · Enter pick · Esc cancel");
+
+    // The cursor starts on the bot's own world: Enter there asks for
+    // nothing, and the picker closes.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(app.modal.is_none());
+
+    // Down is the next world, Up the one before, j and k the same.
+    let mut app = picker_app();
+    assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    assert!(app.modal.is_none(), "a pick closes the picker");
+    let mut app = picker_app();
+    app.on_key(ch('k'));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 1)
+    );
+    let mut app = picker_app();
+    app.on_key(key(KeyCode::End));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    let mut app = picker_app();
+    app.on_key(key(KeyCode::Home));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 1)
+    );
+    // The ends stop the highlight.
+    let mut app = picker_app();
+    for _ in 0..5 {
+        app.on_key(ch('j'));
+    }
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+
+    // Esc cancels and leaves every action unsent; other keys are
+    // swallowed.
+    let mut app = picker_app();
+    assert_eq!(app.on_key(ch('x')), AppAction::None);
+    assert!(matches!(app.modal, Some(Modal::WorldPicker(_))));
+    assert_eq!(app.on_key(ch('m')), AppAction::None, "no fleet key leaks");
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.modal.is_none());
+}
+
+/// A click on a world's row picks it; a click on the bot's own world closes
+/// the picker and asks for nothing; a click inside but off the rows keeps it
+/// open; a click outside leaves everything as it was, like Esc; the wheel
+/// moves the highlight.
+#[test]
+fn clicks_pick_a_world_and_a_click_outside_keeps_everything() {
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[ ] World 3").expect("world 3 is listed");
+    assert_eq!(
+        app.on_click(x, y),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    assert!(app.modal.is_none());
+
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[x] World 2").unwrap();
+    assert_eq!(app.on_click(x, y), AppAction::None, "its own world");
+    assert!(app.modal.is_none());
+
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "Switch world of alice").unwrap();
+    assert_eq!(app.on_click(x + 2, y + 1), AppAction::None, "the note line");
+    assert!(
+        matches!(app.modal, Some(Modal::WorldPicker(_))),
+        "a click inside the box that hits no row keeps the picker"
+    );
+    assert_eq!(app.on_click(0, 0), AppAction::None);
+    assert!(app.modal.is_none(), "a click outside closes it");
+
+    let mut app = picker_app();
+    draw(&mut app, 120, 40);
+    app.on_scroll(60, 20, 1);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3),
+        "the wheel moved the highlight from World 2 to World 3"
+    );
+}
+
+/// The marked picker names no bot, so no world is ticked and its first row
+/// is under the cursor; a pick plans over the marks (no profile staged).
+#[test]
+fn the_marked_picker_ticks_nothing_and_plans_over_no_profile() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        None,
+        None,
+        [1, 2, 3].into_iter(),
+    )));
+    let shown = text(&draw(&mut app, 120, 40));
+    for want in [
+        "Switch world of marked",
+        "[ ] World 1",
+        "[ ] World 2",
+        "[ ] World 3",
+    ] {
+        assert!(shown.contains(want), "{want}: {shown}");
+    }
+    assert!(!shown.contains("[x]"), "{shown}");
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(None, 2)
+    );
+}
+
+/// The picker fits a small terminal and a long world list: the highlight
+/// stays on screen and the box never runs past the screen.
+#[test]
+fn the_world_picker_scrolls_a_long_list_inside_a_small_terminal() {
+    let mut app = fleet_app(&["alice"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        Some("alice".into()),
+        Some(1),
+        (1..=40).collect::<Vec<u16>>().into_iter(),
+    )));
+    app.on_key(key(KeyCode::End));
+    let rows = draw(&mut app, 80, 24);
+    let shown = text(&rows);
+    assert!(shown.contains("> [ ] World 40"), "{shown}");
+    assert!(
+        !shown.contains("[x] World 1"),
+        "the first rows scrolled off"
+    );
+    assert_eq!(rows.len(), 24);
+}
+
+/// The picker keeps inside any area it is given, down to none at all: a
+/// terminal resized small must not panic the overlay, and no clickable row
+/// lies outside the screen.
+#[test]
+fn the_world_picker_draws_into_any_area_without_panicking() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    for (x, y) in [(0, 0), (5, 3)] {
+        for (w, h) in [
+            (0, 0),
+            (1, 1),
+            (3, 1),
+            (3, 2),
+            (8, 4),
+            (12, 3),
+            (20, 5),
+            (40, 2),
+            (80, 24),
+        ] {
+            let area = Rect::new(x, y, w, h);
+            let mut buf = Buffer::empty(area);
+            let mut hits = Vec::new();
+            let mut picker = crate::world_picker::WorldPicker::open(
+                Some("alice".into()),
+                Some(2),
+                [1, 2, 3].into_iter(),
+            );
+            let popup = picker.render(area, &mut buf, &mut hits);
+            assert!(
+                popup.x >= area.x
+                    && popup.y >= area.y
+                    && popup.right() <= area.right()
+                    && popup.bottom() <= area.bottom(),
+                "{w}x{h} at {x},{y}: {popup:?}"
+            );
+            for (rect, _) in &hits {
+                assert!(
+                    rect.x >= area.x
+                        && rect.y >= area.y
+                        && rect.right() <= area.right()
+                        && rect.bottom() <= area.bottom(),
+                    "{w}x{h} at {x},{y}: a clickable row off the screen: {rect:?}"
+                );
+            }
+        }
+    }
+}

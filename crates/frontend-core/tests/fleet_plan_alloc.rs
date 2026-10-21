@@ -1,7 +1,9 @@
 //! Own test binary: what a waiting fleet plan costs. A 100-target plan
 //! and a 100-target settings copy (its prepared scope with the copied
 //! values) hold one bounded snapshot each, process-wide, and give it back
-//! when cancelled; nothing is kept per bot beside the command record.
+//! when cancelled; nothing is kept per bot beside the command record. A
+//! 100-bot world switch keeps one record per bot only while it runs, and
+//! frames while its relogs wait allocate nothing new.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -209,5 +211,100 @@ fn a_100_target_plan_and_copy_hold_one_bounded_snapshot() {
     assert!(
         copy_after_cancel < copy_bytes,
         "cancel gave the copy back: {copy_after_cancel}"
+    );
+}
+
+/// Measured 2026-10-21: a 100-bot Switch world plan holds 7,736 bytes (77
+/// per bot: the frozen targets and the prompt); the running switch (the
+/// command record, the world saves and their operations, one switch
+/// record per bot) 226,606 bytes (2,266 per bot) until it settles; twenty
+/// frames while every relog waits allocate nothing net. The ceilings keep
+/// twice that headroom.
+#[test]
+fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
+    const PLAN_CEILING: isize = 16 * 1024;
+    const RUNNING_CEILING: isize = 460 * 1024;
+    const FRAME_CEILING: isize = 0;
+    let mut d = driver("world-switch");
+    d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
+    let names: Vec<String> = d.session().members().to_vec();
+    for name in &names {
+        let arm = d
+            .session()
+            .play_for_test()
+            .and_then(|p| p.arm(name))
+            .expect("arm");
+        arm.arm_explicit_login();
+        arm.complete_login_for_test();
+        d.session()
+            .play_for_test()
+            .expect("play")
+            .statuses
+            .lock()
+            .unwrap()
+            .push(host_play::SlotStatus {
+                username: name.clone(),
+                connected: true,
+                ingame: true,
+                scene_state: 2,
+                world: Some(1),
+                ..host_play::SlotStatus::default()
+            });
+    }
+    d.poll();
+    d.poll();
+
+    let before = live();
+    d.submit(
+        OperatorCommand::PlanFleetAction(FleetAction::SwitchWorld(2)),
+        Targets::Application,
+    )
+    .expect("plan");
+    let plan_bytes = live() - before;
+    let plan = d.session().fleet_plan().expect("plan");
+    assert_eq!(plan.target_names().count(), BOTS);
+    assert!(plan.needs_confirm());
+
+    let before = live();
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("switch");
+    settle_writes(&mut d);
+    let running_bytes = live() - before;
+    for name in &names {
+        let arm = d
+            .session()
+            .play_for_test()
+            .and_then(|p| p.arm(name))
+            .expect("arm");
+        assert!(arm.wants_logout(), "{name}'s relog is posted");
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert_eq!(result.counts().pending, BOTS, "{}", result.text());
+
+    // Frames while every relog waits: nothing grows.
+    d.poll();
+    let before = live();
+    for _ in 0..20 {
+        d.poll();
+    }
+    let frames_bytes = live() - before;
+
+    eprintln!(
+        "FLEET-SWITCH-HEAP\nbots={BOTS} plan_bytes={plan_bytes} per_target={} \
+         running_bytes={running_bytes} per_bot={} frames_20={frames_bytes}",
+        plan_bytes / BOTS as isize,
+        running_bytes / BOTS as isize,
+    );
+    assert!(
+        plan_bytes <= PLAN_CEILING,
+        "{plan_bytes} bytes for a {BOTS}-bot switch plan"
+    );
+    assert!(
+        running_bytes <= RUNNING_CEILING,
+        "{running_bytes} bytes while a {BOTS}-bot switch runs"
+    );
+    assert!(
+        frames_bytes <= FRAME_CEILING,
+        "{frames_bytes} bytes grew over 20 frames while relogs waited"
     );
 }

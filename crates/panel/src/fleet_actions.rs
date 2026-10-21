@@ -7,10 +7,11 @@
 //! confirmation, and otherwise leaves it waiting for the plan row's
 //! Confirm or Cancel. The one result of the run is
 //! [`frontend_core::OperatorSession::fleet_result`]; nothing here copies it.
+//! A pick in the world picker takes the same path ([`Session::plan_world_switch`]).
 
 use frontend_core::{FleetAction, OperatorCommand, Targets};
 
-use crate::session::Session;
+use crate::session::{PanelWindow, Session};
 
 impl Session {
     /// Plan `action` over the fleet model's marks (or, with none, its loaded
@@ -28,6 +29,26 @@ impl Session {
             self.scripts.stage_start_catalog_root(root);
         }
         self.submit_fleet_plan(OperatorCommand::PlanFleetAction(action));
+    }
+
+    /// Plan moving `target` (a world marker's bot; `None`: the marks, or
+    /// the loaded shown rows when none is marked) to the public world
+    /// `world`: stage the one profile, then plan `SwitchWorld` through the
+    /// same flow as the fleet buttons. A Switch world plan always asks, so
+    /// the Fleet window opens (or comes forward) to show its plan row with
+    /// Confirm and Cancel; a refusal ("no bot to act on (alice: queued for
+    /// login)") shows its reason on the banner. Nothing runs before
+    /// Confirm.
+    pub(crate) fn plan_world_switch(&mut self, target: Option<&str>, world: u16) {
+        if let Some(name) = target {
+            self.core.stage_plan_target(name);
+        }
+        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(FleetAction::SwitchWorld(
+            world,
+        )));
+        if self.core.fleet_plan().is_some() {
+            self.open_window(PanelWindow::Fleet);
+        }
     }
 
     /// Submit a `PlanFleetAction` row and run the plan at once when it

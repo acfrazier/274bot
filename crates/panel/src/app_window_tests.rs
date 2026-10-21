@@ -803,3 +803,125 @@ fn resource_readout_is_drawn_once_in_single_rail_and_grid_layouts() {
         "Grid: the strip's section"
     );
 }
+
+/// One rail cap over a real Dear ImGui context (no GPU) with the shared
+/// world picker drawn after it, as `ui_frame` does: the cap's world marker
+/// is a button only while the server has public worlds. A click on it
+/// reports `world` and nothing else, and once the tile click is applied the
+/// picker opens for that bot with its own world ticked. A one-world server's
+/// marker (and every other part of the cap) opens nothing.
+#[test]
+fn a_rail_cap_world_marker_is_a_button_only_while_the_server_has_worlds() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::IsolatedStores::ensure_thread();
+    let mut ctx = context();
+    let row = frontend_core::FleetRow::fixture("alice", frontend_core::Phase::Ready, Some(2), None);
+    let labels = super::CapLabels {
+        title: "alice: idle###cap".into(),
+        world: "2".into(),
+        world_tip: "w2 · idle".into(),
+    };
+
+    // One frame with the pointer at `at`, the left button held when `down`:
+    // what the cap reported, and its items as `[min_x, min_y, max_x, max_y]`.
+    let mut frame = |session: &mut Session,
+                     switch_world: bool,
+                     at: [f32; 2],
+                     down: bool|
+     -> (super::CapClicks, Vec<[f32; 4]>) {
+        let io = ctx.io_mut();
+        io.add_mouse_pos_event(at);
+        io.add_mouse_button_event(MouseButton::Left, down);
+        ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+        let mut clicks = super::CapClicks::default();
+        {
+            let ui = ctx.frame();
+            ui.window("Rail harness")
+                .position([0.0, 0.0], Condition::Always)
+                .size([300.0, 120.0], Condition::Always)
+                .build(|| {
+                    let mut marked = false;
+                    clicks = super::rail_cap(
+                        ui,
+                        &row,
+                        &labels,
+                        super::CapDrawState {
+                            is_focused: false,
+                            width: 264.0,
+                            preview: false,
+                            restart_required: false,
+                            debug_actions: false,
+                            switch_world,
+                        },
+                        &mut marked,
+                        None,
+                    );
+                });
+            crate::world_picker::popup(ui, session);
+        }
+        ctx.render();
+        let items = super::TEST_RAIL_ITEM_BOUNDS.with_borrow(Clone::clone);
+        (clicks, items)
+    };
+    let centre = |[x0, y0, x1, y1]: [f32; 4]| [(x0 + x1) / 2.0, (y0 + y1) / 2.0];
+    let away = [1000.0, 700.0];
+
+    for switch_world in [false, true] {
+        let mut session = Session::new();
+        session.persist_ui = false;
+        if switch_world {
+            session.core.set_public_worlds_for_test(&[1, 2, 3]);
+        }
+        session
+            .fleet_model
+            .set_universe_for_test(vec![row.snapshot()], &[]);
+        assert_eq!(session.can_switch_world(), switch_world);
+        let (_, items) = frame(&mut session, switch_world, away, false);
+        assert_eq!(items.len(), 5, "marker, mark, name, fold, remove");
+        let at = centre(items[0]);
+
+        // Hover, press, release over the marker.
+        frame(&mut session, switch_world, at, false);
+        let (pressed, _) = frame(&mut session, switch_world, at, true);
+        assert!(!pressed.world, "a button acts on release");
+        let (released, _) = frame(&mut session, switch_world, at, false);
+        assert_eq!(released.world, switch_world, "switch_world: {switch_world}");
+        assert!(
+            !released.select && !released.remove && !released.fold,
+            "only the marker was clicked"
+        );
+
+        // The tile click the frame loop applies after the rows are back.
+        if released.world {
+            super::apply_tile_click(&mut session, Some(super::TileClick::World(0)));
+        }
+        assert_eq!(session.world_picker.is_open(), switch_world);
+        frame(&mut session, switch_world, away, false);
+        let rows = crate::world_picker::take_entries();
+        if switch_world {
+            assert_eq!(session.world_picker.target(), Some("alice"));
+            assert_eq!(
+                rows.iter()
+                    .map(|row| (row.world, row.ticked))
+                    .collect::<Vec<_>>(),
+                [(1, false), (2, true), (3, false)]
+            );
+        } else {
+            assert!(rows.is_empty());
+        }
+        assert!(session.core.fleet_plan().is_none(), "opening plans nothing");
+
+        // The cap's other items are not the marker: a click on the name is
+        // the select click, and never opens a picker.
+        let mut session = Session::new();
+        session.persist_ui = false;
+        session.core.set_public_worlds_for_test(&[1, 2, 3]);
+        let name_at = centre(items[2]);
+        frame(&mut session, true, name_at, false);
+        frame(&mut session, true, name_at, true);
+        let (selected, _) = frame(&mut session, true, name_at, false);
+        assert!(selected.select && !selected.world);
+        assert!(!session.world_picker.is_open());
+    }
+}

@@ -38,10 +38,15 @@ pub enum FleetAction {
     Logout,
     /// Copy the focused bot's settings for the fleet card to the targets.
     CopySettings,
+    /// Move the logged-in targets to this public world: save each one's
+    /// world, then relog it through the login queue
+    /// ([`crate::OperatorSession::switch_world_choices`] lists the worlds).
+    SwitchWorld(u16),
 }
 
 impl FleetAction {
-    /// Every action, in toolbar order.
+    /// Every toolbar button action. [`Self::SwitchWorld`] is reached through
+    /// the world picker, which names the world.
     pub const ALL: [FleetAction; 7] = [
         Self::Start,
         Self::Stop,
@@ -62,6 +67,7 @@ impl FleetAction {
             Self::Login => "Log in",
             Self::Logout => "Log out",
             Self::CopySettings => "Copy settings to",
+            Self::SwitchWorld(_) => "Switch world",
         }
     }
 
@@ -82,6 +88,9 @@ pub enum PlanScope {
     Marked { hidden: usize },
     /// No marks: the loaded rows the filter shows.
     AllShown,
+    /// The one profile a world bubble or the TUI's cursor names
+    /// ([`crate::OperatorSession::stage_plan_target`]).
+    One,
 }
 
 /// A fleet action frozen before it runs.
@@ -131,6 +140,7 @@ impl FleetPlan {
             FleetAction::CopySettings => {
                 OperatorCommand::ApplySettingsToMarked(self.copy_kind.unwrap_or(CardKind::Native))
             }
+            FleetAction::SwitchWorld(world) => OperatorCommand::SwitchWorld(world),
         }
     }
 

@@ -577,6 +577,7 @@ mod native_settings;
 pub(crate) mod prefs;
 mod scripts;
 mod vault_rows;
+mod world_switch;
 pub(crate) use commands::StagedProfileWrite;
 pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
 pub use map::{GameInputEvent, MapDesk};
@@ -638,6 +639,9 @@ pub struct OperatorSession<Io> {
     start_places: HashMap<String, QueuePlace>,
     /// Operator Relog-nows pending a different owner-authorized session.
     mem_relog: HashMap<String, Option<SessionKey>>,
+    /// The bound server's public worlds, read once when the play starts
+    /// (`None` on a one-world server): the Switch world choices.
+    public_worlds: Option<Arc<host_play::public_worlds::PublicWorlds>>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -754,6 +758,7 @@ impl<Io> OperatorSession<Io> {
             views: Views::default(),
             start_places: HashMap::new(),
             mem_relog: HashMap::new(),
+            public_worlds: None,
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
@@ -809,6 +814,10 @@ impl<Io> OperatorSession<Io> {
             play.set_walk_globals_store(preferences.clone());
         }
         play.statuses_into(&mut self.statuses);
+        self.public_worlds = play
+            .server_profile()
+            .and_then(|profile| profile.public_worlds())
+            .cloned();
         self.play = Some(play);
         self.vault = Some(vault);
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
@@ -1046,7 +1055,26 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
+        self.public_worlds = None;
         self.play = None;
+    }
+
+    /// Offer `numbers` as this server's public worlds (a direct test play
+    /// has none).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_public_worlds_for_test(&mut self, numbers: &[u16]) {
+        self.public_worlds = Some(Arc::new(host_play::public_worlds::PublicWorlds {
+            schema_version: 1,
+            worlds: numbers
+                .iter()
+                .map(|&number| host_play::public_worlds::PublicWorld {
+                    number,
+                    host: format!("w{number}.test"),
+                    port: 443,
+                    node_id: i32::from(number) + 9,
+                })
+                .collect(),
+        }));
     }
 
     pub fn fleet(&self) -> &Fleet {

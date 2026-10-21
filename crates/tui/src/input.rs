@@ -202,8 +202,8 @@ impl TuiApp {
         }
         match self.key_scope() {
             "Fleet filter" => "type: name, wN, state · Up/Down move · Enter keep · Esc clear",
-            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · m load all · U logout all",
-            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · m load all · U logout all",
+            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · m load all · U logout all · W world",
+            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · m load all · U logout all · W world",
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
@@ -229,6 +229,12 @@ impl TuiApp {
         };
         self.focused = Some(index);
         AppAction::Focus(name.to_string())
+    }
+
+    /// The profile under the fleet cursor (a shown row, loaded or not).
+    pub fn cursor_profile(&self) -> Option<&str> {
+        let index = self.table.cursor_row(&self.fleet_model)?;
+        self.fleet_model.rows().get(index).map(|row| row.name())
     }
 
     fn select_step(&mut self, step: isize) -> AppAction {
@@ -332,6 +338,13 @@ impl TuiApp {
             Command::PickFleetCard => {
                 self.open_modal(Modal::FleetCard(crate::fleet_card::CardPicker::open(self)));
             }
+            Command::PickWorld => {
+                let Some(name) = self.cursor_profile() else {
+                    return AppAction::None;
+                };
+                return AppAction::PickWorld(Some(name.to_owned()));
+            }
+            Command::PickWorldMarked => return AppAction::PickWorld(None),
             Command::MarkAllShown => return AppAction::MarkFleet(MarkOp::Shown),
             Command::UnmarkShown => return AppAction::MarkFleet(MarkOp::UnmarkShown),
             Command::InvertShown => return AppAction::MarkFleet(MarkOp::InvertShown),

@@ -83,10 +83,6 @@ pub enum SubmitError {
     /// The targets do not fit the row's subject kind.
     #[error("{0:?} cannot take these targets")]
     WrongTargets(OperatorCommand),
-    /// A normative row with no current entry point (`SwitchWorld`, per the
-    /// F0 census).
-    #[error("{0:?} has no current entry point")]
-    NoEntryPoint(OperatorCommand),
     /// [`OperatorSession::submit_detached`] was asked for a row that spawns
     /// or removes a slot.
     #[error("{0:?} needs the surface's slot devices")]
@@ -301,7 +297,7 @@ impl NamePool {
 /// report, and the arms whose events settle posted members.
 #[derive(Default)]
 pub(super) struct CommandDesk {
-    book: CommandBook,
+    pub(super) book: CommandBook,
     owned: Vec<OwnedMember>,
     /// Application members settled by an operation (the op's one member).
     app_owned: Vec<(RequestId, OperatorCommand, OperationId)>,
@@ -357,11 +353,24 @@ pub(super) struct CommandDesk {
     /// The card the next PlanFleetAction uses instead of the fleet card
     /// (the Scripts window's copy shortcut).
     pub(super) plan_card: Option<crate::scripts::ScriptChoice>,
+    /// The one profile the next PlanFleetAction acts on instead of the
+    /// marks (a world bubble, the TUI's cursor row).
+    pub(super) plan_target: Option<crate::selection::ProfileIdentity>,
+    /// Switch world members not settled yet ([`super::world_switch`]).
+    pub(super) world_switches: Vec<super::world_switch::WorldSwitch>,
 }
 
 impl CommandDesk {
     pub(super) fn book(&self) -> &CommandBook {
         &self.book
+    }
+
+    /// Feed `arm`'s lifecycle events to the book until its posted members
+    /// settle.
+    pub(super) fn watch_arm(&mut self, arm: Arc<SlotArm>) {
+        if !self.watched.iter().any(|w| Arc::ptr_eq(w, &arm)) {
+            self.watched.push(arm);
+        }
     }
 
     pub(super) fn stage_vault(&mut self, staged: super::vault_rows::StagedVault) {
@@ -578,9 +587,6 @@ impl<Io> OperatorSession<Io> {
         now: Instant,
         surface: &mut S,
     ) -> Result<Submitted, SubmitError> {
-        if matches!(command, OperatorCommand::SwitchWorld(_)) {
-            return Err(SubmitError::NoEntryPoint(command));
-        }
         let command = self.route_paint_control(command, targets, surface);
         // A planned command runs over the plan's frozen marks, never the
         // lent ones.
@@ -1484,8 +1490,13 @@ impl<Io> OperatorSession<Io> {
                 self.quit(request, &names);
                 self.release_names(names);
             }
-            OperatorCommand::SwitchWorld(_) => {
-                unreachable!("SwitchWorld is refused with NoEntryPoint before a command opens")
+            OperatorCommand::SwitchWorld(world) => {
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let applied = self.begin_world_switch(request, name, world);
+                    self.settle_member(request, command, name, applied, submitted);
+                }
+                self.release_names(names);
             }
             OperatorCommand::SetRenderAll(all) => {
                 let applied = if application_admitted {
@@ -2135,7 +2146,11 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist `name`'s world preference for its next handshake (the
     /// profile form's world field), mirrored onto a running slot's arm.
-    fn set_world_preference(&mut self, name: &str, world: api::lifecycle::WorldChoice) -> Applied {
+    pub(super) fn set_world_preference(
+        &mut self,
+        name: &str,
+        world: api::lifecycle::WorldChoice,
+    ) -> Applied {
         let Some(vault) = self.vault.as_ref() else {
             return Applied::Rejected(Rejection::NoHost, Some("world: vault locked".into()));
         };
@@ -2332,9 +2347,7 @@ impl<Io> OperatorSession<Io> {
                     .is_ok()
                 {
                     if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&post.name)) {
-                        if !self.commands.watched.iter().any(|w| Arc::ptr_eq(w, &arm)) {
-                            self.commands.watched.push(arm);
-                        }
+                        self.commands.watch_arm(arm);
                     }
                 }
             } else {
@@ -2505,6 +2518,7 @@ impl<Io> OperatorSession<Io> {
     pub(super) fn settle_commands(&mut self) {
         self.drain_watched();
         self.settle_owned();
+        self.advance_world_switches();
         self.commands.settle_log_saves();
         self.settle_pref_writes();
         if !self.commands.book.has_pending() {
@@ -2580,7 +2594,7 @@ fn rejection(reason: &str) -> Rejection {
 
 /// The member terminal an operation outcome stands for; `None` while it is
 /// pending.
-fn terminal_of(
+pub(super) fn terminal_of(
     command: OperatorCommand,
     outcome: &Outcome,
 ) -> Option<Settlement<Completion, CommandFailure>> {

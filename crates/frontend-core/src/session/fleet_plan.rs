@@ -67,6 +67,13 @@ impl<Io> OperatorSession<Io> {
         self.commands.plan_card = Some(card);
     }
 
+    /// Stage the one profile the next
+    /// [`crate::OperatorCommand::PlanFleetAction`] acts on instead of the
+    /// marks or the shown rows: a world bubble's bot, the TUI's cursor row.
+    pub fn stage_plan_target(&mut self, name: &str) {
+        self.commands.plan_target = Some(self.profile_identity_or_synthetic(name));
+    }
+
     /// A copy of the running plan's frozen mark set, if a planned command
     /// is being dispatched.
     pub(super) fn planned_marks(&self) -> Option<MarkedSelection> {
@@ -120,9 +127,15 @@ impl<Io> OperatorSession<Io> {
             );
             replaced = Some(old.action);
         }
+        let staged_target = self.commands.plan_target.take();
         let Some(fleet) = models.fleet.as_deref() else {
             return no_model("fleet");
         };
+        if let FleetAction::SwitchWorld(world) = action {
+            if let Some(why) = self.switch_world_unavailable(world) {
+                return reject(format!("{}: {why}", action.verb()));
+            }
+        }
         let staged_card = self.commands.plan_card.take();
         // The catalog root a front end staged with the click: frozen with
         // the plan for the Start or assignment that runs it.
@@ -156,12 +169,18 @@ impl<Io> OperatorSession<Io> {
             return no_model("scripts");
         }
 
-        // Freeze the candidates: every mark (hidden too), else the loaded
-        // shown rows.
+        // Freeze the candidates: the staged profile, else every mark
+        // (hidden too), else the loaded shown rows.
         let marks = fleet.marks();
         let mut skipped = Vec::new();
         let mut candidates: Vec<(ProfileIdentity, usize)> = Vec::new();
-        let scope = if marks.is_empty() {
+        let scope = if let Some(identity) = staged_target {
+            let Some(index) = fleet.index_of(identity) else {
+                return reject(format!("{}: the profile is gone", action.verb()));
+            };
+            candidates.push((identity, index));
+            PlanScope::One
+        } else if marks.is_empty() {
             for (index, row) in fleet.shown_rows() {
                 if row.loaded() {
                     candidates.push((fleet.identities()[index], index));
@@ -263,7 +282,10 @@ impl<Io> OperatorSession<Io> {
         frozen.mark_all(targets.iter().map(|(identity, _)| *identity));
         let needs_confirm = matches!(scope, PlanScope::AllShown)
             || !interrupted.is_empty()
-            || action == FleetAction::CopySettings;
+            || matches!(
+                action,
+                FleetAction::CopySettings | FleetAction::SwitchWorld(_)
+            );
         let mut prompt = String::new();
         if let Some(old) = replaced {
             let _ = write!(prompt, "Replaces the waiting {} plan. ", old.verb());
@@ -567,6 +589,11 @@ fn classify<Io>(
                 Err("not logged in")
             }
         }
+        // The relog keeps a running script's run: nothing is interrupted.
+        FleetAction::SwitchWorld(world) => match super::world_switch::refusal(Some(row), world) {
+            Some((_, why)) => Err(why),
+            None => Ok(false),
+        },
     }
 }
 
@@ -582,7 +609,7 @@ fn prepare_copy<Io>(
     scope: PlanScope,
 ) -> Result<(), String> {
     match scope {
-        PlanScope::Marked { .. } => {
+        PlanScope::Marked { .. } | PlanScope::One => {
             crate::marked::prepare_apply_settings_marked(frozen, core, scripts, source, card)
                 .map(|_| ())
         }
@@ -623,6 +650,7 @@ fn prompt_text(
     let noun = match scope {
         PlanScope::Marked { .. } => "marked bot",
         PlanScope::AllShown => "shown bot",
+        PlanScope::One => "bot",
     };
     let mut text = String::new();
     match action {
@@ -672,6 +700,13 @@ fn prompt_text(
                 plural(count)
             );
         }
+        FleetAction::SwitchWorld(world) => {
+            let _ = write!(
+                text,
+                "Move {count} {noun}{} to world {world}",
+                plural(count)
+            );
+        }
     }
     if let PlanScope::Marked { hidden } = scope {
         if hidden > 0 {
@@ -685,6 +720,11 @@ fn prompt_text(
         text.push_str(" This stops the running script of ");
         write_names(&mut text, interrupted.iter().map(String::as_str));
         text.push('.');
+    }
+    if matches!(action, FleetAction::SwitchWorld(_)) {
+        text.push_str(
+            " Each logs out and back in through the login queue; a running script continues after it reconnects.",
+        );
     }
     if !skipped.is_empty() {
         let _ = write!(text, " Skipped {}: ", skipped.len());
