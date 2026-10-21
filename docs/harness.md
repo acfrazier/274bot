@@ -120,6 +120,10 @@ copied into the cell's temp root before use; the run never writes the
 source cache.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
+Scenario PASS/FAIL receipts report a top-level `ticks` count in observed game
+ticks (one per `PLAYER_INFO`; about 600 ms each on 289 while run steps execute).
+It excludes seed waits. Client cycles, frontend polls and dirty snapshots do
+not count; `elapsed_ms` records wall time separately.
 
 ## Live-cell rules
 
@@ -189,10 +193,11 @@ content) is needed by:
 
 <!-- engine-patch-cells:0002 -->
 `guardian_skill_big_fish`, `guardian_skill_ent`, `guardian_skill_gas`,
-`guardian_skill_lost_axe`, `guardian_skill_lost_pickaxe`,
-`guardian_skill_river_troll`, `guardian_skill_rock_golem`,
-`guardian_skill_shade`, `guardian_skill_tree_spirit`,
-`guardian_skill_watchman`, `guardian_skill_whirlpool`, `guardian_skill_zombie`
+`guardian_skill_lost_axe`, `guardian_skill_lost_axe_same_kind_head`,
+`guardian_skill_lost_pickaxe`, `guardian_skill_river_troll`,
+`guardian_skill_rock_golem`, `guardian_skill_shade`,
+`guardian_skill_tree_spirit`, `guardian_skill_watchman`,
+`guardian_skill_whirlpool`, `guardian_skill_zombie`
 <!-- /engine-patch-cells -->
 
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
@@ -207,9 +212,13 @@ account (combat level 3, 10 Hitpoints) does real work: the Gatherer fishing at
 Catherby (general events and the fishing events), mining at Varrock East,
 chopping west of Lumbridge (oaks at Draynor for the ent), and the catalog BoneBurier and Thiever cards at
 Lumbridge for the prayer and thieving events. Each cell seeds only the
-account's own skill and tool, waits for the activity's first XP, then sends
-the one trigger (again only after the content's busy reply). It never adds an
-NPC itself.
+account's own skill and required items, waits for the activity's first XP,
+then sends one trigger after the content's busy reply. It never adds an NPC
+itself.
+
+The `guardian_skill_lost_axe_same_kind_head` variant also seeds a Rune axe
+head and drops it with an inventory action before triggering the event. Its
+Bronze axe oracle checks that the Guardian recovers the event's own tier.
 
 The oracle (`crates/scenario/src/random_episode.rs`) judges the Guardian's
 documented behaviour for the event's class from the host hold and the
@@ -421,7 +430,7 @@ UI/slot threads through a bounded queue: a slow encoder drops a frame
 1280 px-wide `veryfast`/`crf 23` encode stays well under 500 MB per hour.
 The file lands next to the terminal shot in the session's shot dir as
 `record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
-its scenario step and runner tick (`t=<s> frame=<n> step=<i>/<total>
+its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
 The mp4 is finalized on PASS, FAIL and window close, so it is always
 playable. Resizing the window mid-run drops the mismatched frames
@@ -451,7 +460,7 @@ the entire stall watch. A ready Guard can still wander away: the Strength
 watch tolerates one catch-less stall session, observes its bank visit,
 closure and return, then requires renewed Guard readiness at the stall.
 A second unqualified bank visit fails rather than admitting a third try.
-The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+The scenario has a 360-second wall deadline and a 900-game-tick combat
 watch; the Thieving XP and exact Cake watches retain their original bounds.
 All three still require real post-Start evidence; no catch is forced.
 Script kill messages alone are not XP evidence:

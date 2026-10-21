@@ -5,6 +5,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ## Unreleased
 
+### Scripts
+
+- Scripts may pass an item ID to `Bank.withdrawLoad`.
+- `Bank.withdrawLoad` now returns false when the bank has no matching item,
+  even when the pack is full. Release 0.2.4 returned true.
+
+### Banking
+
+- Banking now opens a closed chest before it tries the bank action. This
+  lets ClueSolver open the Duel Arena reward bank.
+
 ### Panel
 
 - On Linux, the panel now follows the system's choice of graphics chip
@@ -41,6 +52,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   order is saved as `profile_order` in the shared preferences; a reorder
   whose write fails is reported and the last saved order comes back.
 
+### Random events
+
+- The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
+- Shared axe and pick swing messages no longer start recovery.
+
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
@@ -54,10 +70,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   the cursor's profile one shown row up or down, and the palette has
   **Move profile up**, **Move profile down** and **Move marked to top**.
 
+### Scripts
+
+- Script paint: scripts that use the standard paint-controls helper now show
+  working Pause/Resume and Stop buttons. Resume remains available while
+  paused. The panel and TUI use the same controls.
+
 ### Map baking
 
 - Resuming an interrupted local map bake on Windows now repairs a damaged
   tile instead of failing with "Access is denied".
+### Gatherer
+
+- At every fishing site, the Gatherer keeps its preferred observation stand
+  when that stand is reachable. Otherwise, it chooses a reachable alternative.
+  This applies to the initial approach and the return after banking. It fixes
+  the Catherby failure from the Fishing Guild when the preferred stand is on
+  the Water Obelisk island. A bot already on that island can still use it.
+
+### Navigation checks
+
+- The built-in Elkoy and rune-essence navigation checks start beside the
+  transport NPC and seed only their required quest. They no longer start
+  transport checks while unrelated quest rewards still run.
+
+### Scripts
+
+- Starting a script now stops at once with a clear message when the saved
+  loadout list it needs is empty, or when a script file it depends on is
+  missing. Other start problems are still retried.
 
 ### Fixed during development
 
@@ -90,6 +131,38 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   field before script Start. The receipt records the wait and observed loot.
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
+
+- Scenario wait budgets and the receipt `ticks` count now use observed game
+  ticks, not dirty snapshots. Repeated steps send at most once per game
+  tick.
+- Game-tick counts now advance only for applied `PLAYER_INFO` packets;
+  unrelated player-family invalidations no longer inflate scenario receipts.
+
+#### Gatherer
+
+- Fixed: the Gatherer searches distance 0 through 7 from two observed tiles.
+  The first is the last player tile before the event. The second is the tile
+  from the first snapshot that shows the tool change or event message. This
+  covers events that run before or after movement in the same tick. Distance
+  zero is valid because `MAP_FINDSQUARE` returns its input coordinate when no
+  ring tile qualifies (`ServerOps.ts:328-331`).
+  When adjacent inventory snapshots identify one removed tool, the Gatherer
+  selects that tool's exact head. Otherwise, it selects only a new head of
+  the same kind. It waits three observed game ticks for a delayed head.
+  It still refits the tool after pickup. It returns to the bank if no head
+  appears in that time, if one later tick confirms a missing head, or after
+  the ground head's 200-tick lifetime. A full pack with nothing to drop
+  returns to the bank at once.
+
+- The Eye of newt scenario check now allows the measured banking cycle at
+  the normal game speed, with 50% headroom. Its old three-minute deadline
+  stopped the check during the return from Draynor.
+- The Duel Arena clue check now recognises all obstacle-fight pens and their
+  boundary tiles. A valid duel no longer misses the handshake witness when
+  its players start at the east edge or in another obstacle pen.
+- The FireGiant bank check now prepares a level-40 Rune kit and eight Lobsters,
+  with time for the full trip at normal game speed. It still requires earned
+  loot in the bank, a return to the dungeon, and further combat.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 

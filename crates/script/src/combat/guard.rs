@@ -808,6 +808,7 @@ mod tests {
         fn request(&self) -> WalkRequest {
             WalkRequest {
                 target: tile(2610, 3200),
+                candidate_goals: None,
                 loc_id: None,
                 radius: 1,
                 arrival: nav::contract::ArrivalKind::Reach,

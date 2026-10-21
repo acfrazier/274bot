@@ -1450,6 +1450,14 @@
       "reason": "T3.3 script vocabulary seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|PaintControl",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "PaintControl",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "P1 host paint-control role is a Copy discriminator without a payload."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|ChromeBandView",
       "path": "crates/frontend-core/src/scripts/paint.rs",
       "symbol": "ChromeBandView",
@@ -2737,6 +2745,17 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::named_banks::resolve|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::named_banks::resolve",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
       "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::FindOptions::default|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
@@ -2744,6 +2763,50 @@
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::BudgetExhausted|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError::BudgetExhausted",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::NoPath|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError::NoPath",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::Route|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::Route",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -2777,6 +2840,17 @@
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::world_state::WorldState|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::world_state::WorldState",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },

@@ -53,6 +53,12 @@ impl DriverModels {
         &self.scripts
     }
 
+    /// The script coordinator, for staging a command's inputs (a paint
+    /// activation for `ScriptPaintInput`).
+    pub fn scripts_mut(&mut self) -> &mut Scripts {
+        &mut self.scripts
+    }
+
     /// The fleet model: its rows, marks, filter and order.
     pub fn fleet(&self) -> &FleetModel {
         &self.fleet

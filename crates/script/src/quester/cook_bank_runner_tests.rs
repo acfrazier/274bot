@@ -273,6 +273,7 @@ impl CookFixture {
                     self.snapshot
                         .seed_bank_observation(-1, tick, None, Vec::new());
                     self.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+                        goal: None,
                         request_id: authority.request_id().get(),
                         evidence,
                         end: WalkEnd::Arrived,

@@ -995,7 +995,7 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
     loop {
         match fire_pending_catalog_start(&mut pending, true, false, arming) {
             StartScriptPump::CompiledRunning => break,
-            StartScriptPump::CompiledFailed(error) => panic!("{error}"),
+            StartScriptPump::Failed(error) => panic!("{error}"),
             _ => assert!(
                 Instant::now() < guard,
                 "compiled scenario did not settle: hang guard expired"

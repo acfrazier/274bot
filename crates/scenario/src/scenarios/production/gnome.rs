@@ -174,10 +174,10 @@ pub(crate) fn gnome_chop_scenario() -> Scenario {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
     steps.push(start_catalog_step());
-    // The two Magic-tree roll arms get MAGIC_TREE_CHOP_WATCH_TICKS (dirty
-    // increments sized to the 17/256-per-4-ticks roll, not 150x600ms), as in
-    // gnome_fletch_variant. Other arms keep the ordinary gold watch.
-    let chop = MAGIC_TREE_CHOP_WATCH_TICKS;
+    // The two Magic-tree roll arms use `MAGIC_TREE_CHOP_WATCH_GAME_TICKS`,
+    // sized for the 17/256 success chance once per 4 game ticks; the other
+    // arms keep the ordinary 150-game-tick gold watch, as in `gnome_fletch_variant`.
+    let chop = MAGIC_TREE_CHOP_WATCH_GAME_TICKS;
     let gold = SCRIPT_GOLD_WATCH_TICKS;
     for (step_name, arm, budget_ticks) in [
         (
@@ -447,10 +447,10 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
     steps.push(start_catalog_step());
-    // The two Magic-tree roll arms get MAGIC_TREE_CHOP_WATCH_TICKS (dirty
-    // increments sized to the 17/256-per-4-ticks roll, not 150×600ms).
-    // Other arms keep the ordinary gold watch.
-    let chop = MAGIC_TREE_CHOP_WATCH_TICKS;
+    // The two Magic-tree roll arms use `MAGIC_TREE_CHOP_WATCH_GAME_TICKS`,
+    // sized for the 17/256 success chance once per 4 game ticks; the other
+    // arms keep the ordinary 150-game-tick gold watch.
+    let chop = MAGIC_TREE_CHOP_WATCH_GAME_TICKS;
     let gold = SCRIPT_GOLD_WATCH_TICKS;
     for (step_name, arm, budget_ticks) in [
         (

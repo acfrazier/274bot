@@ -74,6 +74,7 @@ fn accept_walk(slot: &mut BankSlot, action: &HostAction, tick: u64) {
     slot.slot.complete_native_walk(
         &authority,
         WalkReceipt {
+            goal: None,
             request_id: action.request_id.get(),
             evidence: EvidenceStamp {
                 run: authority.run(),

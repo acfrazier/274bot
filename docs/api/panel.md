@@ -455,6 +455,16 @@ cancel bots that are still waiting (Stop on marked rows reports them as
 cancelled); Stop all also stops running and paused wall members and live
 slots.
 
+A script's paint draws over the Game chatbox of the focused bot, with its
+buttons below the text. A script that uses the standard paint-controls helper
+(`ScriptRunner.paintControls`) gets working **Pause** and **Stop** buttons
+there. **Pause** reads **Resume** while the script is paused, also on the
+frame the script painted before it paused, and the buttons are disabled while
+the run is stopping or idle. They issue the same commands as the toolbar's
+Pause and Stop, for the bot and run the paint was drawn for: a click is
+refused, not moved to another bot, when the focus or the run changed before
+it was applied ([script.md](script.md)).
+
 Saved settings that need a restart show a `[restart]` badge and open a
 prompt. **Restart** applies only to listed bots still running the same
 assigned script with its pending settings. Bots that stopped, logged out,

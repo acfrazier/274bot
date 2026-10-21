@@ -19,9 +19,13 @@ mod vocab;
 pub(crate) use loadouts::Refused;
 pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
 pub use native::{NativeDetail, SchemaView};
+pub(crate) use paint::{
+    advertises_any_control, advertises_control, is_host_control, ControlActivation, PaintRun,
+    RunToken,
+};
 pub use paint::{
     map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
-    PaintFrame, PaintView,
+    PaintControl, PaintFrame, PaintView,
 };
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,
@@ -388,6 +392,8 @@ pub struct ScriptStartError {
 pub enum ScriptStartErrorKind {
     /// The Start was refused (no assignment, already active, missing card).
     Refused,
+    /// The saved loadout selection is required, but no loadouts exist.
+    NoLoadouts,
     /// The Start waits on another decision (uncommitted settings, a
     /// blocked sync).
     Waiting,
@@ -413,6 +419,9 @@ impl From<script::StartLoadError> for ScriptStartError {
     fn from(error: script::StartLoadError) -> Self {
         let (kind, message) = match error {
             script::StartLoadError::Refused(reason) => (ScriptStartErrorKind::Refused, reason),
+            script::StartLoadError::NoLoadouts(reason) => {
+                (ScriptStartErrorKind::NoLoadouts, reason)
+            }
             script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
             script::StartLoadError::RuntimeLoad(reason) => {
                 (ScriptStartErrorKind::RuntimeLoad, reason)
@@ -548,7 +557,9 @@ impl<'a> BrowseCard<'a> {
 
 /// A click on a script's paint: a button, or a choice in one of its
 /// select rows, for the paint `generation` it was drawn from. A front end
-/// stages it for `ScriptPaintInput`.
+/// builds a button's input with [`PaintView::activate`] and stages it for
+/// `ScriptPaintInput`; the seam issues a host control's own Pause, Resume
+/// or Stop row instead.
 #[derive(Debug)]
 pub struct PaintInput(pub(crate) PaintAction);
 
@@ -563,11 +574,15 @@ pub(crate) enum PaintAction {
         name: String,
         generation: u64,
     },
+    /// A host control, before the seam checks its binding.
+    Control(paint::ControlActivation),
+    /// A host control the seam refused before dispatch, and why.
+    Refused(&'static str),
 }
 
 impl PaintInput {
     /// A click on the paint button `id`.
-    pub fn click(id: String, generation: u64) -> Self {
+    pub(crate) fn click(id: String, generation: u64) -> Self {
         Self(PaintAction::Click { id, generation })
     }
 
@@ -874,6 +889,20 @@ impl Scripts {
 
     pub(crate) fn take_staged_paint_input(&mut self) -> Option<PaintInput> {
         self.staged_paint_input.take()
+    }
+
+    /// The staged host-control activation, if the staged paint input is one.
+    pub(crate) fn staged_paint_control(&self) -> Option<ControlActivation> {
+        match self.staged_paint_input {
+            Some(PaintInput(PaintAction::Control(activation))) => Some(activation),
+            _ => None,
+        }
+    }
+
+    /// Replace the staged host-control activation with its refusal, which
+    /// the `ScriptPaintInput` row then reports.
+    pub(crate) fn refuse_staged_paint_control(&mut self, reason: &'static str) {
+        self.staged_paint_input = Some(PaintInput(PaintAction::Refused(reason)));
     }
 
     /// Stage one typed parameter value for a profile or legacy settings save.

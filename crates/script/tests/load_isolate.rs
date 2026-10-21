@@ -536,6 +536,7 @@ fn accept_bank_walk(
     slot.slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id: action.request_id.get(),
             evidence: api::quest_progress::EvidenceStamp {
                 run: action.run(),
@@ -6316,18 +6317,19 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
-/// `withdrawLoad` through its Rust family: one exact Withdraw-All press on
-/// the named row (no host-owned load result), true once the posted pack
-/// grew in the same bank session; a reopened session settles it false.
+/// `withdrawLoad` selects a numeric item ID through its Rust family: one exact
+/// Withdraw-All press on the matching row (no host-owned load result), true
+/// once the posted pack grew in the same bank session; a reopened session
+/// settles it false.
 #[test]
-fn isolate_bank_withdraw_load_keeps_item_updates_but_rejects_reopened_sessions() {
+fn isolate_bank_withdraw_load_by_numeric_id_keeps_item_updates_but_rejects_reopened_sessions() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__ok = await Bank.withdrawLoad('Yew logs');
+        globalThis.__ok = await Bank.withdrawLoad(1515);
     }
 }
 "#;
@@ -11863,6 +11865,7 @@ export default class T extends LoopingBot {
             slot.slot.complete_native_walk(
                 &first_authority,
                 script::native::WalkReceipt {
+                    goal: None,
                     request_id: first.request_id.get(),
                     evidence: api::quest_progress::EvidenceStamp {
                         run: first.run(),
