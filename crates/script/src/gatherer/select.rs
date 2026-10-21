@@ -390,6 +390,8 @@ pub struct SelectionObservation<'a> {
     /// Packed collision used to keep Area r=1 observation stands off tiles
     /// with no legal goals. `None` skips the filter (unit fixtures without a pack).
     pub collision: Option<nav::contract::CollisionView<'a>>,
+    pub snapshot: Option<api::snapshot::SnapshotView<'a>>,
+    pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
 }
 
 pub struct ReturnObservation<'a> {
@@ -400,6 +402,7 @@ pub struct ReturnObservation<'a> {
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
     pub collision: Option<nav::contract::CollisionView<'a>>,
+    pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
 }
 
 /// Bank-return and death-recovery selection. A temporary avoid deadline is
@@ -649,6 +652,8 @@ fn select_with_access(
         skill_stat,
         fishing,
         collision,
+        snapshot: _,
+        walk_danger: _,
     } = observation;
     let preference = settings.target_preference_kind();
     let region = area.region();
@@ -1696,6 +1701,113 @@ pub(crate) mod tests {
         });
     }
 
+    struct DenyDanger;
+
+    impl crate::native::WalkDangerQuery for DenyDanger {
+        fn check(
+            &self,
+            _target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+        ) -> crate::native::WalkDanger<'_> {
+            crate::native::WalkDanger::Denied {
+                zone: "Draynor jail guards",
+            }
+        }
+    }
+
+    fn danger_tree_selection(
+        walk_danger: Option<&dyn crate::native::WalkDangerQuery>,
+        arrived: bool,
+    ) -> SelectionResult {
+        use api::quest_progress::EvidenceStamp;
+        use api::selected::RunKey;
+        use api::snapshot::{GameSnapshot, SnapshotView};
+
+        let catalog = real_catalog();
+        let method = catalog.method("woodcutting.normal").unwrap();
+        let tile = WorldTile { x: 3113, z: 3235, level: 0 };
+        let spot = complete_spots(method)
+            .unwrap()
+            .iter()
+            .find(|spot| spot.origin == tile && known_resource_target(method, spot.entity))
+            .expect("the shipped Draynor jail tree is in the normal-tree catalog");
+        let EntityId::Loc(id) = spot.entity else {
+            panic!("a normal tree is a loc");
+        };
+        let here = if arrived {
+            WorldTile { x: tile.x - 1, ..tile }
+        } else {
+            WorldTile { x: 3109, z: 3228, ..tile }
+        };
+        let mut client = client::client::Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.map_build_base_x = tile.x - 52;
+        client.map_build_base_z = tile.z - 52;
+        client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(here));
+        let locs = [loc(id, tile)];
+        snapshot.seed_locs(locs.to_vec());
+        let stamp = EvidenceStamp {
+            run: RunKey { slot: 1, run: 1, session: 1 },
+            tick: 1,
+            sequence: 1,
+        };
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert_eq!(view.walk_loc_arrived(here, tile, 1, id), arrived);
+        select(
+            &catalog,
+            &[method_index(&catalog, method)],
+            &GathererSettings::default(),
+            WorkArea {
+                mode: super::super::area::AreaMode::Custom,
+                anchor: tile,
+                radius: 0,
+            },
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(tile),
+                locs: &locs,
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 8,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: Some(view),
+                walk_danger,
+            },
+        )
+    }
+
+    #[test]
+    fn danger_denied_tree_is_not_ranked_as_a_target() {
+        let result = danger_tree_selection(Some(&DenyDanger), false);
+        assert!(result.target.is_none(), "a fully denied tree must be ineligible");
+    }
+
+    #[test]
+    fn danger_without_navigation_data_refuses_a_tree_that_needs_a_walk() {
+        let result = danger_tree_selection(None, false);
+        assert!(result.target.is_none(), "missing danger data must not admit a nav walk");
+    }
+
+    #[test]
+    fn danger_without_navigation_data_keeps_a_tree_already_in_operating_range() {
+        let result = danger_tree_selection(None, true);
+        assert!(result.target.is_some(), "an arrived loc operation does not need walk admission");
+    }
+
     fn target(entity: EntityId, class: TargetClass) -> GatherTarget {
         GatherTarget {
             entity,
@@ -2003,16 +2115,13 @@ pub(crate) mod tests {
             &guild_fishing_settings(method, area),
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision,
-                world: &scene_around(here),
-                locs: &[],
-                npcs: &[],
-                here,
-                now: 1,
-                skill_stat: 68,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision,
+            world: &scene_around(here),
+            locs: &[],
+            npcs: &[],
+            here,
+            now: 1,
+            skill_stat: 68, },
         )
     }
 
@@ -2104,13 +2213,11 @@ pub(crate) mod tests {
             z: origin.z + OBSERVATION_RADIUS,
             ..origin
         };
-        let observation = ReturnObservation {
-            here,
-            now: 1,
-            skill_stat: 10,
-            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-            collision: None,
-        };
+        let observation = ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
+        now: 1,
+        skill_stat: 10,
+        avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+        collision: None, };
         assert_eq!(
             fishing_return_stand(&catalog, method, &spot, area, &observation),
             ReturnStand::Ready(expected_return),
@@ -2561,16 +2668,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &observed_npcs,
-                here: tile,
-                now: 1,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &observed_npcs,
+            here: tile,
+            now: 1,
+            skill_stat: 10, },
         );
         let target = selected.target.expect("live fish selected");
         assert_eq!(target.class, PlacementClass::Live);
@@ -2605,16 +2709,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &moved_npc,
-                here: tile,
-                now: 2,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &moved_npc,
+            here: tile,
+            now: 2,
+            skill_stat: 10, },
         )
         .target
         .expect("the moved spot NPC is re-acquired");
@@ -2638,16 +2739,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &observed_hazard,
-                here: tile,
-                now: 2,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &observed_hazard,
+            here: tile,
+            now: 2,
+            skill_stat: 10, },
         );
         if let Some(candidate) = hazard_selection.target {
             assert_eq!(candidate.plan.entity, EntityId::Npc(type_id));
@@ -2714,13 +2812,11 @@ pub(crate) mod tests {
                 &[index],
                 &settings,
                 area,
-                ReturnObservation {
-                    here,
-                    now: 1,
-                    skill_stat: 10,
-                    avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(lease.collision()),
-                },
+                ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(lease.collision()), },
             )
             .plan()
             .expect("the selected content supplies a resource observation stand");
@@ -2806,13 +2902,11 @@ pub(crate) mod tests {
             &[index],
             &settings,
             area,
-            ReturnObservation {
-                here: edgeville,
-                now: 1,
-                skill_stat: 10,
-                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(lease.collision()),
-            },
+            ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here: edgeville,
+            now: 1,
+            skill_stat: 10,
+            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: Some(lease.collision()), },
         )
         .plan()
         .expect("Catherby harpoon supplies a resource return stand");
@@ -2932,13 +3026,11 @@ pub(crate) mod tests {
                 &[index],
                 &settings,
                 area,
-                ReturnObservation {
-                    here: bank_interior,
-                    now: 1,
-                    skill_stat: 10,
-                    avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                    collision: Some(lease.collision()),
-                },
+                ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here: bank_interior,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: Some(lease.collision()), },
             )
             .plan()
             .expect("Draynor saltfish supplies a resource return stand");
@@ -3015,13 +3107,11 @@ pub(crate) mod tests {
             &[method_index(&catalog, method)],
             &guild_fishing_settings(method, area),
             area,
-            ReturnObservation {
-                here: bank,
-                now: 1,
-                skill_stat: 68,
-                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(lease.collision()),
-            },
+            ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here: bank,
+            now: 1,
+            skill_stat: 68,
+            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: Some(lease.collision()), },
         ) else {
             panic!("Draynor must supply an observation return");
         };
@@ -3093,13 +3183,11 @@ pub(crate) mod tests {
             &[index],
             &settings,
             area,
-            ReturnObservation {
-                here,
-                now: 1,
-                skill_stat: 30,
-                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(lease.collision()),
-            },
+            ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
+            now: 1,
+            skill_stat: 30,
+            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: Some(lease.collision()), },
         )
         .plan()
         .expect("willow origin is the loc return stand");
@@ -3145,16 +3233,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &[],
-                here,
-                now: 1,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &[],
+            here,
+            now: 1,
+            skill_stat: 10, },
         );
         let target = approach.target.expect(
             "returning inside the work area does not establish observation of distant fishing NPCs",
@@ -3181,16 +3266,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &visible,
-                here: target.plan.tile,
-                now: 2,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &visible,
+            here: target.plan.tile,
+            now: 2,
+            skill_stat: 10, },
         )
         .target
         .expect("the fresh actor observation resumes fishing");
@@ -3247,16 +3329,13 @@ pub(crate) mod tests {
                     &settings,
                     area,
                     &[AvoidedTile::EMPTY; MAX_AVOID],
-                    SelectionObservation {
-                        fishing: &mut survey,
-                        collision: None,
-                        world: &world,
-                        locs: &[],
-                        npcs: visible,
-                        here,
-                        now,
-                        skill_stat: 10,
-                    },
+                    SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut survey, collision: None,
+                    world: &world,
+                    locs: &[],
+                    npcs: visible,
+                    here,
+                    now,
+                    skill_stat: 10, },
                 );
                 match result.target {
                     Some(target) if target.class == PlacementClass::Live => {
@@ -3427,16 +3506,13 @@ pub(crate) mod tests {
                 &settings,
                 area,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
-                SelectionObservation {
-                    fishing: &mut survey,
-                    collision: None,
-                    world: &world,
-                    locs: &[],
-                    npcs: &[],
-                    here,
-                    now,
-                    skill_stat: 10,
-                },
+                SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut survey, collision: None,
+                world: &world,
+                locs: &[],
+                npcs: &[],
+                here,
+                now,
+                skill_stat: 10, },
             );
             let Some(target) = result.target else {
                 assert!(matches!(result.outcome, Selection::Absent { .. }));
@@ -3501,16 +3577,13 @@ pub(crate) mod tests {
                 &settings,
                 area,
                 &[AvoidedTile::EMPTY; MAX_AVOID],
-                SelectionObservation {
-                    fishing: &mut survey,
-                    collision: None,
-                    world: &world,
-                    locs: &[],
-                    npcs: &[],
-                    here,
-                    now,
-                    skill_stat: 10,
-                },
+                SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut survey, collision: None,
+                world: &world,
+                locs: &[],
+                npcs: &[],
+                here,
+                now,
+                skill_stat: 10, },
             );
             if result.target.is_none() {
                 assert!(matches!(
@@ -3809,16 +3882,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: Some(lease.collision()),
-                world: &scene_around(here),
-                locs: &[],
-                npcs: &[],
-                here,
-                now: 1,
-                skill_stat: 10,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: Some(lease.collision()),
+            world: &scene_around(here),
+            locs: &[],
+            npcs: &[],
+            here,
+            now: 1,
+            skill_stat: 10, },
         );
         assert!(selected.target.is_none());
         assert_eq!(selected.outcome, Selection::NoStand);
@@ -3970,16 +4040,13 @@ pub(crate) mod tests {
                 &[index],
                 &settings,
                 area,
-                SelectionObservation {
-                    fishing: &mut quest_survey,
-                    collision: Some(lease.collision()),
-                    world: &scene_around(ARDOUGNE_START),
-                    locs: &[],
-                    npcs: &[],
-                    here: ARDOUGNE_START,
-                    now,
-                    skill_stat: 68,
-                },
+                SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut quest_survey, collision: Some(lease.collision()),
+                world: &scene_around(ARDOUGNE_START),
+                locs: &[],
+                npcs: &[],
+                here: ARDOUGNE_START,
+                now,
+                skill_stat: 68, },
                 view,
             );
             assert!(
@@ -4219,16 +4286,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &lower_live,
-                npcs: &[],
-                here,
-                now: 10,
-                skill_stat: 8,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &lower_live,
+            npcs: &[],
+            here,
+            now: 10,
+            skill_stat: 8, },
         );
         let selected = live_result.target.expect("live lower-tier resource");
         assert_eq!(selected.class, PlacementClass::Live);
@@ -4243,16 +4307,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &[],
-                npcs: &[],
-                here,
-                now: 10,
-                skill_stat: 8,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &[],
+            npcs: &[],
+            here,
+            now: 10,
+            skill_stat: 8, },
         );
         let selected = fallback.target.expect("highest tier unloaded fallback");
         assert_eq!(selected.class, PlacementClass::Unloaded);
@@ -4301,16 +4362,13 @@ pub(crate) mod tests {
             &settings,
             area,
             &[AvoidedTile::EMPTY; MAX_AVOID],
-            SelectionObservation {
-                fishing: &mut FishingSurvey::default(),
-                collision: None,
-                world: &world,
-                locs: &locs,
-                npcs: &[],
-                here: spot.origin,
-                now: 100,
-                skill_stat: 8,
-            },
+            SelectionObservation { snapshot: None, walk_danger: Some(&crate::native::AllowWalkDanger), fishing: &mut FishingSurvey::default(), collision: None,
+            world: &world,
+            locs: &locs,
+            npcs: &[],
+            here: spot.origin,
+            now: 100,
+            skill_stat: 8, },
         );
         assert!(selected.target.is_none());
         assert!(matches!(
@@ -4419,13 +4477,11 @@ pub(crate) mod tests {
                 &[index],
                 &settings,
                 area,
-                ReturnObservation {
-                    here: bank,
-                    now,
-                    skill_stat: 1,
-                    avoided,
-                    collision: Some(lease.collision()),
-                },
+                ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here: bank,
+                now,
+                skill_stat: 1,
+                avoided,
+                collision: Some(lease.collision()), },
             )
         };
         assert!(
@@ -4614,13 +4670,11 @@ pub(crate) mod tests {
             &[index],
             &guild_fishing_settings(method, area),
             area,
-            ReturnObservation {
-                here,
-                now: 1,
-                skill_stat: 68,
-                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
-                collision: Some(lease.collision()),
-            },
+            ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
+            now: 1,
+            skill_stat: 68,
+            avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+            collision: Some(lease.collision()), },
         ) else {
             panic!("bank return must retain the same multi-goal policy");
         };
@@ -5516,13 +5570,11 @@ pub(crate) mod tests {
                         anchor: site.anchor,
                         radius: site.radius,
                     },
-                    ReturnObservation {
-                        here,
-                        now: 1,
-                        skill_stat: 99,
-                        avoided: &[AvoidedTile::EMPTY; super::MAX_AVOID],
-                        collision: Some(collision),
-                    },
+                    ReturnObservation { walk_danger: Some(&crate::native::AllowWalkDanger), here,
+                    now: 1,
+                    skill_stat: 99,
+                    avoided: &[AvoidedTile::EMPTY; super::MAX_AVOID],
+                    collision: Some(collision), },
                 ) {
                     ResourceReturn::Ready(selected) => TargetPick {
                         selected: Some(selected),

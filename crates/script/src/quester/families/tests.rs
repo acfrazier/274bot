@@ -201,6 +201,7 @@ fn with_tick_output_reach<R>(
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
+        walk_danger: Some(&crate::native::AllowWalkDanger),
         state: None,
         service_authority: None,
         prompt_port: None,
@@ -229,6 +230,7 @@ fn with_tick_output_reach<R>(
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                walk_danger: Some(&crate::native::AllowWalkDanger),
                 selected: Some(&data),
                 reach: None,
                 reach_flood: None,
