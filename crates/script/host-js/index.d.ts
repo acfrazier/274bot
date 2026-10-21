@@ -1015,6 +1015,7 @@ export interface GatherStatus {
   xp: number;
   xp_per_hour: number;
   bank: string;
+  bank_seen: string;
   last_progress: number;
   deaths: number;
   recoveries: number;
