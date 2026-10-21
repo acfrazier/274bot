@@ -677,7 +677,7 @@ fn bank_observation_text_uses_relative_age_and_keeps_the_unix_time() {
                 "nobody sells it",
                 now,
                 0,
-            ),
+            ).as_ref(),
             format!("no Harpoon in the pack, worn, or in the bank as seen {age} this session (12 rows); nobody sells it; waiting: put a Harpoon in the pack")
         );
     }
@@ -700,7 +700,7 @@ fn bank_observation_text_uses_relative_age_and_keeps_the_unix_time() {
                 "nobody sells it",
                 now,
                 0,
-            ),
+            ).as_ref(),
             "no Harpoon in the pack, worn, or in the bank as seen this session (12 rows); nobody sells it; waiting: put a Harpoon in the pack"
         );
     }
@@ -1150,7 +1150,8 @@ fn shop_session_shortage_with_stocked_eligible_vendor_plans_purchase() {
         VendorChoice::Nearest,
         SourceSet::PACK | SourceSet::BANK,
     );
-    let counts = fixture(&[], &[(harpoon, 0), (COINS, 10_000)], Origin::Session);
+    let bank = [(harpoon, 0), (COINS, 10_000)];
+    let counts = fixture(&[], &bank, Origin::Session);
     let plan = shop_plan(&request, &counts, &data, false);
     let reserve = max_shop_quote(&data, harpoon, false, 2);
 
@@ -1195,11 +1196,8 @@ fn shop_missing_vendor_blocks_and_retains_session_bank_metadata() {
         VendorChoice::Nearest,
         SourceSet::PACK | SourceSet::BANK,
     );
-    let counts = fixture(
-        &[(ITEM, 1)],
-        &[(mithril_axe, 1), (COINS, 1_000)],
-        Origin::Session,
-    );
+    let bank = [(mithril_axe, 1), (COINS, 1_000)];
+    let counts = fixture(&[(ITEM, 1)], &bank, Origin::Session);
     let block = shop_block(&request, &counts, &data, false);
 
     assert_eq!(block.need, 1);
@@ -1269,7 +1267,8 @@ fn shop_selected_alternative_is_the_banked_and_purchased_item() {
         },
         SourceSet::PACK,
     );
-    let counts = fixture(&[(COINS, 1_000)], &[(bronze_axe, 1)], Origin::Session);
+    let bank = [(bronze_axe, 1)];
+    let counts = fixture(&[(COINS, 1_000)], &bank, Origin::Session);
     let plan = shop_plan(&request, &counts, &data, false);
 
     assert_eq!(plan.purchase_count, 1);
@@ -1366,9 +1365,9 @@ fn shop_reserve_sums_the_maximum_quote_for_two_needs() {
 #[test]
 fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
     let data = pinned_shop_data();
-    let vial_water = shop_item_id(&data, "vial_water");
-    let fact = shop_facts::vendor_by_keeper_config(&data, "aemad", vial_water)
-        .expect("pinned Aemad vial stock");
+    let bronze_axe = shop_item_id(&data, "bronze_axe");
+    let fact = shop_facts::vendor_by_keeper_config(&data, "bob", bronze_axe)
+        .expect("pinned Bob bronze axe stock");
     let units = 3;
     let baseline = fact.item.baseline;
     let baseline_quote = shop_facts::quote(fact.record, fact.item, units, baseline);
@@ -1388,7 +1387,7 @@ fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
     assert!(surplus_quote < baseline_quote);
     let request = shop_request(
         vec![need(
-            vial_water,
+            bronze_axe,
             units,
             units,
             Presence::Held,
@@ -1396,7 +1395,7 @@ fn shop_reserve_is_exact_two_chunk_quote_and_surplus_is_below_baseline() {
             SourceSet::PACK | SourceSet::SHOP,
         )],
         VendorChoice::Explicit {
-            keeper_config: Arc::from("aemad"),
+            keeper_config: Arc::from("bob"),
             anchor: None,
         },
         SourceSet::PACK | SourceSet::BANK,
@@ -1436,13 +1435,13 @@ fn shop_pack_only_coin_policy_never_withdraws_coins() {
 #[test]
 fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
     let data = pinned_shop_data();
-    let vial_water = shop_item_id(&data, "vial_water");
-    let fact = shop_facts::vendor_by_keeper_config(&data, "aemad", vial_water)
-        .expect("pinned Aemad vial stock");
+    let bronze_axe = shop_item_id(&data, "bronze_axe");
+    let fact = shop_facts::vendor_by_keeper_config(&data, "bob", bronze_axe)
+        .expect("pinned Bob bronze axe stock");
     let reserve = two_chunk_fact_quote(&fact, 1);
     assert!(reserve > 7);
     let purchase_need = need(
-        vial_water,
+        bronze_axe,
         1,
         1,
         Presence::Held,
@@ -1452,7 +1451,7 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
     let request = shop_request(
         vec![purchase_need.clone()],
         VendorChoice::Explicit {
-            keeper_config: Arc::from("aemad"),
+            keeper_config: Arc::from("bob"),
             anchor: None,
         },
         SourceSet::PACK | SourceSet::BANK,
@@ -1472,7 +1471,7 @@ fn shop_reserve_caps_held_target_and_merges_optional_coin_target() {
     let request = shop_request(
         vec![purchase_need, coin_target],
         VendorChoice::Explicit {
-            keeper_config: Arc::from("aemad"),
+            keeper_config: Arc::from("bob"),
             anchor: None,
         },
         SourceSet::PACK | SourceSet::BANK,
@@ -1595,7 +1594,8 @@ fn nearest_reserve_covers_every_vendor_then_clamps_to_held_plus_bank() {
         VendorChoice::Nearest,
         SourceSet::PACK | SourceSet::BANK,
     );
-    let enough = fixture(&[], &[(COINS, maximum as i32 + 100)], Origin::Session);
+    let bank = [(COINS, maximum as i32 + 100)];
+    let enough = fixture(&[], &bank, Origin::Session);
     let plan = shop_plan(&request, &enough, &data, false);
     assert_eq!(withdrawal_target(&plan, COINS), Some(maximum as i32));
     for quote in &quotes {

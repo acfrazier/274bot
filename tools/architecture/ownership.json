@@ -2895,6 +2895,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/acquire/shop_run.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/vendor.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/acquire/buy.rs",
       "owner": "T2"
     },

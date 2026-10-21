@@ -986,9 +986,10 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 fn acquisition_owner_layout() {
     use std::mem::size_of;
     println!(
-        "AcquireRun={} AcquireRequest={} BankReceipt={} Provisioner={} Quester={}",
+        "AcquireRun={} AcquireRequest={} AcquireReceipt={} BankReceipt={} Provisioner={} Quester={}",
         size_of::<AcquireRun>(),
         size_of::<AcquireRequest>(),
+        size_of::<AcquireReceipt>(),
         size_of::<BankReceipt>(),
         size_of::<crate::quester::provision::Provisioner>(),
         size_of::<crate::quester::runner::Quester>(),
@@ -996,4 +997,43 @@ fn acquisition_owner_layout() {
     // First arm64 build: 712 bytes. Keep 56 bytes of explicit headroom.
     assert!(size_of::<AcquireRun>() <= 768);
     assert_eq!(size_of::<BankReceipt>(), 8);
+}
+
+#[test]
+fn acquisition_receipt_preserves_more_than_255_landed_units() {
+    let (snapshot, _bank, banks) = fixture();
+    let mut ledger = None;
+    let mut run =
+        crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 1, |tick| {
+            AcquireRun::new(
+                request(
+                    BankStage::Planned,
+                    Vec::new(),
+                    None,
+                    None,
+                    false,
+                    false,
+                    CloseBank::Close,
+                ),
+                AcquirePlan::empty(),
+                &banks,
+                &tick.cx,
+            )
+        });
+    // The shop stage accumulates u32 landed counts. Receipt projection must
+    // preserve those units rather than narrowing or saturating them at 255.
+    run.bought = 300;
+    let receipt = done(poll_at(
+        &mut run,
+        &snapshot,
+        None,
+        &mut ledger,
+        2,
+        OpenGate::Open,
+    ));
+    assert_eq!(receipt.bought, 300);
+    assert!(receipt.complete);
+    assert!(ledger
+        .as_ref()
+        .is_none_or(|ledger| ledger.outbox.is_empty()));
 }

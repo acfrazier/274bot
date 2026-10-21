@@ -144,7 +144,7 @@ fn record_domain(
     }
 }
 
-fn record_vendor(looked: &mut Looked, keeper_id: i32, outcome: VendorOutcome) {
+pub(crate) fn record_vendor(looked: &mut Looked, keeper_id: i32, outcome: VendorOutcome) {
     if let Some(prior) = looked
         .vendors
         .iter_mut()

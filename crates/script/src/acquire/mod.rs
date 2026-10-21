@@ -6,6 +6,7 @@
 pub mod buy;
 pub mod plan;
 pub mod run;
+mod shop_run;
 pub mod vendor;
 
 use crate::bank::ops::MAX_MEMO;

@@ -41,6 +41,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ### Fixed during development
 
+#### Shop purchases
+
+- Native shop purchases no longer adopt an unrelated open shop or repeat an
+  unresolved buy. Recovery trades with the same keeper and checks the fresh
+  page before another purchase. Reported quantities count observed units,
+  including purchases above 255 units.
+
 #### Startup and saved state
 
 - On a slow or busy disk, 274bot no longer reports a preference change as

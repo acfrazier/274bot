@@ -132,7 +132,10 @@ fn attached_snapshot(
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
     snapshot.seed_ingame(SCENE_READY);
-    snapshot.seed_scene(SceneView { available: true, ..Default::default() });
+    snapshot.seed_scene(SceneView {
+        available: true,
+        ..Default::default()
+    });
     snapshot.seed_inventory(inventory, 28);
     snapshot.seed_npcs(npcs);
     snapshot
@@ -144,15 +147,27 @@ fn apply_local_close(client: &mut Client) {
     let output_before = client.out.pos;
     let result = Interactions::new(&snapshot, client).close_modal();
     assert!(matches!(result, SendResult::Sent { .. }));
-    assert_eq!(client.main_modal_id, -1, "Client::CloseModal clears the main page");
-    assert_eq!(client.side_modal_id, -1, "Client::CloseModal clears the side page");
-    assert_eq!(client.chat_modal_id, -1, "Client::CloseModal clears the chat page");
+    assert_eq!(
+        client.main_modal_id, -1,
+        "Client::CloseModal clears the main page"
+    );
+    assert_eq!(
+        client.side_modal_id, -1,
+        "Client::CloseModal clears the side page"
+    );
+    assert_eq!(
+        client.chat_modal_id, -1,
+        "Client::CloseModal clears the chat page"
+    );
     assert_eq!(
         client.main_modal_packet_state().close_packets,
         closes_before,
         "a local API close is not a server IF_CLOSE observation"
     );
-    assert!(client.out.pos > output_before, "the Client API wrote CLOSE_MODAL");
+    assert!(
+        client.out.pos > output_before,
+        "the Client API wrote CLOSE_MODAL"
+    );
 }
 
 fn item(id: i32, name: &str, count: i32) -> ItemView {
@@ -229,7 +244,9 @@ fn start_machine(
     qty: i32,
 ) -> crate::native::ActionHandle<BuyMachine> {
     with_tick(snapshot, ledger, 1, |tick| {
-        tick.actions.begin::<BuyMachine>(request(qty), &mut tick.cx).unwrap()
+        tick.actions
+            .begin::<BuyMachine>(request(qty), &mut tick.cx)
+            .unwrap()
     })
 }
 
@@ -252,9 +269,16 @@ struct ActionLog {
 }
 
 fn last_request(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> &InteractReq {
-    match &ledger.as_ref().unwrap().outbox.last().expect("queued native action").effect {
+    match &ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .expect("queued native action")
+        .effect
+    {
         HostEffect::Interaction(request) => request,
-        other => panic!("expected an interaction, got {other:?}"),
+        _ => panic!("expected an interaction"),
     }
 }
 
@@ -263,7 +287,12 @@ fn drain_interaction(
     log: &mut ActionLog,
     tick: u64,
 ) {
-    let action = ledger.as_mut().unwrap().outbox.pop().expect("queued native action");
+    let action = ledger
+        .as_mut()
+        .unwrap()
+        .outbox
+        .pop()
+        .expect("queued native action");
     let authority = action.authority();
     match &action.effect {
         HostEffect::Interaction(InteractReq::Npc {
@@ -274,7 +303,7 @@ fn drain_interaction(
         HostEffect::Interaction(InteractReq::ShopButton { chunk, .. }) => log.buttons.push(*chunk),
         HostEffect::Interaction(InteractReq::CloseModal) => log.closes += 1,
         HostEffect::Interaction(request) => panic!("unexpected native interaction {request:?}"),
-        other => panic!("expected an interaction, got {other:?}"),
+        _ => panic!("expected an interaction"),
     }
     ledger.as_mut().unwrap().complete_interaction(
         &authority,
@@ -374,7 +403,11 @@ fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recover
 
     assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
     drain_trade(&mut ledger, &mut log, 2, 7);
-    assert_eq!(log.trades, [7], "the nearer same-name NPC has the wrong type");
+    assert_eq!(
+        log.trades,
+        [7],
+        "the nearer same-name NPC has the wrong type"
+    );
 
     open_shop(&mut client);
     let page = snapshot(&client, Vec::new(), Vec::new());
@@ -386,7 +419,11 @@ fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recover
     let closed = snapshot(&client, Vec::new(), recovery_npcs);
     assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
     drain_trade(&mut ledger, &mut log, 4, 7);
-    assert_eq!(log.trades, [7, 7], "recovery retains the selected type and index");
+    assert_eq!(
+        log.trades,
+        [7, 7],
+        "recovery retains the selected type and index"
+    );
     assert_eq!(log.buttons, [5]);
     drop(handle);
 }
@@ -408,8 +445,8 @@ fn initially_open_wrong_shop_requires_real_local_clear_and_server_close_count() 
     assert!(log.buttons.is_empty());
 
     let mut local_clear = snapshot(&client, Vec::new(), npc.clone());
-    assert!(!local_clear.shop().unwrap().value.open);
-    assert_eq!(local_clear.shop().unwrap().value.server_closes, before_close);
+    assert!(!local_clear.shop().open);
+    assert_eq!(local_clear.shop().server_closes, before_close);
     // An unrelated family rebuild must not turn local absence into a close receipt.
     local_clear.rebuild_family(&client, Family::Inventory);
     assert!(poll_machine(&local_clear, &handle, &mut ledger, 3).is_pending());
@@ -424,10 +461,7 @@ fn initially_open_wrong_shop_requires_real_local_clear_and_server_close_count() 
 
     client.apply_if_close();
     let server_closed = snapshot(&client, Vec::new(), npc);
-    assert_eq!(
-        server_closed.shop().unwrap().value.server_closes,
-        before_close + 1
-    );
+    assert_eq!(server_closed.shop().server_closes, before_close + 1);
     assert!(poll_machine(&server_closed, &handle, &mut ledger, 5).is_pending());
     drain_trade(&mut ledger, &mut log, 5, 7);
     assert_eq!(log.trades, [7]);
@@ -450,7 +484,10 @@ fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
     let page = snapshot(&client, Vec::new(), Vec::new());
     assert!(poll_machine(&page, &handle, &mut ledger, 2).is_pending());
     assert_no_queued_action(&ledger);
-    assert!(log.buttons.is_empty(), "a page on the Trade send tick is too early");
+    assert!(
+        log.buttons.is_empty(),
+        "a page on the Trade send tick is too early"
+    );
 
     let spent = with_tick(&page, &mut ledger, 3, |native| {
         spend_interaction(&mut native.cx);
@@ -458,7 +495,10 @@ fn own_trade_page_needs_a_later_unspent_tick_and_no_idle_page_is_adopted() {
     });
     assert!(spent.is_pending());
     assert_no_queued_action(&ledger);
-    assert!(log.buttons.is_empty(), "another interaction spent this tick");
+    assert!(
+        log.buttons.is_empty(),
+        "another interaction spent this tick"
+    );
 
     assert!(poll_machine(&page, &handle, &mut ledger, 4).is_pending());
     drain_button(&mut ledger, &mut log, 4, 1);
@@ -507,9 +547,16 @@ fn late_trade_page_is_closed_and_counted_before_retry_trade() {
     let late_page = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
     assert!(poll_machine(&late_page, &handle, &mut ledger, deadline + 3).is_pending());
     assert_eq!(handle.inspect(|machine| machine.bought), Some(10));
-    assert_eq!(handle.inspect(|machine| machine.pending.is_none()), Some(true));
+    assert_eq!(
+        handle.inspect(|machine| machine.pending.is_none()),
+        Some(true)
+    );
     close_with_api(&mut client, &mut ledger, &mut log, deadline + 3);
-    assert_eq!(log.buttons, [10], "the late page is reconciled before another buy");
+    assert_eq!(
+        log.buttons,
+        [10],
+        "the late page is reconciled before another buy"
+    );
 
     let locally_closed = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
     assert!(poll_machine(&locally_closed, &handle, &mut ledger, deadline + 4).is_pending());
@@ -582,8 +629,8 @@ fn foreign_close_case(remaining: Option<RemainingModal>) {
         client.bump_gens(ServerProt::IF_OPENMAIN);
     }
     let foreign_close = snapshot(&client, Vec::new(), npcs.clone());
-    assert!(!foreign_close.shop().unwrap().value.open);
-    assert_eq!(foreign_close.shop().unwrap().value.server_closes, 1);
+    assert!(!foreign_close.shop().open);
+    assert_eq!(foreign_close.shop().server_closes, 1);
     match remaining {
         Some(RemainingModal::Chat) => assert_eq!(foreign_close.modals().chat, 4800),
         Some(RemainingModal::Side) => assert_eq!(foreign_close.modals().side, 4800),
@@ -594,7 +641,10 @@ fn foreign_close_case(remaining: Option<RemainingModal>) {
     let fresh_tick = if remaining.is_some() {
         close_with_api(&mut client, &mut ledger, &mut log, 4);
         assert_eq!(log.trades, [7]);
-        assert_eq!(log.closes, 1, "a remaining local modal must close before Trade");
+        assert_eq!(
+            log.closes, 1,
+            "a remaining local modal must close before Trade"
+        );
 
         let no_modal = snapshot(&client, Vec::new(), npcs.clone());
         assert_eq!(no_modal.modals().main, -1);
@@ -614,14 +664,17 @@ fn foreign_close_case(remaining: Option<RemainingModal>) {
     let fresh_page = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
     assert!(poll_machine(&fresh_page, &handle, &mut ledger, fresh_tick).is_pending());
     close_with_api(&mut client, &mut ledger, &mut log, fresh_tick);
-    assert_eq!(log.buttons, [1], "the old dispatch is reconciled before any next button");
+    assert_eq!(
+        log.buttons,
+        [1],
+        "the old dispatch is reconciled before any next button"
+    );
 
     let no_close_yet = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
     assert!(poll_machine(&no_close_yet, &handle, &mut ledger, fresh_tick + 1).is_pending());
     client.apply_if_close();
     let closed = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
-    let Poll::Ready(Ok(receipt)) =
-        poll_machine(&closed, &handle, &mut ledger, fresh_tick + 2)
+    let Poll::Ready(Ok(receipt)) = poll_machine(&closed, &handle, &mut ledger, fresh_tick + 2)
     else {
         panic!("the server close should release the final receipt");
     };
@@ -665,8 +718,8 @@ fn close_and_open_in_one_observation_cannot_bypass_a_new_trade_page() {
     client.apply_if_close();
     open_shop(&mut client);
     let close_and_open = snapshot(&client, Vec::new(), npcs.clone());
-    assert_eq!(close_and_open.shop().unwrap().value.server_closes, 1);
-    assert!(close_and_open.shop().unwrap().value.open);
+    assert_eq!(close_and_open.shop().server_closes, 1);
+    assert!(close_and_open.shop().open);
     assert!(poll_machine(&close_and_open, &handle, &mut ledger, 4).is_pending());
     close_with_api(&mut client, &mut ledger, &mut log, 4);
     assert_eq!(log.trades, [7]);
@@ -788,7 +841,10 @@ fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
     assert!(poll_machine(&early_pack, &handle, &mut ledger, 5).is_pending());
     assert_no_queued_action(&ledger);
     assert_eq!(handle.inspect(|machine| machine.bought), Some(1));
-    assert_eq!(handle.inspect(|machine| machine.pending.is_none()), Some(true));
+    assert_eq!(
+        handle.inspect(|machine| machine.pending.is_none()),
+        Some(true)
+    );
     assert_eq!(log.buttons, [1]);
 
     assert!(poll_machine(&early_pack, &handle, &mut ledger, 5).is_pending());
@@ -799,7 +855,11 @@ fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
     let fresh_page = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
     assert!(poll_machine(&fresh_page, &handle, &mut ledger, 6).is_pending());
     close_with_api(&mut client, &mut ledger, &mut log, 6);
-    assert_eq!(log.buttons, [1], "the late page does not count the chunk twice");
+    assert_eq!(
+        log.buttons,
+        [1],
+        "the late page does not count the chunk twice"
+    );
 
     let locally_closed = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
     assert!(poll_machine(&locally_closed, &handle, &mut ledger, 7).is_pending());
@@ -832,7 +892,11 @@ fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
         assert!(poll_machine(&first_page, &handle, &mut ledger, 3).is_pending());
         assert_no_queued_action(&ledger);
     }
-    assert_eq!(log.buttons, [1], "repeated polls at one tick do not expire a dispatch");
+    assert_eq!(
+        log.buttons,
+        [1],
+        "repeated polls at one tick do not expire a dispatch"
+    );
 
     client.apply_if_close();
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -844,13 +908,21 @@ fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
     let first_recovery_page = snapshot(&client, Vec::new(), Vec::new());
     assert!(poll_machine(&first_recovery_page, &handle, &mut ledger, 6).is_pending());
     drain_button(&mut ledger, &mut log, 6, 1);
-    assert_eq!(log.buttons, [1, 1], "the first fresh page permits one retry");
+    assert_eq!(
+        log.buttons,
+        [1, 1],
+        "the first fresh page permits one retry"
+    );
 
     for _ in 0..4 {
         assert!(poll_machine(&first_recovery_page, &handle, &mut ledger, 6).is_pending());
         assert_no_queued_action(&ledger);
     }
-    assert_eq!(log.buttons, [1, 1], "the retry does not expire without tick advance");
+    assert_eq!(
+        log.buttons,
+        [1, 1],
+        "the retry does not expire without tick advance"
+    );
 
     client.apply_if_close();
     let closed = snapshot(&client, Vec::new(), npcs.clone());
@@ -867,7 +939,10 @@ fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
     let local_close_only = snapshot(&client, Vec::new(), Vec::new());
     assert!(poll_machine(&local_close_only, &handle, &mut ledger, 10).is_pending());
     assert_no_queued_action(&ledger);
-    assert_eq!(log.closes, 1, "local clearing alone is not the final barrier");
+    assert_eq!(
+        log.closes, 1,
+        "local clearing alone is not the final barrier"
+    );
 
     client.apply_if_close();
     let final_close = snapshot(&client, Vec::new(), Vec::new());
@@ -895,7 +970,10 @@ fn changed_run_returns_stale_and_drops_the_unresolved_dispatch() {
     let page = snapshot(&client, Vec::new(), Vec::new());
     assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
     drain_button(&mut ledger, &mut log, 3, 5);
-    assert_eq!(handle.inspect(|machine| machine.pending.is_some()), Some(true));
+    assert_eq!(
+        handle.inspect(|machine| machine.pending.is_some()),
+        Some(true)
+    );
 
     let later_pack = snapshot(&client, vec![item(4, "Pot", 5)], Vec::new());
     let stale = with_tick(&later_pack, &mut ledger, 4, |native| {
@@ -969,7 +1047,10 @@ fn unchanged_pending_purchase_polls_allocate_nothing_and_keep_bounded_state() {
     assert_no_queued_action(&ledger);
     assert_eq!(log.buttons, [5]);
     let machine_bytes = std::mem::size_of::<BuyMachine>();
-    assert!(machine_bytes <= 512, "bounded shop stage grew to {machine_bytes} bytes");
+    assert!(
+        machine_bytes <= 512,
+        "bounded shop stage grew to {machine_bytes} bytes"
+    );
     println!(
         "A4 purchase state bytes: machine={machine_bytes} dispatch={} request={} receipt={}; unchanged_polls=1000 allocations={}",
         std::mem::size_of::<Dispatch>(),
@@ -977,4 +1058,260 @@ fn unchanged_pending_purchase_polls_allocate_nothing_and_keep_bounded_state() {
         std::mem::size_of::<BuyReceipt>(),
         measured.count_total,
     );
+}
+
+#[test]
+fn three_hundred_stackable_units_are_counted_without_narrowing_or_saturation() {
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    cache.objs.resize(315, client::config::ObjType::default());
+    cache.objs[314] = client::config::ObjType {
+        id: 314,
+        name: "Feather".into(),
+        stackable: true,
+        ..Default::default()
+    };
+    client.set_iface_mut(
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![315, 0]),
+            link_obj_number: Some(vec![1_000, 0]),
+            ..Default::default()
+        },
+    );
+    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), npcs);
+    let mut ledger = None;
+    let handle = with_tick(&closed, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<BuyMachine>(
+                BuyRequest {
+                    item_id: 314,
+                    item_name: Arc::from("Feather"),
+                    qty: 300,
+                    ..request(300)
+                },
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    assert!(matches!(
+        last_request(&ledger),
+        InteractReq::ShopButton {
+            id: 314,
+            chunk: 10,
+            ..
+        }
+    ));
+    drain_interaction(&mut ledger, &mut log, 3);
+    let mut inventory = Vec::new();
+    for held in (10..=300).step_by(10) {
+        let tick = 3 + u64::try_from(held / 10).unwrap();
+        let mut feather = item(314, "Feather", held);
+        feather.def.stackable = true;
+        inventory = vec![feather];
+        let page = snapshot(&client, inventory.clone(), Vec::new());
+        assert!(poll_machine(&page, &handle, &mut ledger, tick).is_pending());
+        assert!(held <= 300);
+        if held < 300 {
+            assert!(matches!(
+                last_request(&ledger),
+                InteractReq::ShopButton {
+                    id: 314,
+                    chunk: 10,
+                    ..
+                }
+            ));
+            drain_interaction(&mut ledger, &mut log, tick);
+        } else {
+            close_with_api(&mut client, &mut ledger, &mut log, tick);
+        }
+    }
+    client.apply_if_close();
+    let closed = snapshot(&client, inventory, Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&closed, &handle, &mut ledger, 34) else {
+        panic!("the counted final close must complete the 300-unit purchase");
+    };
+    assert_eq!(receipt.bought, 300);
+    assert_eq!(receipt.held, 300);
+    assert_eq!(log.buttons, vec![10; 30]);
+    assert_eq!(
+        log.buttons.len(),
+        30,
+        "one resolved dispatch per observed 10-unit transfer"
+    );
+    assert_eq!(log.closes, 1);
+    assert_no_queued_action(&ledger);
+}
+
+#[test]
+fn one_acquisition_buys_two_needs_and_waits_for_each_counted_final_close() {
+    use crate::acquire::{
+        plan, AcquireOutcome, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
+        CoinPolicy, Need, NeedKind, OpenGate, Presence, SourceSet, VendorChoice, WorldFacts,
+    };
+
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let bronze = data.item_by_alias("bronze_axe").unwrap();
+    let iron = data.item_by_alias("iron_axe").unwrap();
+    let keeper = api::shop_facts::vendor_by_keeper_config(&data, "bob", bronze.id).unwrap();
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    cache.objs.resize(
+        usize::try_from(bronze.id.max(iron.id)).unwrap() + 1,
+        client::config::ObjType::default(),
+    );
+    for fact in [bronze, iron] {
+        cache.objs[usize::try_from(fact.id).unwrap()] = client::config::ObjType {
+            id: fact.id,
+            name: fact.name.clone().unwrap(),
+            ..Default::default()
+        };
+    }
+    client.set_iface_mut(
+        3900,
+        IfTypeMut {
+            link_obj_type: Some(vec![bronze.id + 1, iron.id + 1]),
+            link_obj_number: Some(vec![10, 10]),
+            ..Default::default()
+        },
+    );
+    let npcs = || vec![npc_row(7, usize::try_from(keeper.keeper_id).unwrap(), 2)];
+    let pack = |bronze_count, iron_count| {
+        let mut rows = vec![item(995, "Coins", 1_000)];
+        for (fact, count) in [(bronze, bronze_count), (iron, iron_count)] {
+            if count > 0 {
+                let mut row = item(fact.id, fact.name.as_deref().unwrap(), count);
+                row.slot = i32::try_from(rows.len()).unwrap();
+                rows.push(row);
+            }
+        }
+        rows
+    };
+    let initial = snapshot(&client, pack(0, 0), npcs());
+    let request = AcquireRequest {
+        needs: [(bronze, 1), (iron, 2)]
+            .into_iter()
+            .map(|(fact, target)| Need {
+                item: fact.id,
+                name: Arc::from(fact.name.as_deref().unwrap()),
+                target,
+                minimum: target,
+                presence: Presence::Held,
+                kind: NeedKind::Required,
+                sources: SourceSet::PACK | SourceSet::SHOP,
+                alternatives: Arc::from([]),
+            })
+            .collect(),
+        deposit: None,
+        bank: BankChoice {
+            bank: None,
+            explicit: None,
+            required: false,
+            preferences: Default::default(),
+        },
+        stage: BankStage::Planned,
+        partial_ok: true,
+        close: CloseBank::Close,
+        vendor: VendorChoice::Explicit {
+            keeper_config: Arc::from("bob"),
+            anchor: None,
+        },
+        coins: CoinPolicy::ForPurchase {
+            sources: SourceSet::PACK,
+        },
+        walk: Default::default(),
+        required_after: EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 0,
+            sequence: 0,
+        },
+    };
+    let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(Vec::new()));
+    let mut ledger = None;
+    let mut run = with_tick(&initial, &mut ledger, 1, |tick| {
+        let AcquireVerdict::Plan(plan) = plan::plan(
+            &request,
+            &tick.cx.snapshot().stock(),
+            WorldFacts {
+                data: Some(&data),
+                members: false,
+            },
+        )
+        .unwrap() else {
+            panic!("both missing axes require purchases");
+        };
+        assert_eq!(plan.purchase_count, 2);
+        crate::acquire::run::AcquireRun::new(request, plan, &banks, &tick.cx)
+    });
+    let mut log = ActionLog::default();
+    let poll = |run: &mut crate::acquire::run::AcquireRun,
+                page: &GameSnapshot,
+                ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+                tick| {
+        with_tick(page, ledger, tick, |native| {
+            run.poll(native, OpenGate::Open)
+        })
+    };
+
+    assert!(poll(&mut run, &initial, &mut ledger, 2).is_pending());
+    drain_interaction(&mut ledger, &mut log, 2);
+    assert_eq!(log.trades, [7]);
+    open_shop(&mut client);
+    let page = snapshot(&client, pack(0, 0), npcs());
+    assert!(poll(&mut run, &page, &mut ledger, 3).is_pending());
+    assert!(
+        matches!(last_request(&ledger), InteractReq::ShopButton { id, chunk: 1, .. } if *id == bronze.id)
+    );
+    drain_interaction(&mut ledger, &mut log, 3);
+    let page = snapshot(&client, pack(1, 0), npcs());
+    assert!(poll(&mut run, &page, &mut ledger, 4).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 4);
+    client.apply_if_close();
+    let closed = snapshot(&client, pack(1, 0), npcs());
+    assert!(poll(&mut run, &closed, &mut ledger, 5).is_pending());
+    drain_interaction(&mut ledger, &mut log, 5);
+    assert_eq!(log.trades, [7, 7]);
+
+    open_shop(&mut client);
+    let page = snapshot(&client, pack(1, 0), npcs());
+    assert!(poll(&mut run, &page, &mut ledger, 6).is_pending());
+    assert!(
+        matches!(last_request(&ledger), InteractReq::ShopButton { id, chunk: 1, .. } if *id == iron.id)
+    );
+    drain_interaction(&mut ledger, &mut log, 6);
+    let page = snapshot(&client, pack(1, 1), npcs());
+    assert!(poll(&mut run, &page, &mut ledger, 7).is_pending());
+    assert!(
+        matches!(last_request(&ledger), InteractReq::ShopButton { id, chunk: 1, .. } if *id == iron.id)
+    );
+    drain_interaction(&mut ledger, &mut log, 7);
+    let page = snapshot(&client, pack(1, 2), npcs());
+    assert!(poll(&mut run, &page, &mut ledger, 8).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 8);
+    let locally_closed = snapshot(&client, pack(1, 2), npcs());
+    assert!(poll(&mut run, &locally_closed, &mut ledger, 9).is_pending());
+    assert_no_queued_action(&ledger);
+    client.apply_if_close();
+    let closed = snapshot(&client, pack(1, 2), npcs());
+    let Poll::Ready(Ok(AcquireOutcome::Done(receipt))) = poll(&mut run, &closed, &mut ledger, 10)
+    else {
+        panic!("both counted final closes must precede acquisition completion");
+    };
+    assert!(receipt.complete);
+    assert_eq!(receipt.bought, 3);
+    assert_eq!(log.buttons, [1, 1, 1]);
+    assert_eq!(log.buttons.len(), 3, "three resolved observed transfers");
+    assert_eq!(log.closes, 2);
+    assert_no_queued_action(&ledger);
 }

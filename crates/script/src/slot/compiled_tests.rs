@@ -2870,3 +2870,56 @@ fn host_world_members_reaches_the_native_snapshot_view() {
         [Truth::True, Truth::False, Truth::Unknown]
     );
 }
+
+#[test]
+fn vendor_facts_frame_port_borrows_the_world_arc_without_clones_or_allocations() {
+    let data = selected();
+    let pin = data.selected_pin().unwrap();
+    let facts = Arc::new(api::service_pick::ShopKeeperFacts::default());
+    let mut driver = NullDriver::default();
+    let ctx = ScriptCtx {
+        driver: &mut driver,
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: crate::CompiledTick {
+            shop_keepers: Some(&facts),
+            ..Default::default()
+        },
+    };
+    let run = api::selected::RunKey {
+        slot: 10,
+        run: 1,
+        session: 1,
+    };
+    let mut retained = RetainedMemory::default();
+    let mut runtime = crate::native::ledger::Runtime::default();
+    let check = |cx: crate::native::ActionContext<'_>| {
+        assert!(std::ptr::eq(cx.shop_keepers.unwrap(), &facts));
+        assert_eq!(Arc::strong_count(&facts), 1);
+    };
+    check(super::compiled::frame_context(
+        &ctx,
+        run,
+        &pin,
+        &mut retained,
+        &mut runtime,
+    ));
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..1_000 {
+            check(super::compiled::frame_context(
+                &ctx,
+                run,
+                &pin,
+                &mut retained,
+                &mut runtime,
+            ));
+        }
+    });
+    assert_eq!(measured.count_total, 0);
+    assert_eq!(Arc::strong_count(&facts), 1);
+}

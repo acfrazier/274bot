@@ -4,18 +4,19 @@
 //! the outstanding button on the same connection; its fresh page includes
 //! the final pack state before another button is admitted.
 
-use api::selected::RunKey;
 use crate::native::walk::Walk;
 use crate::native::{ActionContext, ActionError, NativeMachine};
 use crate::quester::families::reach::walk_request;
 use crate::reach_route;
 use crate::shim::InteractReq;
 use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
+use api::selected::RunKey;
 use std::sync::Arc;
 use std::task::Poll;
 
 /// Patience before requesting the ordered page roundtrip, in observed ticks.
 ///
+/// The acquisition design's §4.8 E1–E7 establish input/output ordering:
 /// Unverified until PROBE-BUY-REPLY. Engine input is ordered and each admitted
 /// buy runs synchronously (NetworkPlayer.ts:69–152, InvButtonHandler.ts:51–55,
 /// Player.ts:2173–2185); pack output precedes modal output (World.ts:1110–1123).
@@ -113,7 +114,10 @@ impl Dispatch {
         }
 
         let line_was_known = self.refusal.is_some();
-        if let Some(line) = observation.refusal.filter(|line| line.sequence > self.chat_seq) {
+        if let Some(line) = observation
+            .refusal
+            .filter(|line| line.sequence > self.chat_seq)
+        {
             self.chat_seq = line.sequence;
             if self.refusal.is_none() {
                 self.refusal = Some(RefusalSeen {
@@ -128,8 +132,7 @@ impl Dispatch {
             // is not new transfer evidence on a repeated snapshot. Two later
             // PLAYER_INFO edges also put the cycle's pack flush behind us.
             line_was_known
-                && (observation.held > line.held
-                    || observation.tick.saturating_sub(line.tick) >= 2)
+                && (observation.held > line.held || observation.tick.saturating_sub(line.tick) >= 2)
         });
         if content_final || witness == SettlementWitness::FreshPage {
             let refusal = self.refusal.map(|line| line.kind);
@@ -160,8 +163,7 @@ impl Dispatch {
         !self.resolved
             && (!open
                 || server_closes > self.closes_at
-                || (self.refusal.is_none()
-                    && tick.saturating_sub(self.tick) >= BUY_REPLY_TICKS))
+                || (self.refusal.is_none() && tick.saturating_sub(self.tick) >= BUY_REPLY_TICKS))
     }
 }
 
@@ -184,7 +186,11 @@ impl CloseWait {
         }
     }
 
-    fn observe(&mut self, server_closes: u64, tick: u64) -> Result<bool, crate::native::ActionError> {
+    fn observe(
+        &mut self,
+        server_closes: u64,
+        tick: u64,
+    ) -> Result<bool, crate::native::ActionError> {
         if server_closes > self.closes_at {
             return Ok(true);
         }
@@ -383,8 +389,9 @@ impl NativeMachine for BuyMachine {
                     let facts = self.open_facts(cx);
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
-                    let decision =
-                        self.open.tick(&facts, || Self::keeper(request, keeper_index, cx));
+                    let decision = self
+                        .open
+                        .tick(&facts, || Self::keeper(request, keeper_index, cx));
                     if std::task::ready!(self.act(decision, &facts, cx))? {
                         self.accept_page(cx)?;
                     } else {
@@ -414,9 +421,10 @@ impl NativeMachine for BuyMachine {
                     let usable = self.trade_tick.is_some_and(|sent| {
                         cx.evidence().tick > sent
                             && !cx.interaction_event_spent()
-                            && cx.snapshot().shop().is_some_and(|shop| {
-                                shop.value.open && !shop.value.stock.is_empty()
-                            })
+                            && cx
+                                .snapshot()
+                                .shop()
+                                .is_some_and(|shop| shop.value.open && !shop.value.stock.is_empty())
                     });
                     if !usable {
                         // No second Trade is sent while the first response is
@@ -438,8 +446,7 @@ impl NativeMachine for BuyMachine {
                     } else {
                         ClosePurpose::Retry
                     };
-                    self.phase =
-                        Phase::Close(purpose, CloseWait::new(closes, cx.evidence().tick));
+                    self.phase = Phase::Close(purpose, CloseWait::new(closes, cx.evidence().tick));
                 }
                 Phase::Buy => {
                     if self.finish.is_some() || self.held >= self.request.qty {
@@ -577,19 +584,22 @@ impl BuyMachine {
         let Some(dispatch) = &mut self.pending else {
             return Ok(());
         };
-        let refusal = cx.snapshot().chat_lines(dispatch.chat_seq).and_then(|lines| {
-            lines
-                .value
-                .iter()
-                .filter(|line| line.username.is_none() && line.type_ == 0)
-                .filter_map(|line| {
-                    PurchaseRefusal::from_line(&line.text).map(|kind| RefusalLine {
-                        sequence: line.sequence,
-                        kind,
+        let refusal = cx
+            .snapshot()
+            .chat_lines(dispatch.chat_seq)
+            .and_then(|lines| {
+                lines
+                    .value
+                    .iter()
+                    .filter(|line| line.username.is_none() && line.type_ == 0)
+                    .filter_map(|line| {
+                        PurchaseRefusal::from_line(&line.text).map(|kind| RefusalLine {
+                            sequence: line.sequence,
+                            kind,
+                        })
                     })
-                })
-                .min_by_key(|line| line.sequence)
-        });
+                    .min_by_key(|line| line.sequence)
+            });
         let resolved = dispatch.observe(
             PurchaseObservation {
                 run: cx.run(),
@@ -631,7 +641,9 @@ impl BuyMachine {
     fn start_final_close(&mut self, cx: &ActionContext<'_>) {
         let snapshot = cx.snapshot();
         let shop = snapshot.shop();
-        let closes = shop.as_ref().map_or(self.page_closes, |shop| shop.value.server_closes);
+        let closes = shop
+            .as_ref()
+            .map_or(self.page_closes, |shop| shop.value.server_closes);
         let baseline = if shop.is_some_and(|shop| shop.value.open) {
             closes
         } else {
@@ -654,7 +666,10 @@ impl BuyMachine {
             .snapshot()
             .shop()
             .and_then(|shop| {
-                shop.value.stock.iter().find(|row| row.def.id == self.request.item_id)
+                shop.value
+                    .stock
+                    .iter()
+                    .find(|row| row.def.id == self.request.item_id)
             })
             .map_or(0, |row| row.count);
         if self.reconciling {
@@ -668,7 +683,9 @@ impl BuyMachine {
     fn receipt(&self) -> Result<BuyReceipt, ActionError> {
         debug_assert!(self.pending.is_none());
         if matches!(self.finish, Some(Finish::Unsettled)) {
-            return Err(ActionError::Failed(Arc::from("shop purchase did not settle")));
+            return Err(ActionError::Failed(Arc::from(
+                "shop purchase did not settle",
+            )));
         }
         Ok(BuyReceipt {
             held: self.held,
@@ -697,15 +714,15 @@ impl BuyMachine {
     ) -> Option<Keeper> {
         let snapshot = cx.snapshot();
         let npcs = snapshot.npcs()?;
-        let here = snapshot.local_player().map(|player| player.value.player.network);
+        let here = snapshot
+            .local_player()
+            .map(|player| player.value.player.network);
         let view = reach_route::live(snapshot.reach().map(|reach| reach.value), here);
         let candidates = npcs
             .value
             .iter()
             .filter(|npc| npc.r#type == usize::try_from(request.npc_id).ok())
-            .filter(|npc| {
-                keeper_index.is_none_or(|index| i32::try_from(npc.index) == Ok(index))
-            })
+            .filter(|npc| keeper_index.is_none_or(|index| i32::try_from(npc.index) == Ok(index)))
             .map(|npc| shop_open::Candidate {
                 name: npc.name.as_deref().unwrap_or(&request.npc_name),
                 action: npc
@@ -734,10 +751,8 @@ impl BuyMachine {
             Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(Arc::from(reason)))),
             Decision::Trade(keeper) => {
                 if self.trade_tick.is_some() {
-                    self.phase = Phase::DrainTrade(CloseWait::new(
-                        self.page_closes,
-                        cx.evidence().tick,
-                    ));
+                    self.phase =
+                        Phase::DrainTrade(CloseWait::new(self.page_closes, cx.evidence().tick));
                     return Poll::Ready(Ok(false));
                 }
                 std::task::ready!(crate::native::defer_budget(cx.emit(InteractReq::Npc {
@@ -760,9 +775,14 @@ impl BuyMachine {
 }
 
 fn chat_watermark(cx: &ActionContext<'_>) -> i32 {
-    cx.snapshot()
-        .chat_lines(0)
-        .map_or(0, |lines| lines.value.iter().map(|line| line.sequence).max().unwrap_or(0))
+    cx.snapshot().chat_lines(0).map_or(0, |lines| {
+        lines
+            .value
+            .iter()
+            .map(|line| line.sequence)
+            .max()
+            .unwrap_or(0)
+    })
 }
 
 fn open_facts(cx: &ActionContext<'_>) -> Facts {
@@ -773,7 +793,11 @@ fn open_facts(cx: &ActionContext<'_>) -> Facts {
                 line.username.is_none() && line.type_ == 0 && shop_open::is_cant_reach(&line.text);
             (
                 all.max(line.sequence),
-                if refused_here { refused.max(line.sequence) } else { refused },
+                if refused_here {
+                    refused.max(line.sequence)
+                } else {
+                    refused
+                },
             )
         })
     });
@@ -785,9 +809,10 @@ fn open_facts(cx: &ActionContext<'_>) -> Facts {
         },
         chat_seq,
         cant_reach_seq,
-        usable: cx.snapshot().shop().is_some_and(|shop| {
-            shop.value.open && !shop.value.stock.is_empty()
-        }),
+        usable: cx
+            .snapshot()
+            .shop()
+            .is_some_and(|shop| shop.value.open && !shop.value.stock.is_empty()),
         trade_taken: cx.interaction_event_spent(),
     }
 }

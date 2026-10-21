@@ -1,5 +1,6 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{reach, walk_step_evidence, NoArgs};
+use crate::acquire::buy::{BuyMachine, BuyRequest};
 use crate::acquire::run::AcquireRun;
 use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, OpenGate};
 use crate::combat::RaisedPrayers;
@@ -8,7 +9,6 @@ use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankItem, BankReceipt};
 use crate::native_equipment::{EquipmentMachine, EquipmentRequest};
 use crate::native_production::{MakeMachine, MakeRequest};
-use crate::acquire::buy::{BuyMachine, BuyRequest};
 use crate::quester::compile::{
     CompileContext, CompileError, CompiledCarry, FamilyReceipt, PredicateContext, PredicatePlan,
     StepContext, StepOutcome, StepPlan, StepRun,

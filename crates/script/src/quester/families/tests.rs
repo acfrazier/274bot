@@ -45,6 +45,7 @@ pub(crate) fn with_tick_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         |native, later, _| f(native, later),
     )
@@ -63,6 +64,7 @@ pub(crate) fn with_tick_output<R>(
         ledger,
         tick,
         output,
+        None,
         None,
         snapshot,
         |native, _, _| f(native),
@@ -83,6 +85,7 @@ pub(crate) fn with_tick_reach<R>(
         ledger,
         tick,
         &mut Output,
+        None,
         None,
         snapshot,
         |native, _, _| f(native),
@@ -105,6 +108,7 @@ pub(crate) fn with_tick_reach_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         |native, _, later| f(native, later),
     )
@@ -126,6 +130,7 @@ pub(crate) fn with_tick_world<R>(
         tick,
         &mut Output,
         None,
+        None,
         snapshot,
         |native, _, _| f(native),
     )
@@ -146,6 +151,29 @@ pub(crate) fn with_tick_bank<R>(
         tick,
         &mut Output,
         bank,
+        None,
+        snapshot,
+        |native, _, _| f(native),
+    )
+}
+
+pub(crate) fn with_tick_shop<R>(
+    snapshot: &GameSnapshot,
+    facts: &Arc<api::service_pick::ShopKeeperFacts>,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        Some(facts),
         snapshot,
         |native, _, _| f(native),
     )
@@ -167,6 +195,7 @@ pub(crate) fn with_tick_output_bank<R>(
         tick,
         output,
         bank,
+        None,
         snapshot,
         |native, _, _| f(native),
     )
@@ -182,6 +211,7 @@ fn with_tick_output_reach<R>(
     tick: u64,
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
+    shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
     next_snapshot: &GameSnapshot,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
@@ -208,7 +238,7 @@ fn with_tick_output_reach<R>(
         cx: crate::native::ActionContext {
             evidence,
             observed_walk_outcome_seq: 0,
-            shop_keepers: None,
+            shop_keepers,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
                 .with_reach(reach)
@@ -234,6 +264,7 @@ fn with_tick_output_reach<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
+                shop_keepers,
                 collision: None,
                 hold: false,
                 world_members,

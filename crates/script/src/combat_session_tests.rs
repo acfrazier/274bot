@@ -335,6 +335,7 @@ fn with_tick<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: None,
+                shop_keepers: None,
                 collision: None,
                 hold: world.held,
                 world_members: api::selected::Truth::Unknown,
