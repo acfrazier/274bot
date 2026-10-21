@@ -165,41 +165,6 @@ impl Session {
         self.apply_script_notice();
     }
 
-    /// Start the selected card across the marked fleet rows. The fleet
-    /// report then follows the running Start report, which also covers a
-    /// Start all that lands while these rows still wait.
-    pub fn fleet_start_selected(&mut self) {
-        if let Some(selection) = self.script_sel.as_ref().map(ScriptChoice::duplicate) {
-            self.scripts.stage_browse_pick(selection);
-        } else {
-            self.scripts.stage_browse_pick_clear();
-        }
-        let Some(picked) =
-            self.submit_script_command(OperatorCommand::PickBrowseCard, Targets::Application)
-        else {
-            return;
-        };
-        if self.core.command_failure(picked.request()).is_some() {
-            return;
-        }
-        let root = self.start_catalog_root();
-        self.scripts.stage_start_catalog_root(root);
-        self.submit_script_command(OperatorCommand::StartScript, Targets::Marked);
-        self.apply_script_notice();
-        self.fleet_report_follows_start = true;
-        self.follow_fleet_report();
-    }
-
-    /// Stop marked rows through the shared core stop path. The core skips
-    /// idle/already-stopping rows and records those reasons in the report.
-    pub fn fleet_stop_selected(&mut self) {
-        let submitted = self.submit_script_command(OperatorCommand::StopScript, Targets::Marked);
-        self.apply_script_notice();
-        self.fleet_report_follows_start = false;
-        self.fleet_report =
-            submitted.and_then(|submitted| submitted.bulk().map(|report| report.summary()));
-    }
-
     /// Fold settled script work (reload validation, Start setup, parameter
     /// writes) once per UI frame, after the core poll.
     pub fn poll_scripts(&mut self) {
@@ -226,24 +191,6 @@ impl Session {
                 .fail_external_loader_start(&name, message);
         }
         self.apply_script_notice();
-        if self.fleet_report_follows_start {
-            self.follow_fleet_report();
-        }
-    }
-
-    /// Copy the latest bulk report into the fleet report when it changed.
-    pub(crate) fn follow_fleet_report(&mut self) {
-        let Some(report) = self.scripts.last_bulk_report() else {
-            return;
-        };
-        match &mut self.fleet_report {
-            Some(shown) if shown == report => {}
-            Some(shown) => {
-                shown.clear();
-                shown.push_str(report);
-            }
-            None => self.fleet_report = Some(report.to_string()),
-        }
     }
 
     pub fn reload_validation_pending(&self) -> bool {
@@ -303,46 +250,6 @@ impl Session {
         );
         self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
         self.apply_script_notice();
-    }
-
-    /// Prepare Apply to all for the focused profile's selected card.
-    pub fn prepare_settings_sync(&mut self) {
-        let Some(profile) = self.focused_name() else {
-            self.error = Some("Apply to all: no focused profile".into());
-            return;
-        };
-        let Some(selection) = self.script_sel.as_ref() else {
-            self.error = Some("Apply to all: select a script".into());
-            return;
-        };
-        let kind = if selection.compiled_id().is_some() {
-            CardKind::Native
-        } else {
-            CardKind::Script
-        };
-        self.scripts
-            .stage_settings_sync_prepare(&profile, selection);
-        self.submit_script_command(
-            OperatorCommand::ApplySettingsToMarked(kind),
-            Targets::Profile(&profile),
-        );
-        self.apply_script_notice();
-    }
-
-    pub fn apply_settings_sync(&mut self) {
-        let Some(kind) = self.scripts.stage_settings_sync_apply() else {
-            self.error = Some("Apply to all: no prepared copy".into());
-            return;
-        };
-        self.submit_script_command(
-            OperatorCommand::ApplySettingsToMarked(kind),
-            Targets::Everyone,
-        );
-        self.apply_script_notice();
-    }
-
-    pub fn cancel_settings_sync(&mut self) {
-        self.submit_script_command(OperatorCommand::CancelSettingsSync, Targets::Application);
     }
 
     pub fn restart_pending_settings(&mut self) {

@@ -29,7 +29,10 @@ const OVERVIEW_BUTTONS: [Command; 7] = [
     Command::ManualWalk,
     Command::DismissNotice,
 ];
-const FLEET_BUTTONS: [Command; 2] = [Command::LoadLoginAll, Command::LogoutAll];
+const FLEET_BUTTONS: [Command; 2] = [
+    Command::Fleet(frontend_core::FleetAction::Login),
+    Command::Fleet(frontend_core::FleetAction::Logout),
+];
 const MAP_BUTTONS: [Command; 5] = [
     Command::MapWalk,
     Command::MapTeleport,

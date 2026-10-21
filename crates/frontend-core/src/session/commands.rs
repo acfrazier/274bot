@@ -354,6 +354,9 @@ pub(super) struct CommandDesk {
     pub(super) planned: Option<crate::fleet_plan::FleetPlan>,
     /// The latest fleet action's result view.
     pub(super) fleet_result: Option<crate::fleet_plan::FleetResult>,
+    /// The card the next PlanFleetAction uses instead of the fleet card
+    /// (the Scripts window's copy shortcut).
+    pub(super) plan_card: Option<crate::scripts::ScriptChoice>,
 }
 
 impl CommandDesk {
@@ -624,7 +627,18 @@ impl<Io> OperatorSession<Io> {
         };
         self.commands.posts.clear();
         self.commands.recording = command.settles() == Settles::IntentApplied;
+        let planned = self.commands.planned.is_some();
+        if planned {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.set_planned_run(true);
+            }
+        }
         self.dispatch(command, targets, now, surface, &mut submitted);
+        if planned {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.set_planned_run(false);
+            }
+        }
         self.commands.recording = false;
         self.record_posts(request, command);
         let ran_plan = self.commands.planned.take();
@@ -645,6 +659,15 @@ impl<Io> OperatorSession<Io> {
         self.drain_watched();
         self.settle_owned();
         if let Some(plan) = ran_plan {
+            // A planned Log in can load the first members: with nothing
+            // selected, focus the remembered (else first) one, as Load all
+            // does. An existing selection is never taken.
+            if plan.action() == crate::FleetAction::Login && self.selected.is_none() {
+                let hint = self.focus_hint.clone();
+                if let Some(name) = super::pick_focus(self.members(), hint.as_deref()) {
+                    self.select(&name);
+                }
+            }
             self.open_fleet_result(request, plan);
         }
         Ok(submitted)

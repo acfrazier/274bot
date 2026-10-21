@@ -11,6 +11,7 @@ use crate::help::help_rows;
 use crate::layout::{Pane, Screen};
 use crate::overlay::{ConfirmKind, Modal};
 use crate::test_support::{ch, ctrl, draw, find, fleet_app, key, mouse, right_click, text};
+use frontend_core::{FleetAction, FleetCard};
 
 fn names(app: &TuiApp) -> Vec<&str> {
     app.names.iter().map(String::as_str).collect()
@@ -330,6 +331,31 @@ fn help_lists_the_focused_pane_first_and_filters() {
     assert!(app.modal.is_none());
 }
 
+/// Help lists the card picker and the shown-row mark keys, with the same
+/// labels the palette shows, and finds them by search.
+#[test]
+fn help_lists_the_card_picker_and_the_shown_row_mark_keys() {
+    let mut app = fleet_app(&["alice"]);
+    let rows = help_rows(&app);
+    let what = |keys: &str| {
+        rows.iter()
+            .find(|row| row.context == "Fleet" && row.keys == keys)
+            .map(|row| row.what.as_str())
+    };
+    assert_eq!(what("c"), Some("Pick fleet card…"));
+    assert_eq!(what("a"), Some("Mark shown rows"));
+    assert_eq!(what("A"), Some("Unmark shown rows"));
+    assert_eq!(what("m"), Some("Load + log in fleet"));
+    assert_eq!(what("U"), Some("Log out fleet"));
+
+    app.on_key(key(KeyCode::F(1)));
+    for c in "fleet card".chars() {
+        app.on_key(ch(c));
+    }
+    let shown = text(&draw(&mut app, 120, 40));
+    assert!(shown.contains("Pick fleet card…"), "{shown}");
+}
+
 /// Remove asks first and removes the member it named, even if the
 /// selection changes before the operator confirms.
 #[test]
@@ -347,172 +373,320 @@ fn remove_confirms_a_frozen_target() {
     );
 }
 
-/// Fleet-wide commands confirm the frozen membership and refuse to run
-/// over a fleet that changed since.
+/// The fleet keys hand the action to core as a plan. The front end keeps
+/// no scope, membership snapshot or confirmation rule of its own: it opens
+/// no overlay until core says the plan asks first.
 #[test]
-fn bulk_commands_confirm_a_frozen_scope() {
+fn fleet_action_keys_ask_core_for_a_plan() {
     let mut app = fleet_app(&["alice", "bob"]);
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
+    assert_eq!(
+        app.on_key(ch('m')),
+        AppAction::PlanFleet(FleetAction::Login)
+    );
+    assert_eq!(
+        app.on_key(ch('U')),
+        AppAction::PlanFleet(FleetAction::Logout)
+    );
+    assert!(app.modal.is_none(), "core decides whether to ask");
+
+    // The Script tab's bulk keys are the same plans.
+    app.on_key(key(KeyCode::F(5)));
+    assert_eq!(
+        app.on_key(ch('T')),
+        AppAction::PlanFleet(FleetAction::Start)
+    );
+    assert_eq!(app.on_key(ch('E')), AppAction::PlanFleet(FleetAction::Stop));
+    assert!(app.modal.is_none());
+}
+
+/// The confirm overlay shows the plan's prompt as core wrote it. Enter or
+/// `y` runs the plan; Esc or `n` cancels it, with no overlay left behind.
+#[test]
+fn the_confirm_overlay_shows_the_plan_prompt_verbatim() {
+    let prompt = "Stop 2 running bots: alice, bob. 1 marked bot is idle and is skipped.";
+    for (press, expected) in [
+        (key(KeyCode::Enter), AppAction::RunFleetPlan),
+        (ch('y'), AppAction::RunFleetPlan),
+        (key(KeyCode::Esc), AppAction::CancelFleetPlan),
+        (ch('n'), AppAction::CancelFleetPlan),
+    ] {
+        let mut app = fleet_app(&["alice", "bob"]);
+        app.confirm(ConfirmKind::FleetPlan {
+            action: FleetAction::Stop,
+            prompt: prompt.into(),
+        });
+        let all = text(&draw(&mut app, 120, 40));
+        assert!(all.contains(prompt), "{all}");
+        assert!(all.contains("Stop"), "the action titles the overlay: {all}");
+        assert!(
+            all.contains("[Run y]") && all.contains("[Cancel n]"),
+            "{all}"
+        );
+        assert_eq!(app.on_key(press), expected);
+        assert!(app.modal.is_none());
+    }
+
+    // The buttons are the same two answers.
+    let mut app = fleet_app(&["alice"]);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::Logout,
+        prompt: prompt.into(),
+    });
+    let rows = draw(&mut app, 120, 40);
+    let (cancel_x, cancel_y) = find(&rows, "[Cancel n]").unwrap();
+    assert_eq!(app.on_click(cancel_x, cancel_y), AppAction::CancelFleetPlan);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::Logout,
+        prompt: prompt.into(),
+    });
+    let rows = draw(&mut app, 120, 40);
+    let (run_x, run_y) = find(&rows, "[Run y]").unwrap();
+    assert_eq!(app.on_click(run_x, run_y), AppAction::RunFleetPlan);
+}
+
+/// Assign, Assign & restart and Copy settings are unavailable while the
+/// fleet card is each bot's own, and say how to fix it; Start, Stop, Log in
+/// and Log out need no card. Picking a card makes them available.
+#[test]
+fn card_actions_are_unavailable_on_own_until_a_card_is_picked() {
+    let mut seam = Seam::new();
+    let mut app = fleet_app(&["alice", "bob"]);
+    for action in FleetAction::ALL {
+        let command = Command::Fleet(action);
+        if action.needs_card() {
+            assert_eq!(command.availability(&app), Err("pick a card first"));
+            assert_eq!(app.run_command(command), AppAction::None);
+            let shown = app.error.take().expect("the reason shows");
+            assert!(shown.ends_with("pick a card first"), "{shown}");
+        } else {
+            assert_eq!(command.availability(&app), Ok(()), "{action:?}");
+        }
+    }
+    seam.apply(&mut app, AppAction::PickFleetCard(FleetCard::Focused));
+    for action in FleetAction::ALL {
+        let command = Command::Fleet(action);
+        assert_eq!(command.availability(&app), Ok(()), "{action:?}");
+        assert_eq!(app.run_command(command), AppAction::PlanFleet(action));
+    }
+}
+
+/// The palette lists the card picker, the shown-row marks and each status
+/// mark with their keys, and the card actions with the reason they cannot
+/// run on Own.
+#[test]
+fn the_palette_lists_the_fleet_card_marks_and_actions_with_keys() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    let palette = |app: &mut TuiApp, query: &str| {
+        app.on_key(ctrl('p'));
+        for c in query.chars() {
+            app.on_key(ch(c));
+        }
+        let shown = text(&draw(app, 120, 40));
+        app.on_key(key(KeyCode::Esc));
+        shown
+    };
+    let card = palette(&mut app, "pick fleet");
+    assert!(
+        card.contains("Pick fleet card…") && card.contains("fleet card"),
+        "{card}"
+    );
+    let marks = palette(&mut app, "mark");
+    for label in [
+        "Mark shown rows",
+        "Unmark shown rows",
+        "Mark by status: ready",
+        "Mark by status: idle",
+        "Mark by status: running",
+        "Mark by status: logged out",
+        "Mark by status: login error",
+        "Mark by status: not loaded",
+    ] {
+        assert!(marks.contains(label), "{label}: {marks}");
+    }
+    let invert = palette(&mut app, "invert");
+    assert!(invert.contains("Invert shown"), "{invert}");
+    for command in [
+        Command::PickFleetCard,
+        Command::MarkAllShown,
+        Command::UnmarkShown,
+    ] {
+        let keys = crate::palette::key_text(command);
+        assert_eq!(
+            keys,
+            match command {
+                Command::PickFleetCard => "c",
+                Command::MarkAllShown => "a",
+                _ => "A",
+            }
+        );
+    }
+    let actions = palette(&mut app, "assign");
+    assert!(
+        actions.contains("Assign & restart") && actions.contains("pick a card first"),
+        "{actions}"
+    );
+    let copy = palette(&mut app, "copy settings");
+    assert!(
+        copy.contains("Copy settings") && copy.contains("pick a card first"),
+        "{copy}"
+    );
+    // Every fleet action keeps its Script tab key in the palette.
+    let start = palette(&mut app, "start fleet");
+    assert!(start.contains("Start fleet"), "{start}");
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Start)),
+        "T"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Stop)),
+        "E"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Login)),
+        "m"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Logout)),
+        "U"
+    );
+}
+
+/// `a` marks the shown rows, `A` unmarks them, and the status marks and
+/// Invert shown are palette commands: each one is a core `MarkFleet` row.
+#[test]
+fn mark_keys_and_palette_entries_submit_core_mark_ops() {
+    let mut seam = Seam::with_profiles(&[("alice", 41), ("bob", 42)]);
+    let mut app = fleet_app(&["alice", "bob"]);
+    assert_eq!(
+        app.on_key(ch('a')),
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown)
+    );
+    // Nothing is marked yet in the model: `A` says so and sends nothing.
+    assert_eq!(app.on_key(ch('A')), AppAction::None);
+    assert!(app
+        .error
+        .take()
+        .unwrap()
+        .ends_with("no shown row is marked"));
+    seam.apply(&mut app, AppAction::MarkFleet(frontend_core::MarkOp::Shown));
+    assert_eq!(
+        app.on_key(ch('A')),
+        AppAction::MarkFleet(frontend_core::MarkOp::UnmarkShown)
+    );
+    assert_eq!(
+        app.run_command(Command::InvertShown),
+        AppAction::MarkFleet(frontend_core::MarkOp::InvertShown)
+    );
+    for predicate in frontend_core::MarkPredicate::ALL {
+        let command = Command::MarkWhere(predicate);
+        assert!(
+            command.label(&app).ends_with(predicate.label()),
+            "the palette label names the core label"
+        );
+        assert_eq!(
+            app.run_command(command),
+            AppAction::MarkFleet(frontend_core::MarkOp::Where(predicate))
+        );
+    }
+}
+
+/// `c` opens the picker over Own, Focused and the Browse cards, grouped by
+/// category. Enter pins the highlighted card; Esc and an outside click
+/// leave the fleet card alone. Neither touches the Browse pick.
+#[test]
+fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
+    use crate::script_shape::BrowseCard;
+    let card = |name: &str, category: &str| BrowseCard {
+        name: name.into(),
+        description: String::new(),
+        category: category.into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compat,
+        source: CardSource::File,
+        unloadable: None,
+    };
+    let mut app = fleet_app(&["alice", "bob"]);
+    crate::test_support::set_cards(
+        &mut app,
+        vec![
+            card("Gatherer", "Skilling"),
+            card("Fighter", "Combat"),
+            card("Miner", "Skilling"),
+        ],
+    );
+    let browse_pick = ScriptChoice::loaded(CardSource::File, "Thiever");
+    app.script_sel = Some(browse_pick.duplicate());
+
+    assert_eq!(app.on_key(ch('c')), AppAction::None);
+    assert!(matches!(&app.modal, Some(Modal::FleetCard(_))));
     let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Members now (2): alice, bob"), "{all}");
-    app.names.push("carol".into());
+    for want in [
+        "Each bot's own card",
+        "Focused bot's card",
+        "Gatherer",
+        "Fighter",
+        "Miner",
+        "Skilling",
+        "Combat",
+        "(current)",
+    ] {
+        assert!(all.contains(want), "{want}: {all}");
+    }
+    let at = |name: &str| all.find(name).unwrap();
+    assert!(
+        at("Each bot's own card") < at("Focused bot's card")
+            && at("Focused bot's card") < at("Gatherer"),
+        "Own, then Focused, then the cards: {all}"
+    );
+    assert!(
+        at("Gatherer") < at("Miner") && at("Miner") < at("Fighter"),
+        "cards stay grouped by category as Browse groups them: {all}"
+    );
+
+    // Down Down lands on the first card; Enter pins it.
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "a changed fleet is shown again, not run"
-    );
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("alice, bob, carol"), "{all}");
-    assert!(all.contains("The fleet changed"), "{all}");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
-
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(
-        app.on_key(key(KeyCode::Esc)),
-        AppAction::None,
-        "Esc cancels"
+        AppAction::PickFleetCard(FleetCard::Pinned(ScriptChoice::loaded(
+            CardSource::File,
+            "Gatherer"
+        )))
     );
     assert!(app.modal.is_none());
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
-}
 
-#[test]
-fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
-    let mut app = fleet_app(&["alice", "bob"]);
-    app.fleet_model
-        .set_mark_for_test(app.profile_id_for_name("alice"), true);
-    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(
-        all.contains("Start 1 marked bot on their last successful script"),
-        "{all}"
-    );
-    assert!(!all.contains("Start all 1 member"), "{all}");
+    // Esc leaves the card as it was and sends nothing.
+    app.on_key(ch('c'));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.modal.is_none());
+    // A click outside does too.
+    app.on_key(ch('c'));
+    draw(&mut app, 120, 40);
+    assert_eq!(app.on_click(0, 0), AppAction::None);
+    assert!(app.modal.is_none());
 
-    // An unmarked member arriving does not change the frozen marked scope.
-    app.names.push("carol".into());
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::ScriptStartAll);
-}
-
-#[test]
-fn marked_start_confirm_names_the_selected_script_it_will_run() {
-    let mut app = fleet_app(&["alice", "bob"]);
-    app.fleet_model
-        .set_mark_for_test(app.profile_id_for_name("alice"), true);
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    let label = app.script_sel.as_ref().unwrap().label();
-    assert!(
-        all.contains(&format!("Start {label} on 1 marked bot")),
-        "{all}"
-    );
-    assert!(!all.contains("last successful script"), "{all}");
-}
-
-/// With rows marked, Log in and Log out confirm the marked scope and run the
-/// marked commands; with none marked they keep their whole-fleet meaning.
-#[test]
-fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
-    let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.fleet_model
-        .set_mark_for_test(app.profile_id_for_name("bob"), true);
-
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Log in 1 marked bot"), "{all}");
-    assert!(!all.contains("Load every vault profile"), "{all}");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::LoginMarked);
-
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Log out 1 marked bot"), "{all}");
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutMarked);
-
-    app.fleet_model
-        .set_mark_for_test(app.profile_id_for_name("bob"), false);
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
-}
-
-/// Assign and Assign & restart need marked rows and a selected script, say
-/// which is missing, then confirm the marked scope and the script they use.
-#[test]
-fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
-    for command in [Command::ScriptAssignMarked, Command::ScriptRestartMarked] {
-        let mut app = fleet_app(&["alice", "bob"]);
-        assert_eq!(
-            command.availability(&app),
-            Err("mark fleet rows first (Space)")
-        );
-        app.fleet_model
-            .set_mark_for_test(app.profile_id_for_name("alice"), true);
-        assert_eq!(
-            command.availability(&app),
-            Err("browse to pick a script first")
-        );
-        app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-        assert_eq!(command.availability(&app), Ok(()));
-
-        assert_eq!(app.run_command(command), AppAction::None);
-        let all = text(&draw(&mut app, 120, 40));
-        let label = app.script_sel.as_ref().unwrap().label();
-        assert!(all.contains(label), "{all}");
-        if command == Command::ScriptRestartMarked {
-            assert!(
-                all.contains("Start the card on 1 idle bot: alice"),
-                "the restart confirmation names the starting bots: {all}"
-            );
-        } else {
-            assert!(all.contains("1 marked bot"), "{all}");
-        }
-        let expected = match command {
-            Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
-            _ => AppAction::ScriptRestartMarked,
-        };
-        assert_eq!(app.on_key(key(KeyCode::Enter)), expected);
-    }
-}
-
-/// Apply focused bot's settings to marked needs marks, a focused bot and a
-/// selected script (naming which is missing), and the 80x24 palette shows
-/// its whole label with its scope beside it instead of cutting either.
-#[test]
-fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
-    let command = Command::ScriptApplyMarked;
-    let mut app = fleet_app(&["alice", "bob"]);
     assert_eq!(
-        command.availability(&app),
-        Err("mark fleet rows first (Space)")
+        app.script_sel.as_ref(),
+        Some(&browse_pick),
+        "the picker never changes the Browse pick"
     );
-    app.fleet_model
-        .set_mark_for_test(app.profile_id_for_name("bob"), true);
-    assert_eq!(
-        command.availability(&app),
-        Err("browse to pick a script first")
-    );
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    app.focused = None;
-    assert_eq!(
-        command.availability(&app),
-        Err("no bot selected (Fleet: Enter or click a row)")
-    );
-    app.focused = Some(0);
-    assert_eq!(command.availability(&app), Ok(()));
+    assert!(!app.browse_changed, "and never reports a Browse pick");
+    assert!(!app.script_browse_open);
+}
 
-    app.on_key(ctrl('p'));
-    for c in "apply focused".chars() {
-        app.on_key(ch(c));
-    }
-    let all = text(&draw(&mut app, 80, 24));
-    assert!(
-        all.contains("Apply focused bot's settings to marked… alice to 1 marked"),
-        "{all}"
+/// The palette's *Pick fleet card…* opens the same picker.
+#[test]
+fn the_palette_opens_the_fleet_card_picker() {
+    let mut app = fleet_app(&["alice"]);
+    assert_eq!(app.run_command(Command::PickFleetCard), AppAction::None);
+    assert!(matches!(&app.modal, Some(Modal::FleetCard(_))));
+    // The picker is its own overlay: it takes keys and Enter on the
+    // current card (Own, the cursor's start) picks Own again.
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PickFleetCard(FleetCard::Own)
     );
-    assert!(all.contains("1 commands"), "{all}");
 }
 
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
@@ -930,25 +1104,6 @@ fn script_popups_swallow_clicks_outside_themselves() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The restart confirmation for `count` marked bots, the first
-/// `running` of them running a script, with a card picked.
-fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
-    let names: Vec<String> = (0..count).map(|i| format!("bot{i:02}name")).collect();
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut app = fleet_app(&refs);
-    crate::test_support::run_scripts(&mut app, running);
-    for name in &names {
-        let id = app.profile_id_for_name(name);
-        app.fleet_model.set_mark_for_test(id, true);
-    }
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(
-        app.run_command(Command::ScriptRestartMarked),
-        AppAction::None
-    );
-    (app, names)
-}
-
 /// Screen text with every run of whitespace (including the row breaks
 /// a wrapped popup line spans) collapsed to one space, so a phrase is
 /// found wherever wrapping put it — but only if it was drawn at all.
@@ -956,48 +1111,35 @@ fn flattened(rows: &[String]) -> String {
     text(rows).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// H1: with 7 running and 7 idle marked bots, the Assign & restart
-/// confirmation shows both lists with their counts at 120x40 and
-/// 80x24; bots past the six named per list are counted, never hidden.
-#[test]
-fn restart_confirm_shows_both_counts_and_counts_unnamed_bots() {
-    let (mut app, _names) = restart_confirm_app(14, 7);
-    for (width, height) in [(120, 40), (80, 24)] {
-        let all = flattened(&draw(&mut app, width, height));
-        assert!(
-            all.contains("Stop and restart 7 running bots: bot00name,"),
-            "{width}x{height}: interrupted list and its count: {all}"
-        );
-        assert!(
-            all.contains("Start the card on 7 idle bots: bot07name,"),
-            "{width}x{height}: starting list and its count: {all}"
-        );
-        assert_eq!(
-            all.matches("+1 more").count(),
-            2,
-            "{width}x{height}: one bot past the cap in each list is counted: {all}"
-        );
-    }
+/// `s` without any whitespace: wrapping may break a line at a space or in a
+/// word, so the popup's text is compared without it.
+fn squashed(s: &str) -> String {
+    s.split_whitespace().collect()
 }
 
-/// H1: with 20 running marked bots the interrupted line alone would
-/// fill the old popup; the idle list and its count still show.
+/// A long plan prompt (core caps the names it spells out, then "+N
+/// more") is shown whole at 120x40 and 80x24: the popup sizes to the
+/// wrapped rows, so none of core's text is cut.
 #[test]
-fn restart_confirm_with_twenty_running_still_shows_the_idle_list() {
-    let (mut app, _names) = restart_confirm_app(23, 20);
+fn a_long_plan_prompt_is_shown_whole_at_both_sizes() {
+    let prompt =
+        "Assign thiever and restart it on 14 marked bots: bot00name, bot01name, bot02name, \
+                  bot03name, bot04name, bot05name, bot06name, bot07name +6 more. This stops the \
+                  running script of bot00name, bot01name, bot02name, bot03name, bot04name, \
+                  bot05name, bot06name, bot07name +2 more. Skipped 2: bot12name: profile is \
+                  being saved, bot13name: already active.";
     for (width, height) in [(120, 40), (80, 24)] {
-        let all = flattened(&draw(&mut app, width, height));
+        let mut app = fleet_app(&["alice"]);
+        app.confirm(ConfirmKind::FleetPlan {
+            action: FleetAction::AssignRestart,
+            prompt: prompt.into(),
+        });
+        let rows = draw(&mut app, width, height);
+        let all = squashed(&popup_rows(&app, &rows).join(" "));
+        assert!(all.contains(&squashed(prompt)), "{width}x{height}: {all}");
         assert!(
-            all.contains("Stop and restart 20 running bots: bot00name,"),
-            "{width}x{height}: interrupted list and its count: {all}"
-        );
-        assert!(
-            all.contains("+14 more"),
-            "{width}x{height}: running bots past the cap are counted: {all}"
-        );
-        assert!(
-            all.contains("Start the card on 3 idle bots: bot20name, bot21name, bot22name"),
-            "{width}x{height}: every idle bot is named: {all}"
+            flattened(&rows).contains("Assign & restart"),
+            "titled by the action"
         );
     }
 }
@@ -1016,67 +1158,36 @@ fn popup_rows(app: &TuiApp, rows: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The popup's text with wrapping undone: rows join with a space,
-/// except a row filled to its last cell whose next row starts
-/// mid-word (a word wider than the row, split by the wrap), which
-/// joins with nothing. Whitespace runs collapse to one space.
-fn popup_text(app: &TuiApp, rows: &[String]) -> String {
-    let popup = popup_rows(app, rows);
-    let mut joined = String::new();
-    for (index, row) in popup.iter().enumerate() {
-        if index > 0 {
-            let prev = &popup[index - 1];
-            let split_word = !prev.ends_with(' ') && !row.starts_with(' ');
-            if !split_word {
-                joined.push(' ');
-            }
-        }
-        joined.push_str(row);
-    }
-    joined.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// L1: at 40x20 the popup's text area is 38 cells, so an email-style
 /// name wider than that is split across rows by ratatui from a fresh
-/// row. The popup must be sized for those rows: both lists show in
-/// full and the slack row above the buttons stays blank.
+/// row. The popup must be sized for those rows: core's whole prompt shows
+/// and the slack row above the buttons stays blank.
 #[test]
-fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_popup() {
-    let names: Vec<String> = (0..6)
+fn plan_confirm_at_40_by_20_shows_the_whole_prompt_when_a_name_is_wider_than_the_popup() {
+    let names: Vec<String> = (0..4)
         .map(|i| format!("bot{i:02}-with-a-very-long-email-name@example.com"))
         .collect();
     assert!(
         names.iter().all(|name| name.len() > 38),
         "every name is wider than the 40-wide popup's 38-cell text area: {names:?}"
     );
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut app = fleet_app(&refs);
-    crate::test_support::run_scripts(&mut app, 3);
-    for name in &names {
-        let id = app.profile_id_for_name(name);
-        app.fleet_model.set_mark_for_test(id, true);
-    }
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(
-        app.run_command(Command::ScriptRestartMarked),
-        AppAction::None
+    let prompt = format!(
+        "Assign thiever and restart it on 4 marked bots: {}. This stops the running script of {}, {}.",
+        names.join(", "),
+        names[0],
+        names[1]
     );
+    let mut app = fleet_app(&["alice"]);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::AssignRestart,
+        prompt: prompt.clone(),
+    });
     let rows = draw(&mut app, 40, 20);
     let popup = popup_rows(&app, &rows);
-    let all = popup_text(&app, &rows);
+    let all = squashed(&popup.join(" "));
     assert!(
-        all.contains(&format!(
-            "Stop and restart 3 running bots: {}, {}, {}",
-            names[0], names[1], names[2]
-        )),
-        "the interrupted list shows in full: {all}"
-    );
-    assert!(
-        all.contains(&format!(
-            "Start the card on 3 idle bots: {}, {}, {}",
-            names[3], names[4], names[5]
-        )),
-        "the idle list shows in full: {all}"
+        all.contains(&squashed(&prompt)),
+        "the whole prompt shows: {all}"
     );
     let slack = &popup[popup.len() - 2];
     assert!(
@@ -1086,24 +1197,30 @@ fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_po
     );
 }
 
-/// The palette scope text of the combined all/marked commands follows
-/// the core scope resolver: everyone with no marks, the marked bots
-/// once anything is marked.
+/// The palette scope text of the fleet actions follows the core model's
+/// counts: the loaded shown rows with no marks, the marked bots once
+/// anything is marked.
 #[test]
-fn palette_scope_text_follows_the_combined_bulk_scope() {
+fn palette_scope_text_follows_the_core_marks() {
     let mut app = fleet_app(&["alice", "bob", "carol"]);
-    assert_eq!(Command::LoadLoginAll.scope(&app), "every vault profile");
-    assert_eq!(Command::LogoutAll.scope(&app), "all 3 members");
-    assert_eq!(Command::ScriptStartAll.scope(&app), "all 3 members");
-    assert_eq!(Command::ScriptStopAll.scope(&app), "all 3 members");
+    for action in FleetAction::ALL {
+        if action != FleetAction::CopySettings {
+            assert_eq!(Command::Fleet(action).scope(&app), "all 3 shown");
+        }
+    }
     for name in ["alice", "bob"] {
         let id = app.profile_id_for_name(name);
         app.fleet_model.set_mark_for_test(id, true);
     }
-    assert_eq!(Command::LoadLoginAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::LogoutAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::ScriptStartAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::ScriptStopAll.scope(&app), "2 marked bots");
+    for action in FleetAction::ALL {
+        if action != FleetAction::CopySettings {
+            assert_eq!(Command::Fleet(action).scope(&app), "2 marked bots");
+        }
+    }
+    assert_eq!(
+        Command::Fleet(FleetAction::CopySettings).scope(&app),
+        "alice to 2 marked bots"
+    );
 }
 
 /// An app whose fleet is `loaded` (ready) followed by vault profiles that
@@ -1200,17 +1317,22 @@ fn enter_on_an_unloaded_row_does_not_focus_and_says_why() {
     );
 }
 
-/// "Select all shown" marks every shown row, loaded or not, and nothing
-/// the filter hides.
+/// `a` marks every shown row, loaded or not, through the core mark op, and
+/// nothing the filter hides.
 #[test]
-fn mark_all_shown_stages_the_shown_universe_rows() {
+fn the_mark_shown_key_marks_only_the_shown_rows() {
+    let mut seam = Seam::new();
     let mut app = universe_app(&["alice", "bob"], &["zed"]);
     app.fleet_model.set_filter_for_test("z");
-    let zed = frontend_core::ProfileIdentity::synthetic("zed");
-    assert_eq!(
-        app.run_command(Command::MarkAllShown),
-        AppAction::MarkAll(vec![zed])
+    seam.press(
+        &mut app,
+        ch('a'),
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown),
     );
+    let id = frontend_core::ProfileIdentity::synthetic;
+    assert!(app.fleet_model.marks().contains(id("zed")));
+    assert!(!app.fleet_model.marks().contains(id("alice")));
+    assert!(!app.fleet_model.marks().contains(id("bob")));
 }
 
 /// The context menu of an unloaded row offers only the mark.

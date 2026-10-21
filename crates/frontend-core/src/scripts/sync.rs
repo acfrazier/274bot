@@ -371,6 +371,9 @@ pub struct SyncReport {
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
     copy_cancellation: Option<NativeCopyCancellation>,
+    /// Applied by a planned fleet action: its text stays off the banner
+    /// (the plan's result line reports it).
+    quiet: bool,
     text: String,
 }
 
@@ -677,7 +680,10 @@ impl SyncState {
         if !std::mem::take(&mut self.announce) {
             return None;
         }
-        self.last.as_ref().map(|report| report.text.clone())
+        self.last
+            .as_ref()
+            .filter(|report| !report.quiet)
+            .map(|report| report.text.clone())
     }
 
     pub(super) fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
@@ -1273,12 +1279,15 @@ impl Scripts {
             unmarked,
             pending,
             copy_cancellation,
+            quiet: self.planned_run,
             text: String::new(),
         };
         report.refresh();
         // Shown now; `record` announces the final summary once writes settle.
         self.sync.announce = false;
-        self.show(report.text.clone());
+        if !report.quiet {
+            self.show(report.text.clone());
+        }
         self.sync.push(report);
         Ok(op)
     }

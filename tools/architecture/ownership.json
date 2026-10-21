@@ -423,6 +423,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/group_walk.rs",
       "owner": "T3"
     },
@@ -2196,6 +2200,10 @@
     },
     {
       "path": "crates/panel/src/fleet_columns.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/fleet_flow_tests.rs",
       "owner": "T3"
     },
     {
@@ -5451,6 +5459,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/fleet_card.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/fleet_tests.rs",
       "owner": "T3"
     },
@@ -6928,6 +6940,10 @@
     },
     {
       "path": "crates/frontend-core/src/session/fleet.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/fleet_plan.rs",
       "owner": "T3"
     },
     {

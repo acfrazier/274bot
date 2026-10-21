@@ -6,7 +6,6 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
-use frontend_core::scripts::ScriptRunState;
 use frontend_core::{FleetCounts, FleetRow, Phase, ProfileIdentity, SlotDetail};
 
 use crate::app::TuiApp;
@@ -83,21 +82,6 @@ pub fn set_profile_ids(app: &mut TuiApp, ids: &[ProfileIdentity]) {
     app.fleet_model.set_universe_for_test(rows, ids);
 }
 
-/// Mark the first `count` rows' scripts as running.
-pub fn run_scripts(app: &mut TuiApp, count: usize) {
-    let mut rows: Vec<FleetRow> = app
-        .fleet_model
-        .rows()
-        .iter()
-        .map(FleetRow::snapshot)
-        .collect();
-    for row in rows.iter_mut().take(count) {
-        row.set_script(ScriptRunState::Running);
-    }
-    let ids = app.fleet_model.identities().to_vec();
-    app.fleet_model.set_universe_for_test(rows, &ids);
-}
-
 pub fn rows(buf: &Buffer) -> Vec<String> {
     let area = buf.area;
     (area.y..area.y + area.height)
@@ -154,4 +138,14 @@ pub fn write_private_fixture(
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+/// Give the app these Browse cards and the core picker choice of each (the
+/// pump copies both from the session): what the fleet-card picker lists.
+pub fn set_cards(app: &mut TuiApp, cards: Vec<crate::script_shape::BrowseCard>) {
+    app.script_card_choices = cards
+        .iter()
+        .map(|card| crate::script_shape::card_selection(card).expect("a card with a choice"))
+        .collect();
+    app.script_cards = cards;
 }

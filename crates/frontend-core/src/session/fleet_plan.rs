@@ -60,6 +60,13 @@ impl<Io> OperatorSession<Io> {
         self.commands.fleet_result.as_ref()
     }
 
+    /// Stage the card the next [`crate::OperatorCommand::PlanFleetAction`]
+    /// uses instead of the fleet card: an entry such as the Scripts
+    /// window's copy shortcut, which copies the focused bot's own card.
+    pub fn stage_plan_card(&mut self, card: ScriptChoice) {
+        self.commands.plan_card = Some(card);
+    }
+
     /// A copy of the running plan's frozen mark set, if a planned command
     /// is being dispatched.
     pub(super) fn planned_marks(&self) -> Option<MarkedSelection> {
@@ -116,10 +123,12 @@ impl<Io> OperatorSession<Io> {
         let Some(fleet) = models.fleet.as_deref() else {
             return no_model("fleet");
         };
-        let card = match fleet.card() {
-            FleetCard::Own => None,
-            FleetCard::Pinned(card) => Some(card.duplicate()),
-            FleetCard::Focused => match (scripts.as_deref(), self.selected()) {
+        let staged_card = self.commands.plan_card.take();
+        let card = match (staged_card, fleet.card()) {
+            (Some(card), _) => Some(card),
+            (None, FleetCard::Own) => None,
+            (None, FleetCard::Pinned(card)) => Some(card.duplicate()),
+            (None, FleetCard::Focused) => match (scripts.as_deref(), self.selected()) {
                 (Some(scripts), Some(name)) => scripts.heading(self, name),
                 _ => None,
             },
@@ -224,7 +233,7 @@ impl<Io> OperatorSession<Io> {
 
         if targets.is_empty() {
             if action == FleetAction::CopySettings {
-                if let Some(scripts) = scripts.as_deref_mut() {
+                if let Some(scripts) = scripts {
                     scripts.cancel_settings_sync();
                 }
             }
@@ -676,4 +685,97 @@ fn no_model(what: &str) -> Applied {
         Rejection::NoModel,
         Some(format!("{what}: this front end holds none")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify, prompt_text};
+    use crate::bulk::{BulkOutcome, BulkRow};
+    use crate::fleet_plan::{FleetAction, PlanScope};
+    use crate::scripts::ScriptRunState as RunState;
+    use crate::selection::ProfileIdentity;
+    use crate::views::{FleetRow, Phase};
+
+    fn ready(name: &str, script: RunState) -> FleetRow {
+        let mut row = FleetRow::fixture(name, Phase::Ready, Some(1), None);
+        row.set_script(script);
+        row
+    }
+
+    fn core() -> crate::OperatorSession<()> {
+        crate::OperatorSession::new(host_play::InstancePermit::SkipLock)
+    }
+
+    /// The confirmation policy's interruption: Stop, Assign & restart and
+    /// Log out of a running bot interrupt it; Start, Assign and Log in
+    /// never do.
+    #[test]
+    fn running_scripts_are_interrupted_only_by_the_interrupting_actions() {
+        let core = core();
+        let running = ready("a", RunState::Running);
+        for (action, interrupts) in [
+            (FleetAction::Stop, Ok(true)),
+            (FleetAction::AssignRestart, Ok(true)),
+            (FleetAction::Logout, Ok(true)),
+            (FleetAction::Assign, Ok(false)),
+            (FleetAction::Start, Err("already active")),
+            (FleetAction::Login, Err("already logged in")),
+        ] {
+            assert_eq!(
+                classify(action, &running, true, None, &core),
+                interrupts,
+                "{action:?}"
+            );
+        }
+        let idle = ready("b", RunState::Idle);
+        assert_eq!(
+            classify(FleetAction::Stop, &idle, true, None, &core),
+            Err("no script running")
+        );
+        let unloaded = FleetRow::for_profile("c");
+        assert_eq!(
+            classify(FleetAction::Logout, &unloaded, true, None, &core),
+            Err("not logged in")
+        );
+        assert_eq!(
+            classify(FleetAction::Login, &unloaded, true, None, &core),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn the_prompt_names_targets_interruptions_skips_and_hidden_marks() {
+        let targets = vec![
+            (ProfileIdentity::synthetic("aaa"), "aaa".to_string()),
+            (ProfileIdentity::synthetic("bbb"), "bbb".to_string()),
+        ];
+        let skipped = vec![BulkRow::new(
+            "ccc",
+            BulkOutcome::skipped("no script running"),
+        )];
+        let prompt = prompt_text(
+            FleetAction::Stop,
+            PlanScope::Marked { hidden: 1 },
+            None,
+            None,
+            &targets,
+            &["aaa".to_string()],
+            &skipped,
+        );
+        assert_eq!(
+            prompt,
+            "Stop 2 marked bots (1 not shown): aaa, bbb. This stops the running script of aaa. \
+             Skipped 1: ccc: no script running."
+        );
+        let all = prompt_text(
+            FleetAction::Start,
+            PlanScope::AllShown,
+            None,
+            None,
+            &targets[..1],
+            &[],
+            &[],
+        );
+        assert_eq!(all, "Start each bot's own card on 1 shown bot: aaa.");
+    }
 }
