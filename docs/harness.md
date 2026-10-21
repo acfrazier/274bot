@@ -954,7 +954,8 @@ Construct, followed by host adoption (`script/src/slot/compiled.rs`,
 `prepare_run` and `poll_compiled`). The harness allows one tick per step.
 This is a qualification bound, not a guarantee about worker scheduling.
 An unplanned `Starting`, a restart overrun or an unfinished restart at
-observation end fails the cell. A planned restart never resets the original
+observation end fails the cell. The harness does not start another lifecycle
+cycle at observation end. A planned restart never resets the original
 300-tick proof window.
 
 The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
