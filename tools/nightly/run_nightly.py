@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-"""274bot nightly live run: build `tui-play` per branch and run every live cell.
+"""274bot nightly live run: build the frontends and run the selected cells.
 
-Runs on the nightly VM from `274bot-nightly.service`, and on the Windows nightly
-host from the `274bot-nightly` scheduled task (see README.md). For each branch in
-`branches.conf` (or `--branch`, `NIGHTLY_BRANCHES`), it fetches the branch tip
-anonymously, builds the frontends (`--release --locked`), points them at an
-engine, runs every cell in the checked-out scenario catalog with a few in
-parallel, and writes `summary.json`, `summary.md` and per-cell receipts into
-`<root>/runs/<date>-<branch>-<commit>[-windows]/`. `DONE` is written last; the
-archive host only pulls runs that have it.
+The runner fetches each branch anonymously, builds with `--locked`, runs the
+selected catalog cells, and writes `summary.json`, `summary.md` and per-cell
+receipts. `DONE` is written last.
 
-Linux (malbec): one step, `tui` cells on a pty against a private engine copy it
-starts and stops. Windows: three steps in order, each with its own deadline:
-the CI lanes, the cells through `panel-play` in the console session, and the
-cells through `tui-play` on ConPTY, against a running engine it never starts or
-stops (Engine B).
+Linux (malbec) runs two sequential jobs: the main job runs non-quest cells on
+its private Engine A copy; the quest job runs only `quester_*` cells on its
+separate local Engine Q copy. Both use `tui-play`.
 
-The revision-274 lane (zinfandel) runs this same script with
-`NIGHTLY_REVISION=274`, one branch (`dev`) and a cell subset
-(`--cells-file`, `cells-274.conf`). Its runs end in `-274`. The lane
-reports only. It never gates a merge or a release.
+macOS (merlot) runs main cells through `lanes,panel,tui` against already-running
+Engine A, then `quester_*` cells through `panel,tui` against Engine Q. Remote
+engines are checked but never started, stopped, or changed. `MAC-QUIET.lock`
+prevents startup and stops new work at the next cell boundary.
 
-Standard library only (Python 3.10+); on Windows also `pywinpty` for ConPTY
-(pinned in windows/requirements.txt).
+Windows runs the main job's CI lanes and cells through `panel-play` and
+`tui-play` on ConPTY, then a separate quest job on Engine B. Engine B remains
+at its existing tick rate; the quest job does not set `QUESTER_TICK_MS`.
+
+The revision-274 lane uses this same script with `NIGHTLY_REVISION=274`, a
+single branch (`dev`) and its exact cell list. It reports only; it never gates
+a merge or release.
+
+Standard library only (Python 3.10+); on Windows also `pywinpty` for ConPTY.
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+IS_MAC = sys.platform == "darwin"
 IS_WINDOWS = os.name == "nt"
 if IS_WINDOWS:
     import msvcrt
@@ -64,7 +65,9 @@ def env_flag(name: str, default: bool) -> bool:
 
 
 HERE = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get("NIGHTLY_ROOT", r"C:\274bot-nightly" if IS_WINDOWS else "/srv/nightly"))
+DEFAULT_ROOT = r"C:\274bot-nightly" if IS_WINDOWS else (
+    "/Volumes/dev-scratch/274bot-nightly-mac" if IS_MAC else "/srv/nightly")
+ROOT = Path(os.environ.get("NIGHTLY_ROOT", DEFAULT_ROOT))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
 RUNNER_REPO = HERE.parent.parent
 NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
@@ -94,17 +97,64 @@ def revision_defaults(revision: str, windows: bool) -> dict:
     }
 
 
-# The game revision this lane exercises (NIGHTLY_REVISION, default 289).
-# It also names the engine start/stop scripts (`start-<revision>.sh`) and
-# the nav bake revision (BOT_NAV_REVISION). A specific setting
-# (NIGHTLY_PROFILE, NIGHTLY_RUN_SUFFIX, NIGHTLY_ENGINE_CRC_SHA256) still
-# wins over the default the revision implies.
+def job_defaults(job: str, windows: bool, revision: str, root: Path, mac: bool = False) -> dict:
+    """Return engine and identity settings for the selected nightly job."""
+    if job not in ("main", "quest"):
+        raise ValueError(f"nightly job must be main or quest, got {job!r}")
+    revision_config = revision_defaults(revision, windows)
+    if windows:
+        engine = {
+            "host": "127.0.0.1",
+            "game_port": 47594,
+            "http_port": 3080,
+            "label": "Engine B",
+            "profile": revision_config["profile"],
+            "pristine": root / "engine-pristine",
+            "run": root / "engine-run",
+        }
+    elif job == "quest":
+        engine = {
+            "host": "127.0.0.1",
+            "game_port": 44694,
+            "http_port": 1180,
+            "label": "Engine Q",
+            "profile": "local-289q" if revision == "289" else revision_config["profile"],
+            "pristine": root / "engine-q-pristine",
+            "run": root / "engine-q-run",
+        }
+    else:
+        engine = {
+            "host": "127.0.0.1",
+            "game_port": 44594,
+            "http_port": 1080,
+            "label": "Engine A",
+            "profile": revision_config["profile"],
+            "pristine": root / "engine-pristine",
+            "run": root / "engine-run",
+        }
+    quest = job == "quest"
+    platform_suffix = "-mac" if mac and not windows else ""
+    return {
+        **engine,
+        "run_suffix": revision_config["run_suffix"] + platform_suffix + ("-quest" if quest else ""),
+        "name_prefix": ("wq" if windows else "nq") if quest else ("nw" if windows else "nt"),
+        "panel_name_prefix": ("wqp" if windows else "nqp") if quest else "np",
+        "tick_ms": 300 if quest and not windows and revision == "289" else None,
+    }
+
+
+# The nightly job controls which catalog cells run. Quest cells need a separate
+# Engine Q because `::speed` changes the whole world.
+JOB = os.environ.get("NIGHTLY_JOB", "main")
+if JOB not in ("main", "quest"):
+    raise SystemExit(f"NIGHTLY_JOB must be main or quest, got {JOB!r}")
 REVISION = os.environ.get("NIGHTLY_REVISION", "289")
 try:
     DEFAULTS = revision_defaults(REVISION, IS_WINDOWS)
+    JOB_DEFAULTS = job_defaults(JOB, IS_WINDOWS, REVISION, ROOT, IS_MAC)
 except ValueError as error:
-    raise SystemExit(f"NIGHTLY_REVISION: {error}") from error
-PROFILE = os.environ.get("NIGHTLY_PROFILE", DEFAULTS["profile"])
+    raise SystemExit(f"NIGHTLY_REVISION/NIGHTLY_JOB: {error}") from error
+PROFILE = os.environ.get("NIGHTLY_PROFILE", JOB_DEFAULTS["profile"])
 UNPACK_DIR = DEFAULTS["unpack_dir"]
 
 
@@ -121,24 +171,26 @@ def load_timezone() -> ZoneInfo | None:
 
 
 TIMEZONE = load_timezone()
-NAME_PREFIX = os.environ.get("NIGHTLY_NAME_PREFIX", "nw" if IS_WINDOWS else "nt")
-PANEL_NAME_PREFIX = os.environ.get("NIGHTLY_PANEL_NAME_PREFIX", "np")
+NAME_PREFIX = os.environ.get("NIGHTLY_NAME_PREFIX", JOB_DEFAULTS["name_prefix"])
+PANEL_NAME_PREFIX = os.environ.get("NIGHTLY_PANEL_NAME_PREFIX", JOB_DEFAULTS["panel_name_prefix"])
 KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 # Every cell enforces its own scenario deadline inside the frontend; this outer
 # cap only stops a process that never reaches a terminal state.
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
 EXE = ".exe" if IS_WINDOWS else ""
-# Runs of one commit on two platforms must not collide on the archive dataset.
-RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", DEFAULTS["run_suffix"])
+# Runs of one commit on two platforms and jobs must not collide on the archive.
+RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", JOB_DEFAULTS["run_suffix"])
 # "local": a private engine copy this runner starts and stops (malbec).
 # "remote": an engine that is already running; never started, stopped or changed.
-ENGINE_MODE = os.environ.get("NIGHTLY_ENGINE", "remote" if IS_WINDOWS else "local")
-ENGINE_HOST = os.environ.get("NIGHTLY_ENGINE_HOST", "127.0.0.1")
-GAME_PORT = int(os.environ.get("NIGHTLY_GAME_PORT", "47594"))
-HTTP_PORT = int(os.environ.get("NIGHTLY_HTTP_PORT", "3080"))
+ENGINE_MODE = os.environ.get("NIGHTLY_ENGINE", "remote" if IS_WINDOWS or IS_MAC else "local")
+ENGINE_SCRIPT_REVISION = os.environ.get(
+    "NIGHTLY_ENGINE_SCRIPT_REVISION", f"{REVISION}q" if JOB == "quest" and not IS_WINDOWS else REVISION)
+ENGINE_HOST = os.environ.get("NIGHTLY_ENGINE_HOST", JOB_DEFAULTS["host"])
+GAME_PORT = int(os.environ.get("NIGHTLY_GAME_PORT", str(JOB_DEFAULTS["game_port"])))
+HTTP_PORT = int(os.environ.get("NIGHTLY_HTTP_PORT", str(JOB_DEFAULTS["http_port"])))
 # The 289 engine's 40-byte /crc identity (ENGINE.md); empty skips the comparison.
 ENGINE_CRC_SHA256 = os.environ.get("NIGHTLY_ENGINE_CRC_SHA256", DEFAULTS["engine_crc_sha256"])
-ENGINE_LABEL = os.environ.get("NIGHTLY_ENGINE_LABEL", "Engine B")
+ENGINE_LABEL = os.environ.get("NIGHTLY_ENGINE_LABEL", JOB_DEFAULTS["label"])
 # Fresh exact-commit clone per run from local bare mirrors (Windows) into the
 # branch's one stable tree path, instead of one reused checkout per branch
 # (malbec). The stable path means Cargo overwrites last night's artefacts
@@ -179,11 +231,16 @@ PANEL_PARALLEL = int(os.environ.get("NIGHTLY_PANEL_PARALLEL", "3"))
 # Cells whose name matches draw with the GPU renderer; every other cell gets BOT_CPU=1.
 GPU_CELLS = re.compile(os.environ.get("NIGHTLY_GPU_CELLS", "^render_" if IS_WINDOWS else "(?!)"))
 NIGHT_START = os.environ.get("NIGHTLY_START", "23:00")
-ENGINE_PRISTINE = ROOT / "engine-pristine"
-ENGINE_RUN = ROOT / "engine-run"
-CATALOG = ROOT / "rs2b0t"
-NAV_SNAPSHOT = ROOT / "nav-snapshot"
-NAV_FIXTURE = ROOT / "fixtures" / "bake-r2-a.navpack"
+ENGINE_PRISTINE = Path(os.environ.get("NIGHTLY_ENGINE_PRISTINE", str(JOB_DEFAULTS["pristine"])))
+ENGINE_RUN = Path(os.environ.get("NIGHTLY_ENGINE_RUN", str(JOB_DEFAULTS["run"])))
+CATALOG = Path(os.environ.get("NIGHTLY_CATALOG", str(ROOT / "rs2b0t")))
+NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snapshot")))
+NAV_FIXTURE = Path(os.environ.get("NIGHTLY_NAV_FIXTURE", str(ROOT / "fixtures" / "bake-r2-a.navpack")))
+RUNS_ROOT_OVERRIDE = os.environ.get("NIGHTLY_RUNS_ROOT")
+def runs_root() -> Path:
+    return Path(RUNS_ROOT_OVERRIDE) if RUNS_ROOT_OVERRIDE else ROOT / "runs"
+QUIET_LOCK = Path(os.environ["NIGHTLY_QUIET_LOCK"]) if os.environ.get("NIGHTLY_QUIET_LOCK") else None
+ISOHOME = os.environ.get("NIGHTLY_ISOHOME")
 CATALOG_RS = Path("crates/scenario/src/catalog.rs")
 RECEIPT_START = re.compile(r'\{"scenario":"')
 ANSI = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[()][0-9A-Za-z]|[=>78DEHMc])")
@@ -204,6 +261,35 @@ CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 _stop = threading.Event()
+_quiet_lock_reason: str | None = None
+
+
+class QuietLockError(RuntimeError):
+    """A MAC-QUIET lock stopped non-cell work before it could overlap a measurement."""
+
+
+def note_quiet_lock() -> str | None:
+    global _quiet_lock_reason
+    if QUIET_LOCK is not None and QUIET_LOCK.exists() and _quiet_lock_reason is None:
+        _quiet_lock_reason = f"MAC-QUIET.lock appeared at {QUIET_LOCK}"
+        log(f"{_quiet_lock_reason}; no new cells will start")
+    return _quiet_lock_reason
+
+
+def select_job_cells(cells: list[str], only: list[str] | None, job: str) -> list[str]:
+    """Select the job's quest or non-quest cells without changing catalog order."""
+    if job not in ("main", "quest"):
+        raise ValueError(f"nightly job must be main or quest, got {job!r}")
+    selected = cells if only is None else [cell for cell in cells if cell in only]
+    quest_job = job == "quest"
+    return [cell for cell in selected if cell.startswith("quester_") == quest_job]
+
+
+def isolated_command(cmd: list[str]) -> list[str]:
+    """Run Cargo and frontend commands through the configured isolated-HOME wrapper."""
+    if ISOHOME:
+        return [ISOHOME, *cmd]
+    return cmd
 _children: dict[int, Callable[[], None]] = {}
 _children_lock = threading.Lock()
 
@@ -284,24 +370,43 @@ def untrack(pid: int) -> None:
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None,
-        log_to: Path | None = None, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
-    """Run a command to completion; with `timeout`, its whole process tree is stopped at the bound."""
+        log_to: Path | None = None, check: bool = True, timeout: float | None = None,
+        quiet_sensitive: bool = True) -> subprocess.CompletedProcess:
+    """Run a command; stop non-cell work if a Mac timing lock appears."""
+    if cmd and Path(cmd[0]).name == "cargo":
+        cmd = isolated_command(cmd)
     if log_to is None:
         return subprocess.run(cmd, cwd=cwd, env=env, check=check, text=True, encoding="utf-8",
                               errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               timeout=timeout)
+    if quiet_sensitive and note_quiet_lock():
+        raise QuietLockError(_quiet_lock_reason)
     with log_to.open("a", encoding="utf-8") as out:
         out.write(f"$ {' '.join(cmd)}\n")
         out.flush()
         proc = popen_group(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out,
                            stderr=subprocess.STDOUT)
         track(proc.pid, lambda: kill_tree(proc.pid, proc))
+        started = time.monotonic()
         try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            kill_tree(proc.pid, proc)
-            proc.wait()
-            raise
+            while True:
+                wait_s = 5.0 if timeout is None else min(5.0, timeout - (time.monotonic() - started))
+                if wait_s <= 0:
+                    kill_tree(proc.pid, proc)
+                    proc.wait()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    proc.wait(timeout=wait_s)
+                    break
+                except subprocess.TimeoutExpired:
+                    if quiet_sensitive and note_quiet_lock():
+                        kill_tree(proc.pid, proc)
+                        proc.wait()
+                        raise QuietLockError(_quiet_lock_reason)
+                    if timeout is not None and time.monotonic() - started >= timeout:
+                        kill_tree(proc.pid, proc)
+                        proc.wait()
+                        raise subprocess.TimeoutExpired(cmd, timeout)
         finally:
             untrack(proc.pid)
     if check and proc.returncode:
@@ -815,7 +920,7 @@ def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: 
     if not ok:
         raise RuntimeError(f"nav snapshot bootstrap: engine unavailable: {detail}")
     try:
-        run_tui(tui_cmd(skip_target / "release" / f"tui-play{EXE}", "walk"),
+        run_tui(isolated_command(tui_cmd(skip_target / "release" / f"tui-play{EXE}", "walk")),
                 cell_env(home, tmp, work / "evidence", "walk", NAME_PREFIX), work, work / "stderr.log", 600)
     finally:
         engine_stop(None)
@@ -925,7 +1030,8 @@ def engine_start(run_dir: Path) -> tuple[bool, str]:
     engine_stop(None)
     try:
         copy_engine(run_dir)
-        run([str(ENGINE_RUN / f"start-{REVISION}.sh")], cwd=ENGINE_RUN, log_to=run_dir / "engine-control.log")
+        run([str(ENGINE_RUN / f"start-{ENGINE_SCRIPT_REVISION}.sh")], cwd=ENGINE_RUN,
+            log_to=run_dir / "engine-control.log")
     except subprocess.CalledProcessError as error:
         return False, f"failed to start: {error}"
     return True, "fresh copy started, stopped after the run"
@@ -935,7 +1041,8 @@ def engine_stop(run_dir: Path | None) -> None:
     if ENGINE_MODE == "remote" or not (ENGINE_RUN / "runtime" / "pids" / "engine.pid").exists():
         return
     control = run_dir / "engine-control.log" if run_dir else None
-    run([str(ENGINE_RUN / f"stop-{REVISION}.sh")], cwd=ENGINE_RUN, log_to=control, check=False)
+    run([str(ENGINE_RUN / f"stop-{ENGINE_SCRIPT_REVISION}.sh")], cwd=ENGINE_RUN, log_to=control, check=False,
+        quiet_sensitive=False)
     if run_dir:
         engine_log = ENGINE_RUN / "runtime" / "logs" / "engine.log"
         if engine_log.is_file():
@@ -1083,6 +1190,11 @@ def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str) -> d
         "RS2B0T": str(CATALOG),
         "ENGINE_DIR": str(ENGINE_RUN / "engine"),
     })
+    env.pop("QUESTER_TICK_MS", None)
+    if JOB_DEFAULTS["tick_ms"] is not None:
+        env["QUESTER_TICK_MS"] = str(JOB_DEFAULTS["tick_ms"])
+    if ISOHOME:
+        env["ISOHOME_DIR"] = str(home)
     if not GPU_CELLS.search(cell):
         env["BOT_CPU"] = "1"
     return env
@@ -1140,6 +1252,7 @@ def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: floa
                     if _stop.is_set():
                         kill_tree(proc.pid, proc)
                         break
+                    note_quiet_lock()
                     if time.monotonic() - started > cap_s:
                         timed_out = True
                         kill_tree(proc.pid, proc)
@@ -1222,6 +1335,7 @@ def run_panel(cmd: list[str], env: dict, cwd: Path, stdout_path: Path, stderr_pa
                     if _stop.is_set():
                         kill_tree(proc.pid, proc)
                         break
+                    note_quiet_lock()
                     if time.monotonic() - started > cap_s:
                         timed_out = True
                         kill_tree(proc.pid, proc)
@@ -1245,6 +1359,9 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     if _stop.is_set():
         result.result, result.reason = "NOT_RUN", "run interrupted before this cell started"
         return write_cell(cell_dir, result)
+    if note_quiet_lock():
+        result.result, result.reason = "NOT_RUN", _quiet_lock_reason
+        return write_cell(cell_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
         result.reason = f"{deadline_text(frontend)} reached before this cell started"
@@ -1265,11 +1382,11 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         cut_by_deadline = cap < CELL_CAP_S
         env = cell_env(home, tmp, cell_dir / "evidence", cell, prefix)
         if frontend == "tui":
-            cmd = tui_cmd(binary, cell, gate)
+            cmd = isolated_command(tui_cmd(binary, cell, gate))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
             exit_code, timed_out, out_text = run_tui(cmd, env, scratch, cell_dir / "stderr.log", cap)
         else:
-            cmd = panel_cmd(binary, cell)
+            cmd = isolated_command(panel_cmd(binary, cell))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
             exit_code, timed_out = run_panel(cmd, env, scratch, cell_dir / stdout_name,
                                              cell_dir / "stderr.log", cap)
@@ -1418,11 +1535,13 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
 def lane_env(home: Path, tmp: Path, target: Path, extra: dict) -> dict:
     env = dict(os.environ)
     for name in ("NAV_PACK", "ENGINE_DIR", "WORLD_ENGINE_DIR", "LIVE", "BOT_NAV_SNAPSHOT_ROOT", "SKIP_GPU",
-                 "BOT_CPU", "CARGO_TARGET_DIR"):
+                 "BOT_CPU", "CARGO_TARGET_DIR", "QUESTER_TICK_MS", "ISOHOME_DIR"):
         env.pop(name, None)
     env.update(private_dirs(home, tmp))
     env.update(CARGO_TARGET_DIR=str(target), BOT_NAV_BUILD="skip", CARGO_INCREMENTAL="0",
                CARGO_PROFILE_DEV_DEBUG="0", CARGO_TERM_COLOR="never", **extra)
+    if ISOHOME:
+        env["ISOHOME_DIR"] = str(home)
     return env
 
 
@@ -1433,6 +1552,9 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
     lane_dir.mkdir(parents=True, exist_ok=True)
     if _stop.is_set():
         result.result, result.reason = "NOT_RUN", "run interrupted before this lane started"
+        return write_lane(lane_dir, result)
+    if note_quiet_lock():
+        result.result, result.reason = "NOT_RUN", _quiet_lock_reason
         return write_lane(lane_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
@@ -1454,6 +1576,8 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
     try:
         exit_code = run(["cargo", *args], cwd=tree, env=lane_env(home, tmp, target, extra), log_to=cargo_log,
                         check=False, timeout=max(1.0, deadline - time.monotonic())).returncode
+    except QuietLockError as error:
+        result.result, result.reason = "NOT_RUN", str(error)
     except subprocess.TimeoutExpired:
         timed_out = True
     result.wall_s = round(time.monotonic() - started, 1)
@@ -1467,6 +1591,8 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
     if timed_out:
         result.result = "TIMEOUT"
         result.first_failure = "lanes step deadline reached while this lane ran"
+    elif note_quiet_lock():
+        result.result, result.reason = "NOT_RUN", _quiet_lock_reason
     elif _stop.is_set():
         result.result, result.reason = "NOT_RUN", "run interrupted while this lane ran"
     else:
@@ -1545,6 +1671,7 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
     md = [
         f"# Nightly {meta['run']}",
         "",
+        f"- Job `{meta['job']}`",
         f"- Branch `{meta['branch']}` at `{meta['commit_full']}` (revision {meta['revision']}"
         + (f", cells from `{meta['cells_file']}`" if meta.get("cells_file") else "") + ")",
         f"- Platform {meta['platform']} ({meta['os']}, host {meta['host']})",
@@ -1555,6 +1682,8 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
     ]
+    if meta.get("quiet_lock"):
+        md.append(f"- Quiet lock stopped further work: `{meta['quiet_lock']}`")
     if meta.get("session"):
         md.append(f"- Session: {meta['session']['status']}")
     for name, step in meta["steps"].items():
@@ -1602,10 +1731,10 @@ def fmt_s(seconds: float | None) -> str:
 def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
     day = date or now().date()
     base = f"{day:%Y-%m-%d}-{slug(branch)}-{commit}{RUN_SUFFIX}"
-    candidate = ROOT / "runs" / base
+    candidate = runs_root() / base
     attempt = 2
     while candidate.exists():
-        candidate = ROOT / "runs" / f"{base}-r{attempt}"
+        candidate = runs_root() / f"{base}-r{attempt}"
         attempt += 1
     return candidate
 
@@ -1628,7 +1757,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     """
     ident = platform_id()
     target = ROOT / "target" / slug(branch)
-    staging = ROOT / "runs" / f".building-{slug(branch)}"
+    staging = runs_root() / f".building-{slug(branch)}"
     rmtree(staging)
     staging.mkdir(parents=True)
     started_wall = time.monotonic()
@@ -1682,15 +1811,14 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     except (OSError, ValueError, RuntimeError) as error:
         build_ok = False
         build_error = (build_error or "") + f"; cell list: {error}"
-    if only:
-        if only_exact and cells:
-            unknown = [cell for cell in only if cell not in cells]
-            if unknown:
-                build_ok = False
-                build_error = (build_error or "") + (
-                    f"; cell list: {cells_file or 'cells file'} names not in the catalog: "
-                    + ", ".join(unknown))
-        cells = [cell for cell in cells if cell in only]
+    if only and only_exact and cells:
+        unknown = [cell for cell in only if cell not in cells]
+        if unknown:
+            build_ok = False
+            build_error = (build_error or "") + (
+                f"; cell list: {cells_file or 'cells file'} names not in the catalog: "
+                + ", ".join(unknown))
+    cells = select_job_cells(cells, only, JOB)
     cell_base = CellResult(cell="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     lane_base = LaneResult(lane="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     work = ROOT / "work" / run_dir.name
@@ -1713,7 +1841,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if "lanes" in STEPS:
         step = steps["lanes"]
         step_start = time.monotonic()
-        if unavailable:
+        if note_quiet_lock():
+            lanes, step["status"] = lane_rows("NOT_RUN", _quiet_lock_reason), f"not run: {_quiet_lock_reason}"
+        elif unavailable:
             lanes, step["status"] = lane_rows("UNAVAILABLE", unavailable), f"unavailable: {unavailable}"
         elif tree is None or not build_ok:
             lanes, step["status"] = lane_rows("NOT_RUN", "sources failed; see build.log"), "not run: sources failed"
@@ -1726,15 +1856,21 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                 ok, detail, _ = console_session()
                 if not ok:
                     lanes, step["status"] = lane_rows("UNAVAILABLE", detail), f"unavailable: {detail}"
+                elif note_quiet_lock():
+                    lanes, step["status"] = lane_rows("NOT_RUN", _quiet_lock_reason), f"not run: {_quiet_lock_reason}"
                 else:
-                    copy_engine(run_dir)
-                    lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start),
-                                      branch, only_lanes)
-                    step["status"] = "ran: " + counts_text(count(lanes))
+                    try:
+                        copy_engine(run_dir)
+                    except QuietLockError as error:
+                        lanes, step["status"] = lane_rows("NOT_RUN", str(error)), f"not run: {error}"
+                    else:
+                        lanes = run_lanes(tree, run_dir, work, lane_base, step_deadline("lanes", step_start),
+                                          branch, only_lanes)
+                        step["status"] = "ran: " + counts_text(count(lanes))
         step["wall_s"] = round(time.monotonic() - step_start, 1)
 
     cell_steps = [name for name in STEPS if name in ("panel", "tui")]
-    build_ran = bool(cell_steps and not unavailable and tree is not None and build_ok)
+    build_ran = bool(cell_steps and not unavailable and not note_quiet_lock() and tree is not None and build_ok)
     if build_ran:
         disk_reason = guard_disk(branch, target)
         if disk_reason:
@@ -1755,17 +1891,24 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         step_start = time.monotonic()
         reason_unavailable, reason_not_run = unavailable, None
         binary = binaries.get(f"{frontend}-play")
-        if not reason_unavailable and (not build_ok or binary is None):
+        if note_quiet_lock():
+            reason_not_run = _quiet_lock_reason
+        elif not reason_unavailable and (not build_ok or binary is None):
             reason_not_run = "build failed; see build.log"
         if not reason_unavailable and not reason_not_run and REQUIRE_CONSOLE:
             ok, detail, _ = console_session()
             if not ok:
                 reason_unavailable = detail
         if not reason_unavailable and not reason_not_run:
-            ok, detail = engine_start(run_dir)
+            try:
+                ok, detail = engine_start(run_dir)
+            except QuietLockError as error:
+                ok, detail = False, str(error)
             engine_status = detail
             if not ok:
-                if ENGINE_MODE == "remote":
+                if note_quiet_lock():
+                    reason_not_run = _quiet_lock_reason
+                elif ENGINE_MODE == "remote":
                     reason_unavailable = f"{ENGINE_LABEL} not reachable: {detail}"
                 else:
                     reason_not_run = f"engine {detail}"
@@ -1793,19 +1936,20 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if not build_ok and engine_status == "not started":
         engine_status = "not started (build failed)"
     meta = dict(
-        run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
+        job=JOB, run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
         cells_file=cells_file,
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
-        cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE, interrupted=_stop.is_set(),
+        cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
+        interrupted=_stop.is_set() or _quiet_lock_reason is not None, quiet_lock=_quiet_lock_reason,
         steps=steps, session=session, unavailable=unavailable,
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
                    panel_play_sha256=sha256(binaries["panel-play"]) if binaries.get("panel-play", Path()).is_file() else None),
         engine=dict(status=engine_status, mode=ENGINE_MODE,
-                    source=(f"engine-pristine ({REVISION} engine copy, fresh DB)" if ENGINE_MODE == "local"
+                    source=(f"{ENGINE_PRISTINE} ({REVISION} engine copy, fresh DB)" if ENGINE_MODE == "local"
                             else f"{ENGINE_LABEL} (running, shared; never started or stopped), "
-                                 f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from engine-pristine")),
+                                 f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from {ENGINE_PRISTINE}")),
         catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
         tree=str(tree) if tree else None,
     )
@@ -1829,9 +1973,10 @@ def git_head(path: Path) -> str:
 
 def prune_local() -> None:
     cutoff = time.time() - KEEP_DAYS * 86400
-    runs = ROOT / "runs"
+    runs = runs_root()
     for entry in runs.iterdir() if runs.is_dir() else []:
-        if entry.is_dir() and not entry.name.startswith(".") and entry.stat().st_mtime < cutoff:
+        if (entry.is_dir() and not entry.name.startswith(".")
+                and entry.name.endswith(RUN_SUFFIX) and entry.stat().st_mtime < cutoff):
             rmtree(entry)
             log(f"pruned local run {entry.name} (older than {KEEP_DAYS} days; the archive keeps it)")
 
@@ -1847,7 +1992,8 @@ def night_of(moment: dt.datetime) -> dt.date:
 
 
 def started_marker(day: dt.date) -> Path:
-    return ROOT / "state" / f"started-{day:%Y-%m-%d}"
+    suffix = "-quest" if JOB == "quest" else ""
+    return ROOT / "state" / f"started-{day:%Y-%m-%d}{suffix}"
 
 
 def on_signal(signum, _frame) -> None:
@@ -1901,7 +2047,10 @@ def main() -> int:
                 log(f"cells file {cells_path} names no cells; exiting")
                 return 1
     only_lanes = [c.strip() for c in args.lanes.split(",") if c.strip()] if args.lanes else None
-    (ROOT / "runs").mkdir(parents=True, exist_ok=True)
+    if note_quiet_lock():
+        log("nightly skipped before start because MAC-QUIET.lock is present")
+        return 0
+    runs_root().mkdir(parents=True, exist_ok=True)
     (ROOT / "state").mkdir(parents=True, exist_ok=True)
     lock = take_lock()
     if lock is None:
@@ -1929,7 +2078,7 @@ def main() -> int:
         _run_deadline = time.monotonic() + RUN_DEADLINE_S
     log(f"nightly start: branches {branches}, steps {STEPS}, parallel {args.parallel}")
     for branch in branches:
-        if _stop.is_set():
+        if _stop.is_set() or note_quiet_lock():
             break
         run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file)
     if FRESH_TREES:

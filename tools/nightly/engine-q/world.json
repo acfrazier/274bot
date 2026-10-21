@@ -1,0 +1,49 @@
+{
+  "easyStartup": false,
+  "website": { "registration": true },
+  "web": {
+    "port": 1180,
+    "allowedOrigin": "",
+    "managementPort": 9988
+  },
+  "engine": { "revision": 289 },
+  "node": {
+    "id": 289,
+    "port": 44694,
+    "members": true,
+    "autoSubscribeMembers": true,
+    "xpRate": 1,
+    "production": false,
+    "minimumWealthValueEvent": 10,
+    "debug": true,
+    "debugProfile": false,
+    "clientRoutefinder": true,
+    "profile": "main",
+    "maxConnected": 1,
+    "debugProcChar": "~",
+    "hopTime": 45000,
+    "rateLimitAddressLogin": 30,
+    "rateLimitDeviceLogin": 5
+  },
+  "login": { "enabled": false, "host": "127.0.0.1", "port": 44700 },
+  "friend": { "enabled": false, "host": "127.0.0.1", "port": 46299 },
+  "logger": { "enabled": false, "host": "127.0.0.1", "port": 44701 },
+  "db": {
+    "backend": "sqlite",
+    "host": "localhost",
+    "port": 3306,
+    "user": "289-local",
+    "pass": "local-only",
+    "name": "lostcity-289-q",
+    "verbose": false
+  },
+  "build": {
+    "verbose": false,
+    "startup": false,
+    "verify": true,
+    "verifyFolder": true,
+    "verifyPack": true,
+    "liveReload": false,
+    "srcDir": "../content"
+  }
+}
