@@ -2332,10 +2332,6 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     let HostEffect::Walk(request) = effect else {
         panic!("wear settlement must return")
     };
-    eprintln!(
-        "[DEBUG-m1-return] incarnation={incarnation} status={:?}",
-        slot.native_status()
-    );
     assert_resource_return(&selected, &request, anchor);
     let return_target = request.target;
     slot.pause();

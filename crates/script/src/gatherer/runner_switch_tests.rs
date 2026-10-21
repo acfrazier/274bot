@@ -1735,6 +1735,59 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
 }
 
 #[test]
+fn late_tool_wear_preserves_the_bank_return_and_receipt_attribution() {
+    let (mut gatherer, mut snapshot) = fixture();
+    let mut stats = snapshot.stats().to_vec();
+    stats.retain(|stat| stat.index != 0);
+    stats.push(StatView {
+        index: 0,
+        name: "attack".into(),
+        effective: 1,
+        base: 1,
+        xp: 0,
+        used: true,
+    });
+    snapshot.seed_stats(stats);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_inventory(
+        vec![ItemView {
+            def: def(1351, "Bronze axe"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Wield".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    gatherer.trip = TripStep::Validate;
+    gatherer.scratch.kept_unbankable = true;
+    gatherer.scratch.withdrew_supplies = true;
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        assert!(gatherer.admit_supply(&tick.cx));
+    });
+    assert_eq!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: false,
+        }
+    );
+    assert!(gatherer.scratch.kept_unbankable);
+    assert!(gatherer.scratch.withdrew_supplies);
+    with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
+    let actions = &ledger.as_ref().unwrap().outbox;
+    assert_eq!(actions.len(), 1);
+    assert!(matches!(
+        &actions[0].effect,
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Held { action, .. })
+            if action == "Wield"
+    ));
+}
+
+#[test]
 fn unbankable_items_report_item_reason_when_pack_fills_without_withdrawals() {
     let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
     gatherer.trip = TripStep::Validate;
