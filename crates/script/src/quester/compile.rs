@@ -2322,7 +2322,7 @@ mod tests {
                 "Fact": {
                     "kind": "npc_near",
                     "version": 1,
-                    "args": {"npc": "jailguard", "radius": 4}
+                    "args": {"npc": "jailguard", "radius": 5}
                 }
             }
         });

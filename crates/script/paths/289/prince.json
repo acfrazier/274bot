@@ -1214,10 +1214,10 @@
             "guard": "protect",
             "lost_radius": 24,
             "kill_budget_ticks": 400,
-            "until": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}}
+            "until": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 5}}}}
           },
-          "skip_if": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}},
-          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}},
+          "skip_if": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 5}}}},
+          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 5}}}},
           "comment": "Jail guards hunt within 5 tiles and respawn every 60 ticks. Clear only nearby guards, then continue to Keli (content/scripts/areas/area_draynor/configs/draynor.npc:180-182)."
         }
       ],
@@ -1283,7 +1283,7 @@
               {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "keyprint"}}}
             ]
           },
-          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 4}}}}
+          "settle": {"Not": {"Fact": {"kind": "npc_near", "version": 1, "args": {"npc": "jailguard", "radius": 5}}}}
         },
         {
           "id": "key-keli-imprint",
