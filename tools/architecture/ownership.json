@@ -3299,6 +3299,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/grinch.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/grinch_tests.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/ground_take.rs",
       "owner": "T2"
     },

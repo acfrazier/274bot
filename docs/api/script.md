@@ -1030,6 +1030,47 @@ because content itself checks `stat(thieving)` against the pickpocket row
 base level. It does not attach the native Thieving machine's attempt, stun,
 completion, inventory, or dialogue policy to this compat click.
 
+### Grinch ground-item collection
+
+Grinch is a compiled native card in Browse. It does not create a V8 isolate.
+Its schema version is 1. All 18 base item choices default to selected:
+Easter egg (1961), Disk of returning (981), Half full wine jug (1989),
+Pumpkin (1959), green mask (1053), blue mask (1055), red mask (1057),
+Santa hat (1050), Christmas cracker (962), Red partyhat (1038),
+Yellow partyhat (1040), Blue partyhat (1042), Green partyhat (1044),
+Purple partyhat (1046), White partyhat (1048), Scythe (1419), Bunny ears
+(1037), and Yo-yo (4079). Mask labels include their colour and ID.
+Certificates and the worn Yo-yo variant are not choices.
+
+`radius` defaults to 12 tiles and accepts 1 through 16. It bounds item tiles
+in an inclusive square around the first ready tile captured by each Start.
+The square uses that anchor's plane. Radius does not bound route detours or
+the bank trip. Grinch also filters rows against the player's current active
+zone window, so it ignores stale rows that lack later deletion updates.
+It does not roam beyond the anchor square.
+
+Grinch collects only selected base IDs. It does not collect a certificate by
+name, use a cracker, wear or eat an item, or transform an ID. `bank` defaults
+to **Nearest reachable** and uses the `named-banks` choices. The bank run
+deposits selected IDs only, closes the bank, then returns to the exact
+captured anchor before another selection. Nonselected inventory stays in the
+pack. The `allow_wilderness`, `allow_danger_zones`, and `allow_teleports`
+script grants default to false.
+
+At the anchor with no eligible item and no active child, Grinch reports
+`Waiting` with `waiting for items, r=<n>`. Collection, banking and return
+report `Working`. A duplicate refusal excludes that ID until the next Start;
+other selected IDs remain eligible. Saved settings return
+`RestartRequired`: the active run keeps its settings, and the next Start
+validates the saved choices and captures a new anchor.
+
+#### Not in this release
+
+Grinch inherits the shared bank kernel's wall-clock settlement floor. That
+floor is deferred to the shared bank endpoint and is not a Grinch release
+gate. This documentation does not claim historical discontinuance for any
+item or completed S4 live qualification.
+
 ### Gatherer gathering and supplies
 
 Gatherer supports Woodcutting, Mining and Fishing with a usable carried or
