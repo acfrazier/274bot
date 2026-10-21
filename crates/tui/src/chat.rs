@@ -11,6 +11,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
@@ -129,6 +130,8 @@ struct PaintButtonLayout {
     row: Rect,
     hit: Rect,
     text: String,
+    /// A host control the run does not take now: drawn dim.
+    enabled: bool,
 }
 
 #[derive(Debug)]
@@ -268,6 +271,7 @@ pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -
                     row,
                     hit: Rect::new(row.x, row.y, hit_width, 1),
                     text,
+                    enabled: button.enabled(),
                 }
             })
             .collect()
@@ -502,7 +506,14 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
                 }
             }
             for button in layout.buttons {
-                Paragraph::new(button.text).render(button.row, buf);
+                let style = if button.enabled {
+                    Style::default()
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                Paragraph::new(button.text)
+                    .style(style)
+                    .render(button.row, buf);
             }
         } else {
             let mut lines: Vec<Line> = Vec::new();

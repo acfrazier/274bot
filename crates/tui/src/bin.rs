@@ -1505,22 +1505,16 @@ impl TuiSession {
                 );
             }
             ChatAction::PaintButton(index) => {
-                let click = app
+                // The core decides what the button does: a script click, or
+                // a host control bound to the profile and run the frame was
+                // read for (refused, not retargeted, if focus moved).
+                let input = app
                     .chat_data
                     .script_paint
                     .as_ref()
-                    .map(PaintFrame::view)
-                    .and_then(|paint| {
-                        paint
-                            .buttons()
-                            .nth(index)
-                            .map(|button| (button.id().to_owned(), paint.generation()))
-                    });
-                if let Some((id, generation)) = click {
-                    self.scripts
-                        .stage_paint_input(frontend_core::scripts::PaintInput::click(
-                            id, generation,
-                        ));
+                    .and_then(|paint| paint.view().activate(index));
+                if let Some(input) = input {
+                    self.scripts.stage_paint_input(input);
                     app.error = self
                         .submit_with(
                             app,

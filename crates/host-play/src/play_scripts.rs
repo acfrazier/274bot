@@ -935,6 +935,23 @@ impl Play {
             .and_then(|slot| slot.lock().ok().map(|slot| slot.runtime_generation()))
     }
 
+    /// `name`'s script run, read under one slot lock: the slot's lifetime
+    /// incarnation, the run generation (it moves at every Start and Stop,
+    /// never at Pause) and the lifecycle state. `None` without a slot or
+    /// when a retiring worker poisoned the slot lock. A paint control is
+    /// bound to the first two.
+    pub fn script_run_key(&self, name: &str) -> Option<(u64, u64, script::RunState)> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock().ok().map(|slot| {
+                (
+                    slot.control_key().0,
+                    slot.runtime_generation(),
+                    slot.state(),
+                )
+            })
+        })
+    }
+
     pub fn script_source_identity(&self, name: &str) -> Option<String> {
         script_slot(&self.scripts, name).and_then(|slot| {
             slot.lock()

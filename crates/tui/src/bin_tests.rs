@@ -1502,6 +1502,114 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
     );
 }
 
+/// The frame the standard paint-controls helper records, published on
+/// `name`'s status row as the slot's observe does after a tick.
+fn publish_helper_paint(session: &mut TuiSession, name: &str, generation: u64) {
+    TestPaint::new(Some("Helper"), &["status"])
+        .with_host_controls()
+        .with_generation(generation)
+        .publish(session.core.play_for_test().expect("play"), name);
+    session.core.poll();
+}
+
+fn running_play(names: &[&str]) -> Play {
+    let mut play = empty_play();
+    for (uid, name) in names.iter().enumerate() {
+        play.attach_arm(name, SlotArm::new(uid as i32 + 1, false));
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        start_script_source(&play, name, src, LoadShape::NativeTick).unwrap();
+        wait_script_state(&play, name, ScriptRunState::Running);
+    }
+    play
+}
+
+/// Digits, the focused Enter/Space and a mouse click on the drawn row run
+/// the helper's host controls through the same core activation as the
+/// panel: Pause, the retained frame's Resume, and Stop.
+#[test]
+fn tui_keys_and_mouse_run_the_paint_host_controls() {
+    use crate::layout::Screen;
+    use crate::test_support::{ch, draw, find, key};
+    use crossterm::event::KeyCode;
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(running_play(&["alice"]));
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into()];
+    app.focused = Some(0);
+    app.show_screen(Screen::Chat);
+    publish_helper_paint(&mut session, "alice", 51);
+    let refresh = |session: &TuiSession, app: &mut TuiApp| {
+        app.chat_data.script_paint = session.core.script_paint("alice");
+    };
+
+    refresh(&session, &mut app);
+    let rows = draw(&mut app, 120, 40);
+    assert!(find(&rows, "[1] Pause").is_some(), "{rows:#?}");
+    assert!(find(&rows, "[2] Stop").is_some(), "{rows:#?}");
+    let action = app.on_key(ch('1'));
+    assert_eq!(action, AppAction::Chat(ChatAction::PaintButton(0)));
+    dispatch(&mut session, &mut app, action);
+    assert_eq!(session.core.script_state("alice"), ScriptRunState::Paused);
+
+    // The retained frame offers Resume without another script tick.
+    refresh(&session, &mut app);
+    let rows = draw(&mut app, 120, 40);
+    assert!(find(&rows, "[1] Resume").is_some(), "{rows:#?}");
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::Chat(ChatAction::PaintButton(0)));
+    dispatch(&mut session, &mut app, action);
+    assert_eq!(session.core.script_state("alice"), ScriptRunState::Running);
+
+    refresh(&session, &mut app);
+    let rows = draw(&mut app, 120, 40);
+    let (col, row) = find(&rows, "[1] Pause").expect("Pause row drawn");
+    let action = app.on_click(col, row);
+    assert_eq!(action, AppAction::Chat(ChatAction::PaintButton(0)));
+    dispatch(&mut session, &mut app, action);
+    assert_eq!(session.core.script_state("alice"), ScriptRunState::Paused);
+
+    refresh(&session, &mut app);
+    assert_eq!(app.on_key(ch('j')), AppAction::None, "focus moves to Stop");
+    let action = app.on_key(ch(' '));
+    assert_eq!(action, AppAction::Chat(ChatAction::PaintButton(1)));
+    dispatch(&mut session, &mut app, action);
+    wait_script_state(
+        session.core.play_for_test().expect("play"),
+        "alice",
+        ScriptRunState::Idle,
+    );
+    assert!(app.error.is_none(), "{:?}", app.error);
+}
+
+/// A control drawn for alice never controls bob after the focus moves.
+#[test]
+fn tui_paint_control_shown_for_one_profile_is_refused_for_another() {
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(running_play(&["alice", "bob"]));
+    publish_helper_paint(&mut session, "alice", 61);
+    publish_helper_paint(&mut session, "bob", 62);
+    let mut app = TuiApp::new("274bot headless");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.chat_data.script_paint = session.core.script_paint("alice");
+    app.focused = Some(1);
+    for index in [0, 1] {
+        dispatch(
+            &mut session,
+            &mut app,
+            AppAction::Chat(ChatAction::PaintButton(index)),
+        );
+        assert!(
+            app.error
+                .as_deref()
+                .is_some_and(|error| error.contains("another profile")),
+            "{:?}",
+            app.error
+        );
+    }
+    assert_eq!(session.core.script_state("alice"), ScriptRunState::Running);
+    assert_eq!(session.core.script_state("bob"), ScriptRunState::Running);
+}
+
 #[test]
 fn pump_resets_the_paint_toggle_when_the_paint_is_gone() {
     let mut session = TuiSession::new(dummy_options());

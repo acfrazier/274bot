@@ -34,8 +34,9 @@ const STATUS_FG: [f32; 4] = [0.435, 0.878, 0.545, 1.0];
 /// One script-paint interaction the overlay detected this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaintFrameHit {
-    /// One-shot paint button (`paintClick`).
-    Button(String),
+    /// The `index`-th advertised paint button; the core decides what it
+    /// does ([`frontend_core::scripts::PaintView::activate`]).
+    Button(usize),
     /// Persistent strip/rail/tabs selection (`paint_select`).
     Select { key: String, name: String },
 }
@@ -148,6 +149,7 @@ pub struct PaintOverlay {
     /// on this mirror of the window text.
     lines: Vec<String>,
     /// Advertised button labels drawn this frame (empty while collapsed).
+    #[cfg(test)]
     button_labels: Vec<String>,
     /// Screen-space button rects `(min, max)` for GPU-less click tests.
     button_hits: Vec<[f32; 4]>,
@@ -175,6 +177,7 @@ impl PaintOverlay {
         Self {
             collapsed: false,
             lines: Vec::new(),
+            #[cfg(test)]
             button_labels: Vec::new(),
             button_hits: Vec::new(),
             chrome_hits: Vec::new(),
@@ -232,6 +235,7 @@ impl PaintOverlay {
         size: [f32; 2],
     ) -> Option<(PaintFrameHit, u64)> {
         self.lines.clear();
+        #[cfg(test)]
         self.button_labels.clear();
         self.button_hits.clear();
         self.chrome_hits.clear();
@@ -470,7 +474,7 @@ impl PaintOverlay {
                 None,
             );
         }
-        let mut button_click: Option<String> = None;
+        let mut button_click: Option<usize> = None;
         if !self.collapsed {
             if !has_strip {
                 if let Some(title) = paint.title() {
@@ -578,19 +582,23 @@ impl PaintOverlay {
                 (fp[0] / scale * s).max(0.0),
                 (fp[1] / scale * s).max(0.0),
             ]));
-            for btn in paint.buttons() {
+            for (index, btn) in paint.buttons().enumerate() {
+                #[cfg(test)]
                 self.button_labels.push(btn.label().to_owned());
                 if ty + row_h <= content_bottom {
                     ui.set_cursor_screen_pos([body_left, ty]);
                     let hit = [body_left, ty, body_left + body_w, ty + row_h];
                     self.button_hits.push(hit);
-                    let pressed = ui.button_with_size(
-                        format!("{}##paint-{}", btn.label(), btn.id()),
-                        [body_w, row_h],
-                    );
+                    // A host control the run does not take now draws
+                    // disabled and reports no click.
+                    let _off = (!btn.enabled()).then(|| ui.begin_disabled());
+                    let _id = ui.push_id(index as i32);
+                    let pressed = ui.button_with_size(btn.label(), [body_w, row_h]);
                     let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
-                    if pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)) {
-                        button_click = Some(btn.id().to_owned());
+                    if btn.enabled()
+                        && (pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)))
+                    {
+                        button_click = Some(index);
                     }
                     ty += row_h;
                 }
@@ -612,7 +620,7 @@ impl PaintOverlay {
             chrome_click
                 .map(|(key, name)| (PaintFrameHit::Select { key, name }, paint.generation()))
         } else {
-            button_click.map(|id| (PaintFrameHit::Button(id), paint.generation()))
+            button_click.map(|index| (PaintFrameHit::Button(index), paint.generation()))
         }
     }
 
@@ -933,8 +941,8 @@ mod tests {
         ctx.render();
         assert_eq!(
             clicked,
-            Some((PaintFrameHit::Button("gobank".to_string()), p.generation())),
-            "clicking the button dispatches the advertised id with the rendered generation"
+            Some((PaintFrameHit::Button(0), p.generation())),
+            "clicking the button dispatches its index with the rendered generation"
         );
         assert!(!overlay.collapsed, "button click is not collapse");
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(center), false);
@@ -1520,5 +1528,173 @@ mod tests {
             "identical path ops must not reraster"
         );
         assert_eq!(overlay.upload_calls(), 1);
+    }
+
+    // --- Host controls on a helper-generated paint (PAINT-CONTROLS-025) ---
+
+    use frontend_core::scripts::{LoadShape, PaintFrame, ScriptRunState};
+
+    /// One overlay frame over `frame` with the pointer at `mouse`.
+    fn frame_click(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        mouse: [f32; 2],
+        left_down: bool,
+    ) -> Option<(PaintFrameHit, u64)> {
+        prepare_frame(ctx);
+        ctx.io_mut().add_mouse_pos_event(mouse);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        let mut hit = None;
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    hit = overlay.frame(ui, None, Some(frame.view()), [10.0, 20.0], [765.0, 503.0]);
+                });
+        }
+        ctx.render();
+        hit
+    }
+
+    /// Press button `index` of `frame` with the mouse, as an operator does:
+    /// lay out, hover, press. Returns the overlay's hit.
+    fn press(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        index: usize,
+    ) -> Option<(PaintFrameHit, u64)> {
+        let away = [890.0, 690.0];
+        let _ = frame_click(ctx, overlay, frame, away, false);
+        let hit = overlay.button_hits[index];
+        let center = [(hit[0] + hit[2]) / 2.0, (hit[1] + hit[3]) / 2.0];
+        let _ = frame_click(ctx, overlay, frame, center, false);
+        let pressed = frame_click(ctx, overlay, frame, center, true);
+        let _ = frame_click(ctx, overlay, frame, center, false);
+        pressed
+    }
+
+    /// A panel session over a real play whose `names` each run a real Load
+    /// script and publish the paint-controls helper's frame.
+    fn helper_session(names: &[&str]) -> crate::session::Session {
+        let mut s = crate::session::Session::new();
+        s.core.set_spawn_workers(false);
+        let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        });
+        for (uid, name) in names.iter().enumerate() {
+            play.attach_arm(name, host_play::SlotArm::new(uid as i32 + 1, false));
+            frontend_core::test_support::tui::start_script_source(
+                &play,
+                name,
+                "export function tick(api) { api._n = (api._n||0)+1 }".into(),
+                LoadShape::NativeTick,
+            )
+            .expect("start");
+            let guard = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while frontend_core::test_support::tui::play_script_state(&play, name)
+                != ScriptRunState::Running
+            {
+                assert!(std::time::Instant::now() < guard, "{name} never ran");
+                play.pump_script_lifecycle(name);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            paint(Some("Helper"), &["status"])
+                .with_host_controls()
+                .with_generation(70 + uid as u64)
+                .publish(&play, name);
+        }
+        s.core.set_play(Some(play));
+        s.core.poll();
+        s
+    }
+
+    /// The overlay draws Pause and Stop from the displayed run, a click
+    /// pauses that run through the command seam, the retained frame then
+    /// draws Resume and resumes it without another script tick, and Stop
+    /// ends it (the paths `app.rs` runs for a hit).
+    #[test]
+    fn clicked_paint_controls_pause_resume_and_stop_the_displayed_run() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let mut s = helper_session(&["alice"]);
+        s.select("alice");
+
+        let frame = s.core.script_paint("alice").expect("paint");
+        let hit = press(&mut ctx, &mut overlay, &frame, 0);
+        assert_eq!(overlay.button_labels, vec!["Pause", "Stop"]);
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Button(0))
+        );
+        s.script_paint_activate(&frame, 0);
+        assert_eq!(s.core.script_state("alice"), ScriptRunState::Paused);
+
+        let paused = s.core.script_paint("alice").expect("retained paint");
+        let hit = press(&mut ctx, &mut overlay, &paused, 0);
+        assert_eq!(overlay.button_labels, vec!["Resume", "Stop"]);
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Button(0))
+        );
+        s.script_paint_activate(&paused, 0);
+        assert_eq!(s.core.script_state("alice"), ScriptRunState::Running);
+
+        let running = s.core.script_paint("alice").expect("paint");
+        let hit = press(&mut ctx, &mut overlay, &running, 1);
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Button(1))
+        );
+        s.script_paint_activate(&running, 1);
+        let guard = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while s.core.script_state("alice") != ScriptRunState::Idle {
+            assert!(std::time::Instant::now() < guard, "Stop never settled");
+            s.core
+                .play_for_test()
+                .unwrap()
+                .pump_script_lifecycle("alice");
+            s.core.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A disabled host control draws but reports no click.
+    #[test]
+    fn a_stopping_run_draws_its_controls_disabled_and_reports_no_click() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = paint(Some("Helper"), &["status"])
+            .with_host_controls()
+            .frame_for_run("alice", ScriptRunState::Stopping);
+        assert_eq!(press(&mut ctx, &mut overlay, &frame, 0), None);
+        assert_eq!(press(&mut ctx, &mut overlay, &frame, 1), None);
+        assert_eq!(overlay.button_labels, vec!["Pause", "Stop"]);
+    }
+
+    /// A click captured on alice's paint never controls bob once the
+    /// focus moved to bob before the click was applied.
+    #[test]
+    fn a_paint_control_captured_for_one_profile_never_controls_the_new_focus() {
+        let mut s = helper_session(&["alice", "bob"]);
+        s.select("alice");
+        let alice = s.core.script_paint("alice").expect("paint");
+        s.select("bob");
+        s.script_paint_activate(&alice, 0);
+        s.script_paint_activate(&alice, 1);
+        assert_eq!(s.core.script_state("alice"), ScriptRunState::Running);
+        assert_eq!(s.core.script_state("bob"), ScriptRunState::Running);
     }
 }
