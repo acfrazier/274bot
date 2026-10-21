@@ -1597,8 +1597,13 @@ impl CombatRun {
             end: report.end,
         });
         match report.end {
-            // Loot begins only after the combat machine reports `Killed`
+            // A configured finish owns the post-kill dialogue; other runs proceed
+            // to loot only after the combat machine reports `Killed`
             // (design-combat.md §2.3, §5; combat-s3a-ReviewCombatFable.md F5).
+            CombatEnd::Killed if self.finish.is_some() => {
+                self.enter_finish_wait(cx.tick.cx.evidence().tick);
+                Poll::Pending
+            }
             CombatEnd::Killed => {
                 self.phase = Phase::Loot;
                 self.loot_index = 0;
@@ -1712,6 +1717,14 @@ impl CombatRun {
             return Ok(LootStart::Started);
         }
         Ok(LootStart::Complete)
+    }
+
+    fn enter_finish_wait(&mut self, tick: u64) {
+        self.phase = Phase::FinishWait;
+        self.finish_ticks_elapsed = 0;
+        self.finish_last_tick = Some(tick);
+        self.last_report = None;
+        self.last_outcome = None;
     }
 
     fn spend_finish_tick_budget(&mut self, tick: u64) -> bool {
@@ -1876,11 +1889,7 @@ impl StepRun for CombatRun {
         {
             self.capture_prayer_cleanup();
             self.action = None;
-            self.phase = Phase::FinishWait;
-            self.finish_ticks_elapsed = 0;
-            self.finish_last_tick = Some(cx.tick.cx.evidence().tick);
-            self.last_report = None;
-            self.last_outcome = None;
+            self.enter_finish_wait(cx.tick.cx.evidence().tick);
             return Poll::Pending;
         }
         if matches!(self.phase, Phase::Loot) && self.action.is_none() {
