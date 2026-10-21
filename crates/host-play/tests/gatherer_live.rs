@@ -7714,8 +7714,8 @@ impl QuesterSharedCoreState {
 #[cfg(feature = "live-harness")]
 fn quester_shared_core_completed(
     native_status: Option<&script::native::ScriptStatus>,
-    _lifecycle: Option<&script::ScriptLifecycleReceipt>,
-    _run_state: script::RunState,
+    lifecycle: Option<&script::ScriptLifecycleReceipt>,
+    run_state: script::RunState,
 ) -> Result<bool, String> {
     if let Some(status) = native_status {
         if status.card != script::CompiledId("Quester") {
@@ -7725,7 +7725,16 @@ fn quester_shared_core_completed(
             ));
         }
     }
-    Ok(native_status.is_some_and(|status| status.phase == script::native::NativePhase::Complete))
+    let Some(receipt) = lifecycle else {
+        return Ok(false);
+    };
+    if receipt.state != script::ScriptTerminalState::Completed {
+        return Err(format!(
+            "quester_sheep native run ended {:?}: {receipt:?}",
+            receipt.state
+        ));
+    }
+    Ok(run_state == script::RunState::Idle)
 }
 
 #[cfg(feature = "live-harness")]
@@ -8297,6 +8306,128 @@ mod bank_conservation_tests {
             28,
         );
         (config, snapshot)
+    }
+
+    fn open_bank_slot(items: &[(i32, i32)]) -> GatherSlot {
+        let (config, mut snapshot) = bank_fixture(items);
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 2)]);
+        snapshot.seed_bank_observation(5292, 1, Some(bank.inventory().to_vec()), vec![]);
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::WoodcuttingBank,
+            DRAYNOR_OAK_BANK_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.bank_config = Some(config);
+        slot.snapshot = snapshot;
+        slot
+    }
+
+    fn bank_status(
+        step: &str,
+        event: &str,
+        deposited: i64,
+        trips: i64,
+    ) -> script::native::ScriptStatus {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(format!("Draynor; {step}").into()),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+                StatusField {
+                    key: "deposited",
+                    label: "Deposited",
+                    value: StatusValue::Integer(deposited),
+                },
+                StatusField {
+                    key: "trips",
+                    label: "Trips",
+                    value: StatusValue::Integer(trips),
+                },
+            ]),
+        }
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_an_empty_supply_deposit_without_a_deposit_stage() {
+        let mut slot = open_bank_slot(&[]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.apply_status(&bank_status("Withdraw", "bank trip due", 0, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            0,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 0, 1))
+            .unwrap();
+        assert_eq!(slot.witness.status_trips, 1);
+        assert!(slot.witness.bank_trips.is_empty());
+    }
+
+    #[test]
+    fn bank_open_boundary_accepts_only_the_observed_item_count_increase() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert_eq!(receipt.expected_items, counts(&[(KEBAB_ID, 4)]));
+        assert_eq!(receipt.bank_before, counts(&[(KEBAB_ID, 2)]));
+        let (_, bank) = bank_fixture(&[(KEBAB_ID, 6)]);
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.snapshot
+            .seed_bank_observation(5292, 2, Some(bank.inventory().to_vec()), vec![]);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        slot.apply_status(&bank_status(
+            "Wear",
+            "bank closed; validating equipment",
+            4,
+            0,
+        ))
+        .unwrap();
+        slot.apply_status(&bank_status("Idle", "returned to work area", 4, 1))
+            .unwrap();
+        assert_eq!(slot.witness.bank_trips.len(), 1);
+        assert!(slot.witness.bank_trips[0].deposit_verified);
+    }
+
+    #[test]
+    fn bank_open_boundary_rejects_items_that_vanish_without_a_bank_increase() {
+        let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
+        slot.observe_running(None, slot.capture()).unwrap();
+        slot.snapshot.seed_inventory(vec![], 28);
+        slot.apply_status(&bank_status("Supply", "deposit confirmed", 4, 0))
+            .unwrap();
+        assert!(slot
+            .apply_status(&bank_status(
+                "Wear",
+                "bank closed; validating equipment",
+                4,
+                0,
+            ))
+            .is_err());
     }
 
     fn real_death_slot_at_bank() -> GatherSlot {
