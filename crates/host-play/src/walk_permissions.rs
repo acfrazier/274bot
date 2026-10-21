@@ -722,7 +722,11 @@ pub(crate) fn selection_access_tiles<'a>(
         }
         if let Some((geometry, window, scene)) = live_geometry {
             let tile = window.tile_at(index)?;
-            return geometry.candidate_at(tile, scene.collision_at(tile)?);
+            let flags = window
+                .collision_index(index, scene.height)
+                .and_then(|index| scene.collision_flags.get(index).copied())
+                .unwrap_or(client::dash3d::CollisionFlag::SQ_BLOCKED);
+            return geometry.candidate_at(tile, flags);
         }
         let tile = radius_geometry.candidate_at(index)?;
         if !world.collision.standable(tile) {

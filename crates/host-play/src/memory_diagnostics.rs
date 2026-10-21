@@ -318,23 +318,15 @@ enum SampledPosition {
 
 fn build_gatherer_geometry(
     c: &client::client::Client,
-    fleet: &GathererFleet,
+    world: &Arc<nav::world::NavWorld>,
+    catalog: &api::gather_methods::GatherCatalog,
     anchor: WorldTile,
     combat: i32,
+    radius: i32,
 ) -> Result<Arc<GathererGeometry>, String> {
-    let world = Arc::clone(
-        fleet
-            .world
-            .as_ref()
-            .ok_or_else(|| "gatherer_nav_world_unavailable".to_owned())?,
-    );
-    let catalog = fleet
-        .catalog
-        .as_ref()
-        .ok_or_else(|| "gatherer_catalog_unavailable".to_owned())?;
     let method = catalog
         .method("woodcutting.normal")
-        .map_err(|error| format!("gatherer_method_unavailable:{error}"))?;
+        .map_err(|error| format!("gatherer_method_unavailable:{error:?}"))?;
     let targets = match &method.targets {
         api::selected::Knowledge::Known(targets) => targets,
         _ => return Err("gatherer_method_targets_not_complete".to_owned()),
@@ -351,15 +343,15 @@ fn build_gatherer_geometry(
         return Err("gatherer_method_has_no_resource_loc_targets".to_owned());
     }
     let region = api::gather_methods::SceneRegionInput {
-        min_x: anchor.x.saturating_sub(fleet.radius),
-        min_z: anchor.z.saturating_sub(fleet.radius),
-        max_x: anchor.x.saturating_add(fleet.radius),
-        max_z: anchor.z.saturating_add(fleet.radius),
+        min_x: anchor.x.saturating_sub(radius),
+        min_z: anchor.z.saturating_sub(radius),
+        max_x: anchor.x.saturating_add(radius),
+        max_z: anchor.z.saturating_add(radius),
         level: anchor.level,
     };
     let spots = catalog
         .spots(method, &region)
-        .map_err(|error| format!("gatherer_method_spots_not_complete:{error}"))?;
+        .map_err(|error| format!("gatherer_method_spots_not_complete:{error:?}"))?;
     let zone_table = world
         .graph
         .zones
@@ -441,7 +433,7 @@ fn build_gatherer_geometry(
         candidate_placements,
         excluded_placements: candidate_placements.saturating_sub(trees.len()),
         trees,
-        world: Some(world),
+        world: Some(Arc::clone(world)),
         filter: Some(zone_filter),
     }))
 }
@@ -467,7 +459,8 @@ fn sample_position(
     let Some(filter) = zone_filter.view(zone_table) else {
         return SampledPosition::Missing;
     };
-    match filter.blocking_at(&world.graph.wilderness, tile).next() {
+    let blocking = filter.blocking_at(&world.graph.wilderness, tile).next();
+    match blocking {
         Some(zone) => SampledPosition::Denied(DeniedSample { tick, tile, zone }),
         None => SampledPosition::Allowed,
     }
@@ -491,13 +484,12 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
     let should_sample = new_tick && bot.start_tick.is_some_and(|start| tick > start);
     let combat = combat.filter(|level| *level > 0);
     let anchor = bot.anchor;
-    if let (Some(anchor), Some(combat), Some(_), Some(_)) =
+    if let (Some(anchor), Some(combat), Some(world), Some(catalog)) =
         (anchor, combat, fleet.world.as_ref(), fleet.catalog.as_ref())
     {
-        if !fleet.geometries.contains_key(&combat) {
-            let geometry = build_gatherer_geometry(c, fleet, anchor, combat);
-            fleet.geometries.insert(combat, geometry);
-        }
+        fleet.geometries.entry(combat).or_insert_with(|| {
+            build_gatherer_geometry(c, world, catalog, anchor, combat, fleet.radius)
+        });
     }
     let geometry = combat.and_then(|level| fleet.geometries.get(&level));
     let sampled = if should_sample {
@@ -1436,20 +1428,11 @@ mod tests {
         bot.final_event = Some(Arc::from("idle"));
         assert!(failure(&generic_wait).starts_with("gatherer_zero_xp_without_resource_wait:"));
 
-        let zero = [0; 10];
-        let no_fleet_xp = retained_fleet(
-            "zero",
-            &R2_STARTS,
-            &zero,
-            &R2_WAITS,
-            &R2_CHOPS,
-            &R2_TREE_IDS,
-            &R2_TREE_TILES,
-            &R2_STAND_TILES,
-            NativePhase::Working,
-            "working",
-            "gathering",
-        );
+        let mut no_fleet_xp = r2_fleet();
+        for bot in no_fleet_xp.bots.values_mut() {
+            bot.window_end_xp = bot.start_xp;
+            bot.resource_wait_samples = 1;
+        }
         assert!(failure(&no_fleet_xp).starts_with("gatherer_fleet_zero_xp:"));
 
         let mut idle = r2_fleet();

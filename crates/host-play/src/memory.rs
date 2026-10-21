@@ -389,7 +389,11 @@ pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: boo
     let Some(seed) = seed else {
         return;
     };
-    seed_frame(&mut seed.lock().unwrap(), c, hold);
+    let mut seed = seed.lock().unwrap();
+    if seed.runner.on_start_script() {
+        crate::memory_diagnostics::gatherer_anchor(name, c);
+    }
+    seed_frame(&mut seed, c, hold);
 }
 
 /// One client frame of a slot's seed. A duel slot reports its tile to the
@@ -401,11 +405,8 @@ fn seed_frame(seed: &mut Seed, c: &mut client::client::Client, hold: bool) {
             duel.gate.observe(duel.slot, tile);
         }
     }
-    if seed.runner.on_start_script() {
-        crate::memory_diagnostics::gatherer_anchor(name, c);
-        if !seed.started {
-            return;
-        }
+    if seed.runner.on_start_script() && !seed.started {
+        return;
     }
     seed.runner.tick_with_hold(c, hold);
 }
@@ -2704,7 +2705,7 @@ mod tests {
         library
             .ensure_js(script::ScriptSource::File, &lookup)
             .unwrap();
-        run.card = Some(ScriptCard {
+        run.card = Some(ScriptCard::Catalog {
             card: library
                 .get(script::ScriptSource::File, &lookup)
                 .unwrap()
