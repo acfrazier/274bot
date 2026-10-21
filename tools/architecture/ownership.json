@@ -2387,6 +2387,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/world_picker.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/tests/fixtures/upgrade-0.1.8.1-home/generate.rs",
       "owner": "T3"
     },
@@ -5583,7 +5587,15 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/world_picker.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/tests/settings_notice_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/tui/tests/world_picker_alloc.rs",
       "owner": "T3"
     },
     {
@@ -7012,6 +7024,10 @@
     },
     {
       "path": "crates/frontend-core/src/session/vault_rows.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/world_switch.rs",
       "owner": "T3"
     }
   ]
