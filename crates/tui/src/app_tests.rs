@@ -1157,10 +1157,7 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     let alice = app.profile_id_for_name("alice");
     seam.press(&mut app, ch('g'), AppAction::MarkAll(vec![alice]));
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
-    assert_eq!(
-        app.walk_send.walk_label(app.fleet_model.marks()),
-        "Walk 1 bots"
-    );
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
     assert!(
         app.fleet_model
             .marks()
@@ -1894,10 +1891,55 @@ fn the_group_checklist_count_follows_the_models_marks() {
     assert_eq!(count(&app), 0, "nothing is checked before MarkAll lands");
     seam.apply(&mut app, AppAction::MarkAll(vec![alice]));
     assert_eq!(count(&app), 1);
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
+}
+
+/// A warm, unchanged Group Map draw borrows the cached Walk label: it is
+/// not rebuilt (no count, no new string) until a mark, the rows or the
+/// mode moves, and then it is rebuilt once in its own buffer.
+#[test]
+fn a_steady_group_map_draw_reuses_the_walk_label() {
+    let mut seam = Seam::new();
+    let mut app = open_map_world();
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.refresh_walk_send(all_eligible);
+    let ids = vec![
+        app.profile_id_for_name("alice"),
+        app.profile_id_for_name("bob"),
+    ];
+    seam.press(&mut app, ch('g'), AppAction::MarkAll(ids));
+    assert_eq!(app.walk_send.mode, WalkSendMode::Group);
+    let first = text(&draw(&mut app, 160, 40));
+    assert!(first.contains("Walk 2 bots"), "{first}");
+    let builds = app.walk_send.label_builds;
+    let buffer = app.walk_send.walk_label().as_ptr();
+    for _ in 0..5 {
+        draw(&mut app, 160, 40);
+    }
     assert_eq!(
-        app.walk_send.walk_label(app.fleet_model.marks()),
-        "Walk 1 bots"
+        app.walk_send.label_builds, builds,
+        "steady draws rebuild nothing"
     );
+    assert_eq!(
+        app.walk_send.walk_label().as_ptr(),
+        buffer,
+        "the same string"
+    );
+
+    seam.apply(&mut app, AppAction::SetMark("bob".into(), false));
+    let after = text(&draw(&mut app, 160, 40));
+    assert!(
+        after.contains("Walk 1 bots"),
+        "an unmark moves the label: {after}"
+    );
+    assert_eq!(app.walk_send.label_builds, builds + 1, "rebuilt once");
+    assert_eq!(
+        app.walk_send.walk_label().as_ptr(),
+        buffer,
+        "in its own buffer"
+    );
+    draw(&mut app, 160, 40);
+    assert_eq!(app.walk_send.label_builds, builds + 1);
 }
 
 /// Unloading a marked profile keeps its mark: the table still shows it
@@ -1944,10 +1986,7 @@ fn unloading_a_marked_profile_keeps_its_mark_for_the_next_group_walk() {
     assert_eq!(app.walk_send.checked_count(marks), 1);
     // Entering Group mode keeps the existing mark: no `MarkAll`.
     assert_eq!(app.toggle_walk_send_mode(), AppAction::None);
-    assert_eq!(
-        app.walk_send.walk_label(app.fleet_model.marks()),
-        "Walk 1 bots"
-    );
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
 }
 
 /// The Space key on the Map toggles the focused bot's mark through

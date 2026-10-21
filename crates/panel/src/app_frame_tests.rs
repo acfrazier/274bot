@@ -842,3 +842,35 @@ fn the_rail_grid_and_fleet_window_draw_one_filtered_order() {
         rig.text
     );
 }
+
+/// A Grid whose filter leaves no loaded profile frees the tile views its
+/// cells held: the rail, which also disposes them, is not drawn in Grid.
+#[test]
+fn an_empty_filtered_grid_frees_its_tile_views() {
+    let (mut session, _dir) = session_with_play("fleet-empty-grid", &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    rig.frames_until("a Grid cell holds a tile view", |rig| {
+        !rig.state.views.is_empty()
+    });
+    rig.session()
+        .fleet_model
+        .staged_filter_mut()
+        .push_str("zzz");
+    rig.session()
+        .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+    rig.frame(Pointer::Away);
+    assert!(
+        rig.text.contains("no wall member matches the Fleet filter"),
+        "the Grid is empty:\n{}",
+        rig.text
+    );
+    assert!(
+        rig.state.views.is_empty(),
+        "the hidden cells' views are freed: {:?}",
+        rig.state.views.keys().collect::<Vec<_>>()
+    );
+}

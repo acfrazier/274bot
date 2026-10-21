@@ -1498,6 +1498,10 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             "no wall members"
         });
         state.paint.release_canvas(gpu);
+        // No cell paints: free the tile views the cells held (the rail,
+        // which also disposes them, is not drawn in Grid).
+        let model = &state.session.fleet_model;
+        dispose_idle_views(&mut state.views, gpu, |name| tile_shown(model, name));
         return;
     }
     // The cells read the model's rows while their clicks need the session:
