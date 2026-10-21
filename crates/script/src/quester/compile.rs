@@ -1,11 +1,11 @@
 //! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
+#[cfg(test)]
+use super::path::SequenceOrder;
 use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
     QuestRequirementKindDocument, StepDocument,
 };
-#[cfg(test)]
-use super::path::SequenceOrder;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
@@ -2263,11 +2263,7 @@ mod tests {
 
         fn step_by_id<'a>(document: &'a PathDocument, id: &str) -> Option<&'a StepDocument> {
             for role in &document.roles {
-                if let Some(step) = role
-                    .prelude
-                    .iter()
-                    .find(|step| step.id.0.as_ref() == id)
-                {
+                if let Some(step) = role.prelude.iter().find(|step| step.id.0.as_ref() == id) {
                     return Some(step);
                 }
                 if let Some(step) = role
@@ -2278,10 +2274,7 @@ mod tests {
                     return Some(step);
                 }
                 for sequence in &role.sequences {
-                    if let Some(step) = sequence
-                        .steps
-                        .iter()
-                        .find(|step| step.id.0.as_ref() == id)
+                    if let Some(step) = sequence.steps.iter().find(|step| step.id.0.as_ref() == id)
                     {
                         return Some(step);
                     }
@@ -2308,9 +2301,7 @@ mod tests {
                 PredicateDocument::All(items) | PredicateDocument::Any(items) => items
                     .iter()
                     .any(|item| has_fact(item, expected_kind, expected_args)),
-                PredicateDocument::Not(inner) => {
-                    has_fact(inner, expected_kind, expected_args)
-                }
+                PredicateDocument::Not(inner) => has_fact(inner, expected_kind, expected_args),
             }
         }
 
@@ -2336,31 +2327,17 @@ mod tests {
         let hunt = path("hunt");
         let read_message = step_by_id(&hunt, "hunt-read-pirate-message").unwrap();
         assert!(read_message.args.get("dialogue").is_none());
-        assert!(
-            read_message
-                .comment
-                .as_deref()
-                .unwrap()
-                .contains("still needs S7 runtime journal-root handling")
-        );
+        assert!(read_message
+            .comment
+            .as_deref()
+            .unwrap()
+            .contains("still needs S7 runtime journal-root handling"));
         let apron = step_by_id(&hunt, "apron-buy-thessalia").unwrap();
         assert_eq!(apron.args["est_gp"], 2);
-        assert!(
-            apron
-                .comment
-                .as_deref()
-                .unwrap()
-                .contains("base cost 2 gp")
-        );
+        assert!(apron.comment.as_deref().unwrap().contains("base cost 2 gp"));
         let rum = step_by_id(&hunt, "rum-buy-zambo").unwrap();
         assert_eq!(rum.args["est_gp"], 30);
-        assert!(
-            rum
-                .comment
-                .as_deref()
-                .unwrap()
-                .contains("base cost 30 gp")
-        );
+        assert!(rum.comment.as_deref().unwrap().contains("base cost 30 gp"));
         let coin_float = u64::from(hunt.quest.as_ref().unwrap().coin_float);
         let purchase_total = coin_float
             + 4 * 30
@@ -2391,9 +2368,7 @@ mod tests {
         let prince = path("prince");
         let nearby_guards = &serde_json::json!({"npc": "jailguard", "radius": 5});
         assert!(excludes_nearby_jailguard(
-            &step_by_id(&prince, "key-jail-approach")
-                .unwrap()
-                .settle
+            &step_by_id(&prince, "key-jail-approach").unwrap().settle
         ));
         let clear_guards = step_by_id(&prince, "jail-clear-guards").unwrap();
         let until: PredicateDocument =

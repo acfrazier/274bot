@@ -647,14 +647,7 @@ mod tests {
         let bank = known_empty_bank();
 
         assert_eq!(
-            choice_for_stage(
-                &compiled,
-                "drunkmonk:10",
-                &snapshot,
-                &quests,
-                &[],
-                &bank,
-            ),
+            choice_for_stage(&compiled, "drunkmonk:10", &snapshot, &quests, &[], &bank,),
             chosen("take-childs-blanket"),
             "the cave-side boundary must skip the ring-stone walk and ladder"
         );
