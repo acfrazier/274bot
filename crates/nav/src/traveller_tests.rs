@@ -676,19 +676,43 @@ fn plant_player(c: &mut Client, x: i32, z: i32) {
     c.local_player = Some(lp);
 }
 
-/// Bump every gen and rebuild every family into a fresh snapshot (tick 1).
+/// Refresh every family and observe one PLAYER_INFO game tick.
 fn snap_at(c: &mut Client, x: i32, z: i32) -> GameSnapshot {
     plant_player(c, x, z);
     c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
     let mut snap = GameSnapshot::new();
     snap.rebuild(c);
     snap
 }
 
-/// Bump every gen and rebuild into the existing snapshot (tick + 1).
+/// Refresh every family and observe the next PLAYER_INFO game tick.
 fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
     c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
     snap.rebuild(c);
+}
+
+#[test]
+fn snapshot_fixture_counts_player_info_not_rebuilds_or_polls() {
+    let mut c = scene_client();
+    let mut snapshot = snap_at(&mut c, 0, 0);
+    assert_eq!(snapshot.tick(), 1, "the fixture starts with PLAYER_INFO");
+    assert_eq!(snapshot.tile(), Some((3200, 3200, 0)));
+
+    snapshot.rebuild(&c);
+    assert_eq!(snapshot.tick(), 1, "a duplicate poll is not a game tick");
+
+    plant_player(&mut c, 1, 0);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    snapshot.rebuild(&c);
+    assert_eq!(snapshot.tile(), Some((3201, 3200, 0)));
+    assert_eq!(snapshot.tick(), 1, "a scene rebuild is not a game tick");
+
+    bump_rebuild(&mut c, &mut snapshot);
+    assert_eq!(snapshot.tick(), 2, "the helper observes one PLAYER_INFO");
+    snapshot.rebuild(&c);
+    assert_eq!(snapshot.tick(), 2, "the packet is counted only once");
 }
 
 /// A wall loc (id 1, "Ladder") at scene (3, 4) → world tile (3203, 3204).
