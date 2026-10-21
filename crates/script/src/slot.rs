@@ -1053,7 +1053,7 @@ impl SlotScript {
             return;
         }
         let kind = match card.0 {
-            "Gatherer" => crate::native::request::NativeKind::Gather,
+            "Gatherer" | "Grinch" => crate::native::request::NativeKind::Gather,
             "Quester" => crate::native::request::NativeKind::Quester,
             #[cfg(feature = "load")]
             "Sherlock" => crate::native::request::NativeKind::Clue,

@@ -58,6 +58,30 @@ fn tick(slot: &mut SlotScript) {
     });
 }
 
+#[test]
+fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_419);
+    slot.start_compiled(
+        "account",
+        crate::CompiledId("Grinch"),
+        Arc::new(SettingsBag::new()),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    assert_eq!(slot.state(), RunState::Running);
+    let owner = slot.seat_compiled_owner.expect("compiled Grinch owner");
+    let seat = slot.seat.as_ref().expect("Grinch execution seat");
+    assert_eq!(seat.session(), Some(owner));
+    assert_eq!(seat.foreground(), Some(owner));
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Idle);
+}
+
 #[cfg(feature = "load")]
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
@@ -3284,4 +3308,113 @@ fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
         );
         assert_eq!(slot.evidence_wait_run, None, "{boundary:?}");
     }
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
+    use crate::shim::InteractReq;
+    use api::script_contract::EmissionClass;
+
+    struct Waiting;
+    impl Script for Waiting {
+        fn tick(&mut self, _tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            Ok(ScriptFlow::Continue)
+        }
+
+        fn waits_for_evidence(&self) -> bool {
+            true
+        }
+
+        fn recovery_anchor(&self) -> Option<api::snapshot::WorldTile> {
+            Some(api::snapshot::WorldTile {
+                x: 20,
+                z: 1,
+                level: 0,
+            })
+        }
+    }
+
+    let snapshot = gatherer_snapshot();
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(10);
+    slot.start_test_script(Box::new(Waiting), Some(selected()))
+        .unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        slot.feed_watchdog(started, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::None,
+    );
+    poll_ready_evidence_wait_card(&mut slot, &snapshot, 1);
+    assert_eq!(slot.evidence_wait_run, slot.native_run());
+    slot.seat
+        .as_mut()
+        .expect("compiled execution seat")
+        .push(
+            super::SeatEffect::Interact(crate::load::QueuedInteract {
+                req: InteractReq::WalkTo {
+                    x: 20,
+                    z: 1,
+                    level: 0,
+                },
+                observed_walk_outcome_seq: 0,
+            }),
+            EmissionClass::Gameplay,
+            EmissionSource::Root,
+            None,
+        )
+        .unwrap();
+    assert!(
+        !slot.foreground_action_active(),
+        "no ledger owner or delivery row"
+    );
+    assert!(
+        slot.has_native_actions(),
+        "only the seat's queued row is active"
+    );
+    poll_ready_evidence_wait_card(&mut slot, &snapshot, 2);
+    assert!(!slot.foreground_action_active());
+    assert!(slot.has_native_actions());
+    assert_eq!(
+        slot.evidence_wait_run, None,
+        "poll rejects queued seat work"
+    );
+
+    // Exercise the feed-time term independently of the poll-time term.
+    slot.evidence_wait_run = slot.native_run();
+    let wedge_at = started + crate::watchdog::WEDGE;
+    slot.watchdog.stamp_scheduler(wedge_at);
+    slot.note_game_packet_tick(wedge_at);
+    assert_eq!(
+        slot.feed_watchdog(wedge_at, Some((1, 1, 0)), &[], false, true, &[]),
+        WatchdogAction::ArmWalk {
+            x: 20,
+            z: 1,
+            level: 0
+        },
+        "queued seat work cannot suppress the wedge",
+    );
+    assert_eq!(slot.evidence_wait_run, None);
+    assert_eq!(
+        slot.watchdog.abort_owned_recovery(),
+        WatchdogAction::AbortWalk
+    );
+    let (_, rows, _) = slot.drain_host_interacts();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].req,
+        InteractReq::WalkTo {
+            x: 20,
+            z: 1,
+            level: 0
+        }
+    );
+    assert!(!slot.foreground_action_active());
+    assert!(!slot.has_native_actions());
+    poll_ready_evidence_wait_card(&mut slot, &snapshot, 3);
+    assert_eq!(
+        slot.evidence_wait_run,
+        slot.native_run(),
+        "dispatch readmits the wait"
+    );
 }
