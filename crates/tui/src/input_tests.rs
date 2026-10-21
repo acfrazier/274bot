@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, MouseEventKind};
 
 use api::snapshot::ChatOptionView;
-use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice};
 
 use crate::app::{AppAction, TuiApp};
 use crate::bin::seam::Seam;
@@ -94,10 +94,10 @@ fn space_selects_rows_without_selecting_the_bot() {
     seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), true));
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
     let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("selected 2 of 3"), "{all}");
+    assert!(all.contains("marked 2"), "{all}");
     assert!(all.contains("[x]"), "{all}");
     seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), false));
-    assert!(text(&draw(&mut app, 120, 40)).contains("selected 1 of 3"));
+    assert!(text(&draw(&mut app, 120, 40)).contains("marked 1"));
 }
 
 #[test]
@@ -106,12 +106,14 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
     // does: `SetMark` names a member and the core resolves its identity.
     let mut seam = Seam::with_profiles(&[("alice", 41), ("bob", 42), ("carol", 43)]);
     let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.profile_ids = [
-        frontend_core::ProfileIdentity::uid(41),
-        frontend_core::ProfileIdentity::uid(42),
-        frontend_core::ProfileIdentity::uid(43),
-    ]
-    .into();
+    crate::test_support::set_profile_ids(
+        &mut app,
+        &[
+            frontend_core::ProfileIdentity::uid(41),
+            frontend_core::ProfileIdentity::uid(42),
+            frontend_core::ProfileIdentity::uid(43),
+        ],
+    );
     draw(&mut app, 120, 40);
 
     // Space follows the production fleet_key path, including its identity
@@ -121,8 +123,8 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
     seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), true));
     let alice = frontend_core::ProfileIdentity::uid(41);
     let bob = frontend_core::ProfileIdentity::uid(42);
-    assert!(app.table.selection.contains(alice));
-    assert!(app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(app.fleet_model.marks().contains(bob));
 
     // A cursor move and a filter character both re-project the table.
     app.on_key(key(KeyCode::Down));
@@ -132,14 +134,14 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
         ch('b'),
         AppAction::FleetFilter(FilterEdit::Push('b')),
     );
-    assert!(app.table.selection.contains(alice));
-    assert!(app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(app.fleet_model.marks().contains(bob));
 
     // The filtered, marked row still toggles off through fleet_key.
     app.on_key(key(KeyCode::Enter));
     seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), false));
-    assert!(app.table.selection.contains(alice));
-    assert!(!app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(!app.fleet_model.marks().contains(bob));
 }
 
 /// Tab only moves keyboard focus; it never selects another bot.
@@ -203,13 +205,13 @@ fn text_fields_take_typing_before_global_keys() {
     for c in "q?:".chars() {
         seam.press(&mut app, ch(c), AppAction::FleetFilter(FilterEdit::Push(c)));
     }
-    assert_eq!(app.table.filter.text(), "q?:");
+    assert_eq!(app.fleet_model.filter().text(), "q?:");
     assert!(!app.quit && app.modal.is_none(), "no quit, help or palette");
     assert!(text(&draw(&mut app, 120, 40)).contains("KEYS Fleet filter"));
     for _ in 0..2 {
         seam.send(&mut app, key(KeyCode::Backspace));
     }
-    assert_eq!(app.table.filter.text(), "q");
+    assert_eq!(app.fleet_model.filter().text(), "q");
     let all = text(&draw(&mut app, 120, 40));
     assert!(all.contains("1/2 shown"), "filter keeps quinn only: {all}");
     seam.press(
@@ -217,7 +219,7 @@ fn text_fields_take_typing_before_global_keys() {
         key(KeyCode::Esc),
         AppAction::FleetFilter(FilterEdit::Clear),
     );
-    assert!(app.table.filter.text().is_empty() && !app.table.editing);
+    assert!(app.fleet_model.filter().text().is_empty() && !app.table.editing);
 
     // Log search on the Logs tab.
     assert_eq!(app.on_key(key(KeyCode::F(7))), AppAction::None);
@@ -378,9 +380,8 @@ fn bulk_commands_confirm_a_frozen_scope() {
 #[test]
 fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
     let mut app = fleet_app(&["alice", "bob"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("alice"), true);
+    app.fleet_model
+        .set_mark_for_test(app.profile_id_for_name("alice"), true);
     assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
     assert!(
@@ -397,9 +398,8 @@ fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
 #[test]
 fn marked_start_confirm_names_the_selected_script_it_will_run() {
     let mut app = fleet_app(&["alice", "bob"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("alice"), true);
+    app.fleet_model
+        .set_mark_for_test(app.profile_id_for_name("alice"), true);
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
@@ -416,9 +416,8 @@ fn marked_start_confirm_names_the_selected_script_it_will_run() {
 #[test]
 fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
     let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), true);
+    app.fleet_model
+        .set_mark_for_test(app.profile_id_for_name("bob"), true);
 
     assert_eq!(app.on_key(ch('m')), AppAction::None);
     let all = text(&draw(&mut app, 120, 40));
@@ -431,9 +430,8 @@ fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
     assert!(all.contains("Log out 1 marked bot"), "{all}");
     assert_eq!(app.on_key(ch('y')), AppAction::LogoutMarked);
 
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), false);
+    app.fleet_model
+        .set_mark_for_test(app.profile_id_for_name("bob"), false);
     assert_eq!(app.on_key(ch('m')), AppAction::None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
     assert_eq!(app.on_key(ch('U')), AppAction::None);
@@ -450,9 +448,8 @@ fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
             command.availability(&app),
             Err("mark fleet rows first (Space)")
         );
-        app.table
-            .selection
-            .set_for_test(app.profile_id_for_name("alice"), true);
+        app.fleet_model
+            .set_mark_for_test(app.profile_id_for_name("alice"), true);
         assert_eq!(
             command.availability(&app),
             Err("browse to pick a script first")
@@ -491,9 +488,8 @@ fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
         command.availability(&app),
         Err("mark fleet rows first (Space)")
     );
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), true);
+    app.fleet_model
+        .set_mark_for_test(app.profile_id_for_name("bob"), true);
     assert_eq!(
         command.availability(&app),
         Err("browse to pick a script first")
@@ -567,8 +563,8 @@ fn clicks_select_rows_and_right_click_opens_a_menu() {
     seam.apply(&mut app, mark);
 
     assert!(app
-        .table
-        .selection
+        .fleet_model
+        .marks()
         .contains(app.profile_id_for_name("carol")));
     assert_eq!(app.focused_name().as_deref(), Some("bob"));
 
@@ -940,12 +936,10 @@ fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
     let names: Vec<String> = (0..count).map(|i| format!("bot{i:02}name")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
-    for row in app.fleet.iter_mut().take(running) {
-        row.set_script(ScriptRunState::Running);
-    }
+    crate::test_support::run_scripts(&mut app, running);
     for name in &names {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
+        app.fleet_model.set_mark_for_test(id, true);
     }
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
@@ -1057,12 +1051,10 @@ fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_po
     );
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = fleet_app(&refs);
-    for row in app.fleet.iter_mut().take(3) {
-        row.set_script(ScriptRunState::Running);
-    }
+    crate::test_support::run_scripts(&mut app, 3);
     for name in &names {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
+        app.fleet_model.set_mark_for_test(id, true);
     }
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
     assert_eq!(
@@ -1106,10 +1098,138 @@ fn palette_scope_text_follows_the_combined_bulk_scope() {
     assert_eq!(Command::ScriptStopAll.scope(&app), "all 3 members");
     for name in ["alice", "bob"] {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
+        app.fleet_model.set_mark_for_test(id, true);
     }
     assert_eq!(Command::LoadLoginAll.scope(&app), "2 marked bots");
     assert_eq!(Command::LogoutAll.scope(&app), "2 marked bots");
     assert_eq!(Command::ScriptStartAll.scope(&app), "2 marked bots");
     assert_eq!(Command::ScriptStopAll.scope(&app), "2 marked bots");
+}
+
+/// An app whose fleet is `loaded` (ready) followed by vault profiles that
+/// are not loaded, as the fleet model's universe orders them.
+fn universe_app(loaded: &[&str], unloaded: &[&str]) -> TuiApp {
+    let mut app = fleet_app(loaded);
+    let mut rows: Vec<frontend_core::FleetRow> = app
+        .fleet_model
+        .rows()
+        .iter()
+        .map(frontend_core::FleetRow::snapshot)
+        .collect();
+    rows.extend(
+        unloaded
+            .iter()
+            .map(|name| frontend_core::FleetRow::for_profile(*name)),
+    );
+    app.fleet_model.set_universe_for_test(rows, &[]);
+    app
+}
+
+/// The fleet table lists an unloaded vault profile after the loaded rows,
+/// as `not loaded`, and Space marks it like any other row.
+#[test]
+fn space_marks_an_unloaded_profile_row_the_table_lists() {
+    let mut seam = Seam::new();
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (_, alice_y) = find(&rows, "alice").expect("the loaded row");
+    let (_, zed_y) = find(&rows, "zed").expect("the unloaded profile is listed");
+    assert!(zed_y > alice_y, "after the loaded rows: {}", text(&rows));
+    assert!(
+        rows[usize::from(zed_y)].contains("not loaded"),
+        "{}",
+        text(&rows)
+    );
+    assert!(
+        !rows[usize::from(zed_y)].contains("[x]"),
+        "not marked yet: {}",
+        text(&rows)
+    );
+    app.on_key(key(KeyCode::Down));
+    seam.press(&mut app, ch(' '), AppAction::SetMark("zed".into(), true));
+    let rows = draw(&mut app, 120, 40);
+    let (_, zed_y) = find(&rows, "zed").unwrap();
+    assert!(
+        rows[usize::from(zed_y)].contains("[x] > zed"),
+        "{}",
+        text(&rows)
+    );
+    assert!(text(&rows).contains("marked 1"), "{}", text(&rows));
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+}
+
+/// A click on the `[x]` box of an unloaded row marks it; a click on the
+/// rest of the row focuses nothing.
+#[test]
+fn clicking_an_unloaded_row_marks_through_its_box_and_never_focuses() {
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "zed").unwrap();
+    let box_x = app.regions.fleet_rows.x;
+    assert_eq!(
+        app.on_click(box_x + 1, y),
+        AppAction::SetMark("zed".into(), true)
+    );
+    assert_eq!(app.on_click(x, y), AppAction::None);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("zed is not loaded: mark it and press m to log in")
+    );
+}
+
+/// Enter on an unloaded row keeps the focus where it was and says what to
+/// do instead.
+#[test]
+fn enter_on_an_unloaded_row_does_not_focus_and_says_why() {
+    let mut app = universe_app(&["alice", "bob"], &["zed"]);
+    draw(&mut app, 120, 40);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    app.on_key(key(KeyCode::End));
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("zed is not loaded: mark it and press m to log in")
+    );
+    // A loaded row still focuses.
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::Focus("bob".into())
+    );
+}
+
+/// "Select all shown" marks every shown row, loaded or not, and nothing
+/// the filter hides.
+#[test]
+fn mark_all_shown_stages_the_shown_universe_rows() {
+    let mut app = universe_app(&["alice", "bob"], &["zed"]);
+    app.fleet_model.set_filter_for_test("z");
+    let zed = frontend_core::ProfileIdentity::synthetic("zed");
+    assert_eq!(
+        app.run_command(Command::MarkAllShown),
+        AppAction::MarkAll(vec![zed])
+    );
+}
+
+/// The context menu of an unloaded row offers only the mark.
+#[test]
+fn the_context_menu_of_an_unloaded_row_offers_only_the_mark() {
+    let mut seam = Seam::new();
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "zed").unwrap();
+    app.on_mouse(right_click(x, y));
+    let Some(Modal::Context(menu)) = &app.modal else {
+        panic!("a context menu opened");
+    };
+    assert_eq!(menu.items.len(), 1, "{:?}", menu.items);
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::SetMark("zed".into(), true));
+    seam.apply(&mut app, action);
+    assert!(app
+        .fleet_model
+        .marks()
+        .contains(frontend_core::ProfileIdentity::synthetic("zed")));
 }

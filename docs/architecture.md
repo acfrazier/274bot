@@ -737,7 +737,7 @@ retained by a consumer.
 | --- | --- | --- |
 | `lib.rs` | crate facade | re-exports the session vocabulary |
 | `session.rs`, `session/native_settings.rs` | operator lifecycle over `Play` | vault (staged view), play, selection, slot IO, Load/Log in/Log out/Remove, poll (also refreshes the projections and runs the meter), script Start/Stop settlement, profile write settlement; native settings preparation as a persistence prerequisite |
-| `fleet.rs` | fleet membership | ordered members, logout latch, focus neighbour |
+| `fleet.rs` | fleet membership and the fleet model | ordered members, logout latch, focus neighbour; `FleetModel`: one row per profile identity (loaded slots in load order, then the vault profiles that are not loaded, each with an explicit loaded flag), the marks, the filter and order, the shown rows and their counts, rebuilt only when the core's rows or the vault's profiles moved. Each front end holds one and lends it through `Models::with_fleet`; the panel's Fleet window, rail and Grid and the TUI fleet pane read it |
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
@@ -792,7 +792,7 @@ has released it.
 | `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
-| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | identity-keyed marks, action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands |
+| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | the wide table over the shared fleet model (every profile, loaded or not), action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands. The rail and the Grid draw the same model's shown loaded rows (`app.rs`) |
 | `rail.rs` | sidecar rail chrome | geometry and the status-dot colour of a row's light |
 | `chrome.rs` | app chrome | menus and banners |
 | `overlay.rs` | queue-card overlay | each image's own queue card from its fleet row |
@@ -826,7 +826,7 @@ has released it.
 | `shell.rs` | shell drawing | header (fleet counts, compact meter), fleet and detail panes, log drawer, footer naming the keyboard scope |
 | `input.rs` | key and mouse routing | one model: popup/overlay, then text field, then global chords, then the focused pane; mouse hit-tests the last draw |
 | `commands.rs` | operator command vocabulary | labels, target scope, availability and reason, per-pane shortcut tables shared by keys, buttons, palette and help |
-| `fleet.rs` | fleet table | cursor, row selection, filter, visible-window rows over the core's fleet rows |
+| `fleet.rs` | fleet table | cursor, scroll and filter edit over the core fleet model's shown rows (marks, filter and order are the model's) |
 | `overlay.rs` | app overlays | help, palette, confirmations with frozen targets, context menus, message viewer, manual walk |
 | `palette.rs` | command palette | filtered commands with scope, key and unavailable reason |
 | `help.rs` | help overlay | focused pane's keys first, searchable |

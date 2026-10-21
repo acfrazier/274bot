@@ -387,22 +387,22 @@ impl Command {
             Some(name) => format!("BOT {name}"),
             None => "no bot selected".to_string(),
         };
-        let selected_scope = || match combined_bulk_scope(&app.table.selection) {
+        let selected_scope = || match combined_bulk_scope(app.fleet_model.marks()) {
             BulkScope::All => format!("all {}", members_text(app.names.len())),
-            BulkScope::Marked => format!("{} marked bots", app.table.selection.len()),
+            BulkScope::Marked => format!("{} marked bots", app.fleet_model.marks().len()),
         };
         match self.group() {
             Group::App => "app".into(),
             Group::Logs => "log".into(),
             Group::Fleet => match self {
                 Command::LoadLoginAll
-                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                    if combined_bulk_scope(app.fleet_model.marks()) == BulkScope::Marked =>
                 {
                     selected_scope()
                 }
                 Command::LoadLoginAll => "every vault profile".into(),
                 Command::LogoutAll
-                    if combined_bulk_scope(&app.table.selection) == BulkScope::Marked =>
+                    if combined_bulk_scope(app.fleet_model.marks()) == BulkScope::Marked =>
                 {
                     selected_scope()
                 }
@@ -423,7 +423,7 @@ impl Command {
             }
             Group::Script if self == Command::ScriptApplyMarked => {
                 let source = app.focused_name().unwrap_or_else(|| "no bot".into());
-                format!("{source} to {} marked", app.table.selection.len())
+                format!("{source} to {} marked", app.fleet_model.marks().len())
             }
             Group::Script if matches!(self, Command::ScriptBrowse | Command::ScriptLoad) => {
                 "script library".into()
@@ -433,7 +433,10 @@ impl Command {
                 if matches!(self, Command::MapWalk)
                     && app.walk_send.mode == WalkSendMode::Group =>
             {
-                format!("{} selected bots", app.walk_send.checked_count())
+                format!(
+                    "{} selected bots",
+                    app.walk_send.checked_count(app.fleet_model.marks())
+                )
             }
             Group::Map if !matches!(self, Command::MapWalk | Command::MapTeleport) => "map".into(),
             Group::Bot if self == Command::Loadouts => "loadout store".into(),
@@ -460,8 +463,10 @@ impl Command {
         };
         match self {
             Command::ShowMessage => app.error.as_ref().map(|_| ()).ok_or("no message"),
-            Command::MarkAllShown => members(),
-            Command::ClearMarks => (!app.table.selection.is_empty())
+            Command::MarkAllShown => (!app.fleet_model.shown().is_empty())
+                .then_some(())
+                .ok_or("no rows shown"),
+            Command::ClearMarks => (!app.fleet_model.marks().is_empty())
                 .then_some(())
                 .ok_or("no rows selected"),
             Command::Login | Command::Logout | Command::Remove => bot(),
@@ -525,7 +530,7 @@ impl Command {
                 };
                 match marked_availability(
                     action,
-                    app.table.selection.len(),
+                    app.fleet_model.marks().len(),
                     app.script_sel.is_some(),
                     app.focused_name().is_some(),
                 ) {
@@ -539,7 +544,7 @@ impl Command {
             }
             Command::ScriptApplyMarked => match marked_availability(
                 MarkedAction::ApplySettings,
-                app.table.selection.len(),
+                app.fleet_model.marks().len(),
                 app.script_sel.is_some(),
                 app.focused_name().is_some(),
             ) {

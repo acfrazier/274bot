@@ -450,7 +450,6 @@ impl TuiSession {
 #[cfg(test)]
 pub(crate) mod seam {
     use super::*;
-    use crate::fleet::FleetState;
     use crossterm::event::KeyEvent;
 
     static QUESTER_PATHS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -533,10 +532,10 @@ pub(crate) mod seam {
             self.apply(app, action);
         }
 
-        /// Commit `text` as the fleet filter of a bare fleet table
+        /// Commit `text` as the fleet filter of a bare fleet model
         /// (`SetFleetFilter`).
-        pub(crate) fn filter(&mut self, state: &mut FleetState, text: &str) {
-            let staged = state.filter.staged_mut();
+        pub(crate) fn filter(&mut self, model: &mut frontend_core::FleetModel, text: &str) {
+            let staged = model.staged_filter_mut();
             staged.clear();
             staged.push_str(text);
             let mut walk_cleared = false;
@@ -544,7 +543,7 @@ pub(crate) mod seam {
             let mut surface = TuiSurface {
                 walk_cleared: &mut walk_cleared,
                 map_desk: &mut desk,
-                models: frontend_core::Models::none().with_fleet_filter(&mut state.filter),
+                models: frontend_core::Models::none().with_fleet(model),
                 frame_hook: None,
             };
             self.session
@@ -886,8 +885,7 @@ impl TuiSession {
                     .with_scripts(&mut self.scripts)
                     .with_import(&mut self.profile_import)
                     .with_loadouts(&mut self.loadouts)
-                    .with_marks(&mut app.table.selection)
-                    .with_fleet_filter(&mut app.table.filter)
+                    .with_fleet(&mut app.fleet_model)
                     .with_quester(&mut app.quester_paths_controller)
                     .with_walk_globals(&mut app.walk_permissions)
                     .with_form_save(&mut app.settings_save),
@@ -2019,7 +2017,7 @@ impl TuiSession {
 
     fn script_start_all(&mut self, app: &mut TuiApp) {
         let root = self.start_catalog_root();
-        match frontend_core::combined_bulk_scope(&app.table.selection) {
+        match frontend_core::combined_bulk_scope(app.fleet_model.marks()) {
             frontend_core::BulkScope::Marked => {
                 if let Some(selection) = app.script_sel.as_ref().map(ScriptChoice::duplicate) {
                     self.scripts.stage_browse_pick(selection);
@@ -2161,7 +2159,7 @@ impl TuiSession {
     }
 
     fn script_stop_all(&mut self, app: &mut TuiApp) {
-        match frontend_core::combined_bulk_scope(&app.table.selection) {
+        match frontend_core::combined_bulk_scope(app.fleet_model.marks()) {
             frontend_core::BulkScope::Marked => {
                 match self.submit_raw_with(app, OperatorCommand::StopScript, Targets::Marked) {
                     Ok(mut submitted) => {
@@ -2841,7 +2839,6 @@ impl TuiSession {
                     .iter()
                     .map(|name| self.core.profile_identity_or_synthetic(name)),
             );
-            app.table.selection.retain(app.profile_ids.iter().copied());
         }
         let restart_generation = self.scripts.restart_generation();
         if restart_generation != app.restart_badge_generation || names_changed || ids_changed {
@@ -3327,14 +3324,15 @@ impl TuiSession {
         }
     }
 
-    /// Copy the core's shared projection into the app: fleet rows and
-    /// their counts, the selected slot's detail and the resource meter, each
-    /// only when it moved since the last copy (and into the app's own
-    /// buffers).
+    /// Follow the core's shared projection: refresh the fleet model (one
+    /// cheap check per loop; it rebuilds only when the rows or the vault's
+    /// profiles moved), then copy the fleet counts, the selected slot's
+    /// detail and the resource meter, each only when it moved since the
+    /// last copy (and into the app's own buffers).
     fn copy_projection(&mut self, app: &mut TuiApp) {
+        app.fleet_model.refresh(&self.core);
         let view = self.core.fleet_view();
         if self.copied_rows.replace(view.rows_generation()) != Some(view.rows_generation()) {
-            view.copy_rows_into(&mut app.fleet);
             app.counts = view.counts();
         }
         if self.copied_view.replace(view.generation()) != Some(view.generation()) {
@@ -3390,7 +3388,7 @@ impl TuiSession {
     /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
     /// shown rows follow the text.
     fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
-        let staged = app.table.filter.staged_mut();
+        let staged = app.fleet_model.staged_filter_mut();
         match edit {
             crate::fleet::FilterEdit::Push(c) => staged.push(c),
             crate::fleet::FilterEdit::Pop => {
@@ -3403,8 +3401,7 @@ impl TuiSession {
         {
             app.error = Some(error);
         }
-        app.table
-            .sync_with_ids(&app.names, &app.profile_ids, &app.fleet);
+        app.table.sync(&app.fleet_model);
     }
 
     /// Save the rows the log view shows (`SaveLog`). The write runs off the

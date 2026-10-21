@@ -1534,8 +1534,8 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     let id = CompiledCardId::lookup("Gatherer").unwrap();
     let target_uid = session.core.profile(&target).unwrap().uid();
     session
-        .fleet_selection
-        .set_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
+        .fleet_model
+        .set_mark_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
 
     session.select(&source);
     session.script_sel = Some(ScriptChoice::compiled(id));
