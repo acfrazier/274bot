@@ -2,8 +2,10 @@
 use super::families::{self, CompiledAcquireStep};
 use super::path::{
     PathDocument, PredicateDocument, QuestItemDocument, QuestRequirementDocument,
-    QuestRequirementKindDocument, SequenceOrder, StepDocument,
+    QuestRequirementKindDocument, StepDocument,
 };
+#[cfg(test)]
+use super::path::SequenceOrder;
 pub use super::progress::CompiledProgress;
 use crate::combat::RaisedPrayers;
 use crate::local_state::OperatorLoadouts;
