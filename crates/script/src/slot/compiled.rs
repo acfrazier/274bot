@@ -1483,10 +1483,12 @@ impl SlotScript {
             tick: self.ticks,
             reason: failure.message.to_string(),
         });
+        let terminal_status = self.publish_terminal_native_failure(failure);
         self.state = RunState::Error;
         self.want_run = false;
         self.teardown_compiled(StopReason::Error);
         self.watchdog.cancel_clear();
+        self.terminal_native_status = terminal_status;
     }
 
     /// Same run/session fence as other native controls. A successful request
