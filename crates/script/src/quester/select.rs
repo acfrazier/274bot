@@ -661,6 +661,34 @@ mod tests {
     }
 
     #[test]
+    fn gertrude_yard_cursor_does_not_reselect_earlier_walks() {
+        let data = selected();
+        let quests = quests(&data);
+        let document: PathDocument =
+            serde_json::from_slice(path_bytes("fluffs").expect("released Path")).unwrap();
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 3304,
+                z: 3509,
+                level: 0,
+            },
+        ));
+        let bank = known_empty_bank();
+        let choice = Probe {
+            path: &compiled,
+            selected: &data,
+            quests: &quests,
+            progress: &[],
+            bank: &bank,
+        }
+        .choice("fluffs:4", 5, &snapshot);
+
+        assert_eq!(choice, chosen("walk-nw-corner-in-1"));
+    }
+
+    #[test]
     fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
         use crate::native::ActionError;
         use crate::quester::compile::{PredicatePlan, StepContext, StepPlan, StepRun};
