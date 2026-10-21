@@ -23,7 +23,7 @@ pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load
 /// The bulk row under the buttons (after `[Params]` when a schema
 /// exists). The first slot reads "Confirm" while a reload warning awaits
 /// confirmation, followed by a "Cancel" button.
-pub const SCRIPT_BULK_BUTTONS: [&str; 3] = ["Reload", "Start all", "Stop all"];
+pub const SCRIPT_BULK_BUTTONS: [&str; 3] = ["Reload", "Start fleet", "Stop fleet"];
 
 /// Every script command's key (shown in its button as `[Label k]`): the
 /// same commands the buttons emit, reachable when the pane is clipped.
@@ -37,8 +37,8 @@ pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Params", 'v'),
     ("Reload", 'R'),
     ("Cancel", 'C'),
-    ("Start all", 'T'),
-    ("Stop all", 'E'),
+    ("Start fleet", 'T'),
+    ("Stop fleet", 'E'),
 ];
 
 /// The key of a button label (`Resume` shares Pause's, `Confirm` Reload's).
@@ -674,7 +674,7 @@ mod tests {
         );
     }
 
-    /// The bulk row under the buttons: Reload / Start all / Stop all after
+    /// The bulk row under the buttons: Reload / Start fleet / Stop fleet after
     /// `[Params]`; a pending reload warning turns Reload into Confirm and
     /// adds Cancel, shifting the rest.
     #[test]
@@ -697,7 +697,7 @@ mod tests {
         let row = 3;
         let painted = render(pane(false), 80, 6);
         assert!(
-            painted.contains("[Params v] [Reload R] [Start all T] [Stop all E]"),
+            painted.contains("[Params v] [Reload R] [Start fleet T] [Stop fleet E]"),
             "{painted}"
         );
         assert_eq!(pane(false).on_click(area, 1, row), ScriptClick::Params);
@@ -708,15 +708,15 @@ mod tests {
         );
         assert_eq!(
             pane(false).on_click(area, 23, row),
-            ScriptClick::Button("Start all")
+            ScriptClick::Button("Start fleet")
         );
         assert_eq!(
             pane(false).on_click(area, 48, row),
-            ScriptClick::Button("Stop all")
+            ScriptClick::Button("Stop fleet")
         );
         let painted = render(pane(true), 80, 6);
         assert!(
-            painted.contains("[Params v] [Confirm R] [Cancel C] [Start all T] [Stop all E]"),
+            painted.contains("[Params v] [Confirm R] [Cancel C] [Start fleet T] [Stop fleet E]"),
             "{painted}"
         );
         assert_eq!(
@@ -729,7 +729,7 @@ mod tests {
         );
         assert_eq!(
             pane(true).on_click(area, 35, row),
-            ScriptClick::Button("Start all")
+            ScriptClick::Button("Start fleet")
         );
     }
 

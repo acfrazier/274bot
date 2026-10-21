@@ -566,7 +566,7 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             MapRow::GroupWalk => {
-                let Some(selection) = models.marks.as_deref() else {
+                let Some(selection) = models.fleet.as_deref().map(crate::FleetModel::marks) else {
                     let refused = Applied::Rejected(
                         Rejection::NoModel,
                         Some("marked rows unavailable".into()),
@@ -598,7 +598,8 @@ impl<Io> OperatorSession<Io> {
                     return;
                 };
                 if matches!(targets, super::commands::Targets::Marked) {
-                    let Some(selection) = models.marks.as_deref() else {
+                    let Some(selection) = models.fleet.as_deref().map(crate::FleetModel::marks)
+                    else {
                         for name in names {
                             self.settle_member(
                                 request,

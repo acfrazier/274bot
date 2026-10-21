@@ -10,7 +10,7 @@
 //! and live delivery are reported separately. An assignment is persisted
 //! only with an accepted settings copy, never on its own.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,8 +24,14 @@ use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
+/// A planned copy's target whose profile was deleted since the plan.
+const GONE: &str = "profile no longer exists";
 const NOT_LOADED: &str = "not loaded";
 const UNAVAILABLE: &str = "profile unavailable";
+/// A queued copy target when the copy was cancelled before its turn.
+const COPY_CANCELLED: &str = "settings copy cancelled";
+/// A queued copy target renamed while it waited for its turn.
+const RENAMED: &str = "renamed while the copy waited";
 
 /// A settled settings write (or sync) that needs the operator to choose
 /// whether its affected scripts should restart.
@@ -161,6 +167,11 @@ pub struct SyncScope {
     /// Per-account fields every compiled target keeps; empty for JS cards.
     excluded_fields: Vec<String>,
     field: Option<String>,
+    /// A planned copy's targets, frozen with the plan: identity and the
+    /// name at plan time. Apply writes each through its identity (under its
+    /// current name), skips one gone since or still saving, and writes no
+    /// other row.
+    frozen: Option<Vec<(crate::selection::ProfileIdentity, String)>>,
     prompt: String,
 }
 
@@ -271,6 +282,18 @@ impl SyncScope {
         self.refresh_marked_prompt();
     }
 
+    /// Keep only `shown` (the frozen loaded shown rows of a no-marks
+    /// fleet copy). Unlike [`Self::restrict_to_marked`], an unassigned
+    /// member stays skipped: the no-marks scope never assigns the card.
+    fn restrict_to_shown(&mut self, shown: &[String]) {
+        let others = self.targets.len() + self.skipped.len();
+        self.targets.retain(|target| shown.contains(target));
+        self.skipped.retain(|(member, _)| shown.contains(member));
+        self.unmarked = Some(others - self.targets.len() - self.skipped.len());
+        self.refresh_excluded();
+        self.refresh_marked_prompt();
+    }
+
     fn refresh_excluded(&mut self) {
         if self.excluded_fields.is_empty() {
             self.excluded.clear();
@@ -358,7 +381,12 @@ pub struct SyncReport {
     pub(crate) unmarked: Option<usize>,
     /// Member writes not yet settled: (write operation, member).
     pending: Vec<(OperationId, String)>,
+    /// A native copy's targets still waiting for room.
+    queued: Option<Box<CopyQueue>>,
     copy_cancellation: Option<NativeCopyCancellation>,
+    /// Applied by a planned fleet action: its text stays off the banner
+    /// (the plan's result line reports it).
+    quiet: bool,
     text: String,
 }
 
@@ -453,12 +481,17 @@ impl SyncReport {
         self.unmarked
     }
 
+    /// Member writes not settled yet, queued targets included.
     pub fn pending(&self) -> usize {
         self.pending.len()
+            + self
+                .queued
+                .as_ref()
+                .map_or(0, |queue| queue.remaining.len())
     }
 
     pub fn is_settled(&self) -> bool {
-        self.pending.is_empty()
+        self.pending.is_empty() && self.queued.is_none()
     }
 
     /// One line for the operator: persistence and live delivery counted
@@ -490,7 +523,7 @@ impl SyncReport {
         let counts = [
             (self.failed.len(), "failed"),
             (self.superseded, "superseded"),
-            (self.pending.len(), "saving"),
+            (self.pending(), "saving"),
         ];
         for (n, label) in counts {
             if n > 0 {
@@ -606,7 +639,7 @@ impl SyncState {
                 let report = &mut self.earlier[slot];
                 report.pending.swap_remove(index);
                 let settled = (report.op, fold(report, write));
-                let complete = report.pending.is_empty();
+                let complete = report.is_settled();
                 let prompt = if complete {
                     report.restart_prompt()
                 } else {
@@ -628,7 +661,7 @@ impl SyncState {
             report.pending.swap_remove(index);
             let outcome = fold(report, write);
             report.refresh();
-            let complete = report.pending.is_empty();
+            let complete = report.is_settled();
             let prompt = if complete {
                 report.restart_prompt()
             } else {
@@ -661,11 +694,48 @@ impl SyncState {
         }
     }
 
+    /// The report at `slot`: the older reports first, then the newest.
+    fn report_mut(&mut self, slot: usize) -> Option<&mut SyncReport> {
+        match slot.checked_sub(self.earlier.len()) {
+            None => self.earlier.get_mut(slot),
+            Some(0) => self.last.as_mut(),
+            Some(_) => None,
+        }
+    }
+
+    /// Retire the reports a queue pump settled (every queued target
+    /// skipped or failed and no write pending): an older report is dropped
+    /// and the newest announces its summary; each queues its restart
+    /// prompt. `last_was_open`: the newest report was unsettled before the
+    /// pump.
+    fn finish_settled_reports(&mut self, last_was_open: bool) {
+        let mut index = 0;
+        while index < self.earlier.len() {
+            if self.earlier[index].is_settled() {
+                let report = self.earlier.swap_remove(index);
+                if let Some(prompt) = report.restart_prompt() {
+                    self.queue_restart_prompt(prompt);
+                }
+            } else {
+                index += 1;
+            }
+        }
+        if last_was_open && self.last.as_ref().is_some_and(SyncReport::is_settled) {
+            self.announce = true;
+            if let Some(prompt) = self.last.as_ref().and_then(SyncReport::restart_prompt) {
+                self.queue_restart_prompt(prompt);
+            }
+        }
+    }
+
     pub(super) fn take_settled_summary(&mut self) -> Option<String> {
         if !std::mem::take(&mut self.announce) {
             return None;
         }
-        self.last.as_ref().map(|report| report.text.clone())
+        self.last
+            .as_ref()
+            .filter(|report| !report.quiet)
+            .map(|report| report.text.clone())
     }
 
     pub(super) fn pending_restart_prompt(&self) -> Option<&RestartPrompt> {
@@ -958,6 +1028,7 @@ impl Scripts {
             assigning: Vec::new(),
             excluded_fields: Vec::new(),
             field: None,
+            frozen: None,
             prompt,
         })
     }
@@ -1030,12 +1101,24 @@ impl Scripts {
             assigning: Vec::new(),
             excluded_fields,
             field: field.map(str::to_owned),
+            frozen: None,
             prompt,
         }))
     }
 
     pub fn prepared_settings_sync(&self) -> Option<&SyncScope> {
         self.sync.prepared.as_ref()
+    }
+
+    /// Freeze the prepared copy to a plan's targets (identity and name at
+    /// plan time): see [`SyncScope`]'s `frozen`.
+    pub(crate) fn freeze_settings_sync_targets(
+        &mut self,
+        targets: Vec<(crate::selection::ProfileIdentity, String)>,
+    ) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.frozen = Some(targets);
+        }
     }
 
     /// Stage a profile's selected script settings for the Apply-to-all
@@ -1065,6 +1148,14 @@ impl Scripts {
     pub(crate) fn restrict_prepared_settings_sync(&mut self, marked: &[String], gone: Vec<String>) {
         if let Some(scope) = self.sync.prepared.as_mut() {
             scope.restrict_to_marked(marked, gone);
+        }
+    }
+
+    /// Restrict the prepared scope to the frozen shown rows of a no-marks
+    /// fleet copy (unassigned members stay skipped).
+    pub(crate) fn restrict_prepared_settings_sync_to_shown(&mut self, shown: &[String]) {
+        if let Some(scope) = self.sync.prepared.as_mut() {
+            scope.restrict_to_shown(shown);
         }
     }
 
@@ -1099,7 +1190,10 @@ impl Scripts {
     /// A target whose run of the card is live at this moment receives the
     /// merged bag once its write is durable, fenced to that run. Native copies
     /// also hold new Starts through preparation and persistence; JS copies
-    /// release after their bag has been staged. Returns the sync operation.
+    /// release after their bag has been staged. A native copy keeps a
+    /// bounded number of saves in flight and queues the other targets,
+    /// written as earlier saves finish ([`Self::poll`]); the start hold
+    /// lasts until the last of them is accepted. Returns the sync operation.
     pub(crate) fn apply_settings_sync<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -1109,7 +1203,7 @@ impl Scripts {
             .prepared
             .take()
             .ok_or_else(|| "Apply to all: nothing prepared".to_string())?;
-        let _start_hold = self.sync.start_hold.take();
+        let start_hold = self.sync.start_hold.take();
         let SyncScope {
             source,
             card,
@@ -1121,104 +1215,47 @@ impl Scripts {
             excluded,
             unmarked,
             field,
+            frozen,
             ..
         } = scope;
         let op = core.open_operation(ActionKind::SyncSettings);
-        let copy_cancellation = matches!(selection, script::ScriptSel::Compiled(_))
-            .then(|| NativeCopyCancellation::new(op));
-        let mut failed = Vec::new();
-        let mut pending = Vec::new();
-        let resolved_assignment = match self.assignment_for(&selection, None) {
+        let native = matches!(selection, script::ScriptSel::Compiled(_));
+        let copy_cancellation = native.then(|| NativeCopyCancellation::new(op));
+        let assignment = match self.assignment_for(&selection, None) {
             Ok(Some(assignment)) => Ok(assignment),
             Ok(None) => Err("catalog preparation pending".into()),
             Err(error) => Err(error),
         };
-        for target in targets {
-            let row = core.vault().and_then(|v| v.get(&target)).cloned();
-            let Some(mut row) = row else {
-                failed.push((target, "no profile".to_string()));
-                continue;
+        let mut remaining: VecDeque<String> = targets.into();
+        let mut steps = Vec::new();
+        {
+            let copy = CopyTarget {
+                card: &card,
+                card_name: &card_name,
+                selection: &selection,
+                overrides: &overrides,
+                excluded: &excluded,
+                field: field.as_deref(),
+                frozen: frozen.as_deref(),
+                assignment: &assignment,
+                start_hold: start_hold.as_ref(),
+                cancellation: copy_cancellation.as_ref(),
+                follow_rename: true,
             };
-            let unassigned = row.settings.script_assignment.is_none();
-            let same_card = row
-                .settings
-                .script_assignment
-                .as_ref()
-                .is_some_and(|asg| asg.key() == card);
-            if !same_card && !unassigned {
-                skipped.push((target, OTHER_CARD.to_string()));
-                continue;
+            while !native || core.native_copy_room() > 0 {
+                let Some(target) = remaining.pop_front() else {
+                    break;
+                };
+                steps.push(self.copy_target(core, &copy, target));
             }
-            let assign = if unassigned {
-                match &resolved_assignment {
-                    Ok(assignment) => Some(assignment.clone()),
-                    Err(reason) => {
-                        failed.push((target, reason.clone()));
-                        continue;
-                    }
-                }
-            } else {
-                None
-            };
-            let result = match &selection {
-                script::ScriptSel::Compiled(id) => {
-                    let fields = excluded
-                        .iter()
-                        .find(|(member, _)| member == &target)
-                        .map_or(&[][..], |(_, fields)| fields.as_slice());
-                    match self.compiled_overrides(core, &target, CompiledCardId::from_script(*id)) {
-                        Ok(current) => {
-                            let values =
-                                bulk_values(&overrides, &current, fields, field.as_deref());
-                            self.set_compiled_overrides_assigning(
-                                core, &target, *id, values, assign,
-                            )
-                        }
-                        Err(error) => Err(error),
-                    }
-                }
-                script::ScriptSel::Loaded(source, lookup) => {
-                    if let Some(assignment) = assign {
-                        row.settings.script_assignment = Some(assignment);
-                    }
-                    let schema = self
-                        .js
-                        .get(*source, lookup)
-                        .map_or(&[][..], |card| card.settings_schema.as_slice());
-                    row.settings
-                        .script_settings
-                        .insert(card.clone(), overrides.clone());
-                    let live =
-                        super::live_fence(core, &target, &card).map(|(identity, generation)| {
-                            LiveSettings {
-                                identity,
-                                generation,
-                                run: None,
-                                prepared: None,
-                                bag: Arc::new(self.run_bag(core, &target, schema, &overrides)),
-                            }
-                        });
-                    core.save_profile_with_log_action(
-                        row,
-                        ArmMirror::script_settings(card.clone(), live),
-                        "apply to all",
-                        "settings sync",
-                    )
-                }
-            };
-            if let Ok(write) = result.as_ref() {
-                if matches!(&selection, script::ScriptSel::Loaded(..)) {
-                    self.track_settings_card(*write, selection.clone(), &card_name);
-                }
-            }
-            match result {
-                Ok(write) => {
-                    if let (Some(token), Some(cancellation)) = (&_start_hold, &copy_cancellation) {
-                        core.hold_native_copy_start(write, Arc::clone(token), cancellation.clone());
-                    }
-                    pending.push((write, target));
-                }
-                Err(error) => failed.push((target, error)),
+        }
+        let mut failed = Vec::new();
+        let mut pending = Vec::new();
+        for step in steps {
+            match step {
+                CopyStep::Skipped(member, reason) => skipped.push((member, reason)),
+                CopyStep::Failed(member, error) => failed.push((member, error)),
+                CopyStep::Pending(write, member) => pending.push((write, member)),
             }
         }
         for (member, reason) in &skipped {
@@ -1227,9 +1264,20 @@ impl Scripts {
         for (member, error) in &failed {
             core.set_outcome(op, member, Outcome::failed(error.clone()));
         }
-        for (_, member) in &pending {
+        for member in pending.iter().map(|(_, member)| member).chain(&remaining) {
             core.set_outcome(op, member, Outcome::Pending);
         }
+        let queued = (!remaining.is_empty()).then(|| {
+            Box::new(CopyQueue {
+                remaining,
+                overrides: overrides.clone(),
+                excluded: excluded.clone(),
+                field,
+                frozen,
+                assignment,
+                start_hold,
+            })
+        });
         let mut report = SyncReport {
             op,
             source,
@@ -1252,16 +1300,276 @@ impl Scripts {
             excluded,
             unmarked,
             pending,
+            queued,
             copy_cancellation,
+            quiet: self.planned_run,
             text: String::new(),
         };
         report.refresh();
         // Shown now; `record` announces the final summary once writes settle.
         self.sync.announce = false;
-        self.show(report.text.clone());
+        if !report.quiet {
+            self.show(report.text.clone());
+        }
         self.sync.push(report);
         Ok(op)
     }
+
+    /// Write the queued targets of every copy as room frees; a cancelled
+    /// copy writes nothing more and reports its queued targets skipped.
+    pub(super) fn pump_copy_queues<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        let reports = self.sync.earlier.len() + usize::from(self.sync.last.is_some());
+        let last_was_open = self
+            .sync
+            .last
+            .as_ref()
+            .is_some_and(|last| !last.is_settled());
+        for slot in 0..reports {
+            let Some(report) = self.sync.report_mut(slot) else {
+                continue;
+            };
+            let Some(waiting) = report.queued.as_ref() else {
+                continue;
+            };
+            let cancelled = report
+                .copy_cancellation
+                .as_ref()
+                .is_some_and(|c| c.is_cancelled());
+            // Nothing to write until room frees: leave the queue as it is
+            // and copy nothing (this runs every poll).
+            if !cancelled && (waiting.remaining.is_empty() || core.native_copy_room() == 0) {
+                continue;
+            }
+            let Some(mut queue) = report.queued.take() else {
+                continue;
+            };
+            let op = report.op;
+            let card = report.card.clone();
+            let card_name = report.card_name.clone();
+            let selection = report.selection.clone();
+            let cancellation = report.copy_cancellation.clone();
+            let mut steps = Vec::new();
+            if cancellation.as_ref().is_some_and(|c| c.is_cancelled()) {
+                steps.extend(
+                    queue
+                        .remaining
+                        .drain(..)
+                        .map(|member| CopyStep::Skipped(member, COPY_CANCELLED.to_string())),
+                );
+            } else {
+                let copy = CopyTarget {
+                    card: &card,
+                    card_name: &card_name,
+                    selection: &selection,
+                    overrides: &queue.overrides,
+                    excluded: &queue.excluded,
+                    field: queue.field.as_deref(),
+                    frozen: queue.frozen.as_deref(),
+                    assignment: &queue.assignment,
+                    start_hold: queue.start_hold.as_ref(),
+                    cancellation: cancellation.as_ref(),
+                    follow_rename: false,
+                };
+                while core.native_copy_room() > 0 {
+                    let Some(target) = queue.remaining.pop_front() else {
+                        break;
+                    };
+                    steps.push(self.copy_target(core, &copy, target));
+                }
+            }
+            if steps.is_empty() {
+                if let Some(report) = self.sync.report_mut(slot) {
+                    report.queued = Some(queue);
+                }
+                continue;
+            }
+            for step in &steps {
+                match step {
+                    CopyStep::Skipped(member, reason) => {
+                        core.set_outcome(op, member, Outcome::skipped(reason.clone()));
+                    }
+                    CopyStep::Failed(member, error) => {
+                        core.set_outcome(op, member, Outcome::failed(error.clone()));
+                    }
+                    CopyStep::Pending(..) => {}
+                }
+            }
+            let Some(report) = self.sync.report_mut(slot) else {
+                continue;
+            };
+            for step in steps {
+                match step {
+                    CopyStep::Skipped(member, reason) => report.skipped.push((member, reason)),
+                    CopyStep::Failed(member, error) => report.failed.push((member, error)),
+                    CopyStep::Pending(write, member) => report.pending.push((write, member)),
+                }
+            }
+            // The last queued target accepted: dropping the queue releases
+            // its start hold (each accepted save keeps its own).
+            if !queue.remaining.is_empty() {
+                report.queued = Some(queue);
+            }
+            report.refresh();
+        }
+        self.sync.finish_settled_reports(last_was_open);
+    }
+
+    /// Write one target of a copy: its skip, its failure, or its pending
+    /// write.
+    fn copy_target<Io>(
+        &mut self,
+        core: &mut OperatorSession<Io>,
+        copy: &CopyTarget<'_>,
+        prepared_name: String,
+    ) -> CopyStep {
+        let (target, row) = match copy.frozen {
+            // A planned copy writes the frozen identity, never a row
+            // that took its name since.
+            Some(frozen) => {
+                let row = frozen
+                    .iter()
+                    .find(|(_, name)| *name == prepared_name)
+                    .and_then(|(identity, _)| {
+                        core.vault()?
+                            .profiles()
+                            .find(|profile| {
+                                crate::selection::ProfileIdentity::uid(profile.uid) == *identity
+                            })
+                            .cloned()
+                    });
+                let Some(row) = row else {
+                    return CopyStep::Skipped(prepared_name, GONE.to_string());
+                };
+                if !copy.follow_rename && row.username != prepared_name {
+                    return CopyStep::Skipped(prepared_name, RENAMED.to_string());
+                }
+                if core.profile_write_pending(&row.username) {
+                    return CopyStep::Skipped(row.username, crate::session::SAVING.to_string());
+                }
+                (row.username.clone(), Some(row))
+            }
+            None => {
+                let row = core.vault().and_then(|v| v.get(&prepared_name)).cloned();
+                (prepared_name.clone(), row)
+            }
+        };
+        let Some(mut row) = row else {
+            return CopyStep::Failed(target, "no profile".to_string());
+        };
+        let unassigned = row.settings.script_assignment.is_none();
+        let same_card = row
+            .settings
+            .script_assignment
+            .as_ref()
+            .is_some_and(|asg| asg.key() == copy.card);
+        if !same_card && !unassigned {
+            return CopyStep::Skipped(target, OTHER_CARD.to_string());
+        }
+        let assign = if unassigned {
+            match copy.assignment {
+                Ok(assignment) => Some(assignment.clone()),
+                Err(reason) => return CopyStep::Failed(target, reason.clone()),
+            }
+        } else {
+            None
+        };
+        let result = match copy.selection {
+            script::ScriptSel::Compiled(id) => {
+                let fields = copy
+                    .excluded
+                    .iter()
+                    .find(|(member, _)| member == &prepared_name)
+                    .map_or(&[][..], |(_, fields)| fields.as_slice());
+                match self.compiled_overrides(core, &target, CompiledCardId::from_script(*id)) {
+                    Ok(current) => {
+                        let values = bulk_values(copy.overrides, &current, fields, copy.field);
+                        self.set_compiled_overrides_assigning(core, &target, *id, values, assign)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            script::ScriptSel::Loaded(source, lookup) => {
+                if let Some(assignment) = assign {
+                    row.settings.script_assignment = Some(assignment);
+                }
+                let schema = self
+                    .js
+                    .get(*source, lookup)
+                    .map_or(&[][..], |card| card.settings_schema.as_slice());
+                row.settings
+                    .script_settings
+                    .insert(copy.card.to_owned(), copy.overrides.clone());
+                let live =
+                    super::live_fence(core, &target, copy.card).map(|(identity, generation)| {
+                        LiveSettings {
+                            identity,
+                            generation,
+                            run: None,
+                            prepared: None,
+                            bag: Arc::new(self.run_bag(core, &target, schema, copy.overrides)),
+                        }
+                    });
+                core.save_profile_with_log_action(
+                    row,
+                    ArmMirror::script_settings(copy.card.to_owned(), live),
+                    "apply to all",
+                    "settings sync",
+                )
+            }
+        };
+        match result {
+            Ok(write) => {
+                if matches!(copy.selection, script::ScriptSel::Loaded(..)) {
+                    self.track_settings_card(write, copy.selection.clone(), copy.card_name);
+                }
+                if let (Some(token), Some(cancellation)) = (copy.start_hold, copy.cancellation) {
+                    core.hold_native_copy_start(write, Arc::clone(token), cancellation.clone());
+                }
+                CopyStep::Pending(write, target)
+            }
+            Err(error) => CopyStep::Failed(target, error),
+        }
+    }
+}
+
+/// What one copy writes to every target.
+struct CopyTarget<'a> {
+    card: &'a str,
+    card_name: &'a str,
+    selection: &'a script::ScriptSel,
+    overrides: &'a Map<String, Value>,
+    excluded: &'a [(String, Vec<String>)],
+    field: Option<&'a str>,
+    frozen: Option<&'a [(crate::selection::ProfileIdentity, String)]>,
+    assignment: &'a Result<vault::ScriptAssignment, String>,
+    start_hold: Option<&'a Arc<String>>,
+    cancellation: Option<&'a NativeCopyCancellation>,
+    /// A planned copy writes a frozen profile renamed since the plan
+    /// (Apply); a queued target renamed while it waited is skipped.
+    follow_rename: bool,
+}
+
+/// One target's result at its turn.
+enum CopyStep {
+    Skipped(String, String),
+    Failed(String, String),
+    /// The write operation and the member's name.
+    Pending(OperationId, String),
+}
+
+/// A native copy's targets beyond its in-flight bound
+/// ([`OperatorSession::native_copy_room`]), written in order as earlier
+/// saves finish.
+#[derive(Debug, PartialEq, Eq)]
+struct CopyQueue {
+    remaining: VecDeque<String>,
+    overrides: Map<String, Value>,
+    excluded: Vec<(String, Vec<String>)>,
+    field: Option<String>,
+    frozen: Option<Vec<(crate::selection::ProfileIdentity, String)>>,
+    assignment: Result<vault::ScriptAssignment, String>,
+    /// Holds new Starts until the last queued target's save is accepted.
+    start_hold: Option<Arc<String>>,
 }
 
 /// Same-card members take the copy; another card and unassigned members are

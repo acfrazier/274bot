@@ -1160,7 +1160,12 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
         return Gate::Refuse(ErrorCode::Busy { domain });
     }
     if let DomainEdit::Preferences(edit) = edit {
-        if serde_json::from_str::<serde_json::Value>(edit.value()).is_err() {
+        let malformed = edit.changes().iter().any(|change| {
+            change
+                .value()
+                .is_some_and(|value| serde_json::from_str::<serde_json::Value>(value).is_err())
+        });
+        if malformed {
             return Gate::Refuse(ErrorCode::Validation {
                 domain,
                 reason: ValidationReason::Schema,
@@ -2573,9 +2578,10 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
             let rows = cached.snapshot.as_preferences().unwrap_or(&[]);
             let mut document =
                 files::preference_document(rows).ok_or_else(|| schema_failure(domain))?;
-            if files::apply_preferences_edit(&mut document, edit.key(), edit.value()).is_none() {
-                // The value is JSON (admission checked); a nested key whose
-                // member is not an object cannot be written.
+            if files::apply_preferences_edit(&mut document, edit.changes()).is_none() {
+                // Every value is JSON (admission checked); a nested key
+                // whose member is not an object cannot be written, and
+                // then no change of the edit is.
                 return Err(Settlement::Failed(ErrorCode::Validation {
                     domain,
                     reason: ValidationReason::Schema,

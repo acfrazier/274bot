@@ -39,6 +39,60 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - A capture frame that fills the input queue is reported, instead of
   dropping events silently.
 
+### Fleet
+
+- The panel's Fleet table, MultiBox rail and Grid, and the TUI fleet table,
+  use one filter, sort and set of marks. The sort offers Load order (the
+  default), Name and Status. Profiles that are not loaded are listed as "not
+  loaded"; the rail lists them in a folded "Not loaded" group where you can
+  mark them. A profile keeps its mark when the filter hides it or when it is
+  unloaded, until the profile is deleted. The TUI Map's group send uses the
+  same marks.
+- Load order is saved. Reorder bots by dragging MultiBox tiles or Fleet rows
+  in the panel, with `Alt+Up` / `Alt+Down` in the TUI, or with **Move marked
+  to top** (the TUI palette also has **Move profile up** and **Move profile
+  down**). Name and Status remain temporary view sorts. Load all logs in bots
+  in that order, a new profile goes to the end, a renamed profile keeps its
+  place and removing a bot from the wall keeps its place. The order is saved
+  as `profile_order` in the shared preferences; a reorder whose write fails
+  is reported and the last saved order comes back.
+- Choose each bot's own card, the focused bot's card, or a pinned card (the
+  panel's card picker; `c` in the TUI). Choosing a card does not start a
+  script or change a bot's assignment.
+- Fleet actions name their scope. With bots marked, an action covers every
+  marked profile, hidden marks included; with nothing marked, it covers the
+  loaded bots the filter shows and asks first. Interruption and
+  settings-copy prompts name their targets, the panel and the TUI show the
+  same prompt, and each action keeps one result until it settles. A plan is
+  frozen when it is made: a bot marked, loaded or made ready later does not
+  join it, and a bot that changed is skipped with its new reason. Stop on a
+  bot whose Start is still waiting cancels that Start, and the Start
+  reports it cancelled. The panel's mark box and the TUI's `a` / `A` mark
+  and unmark the shown rows, and both mark the shown rows by status. In
+  the TUI, mark profiles that are not loaded before logging them in.
+- The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
+  **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
+  **Start all** / **Stop all** until the combined fleet toolbar.
+- Switch a bot's world: click its world marker on a MultiBox tile, Grid
+  cell or Fleet row and pick a public world, or press `W` on a TUI fleet
+  row. To move several bots, mark them and choose **Switch world…** in the
+  Fleet window's Marks menu or **Switch world of marked…** in the TUI
+  palette. Fleet asks first and names the bots. Each bot saves its new
+  world, logs out and logs back in through the login queue; a running
+  script continues after it reconnects, and a paused script stays paused.
+  A bot that is queued, logging in, not logged in or already on that world
+  is skipped with the reason, and a bot whose world could not be saved
+  stays logged in. A server with one world offers no switch.
+- Copy settings to more than 64 bots now saves every bot. The copy saves a
+  few dozen bots at a time and the rest wait their turn; Starts wait until
+  the last bot is saved. Cancel stops the bots that are still waiting.
+- Fixed: with MultiBox off, the bot that unlocking logs in (the last
+  focused profile), or a bot picked in Profiles, is now a fleet member.
+  The Fleet window lists it as loaded, and a script can be started on
+  it. Before, Start refused it with `no slot: <name>`. Starting a script
+  on a profile that is not loaded now says `<name> is not loaded`. 0.2.4
+  has the same problem.
+
 ### Random events
 
 - The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
@@ -100,10 +154,34 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
 
+#### Profiles
+
+- Deleting a profile no longer leaves the result of the delete waiting
+  forever; it now reports when the delete is saved.
+
 #### Banking
 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
+
+#### Quester
+
+- Fixed five Path errors. Demon Slayer now waits for Silverlight's delayed
+  handoff. Pirate's Treasure estimates its rum and apron at their full-stock
+  prices of 30 gp and 2 gp; its message-scroll journal read still needs S7
+  runtime journal-root handling. Sea Slug no longer reacquires Swamp paste
+  after Holgart takes it. Prince Ali Rescue clears only nearby guards before
+  talking to Keli. Gertrude's Cat includes the fence landing tile and walks
+  its yard waypoints in order. Monk's Friend skips the ring-stone walk near
+  the ladder or inside the cave.
+- Demon Slayer: the Quester no longer stops at Delrith's incantation menu; it
+  chooses the phrase Gypsy Aris teaches.
+- Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
+  fixtures may start at an explicit seeded stand such as a bank instead of
+  requiring the Path's authored start anchor.
+- An initial wall-facing `Interact` or `UseOn` loc walk retries once from
+  the wall tile after a typed `NoPath` receipt. The retry stays pending
+  across action-budget exhaustion; other walk failures remain terminal.
 
 #### Scenario checks
 

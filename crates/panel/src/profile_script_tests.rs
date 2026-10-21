@@ -9,8 +9,34 @@ use frontend_core::test_support::scripts::{
 };
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
+use frontend_core::FleetAction;
 use std::fs;
 use std::time::{Duration, Instant};
+
+/// Pin `choice` as the fleet card, as the Fleet window's drop-down does:
+/// stage it and submit `SetFleetCard`, nothing else.
+fn pin_fleet_card(s: &mut Session, choice: ScriptChoice) {
+    s.fleet_model
+        .stage_card(frontend_core::FleetCard::pinned(choice));
+    s.submit(OperatorCommand::SetFleetCard, Targets::Application);
+}
+
+/// Plan `action` as a frame does: the session sync refreshes the fleet
+/// model first, then the button submits.
+fn plan(s: &mut Session, action: FleetAction) {
+    s.pump_status();
+    s.plan_fleet_action(action);
+}
+
+/// Pump the session until the latest fleet result has settled.
+fn settle_fleet_result(s: &mut Session) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !s.core.fleet_result().is_some_and(|result| result.settled()) {
+        assert!(Instant::now() < deadline, "the fleet result did not settle");
+        s.pump_status();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 /// Pump catalogue, worker validation and Start receipts until all script
 /// lifecycle work has settled.
@@ -378,6 +404,41 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+/// The unlock's auto-login of the last focused profile with MultiBox off:
+/// the bot runs and is a fleet member, so a loaded script starts on it.
+/// (Before, the unlock opened its slot without loading it, and Start
+/// refused with `no slot: <name>`; found in the F4 rs2b2t live session.)
+#[test]
+fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
+    IsolatedStores::ensure_thread();
+    let dir = tmp("unlock-focus");
+    let vault_path = dir.join("v.vault");
+    let mut vault = VaultFixture::create(&vault_path, "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(1).auto_login(true));
+    vault.put(FixtureProfile::new("bob", "pw").uid(2));
+    drop(vault);
+    let mut s = Session::new();
+    s.persist_ui = false;
+    s.core.set_spawn_workers(false);
+    assert!(!s.multibox);
+    assert!(s.unlock_at(&vault_path, "test-passphrase-01"));
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    assert!(s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let path = write_bot(&dir, "unlock-focus.ts", BOT_TS);
+    let card = s.scripts.load_card(&path).unwrap();
+    let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());
+    start_sel(&mut s, "alice", sel).expect("a loaded script starts on the unlock's bot");
+    assert_eq!(s.core.members(), ["alice".to_string()]);
+}
+
 #[test]
 fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -412,9 +473,10 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
             .script_runtime_generation("alice"),
         Some(0)
     );
+    // A non-member is a profile that is not loaded; the words say so.
     assert_eq!(
         start_sel(&mut s, "missing", sel.duplicate()).unwrap_err(),
-        "no slot: missing"
+        "missing is not loaded"
     );
     assert_eq!(
         s.scripts
@@ -1120,22 +1182,23 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
 
     // Marks persist when focus moves to Bob, but plain Start must skip
     // Alice before it can queue a card or save an assignment there.
-    s.fleet_selection.mark_all_for_test([
+    s.fleet_model.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(1),
         frontend_core::ProfileIdentity::uid(2),
     ]);
     focus_profile(&mut s, "bob");
     let card_id = CompiledCardId::lookup("Gatherer").unwrap();
-    s.select_script_selection(ScriptChoice::compiled(card_id));
-    s.fleet_start_selected();
+    pin_fleet_card(&mut s, ScriptChoice::compiled(card_id));
+    plan(&mut s, FleetAction::Start);
     settle(&mut s);
     s.core.flush_writes();
     wait_state(&s, "bob", ScriptRunState::Running);
-    assert!(s
-        .scripts
-        .last_bulk_report()
-        .unwrap()
-        .contains("alice: already active"));
+    let result = s.core.fleet_result().expect("the Start result");
+    assert!(
+        result.text().contains("alice (already active)"),
+        "{}",
+        result.text()
+    );
     assert_eq!(
         s.profile_assignment("alice"),
         Some(Assignment::catalog("Thiever"))
@@ -1687,13 +1750,18 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     s.load_js(&path);
     start_file_on(&mut s, "alice", &path);
     // Assign & restart holds the replacement behind the old isolate's reap.
-    s.select_script_selection(ScriptChoice::loaded(
-        CardSource::File,
-        &path.to_string_lossy(),
-    ));
+    pin_fleet_card(
+        &mut s,
+        ScriptChoice::loaded(CardSource::File, &path.to_string_lossy()),
+    );
     let identity = s.core.profile_identity("alice").unwrap();
-    s.fleet_selection.set_for_test(identity, true);
-    s.fleet_assign_restart_selected();
+    s.fleet_model.set_mark_for_test(identity, true);
+    plan(&mut s, FleetAction::AssignRestart);
+    assert!(
+        s.core.fleet_plan().is_some_and(|plan| plan.needs_confirm()),
+        "a running script's restart asks first"
+    );
+    s.confirm_fleet_plan();
     assert_eq!(s.core.script_state("alice"), ScriptRunState::Stopping);
 
     s.script_stop_all();
@@ -1917,11 +1985,12 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     play.script_stop("alice");
 }
 
-/// A Start all that lands while marked rows still wait joins their report:
-/// the fleet report keeps following it, and a marked row whose setup fails
-/// afterwards stays listed there and on the banner.
+/// A marked Start on each bot's own card runs at once and its one result
+/// line follows the paced Starts: the marked row whose setup fails after
+/// the click is listed there when it lands, and the banner never carries a
+/// second copy.
 #[test]
-fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
+fn fleet_result_follows_the_paced_starts_of_a_marked_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "carol", "dave"]);
     let good_path = write_bot(&dir, "good.ts", BOT_TS);
     let bad_path = write_bot(
@@ -1937,50 +2006,50 @@ fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
     s.persist_successful_assignment("carol", bad.assignment());
     for name in ["alice", "bob", "carol"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
 
-    s.fleet_start_selected();
-    assert_eq!(
-        s.fleet_report.as_deref(),
-        Some("Start selected: started 1, queued 2, skipped 0")
-    );
-    s.script_start_all();
+    plan(&mut s, FleetAction::Start);
+    assert!(s.core.fleet_plan().is_none(), "a marked Start runs at once");
+    let result = s.core.fleet_result().expect("the Start result");
     assert!(
-        s.error
-            .as_deref()
-            .is_some_and(|report| report.starts_with("Start all: started ")
-                && report.contains("queued")
-                && !report.contains("failed")),
-        "the Start all keeps the marked rows queued: {:?}",
-        s.error
+        !result.settled(),
+        "the queued Starts are still pending: {}",
+        result.text()
     );
     settle(&mut s);
-    let report = s.fleet_report.clone().unwrap_or_default();
-    assert!(
-        [
-            "Start all: started 3, skipped 0, failed 1: carol: ",
-            "Start all: started 2, skipped 1, failed 1: carol: ",
-            "Start all: started 1, skipped 2, failed 1: carol: ",
-        ]
-        .iter()
-        .any(|prefix| report.starts_with(prefix))
-            && report.contains("bulk-load-proof"),
-        "{report}"
+    s.pump_status();
+    let result = s.core.fleet_result().expect("the Start result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(
+        (result.counts().done, result.counts().failed),
+        (2, 1),
+        "{}",
+        result.text()
     );
-    assert_eq!(s.error.as_deref(), Some(report.as_str()));
+    assert!(
+        result.text().contains("carol") && result.text().contains("bulk-load-proof"),
+        "{}",
+        result.text()
+    );
     let play = s.core.play_for_test().unwrap();
-    for name in ["alice", "bob", "dave"] {
+    for name in ["alice", "bob"] {
         assert_eq!(s.core.script_state(name), ScriptRunState::Running, "{name}");
         play.script_stop(name);
     }
     assert_eq!(s.core.script_state("carol"), ScriptRunState::Idle);
+    assert_eq!(
+        s.core.script_state("dave"),
+        ScriptRunState::Idle,
+        "unmarked"
+    );
 }
 
 /// Assign & restart from the Fleet window swaps the card on a running marked
-/// bot and starts it on an idle one; the fleet report follows the paced
-/// Starts to their end. Plain Assign with no card selected says so and
-/// changes nothing.
+/// bot and starts it on an idle one, after a confirmation that names the
+/// interrupted bot; the one result follows the paced Starts to their end.
+/// Assign on each bot's own card is refused with its reason and changes
+/// nothing.
 #[test]
 fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2003,39 +2072,46 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         .unwrap();
     for name in ["alice", "bob"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
 
-    s.fleet_assign_selected();
-    assert_eq!(
-        s.fleet_report.as_deref(),
-        Some("Assign: select a card in Scripts first")
+    plan(&mut s, FleetAction::Assign);
+    assert!(
+        s.error
+            .as_deref()
+            .is_some_and(|error| error.contains("pick a card")),
+        "{:?}",
+        s.error
     );
+    assert!(s.core.fleet_plan().is_none());
+    assert_eq!(s.profile_assignment("bob"), None);
+    s.error = None;
 
-    s.select_script_selection(ScriptChoice::loaded(new.source(), new.identity_id()));
-    let scope = s.fleet_restart_scope();
-    assert_eq!(
-        (scope.interrupted(), scope.starting()),
-        (&["alice".to_string()][..], &["bob".to_string()][..])
+    pin_fleet_card(
+        &mut s,
+        ScriptChoice::loaded(new.source(), new.identity_id()),
     );
-    s.fleet_assign_restart_selected();
+    plan(&mut s, FleetAction::AssignRestart);
+    let plan = s.core.fleet_plan().expect("the restart waits for Confirm");
+    assert!(plan.needs_confirm());
+    assert_eq!(plan.interrupted(), ["alice"]);
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice", "bob"]);
+    s.confirm_fleet_plan();
     s.core.flush_writes();
     s.pump_status();
     settle(&mut s);
+    settle_fleet_result(&mut s);
     let play = s.core.play_for_test().unwrap();
     for name in ["alice", "bob"] {
         assert_eq!(
             s.core.script_state(name),
             ScriptRunState::Running,
-            "{name}; report={:?}; last_bulk={:?}; error={:?}; assignment={:?}; \
-             starts_pending={}; queue={:?}; commands={:?}",
-            s.fleet_report,
-            s.scripts.last_bulk_report(),
+            "{name}; result={:?}; error={:?}; assignment={:?}; starts_pending={}; queue={:?}",
+            s.core.fleet_result().map(|result| result.text()),
             s.error,
             s.profile_assignment(name),
             s.scripts.starts_pending(),
             s.scripts.start_queue_place(name),
-            s.core.commands().reports().collect::<Vec<_>>()
         );
         assert_eq!(
             s.profile_assignment(name).unwrap().key(),
@@ -2044,10 +2120,9 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         );
     }
     assert!(play.script_runtime_generation("alice").unwrap() > before);
-    assert_eq!(
-        s.fleet_report.as_deref(),
-        Some("Assign & restart: started 2, skipped 0")
-    );
+    let result = s.core.fleet_result().expect("the restart result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 2, "{}", result.text());
     for name in ["alice", "bob"] {
         play.script_stop(name);
     }
@@ -2094,9 +2169,10 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
 
 const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
-/// Apply to all from the Script prefs editor: the focused profile's bag
-/// for its card reaches the other same-card member (saved and pushed to
-/// its run), a member on another card is skipped and untouched.
+/// The Scripts window's Apply to same-card members: the focused profile's
+/// bag for its card reaches the other same-card member (saved and pushed to
+/// its run) after the plan row's confirmation; a member on another card is
+/// skipped and untouched. The prompt and the result are the fleet plan's.
 #[test]
 fn apply_to_all_reaches_same_card_members_only() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "carol"]);
@@ -2129,13 +2205,17 @@ fn apply_to_all_reaches_same_card_members_only() {
         Value::String("Guard".into()),
     ));
 
-    s.prepare_settings_sync();
+    s.pump_status();
+    s.copy_focused_settings_to_same_card();
+    let plan = s.core.fleet_plan().expect("the copy waits for Confirm");
+    assert!(plan.needs_confirm());
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["bob"]);
     let scope = s.scripts.prepared_settings_sync().unwrap();
     assert_eq!(scope.targets(), ["bob"]);
     assert_eq!(scope.skipped().len(), 1);
-    s.apply_settings_sync();
+    s.confirm_fleet_plan();
     s.core.flush_writes();
-    s.poll_scripts();
+    settle_fleet_result(&mut s);
 
     let key = card.identity_key().to_owned();
     let saved = |s: &Session, name: &str| {
@@ -2145,7 +2225,8 @@ fn apply_to_all_reaches_same_card_members_only() {
     assert_eq!(saved(&s, "carol"), None);
     let report = s.scripts.last_settings_sync().unwrap();
     assert_eq!((report.saved(), report.delivered()), (1, 1));
-    assert_eq!(s.error.as_deref(), Some(report.summary()));
+    let result = s.core.fleet_result().expect("the copy result");
+    assert_eq!(result.counts().done, 1, "{}", result.text());
     s.core.play_for_test().unwrap().script_stop("bob");
     s.core.play_for_test().unwrap().script_stop("carol");
 }
@@ -2242,9 +2323,9 @@ fn start_all_paces_admission_through_the_shared_coordinator() {
     }
 }
 
-/// The Fleet window's apply-settings prepares the focused bot's parameters
-/// for the marked same-card bots only: an unmarked bot on the same card is
-/// left out and named as such, and nothing is written before Apply.
+/// The Fleet window's Copy settings plans the focused bot's parameters for
+/// the marked same-card bots only: an unmarked bot on the same card is
+/// left out and named as such, and nothing is written before Confirm.
 #[test]
 fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "dave"]);
@@ -2260,7 +2341,7 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     focus_profile(&mut s, "alice");
     s.script_sel = Some(ScriptChoice::loaded(card.source(), card.identity_id()));
     let bob = s.core.profile_identity("bob").unwrap();
-    s.fleet_selection.set_for_test(bob, true);
+    s.fleet_model.set_mark_for_test(bob, true);
 
     // Newly assigned: alice has no per-card key, only a legacy override.
     s.scripts
@@ -2269,7 +2350,15 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let vault_file = dir.join("v.vault");
     let before = fs::read(&vault_file).unwrap();
 
-    s.fleet_prepare_apply_settings();
+    pin_fleet_card(
+        &mut s,
+        ScriptChoice::loaded(card.source(), card.identity_id()),
+    );
+    plan(&mut s, FleetAction::CopySettings);
+    assert!(
+        s.core.fleet_plan().is_some_and(|plan| plan.needs_confirm()),
+        "a settings copy always asks first"
+    );
     s.core.flush_writes();
 
     let scope = s.scripts.prepared_settings_sync().expect("prepared");

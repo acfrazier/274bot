@@ -3464,6 +3464,7 @@ fn apply_route_output(
                 return;
             };
             let mut reservation = reservation;
+            let no_path = matches!(&output.outcome, RouteJobOutcome::NoPath);
             let (route_path, pending, custody) = match output.outcome {
                 RouteJobOutcome::NoPath => (None, None, None),
                 RouteJobOutcome::Route(route) => {
@@ -3566,6 +3567,15 @@ fn apply_route_output(
                     .as_ref()
                     .map(|_| script::native::WalkEnd::Refused)
             });
+            let native_failure = if no_path
+                && native_failure
+                    .as_ref()
+                    .is_none_or(|failure| *failure == script::native::WalkEnd::Failed)
+            {
+                Some(script::native::WalkEnd::NoPath)
+            } else {
+                native_failure
+            };
             let native_refused = native_failure == Some(script::native::WalkEnd::Refused);
             let detail = output.detail.take().map(Arc::from);
             let blocked = std::mem::take(&mut output.blocked);

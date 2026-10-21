@@ -6,7 +6,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
-use frontend_core::{FleetCounts, FleetRow, Phase, SlotDetail};
+use frontend_core::{FleetCounts, FleetRow, Phase, ProfileIdentity, SlotDetail};
 
 use crate::app::TuiApp;
 
@@ -56,7 +56,8 @@ pub fn ready_detail(name: &str) -> SlotDetail {
 pub fn fleet_app(names: &[&str]) -> TuiApp {
     let mut app = TuiApp::new(TITLE);
     app.names = names.iter().map(|n| n.to_string()).collect();
-    app.fleet = names.iter().map(|n| ready(n, 2)).collect();
+    app.fleet_model
+        .set_universe_for_test(names.iter().map(|n| ready(n, 2)).collect(), &[]);
     app.counts = FleetCounts {
         loaded: names.len(),
         ready: names.len(),
@@ -66,6 +67,19 @@ pub fn fleet_app(names: &[&str]) -> TuiApp {
     app.detail = names.first().map(|name| ready_detail(name));
     app.refresh();
     app
+}
+
+/// Give the app's members these vault identities (the model's rows keep
+/// their order), as the production session's projection does.
+pub fn set_profile_ids(app: &mut TuiApp, ids: &[ProfileIdentity]) {
+    app.profile_ids = ids.to_vec();
+    let rows: Vec<FleetRow> = app
+        .fleet_model
+        .rows()
+        .iter()
+        .map(FleetRow::snapshot)
+        .collect();
+    app.fleet_model.set_universe_for_test(rows, ids);
 }
 
 pub fn rows(buf: &Buffer) -> Vec<String> {
@@ -124,4 +138,14 @@ pub fn write_private_fixture(
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+/// Give the app these Browse cards and the core picker choice of each (the
+/// pump copies both from the session): what the fleet-card picker lists.
+pub fn set_cards(app: &mut TuiApp, cards: Vec<crate::script_shape::BrowseCard>) {
+    app.script_card_choices = cards
+        .iter()
+        .map(|card| crate::script_shape::card_selection(card).expect("a card with a choice"))
+        .collect();
+    app.script_cards = cards;
 }
