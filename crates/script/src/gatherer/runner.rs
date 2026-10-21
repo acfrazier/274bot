@@ -13,12 +13,18 @@ use super::select::{
 };
 use super::settings::{has_members_requirement, method_level, GathererSettings, Skill};
 use super::status::{self, StatusData};
-use super::supply::{self, SupplyPlan, SupplyPlanResult, SupplyVerdict};
+use super::supply::{self, SupplyPlan};
 use super::widen::{
     remember_group, site_anchor, SearchExclusions, SearchResult, TriedGroup, WidenCursor,
 };
 use super::{GatherRetained, RecoveryState};
-use crate::bank::{self, PickKind, SelectedBank};
+use crate::acquire::run::AcquireRun;
+use crate::acquire::{
+    AcquireOutcome, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
+    CoinPolicy, DepositSpec, Need, OpenGate, VendorChoice,
+};
+#[cfg(test)]
+use crate::bank;
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
@@ -37,8 +43,6 @@ use std::task::Poll;
 mod recover;
 
 const MAX_AVOID: usize = 8;
-const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
-const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
 // USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
 // Traveller's 60-poll bound; §3 records the normal content-derived stand
 // succeeding. One fresh plan from observed position is the supported recovery.
@@ -103,30 +107,24 @@ enum Active {
     Drop(ActionHandle<DropBatch>),
     Walk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
-    Select(ActionHandle<bank::Select>),
-    Open(ActionHandle<bank::Open>),
-    Deposit(ActionHandle<bank::Deposit>),
-    Withdraw(ActionHandle<bank::Withdraw>),
-    Close(ActionHandle<bank::Close>),
+    Acquire(AcquireRun),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Validation {
     Ready,
     Pending,
-    Wear(ToolState),
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum TripStep {
     #[default]
     Idle,
-    Select,
-    Access,
-    Open,
     Deposit,
-    Withdraw,
-    Close,
+    Supply {
+        return_to_work: bool,
+        deposit_products: bool,
+    },
     Validate,
     Return,
 }
@@ -241,9 +239,8 @@ fn hazard_retreat_stand(
 #[derive(Default)]
 struct GatherScratch {
     fishing: FishingSurvey,
-    withdrawals: Option<Arc<[bank::Withdrawal]>>,
-    bank_open_attempts: u8,
-    bank_close_attempts: u8,
+    /// Retain the admitted full-batch reserve across a hold and re-plan.
+    needs: Option<Arc<[Need]>>,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
     last_yield_tick: u64,
     /// At most one admitted replan for a resource return; admission deferrals
@@ -273,8 +270,6 @@ pub struct Gatherer {
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
-    selected_bank: Option<SelectedBank>,
-    supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
     last_gameplay_tick: u64,
@@ -331,8 +326,6 @@ impl Gatherer {
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
-            selected_bank: None,
-            supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
             last_gameplay_tick: 0,
@@ -368,28 +361,10 @@ impl Gatherer {
 
     fn advance_trip(&mut self, step: TripStep) {
         self.trip = step;
-        if let Some(selected) = &self.selected_bank {
-            if let Some(bank) = self
-                .prepared
-                .banks
-                .banks()
-                .get(usize::from(selected.bank_index))
-            {
-                self.bank_label = Arc::from(format!(
-                    "{}; {:?}; access:{},{},{}; {:?}",
-                    bank.name,
-                    selected.kind,
-                    selected.access_tile.x,
-                    selected.access_tile.z,
-                    selected.access_tile.level,
-                    step
-                ));
-            }
-        }
         self.dirty = true;
     }
 
-    fn start_trip(&mut self) {
+    fn start_trip(&mut self, step: TripStep) {
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -400,40 +375,110 @@ impl Gatherer {
         );
         self.target = None;
         self.wait_until = None;
-        self.selected_bank = None;
-        self.scratch.bank_open_attempts = 0;
-        self.scratch.bank_close_attempts = 0;
-        self.scratch.withdrawals = None;
+        self.scratch.needs = None;
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
         self.scratch.return_recovery_actions = 0;
         self.scratch.return_recovery_pending = false;
-        self.supply_missing = None;
-        self.advance_trip(TripStep::Select);
+        self.advance_trip(step);
         self.set_event("bank trip due");
     }
 
-    /// The packed stand the current trip opened, for the transfer verbs'
-    /// re-open (`native_bank::MAX_BANK_REOPENS`).
-    fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
-        self.selected_bank
-            .as_ref()
-            .and_then(|selected| selected.access.clone())
+    fn acquire_request(
+        &self,
+        needs: Arc<[Need]>,
+        deposit: Option<DepositSpec>,
+        close: CloseBank,
+        cx: &crate::native::ActionContext<'_>,
+    ) -> AcquireRequest {
+        AcquireRequest {
+            needs,
+            deposit,
+            bank: BankChoice {
+                bank: None,
+                explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
+                    .then(|| Arc::from(self.settings().bank.as_str())),
+                required: false,
+                preferences: self.settings().bank_preferences(),
+            },
+            stage: BankStage::Planned,
+            partial_ok: true,
+            close,
+            vendor: VendorChoice::None,
+            coins: CoinPolicy::None,
+            walk: WalkOptions::default(),
+            required_after: cx.evidence(),
+        }
     }
 
-    /// Act on trip admission at a boundary (design-bank-snapshot §2.4): a
-    /// due trip starts, whether the bank memory planned it (`Trip`) or the
-    /// trip is the lookup (`TripToLearn`); a shortage the bank showed this
-    /// session fails in place, without the walk. `false` when nothing is due.
-    fn admit_supply(&mut self, verdict: SupplyVerdict) -> bool {
-        match verdict {
-            SupplyVerdict::NotDue => false,
-            SupplyVerdict::Trip(_) | SupplyVerdict::TripToLearn => {
-                self.start_trip();
+    fn deposit_spec(&mut self, inventory: &[ItemView]) -> DepositSpec {
+        for item in inventory.iter().filter(|item| item.count > 0) {
+            let Some(index) = crate::acquire::unbankable_index(&self.prepared.selected, item)
+            else {
+                continue;
+            };
+            let mask = 1_u8 << index;
+            if self.unbankable_logged & mask == 0 {
+                self.unbankable_logged |= mask;
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "Gatherer keeps {} (id={}): engine content forbids banking this item",
+                    item.def.name.as_deref().unwrap_or("unnamed item"),
+                    item.def.id,
+                );
+            }
+        }
+        let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
+        keep.keep_unbankable(&self.prepared.selected, inventory);
+        DepositSpec::Ids {
+            products: supply::bank_deposit_ids(&self.prepared, self.tool.id, inventory),
+            keep: Arc::from(keep.as_slice()),
+        }
+    }
+
+    /// A known shortage refuses before a trip; hints earn the core's scan.
+    fn admit_supply(&mut self, cx: &crate::native::ActionContext<'_>) -> bool {
+        let snapshot = cx.snapshot();
+        let Some(stats) = snapshot.stats() else {
+            return false;
+        };
+        if !SupplyPlan::due(&self.prepared, stats.value, snapshot.stock()) {
+            return false;
+        }
+        let needs = match SupplyPlan::build(&self.prepared, stats.value, snapshot.stock()) {
+            Ok(needs) => needs,
+            Err(error) => {
+                self.action_failure(error);
+                return true;
+            }
+        };
+        let mut request = self.acquire_request(needs, None, CloseBank::Close, cx);
+        match crate::acquire::run::plan_current(&request, cx) {
+            Ok(AcquireVerdict::Satisfied) => false,
+            Ok(AcquireVerdict::Plan(plan)) => {
+                let return_to_work = plan.scan || plan.withdrawal_count > 0;
+                if return_to_work {
+                    let Some(inventory) = snapshot.inventory() else {
+                        return false;
+                    };
+                    request.deposit = Some(self.deposit_spec(inventory.value));
+                }
+                self.start_trip(TripStep::Supply {
+                    return_to_work,
+                    deposit_products: return_to_work,
+                });
+                self.scratch.needs = Some(Arc::clone(&request.needs));
+                self.active =
+                    Active::Acquire(AcquireRun::new(request, plan, &self.prepared.banks, cx));
                 true
             }
-            SupplyVerdict::Missing(item) => {
-                self.fail("supply-missing", format!("supply-missing:{item}"));
+            Ok(AcquireVerdict::Blocked(block)) => {
+                self.fail(block.code(), block.message);
+                true
+            }
+            Err(error) => {
+                self.action_failure(error);
                 true
             }
         }
@@ -441,7 +486,7 @@ impl Gatherer {
 
     fn start_dispose(&mut self, tick: &mut NativeTick<'_>) {
         if self.settings().disposition.eq_ignore_ascii_case("Bank") {
-            self.start_trip();
+            self.start_trip(TripStep::Deposit);
         } else {
             self.start_drop(tick);
         }
@@ -569,169 +614,62 @@ impl Gatherer {
     }
 
     fn begin_trip(&mut self, tick: &mut NativeTick<'_>) {
-        if matches!(self.trip, TripStep::Deposit | TripStep::Withdraw)
-            && tick
-                .cx
-                .snapshot()
-                .bank_session()
-                .is_some_and(|session| !session.value.open)
-        {
-            // A hold may dismiss the modal without consuming the trip step.
-            self.advance_trip(TripStep::Open);
+        if matches!(self.active, Active::Acquire(_)) {
+            self.poll_active(tick);
             return;
         }
         match self.trip {
             TripStep::Idle => {}
-            TripStep::Select => {
-                let Some(here) = tick.cx.snapshot().here() else {
-                    return;
-                };
-                let args = bank::SelectArgs {
-                    facts: Arc::clone(&self.prepared.banks),
-                    from: here.value,
-                    preferences: self.settings().bank_preferences(),
-                    options: WalkOptions::default(),
-                    explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
-                        .then(|| Arc::from(self.settings().bank.as_str())),
-                    allow_air_fallback: false,
-                };
-                match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
-                    Ok(handle) => self.active = Active::Select(handle),
-                    Err(error) => self.action_failure(error),
-                }
-            }
-            TripStep::Access => {
-                if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, tick);
-                }
-            }
-            TripStep::Open => {
-                let Some(selected) = &self.selected_bank else {
-                    return;
-                };
-                let Some(access) = &selected.access else {
-                    self.fail(
-                        "bank-unavailable",
-                        format!(
-                            "bank-unavailable:{}: no packed stand or declared NPC access",
-                            self.prepared
-                                .banks
-                                .banks()
-                                .get(usize::from(selected.bank_index))
-                                .map_or(self.settings().bank.as_str(), |bank| bank.name)
-                        ),
-                    );
-                    return;
-                };
-                if self.scratch.bank_open_attempts >= MAX_BANK_OPEN_ATTEMPTS {
-                    self.fail(
-                        "bank-unavailable",
-                        format!(
-                            "bank-unavailable: bank did not open after {MAX_BANK_OPEN_ATTEMPTS} attempts"
-                        ),
-                    );
-                    return;
-                }
-                self.scratch.bank_open_attempts += 1;
-                let args = bank::OpenArgs {
-                    access: Arc::clone(access),
-                };
-                match tick.actions.begin::<bank::Open>(args, &mut tick.cx) {
-                    Ok(handle) => self.active = Active::Open(handle),
-                    Err(error) => self.action_failure(error),
-                }
-            }
             TripStep::Deposit => {
                 let snapshot = tick.cx.snapshot();
                 let Some(inventory) = snapshot.inventory() else {
                     return;
                 };
-                for item in inventory.value.iter().filter(|item| item.count > 0) {
-                    let Some(index) =
-                        crate::acquire::unbankable_index(&self.prepared.selected, item)
-                    else {
-                        continue;
-                    };
-                    self.scratch.kept_unbankable = true;
-                    let mask = 1_u8 << index;
-                    if self.unbankable_logged & mask == 0 {
-                        self.unbankable_logged |= mask;
-                        api::host_log!(
-                            api::hostlog::Category::BankOp,
-                            api::hostlog::Level::Info,
-                            "Gatherer keeps {} (id={}): engine content forbids banking this item",
-                            item.def.name.as_deref().unwrap_or("unnamed item"),
-                            item.def.id,
-                        );
-                    }
-                }
-                let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
-                keep.keep_unbankable(&self.prepared.selected, inventory.value);
-                let args = bank::DepositArgs {
-                    products: supply::bank_deposit_ids(
-                        &self.prepared,
-                        self.tool.id,
-                        inventory.value,
-                    ),
-                    keep: Arc::from(keep.as_slice()),
-                    // The stand this trip opened: a session lost mid-deposit
-                    // is re-opened from it instead of blocking the run.
-                    access: self.selected_access(),
-                };
-                match tick.actions.begin::<bank::Deposit>(args, &mut tick.cx) {
-                    Ok(handle) => self.active = Active::Deposit(handle),
-                    Err(error) => self.deposit_failure(error),
-                }
+                let deposit = self.deposit_spec(inventory.value);
+                let request = self.acquire_request(
+                    Arc::from([]),
+                    Some(deposit),
+                    CloseBank::LeaveOpen,
+                    &tick.cx,
+                );
+                self.begin_acquire(request, tick);
             }
-            TripStep::Withdraw => {
-                if self.scratch.withdrawals.is_none() {
+            TripStep::Supply {
+                deposit_products, ..
+            } => {
+                if self.scratch.needs.is_none() {
                     let snapshot = tick.cx.snapshot();
-                    let (Some(stats), Some(inventory), Some(equipment)) =
-                        (snapshot.stats(), snapshot.inventory(), snapshot.equipment())
-                    else {
+                    let Some(stats) = snapshot.stats() else {
                         return;
                     };
-                    match SupplyPlan::from_loaded_bank(
-                        &self.prepared,
-                        stats.value,
-                        inventory.value,
-                        equipment.value,
-                        snapshot.bank().map(|bank| bank.value),
-                    ) {
-                        SupplyPlanResult::Pending => return,
-                        SupplyPlanResult::Missing(item) => {
-                            self.fail("supply-missing", format!("supply-missing:{item}"));
+                    match SupplyPlan::build(&self.prepared, stats.value, snapshot.stock()) {
+                        Ok(needs) => self.scratch.needs = Some(needs),
+                        Err(error) => {
+                            self.action_failure(error);
                             return;
-                        }
-                        SupplyPlanResult::Ready(plan) => {
-                            self.supply_missing = plan.missing().cloned();
-                            self.scratch.withdrawals = Some(plan.to_withdrawals());
                         }
                     }
                 }
-                let withdrawals = self
-                    .scratch
-                    .withdrawals
-                    .as_ref()
-                    .expect("latched supply plan");
-                if withdrawals.is_empty() {
-                    self.advance_trip(TripStep::Close);
-                    self.begin_close(tick);
-                    return;
-                }
-                let args = bank::WithdrawArgs {
-                    withdrawals: Arc::clone(withdrawals),
-                    access: self.selected_access(),
+                let deposit = if deposit_products {
+                    let snapshot = tick.cx.snapshot();
+                    let Some(inventory) = snapshot.inventory() else {
+                        return;
+                    };
+                    Some(self.deposit_spec(inventory.value))
+                } else {
+                    None
                 };
-                match tick.actions.begin::<bank::Withdraw>(args, &mut tick.cx) {
-                    Ok(handle) => self.active = Active::Withdraw(handle),
-                    Err(error) => self.action_failure(error),
-                }
+                let request = self.acquire_request(
+                    Arc::clone(self.scratch.needs.as_ref().expect("admitted supply needs")),
+                    deposit,
+                    CloseBank::Close,
+                    &tick.cx,
+                );
+                self.begin_acquire(request, tick);
             }
-            TripStep::Close => self.begin_close(tick),
             TripStep::Validate => {
-                // V-resume derives the observed tool and, if possible, waits
-                // for its equipment settlement before this return boundary.
+                // V-resume derives the observed tool after the core's settled
+                // Close and Wear steps, before the resource-return boundary.
                 if !self.needs_validate {
                     if self.scratch.kept_unbankable
                         && tick.cx.snapshot().stock().pack_full() == Some(true)
@@ -756,21 +694,28 @@ impl Gatherer {
             TripStep::Return => self.return_to_resources(tick),
         }
     }
-    fn begin_close(&mut self, tick: &mut NativeTick<'_>) {
-        if self.scratch.bank_close_attempts >= MAX_BANK_CLOSE_ATTEMPTS {
-            self.fail(
-                "bank-close-failed",
-                format!(
-                    "bank-close-failed: bank did not close after {MAX_BANK_CLOSE_ATTEMPTS} attempts"
-                ),
-            );
-            return;
-        }
-        self.scratch.bank_close_attempts += 1;
-        match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
-            Ok(handle) => self.active = Active::Close(handle),
-            Err(error) => self.action_failure(error),
-        }
+    fn begin_acquire(&mut self, request: AcquireRequest, tick: &mut NativeTick<'_>) {
+        let plan = match crate::acquire::run::plan_current(&request, &tick.cx) {
+            // A chained supply request must close the already-open bank even
+            // when no transfer or wear is left to do.
+            Ok(AcquireVerdict::Satisfied) => AcquirePlan::empty(),
+            Ok(AcquireVerdict::Plan(plan)) => plan,
+            Ok(AcquireVerdict::Blocked(block)) => {
+                self.fail(block.code(), block.message);
+                return;
+            }
+            Err(error) => {
+                self.action_failure(error);
+                return;
+            }
+        };
+        self.active = Active::Acquire(AcquireRun::new(
+            request,
+            plan,
+            &self.prepared.banks,
+            &tick.cx,
+        ));
+        self.poll_active(tick);
     }
 
     fn fail(&mut self, code: &'static str, message: impl Into<Arc<str>>) {
@@ -852,7 +797,7 @@ impl Gatherer {
     fn apply_pending(&mut self, disposal_due: bool) -> Option<u64> {
         // A hold revokes the machine, not its full-batch reserve target.
         // Keep both the plan and its configuration stable until settlement.
-        if self.scratch.withdrawals.is_some() {
+        if self.scratch.needs.is_some() {
             return None;
         }
         let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
@@ -865,7 +810,7 @@ impl Gatherer {
         let next_disposal = disposal_due
             && self.trip == TripStep::Idle
             && current.disposition != next.settings.disposition;
-        if changed_bank && self.trip != TripStep::Select && !next_disposal {
+        if changed_bank && self.trip != TripStep::Deposit && !next_disposal {
             return None;
         }
         if current.disposition != next.settings.disposition
@@ -1083,24 +1028,20 @@ impl Gatherer {
         if self.trip != TripStep::Idle && self.trip != TripStep::Validate {
             return Validation::Ready;
         }
-        if self.admit_supply(SupplyPlan::plan(
-            &self.prepared,
-            stats.value,
-            snapshot.stock(),
-        )) {
+        // A full-pack haul is deposited before a known supply shortage can
+        // refuse the second request at the open bank.
+        if self.trip == TripStep::Idle
+            && self.settings().disposition.eq_ignore_ascii_case("Bank")
+            && snapshot.stock().pack_full() == Some(true)
+        {
+            return Validation::Ready;
+        }
+        if self.admit_supply(cx) {
             return if self.failure.is_some() {
                 Validation::Pending
             } else {
                 Validation::Ready
             };
-        }
-        if let Some(tool) = tool {
-            if skill != Skill::Fishing
-                && !tool.worn
-                && self.can_wield(tool, inventory.value, stats.value)
-            {
-                return Validation::Wear(tool);
-            }
         }
         Validation::Ready
     }
@@ -1119,51 +1060,6 @@ impl Gatherer {
             id: tool.id,
             worn: tool.worn,
         })
-    }
-
-    fn can_wield(&self, tool: ToolState, inventory: &[ItemView], stats: &[StatView]) -> bool {
-        !tool.worn && supply::can_wield(&self.prepared, tool.id, inventory, stats)
-    }
-
-    fn begin_wear(&mut self, tick: &mut NativeTick<'_>) {
-        let snapshot = tick.cx.snapshot();
-        let Some(inventory) = snapshot.inventory() else {
-            return;
-        };
-        let Some(row) = inventory
-            .value
-            .iter()
-            .find(|row| row.def.id == self.tool.id)
-        else {
-            self.fail("tool-missing", "the selected tool left the inventory");
-            return;
-        };
-        let Some(name) = row.def.name.as_deref() else {
-            self.fail("tool-missing", "the selected tool has no observed name");
-            return;
-        };
-        let Some(action) = row.actions.iter().flatten().find(|action| {
-            action.eq_ignore_ascii_case("Wield") || action.eq_ignore_ascii_case("Wear")
-        }) else {
-            self.fail(
-                "tool-unusable",
-                "the selected tool has no observed equip action",
-            );
-            return;
-        };
-        if !self.fence.reserve(1) {
-            return;
-        }
-        match tick.actions.begin::<OneOp>(
-            OneOpArgs::wear(Arc::from(name), self.tool.id, action),
-            &mut tick.cx,
-        ) {
-            Ok(handle) => {
-                self.active = Active::Tend(handle);
-                self.set_event("wielding tool");
-            }
-            Err(error) => self.action_failure(error),
-        }
     }
 
     fn action_failure(&mut self, error: ActionError) {
@@ -1573,8 +1469,6 @@ impl Gatherer {
             self.fail(
                 if self.trip == TripStep::Return {
                     "return-failed"
-                } else if self.trip == TripStep::Access {
-                    "bank-unavailable"
                 } else {
                     "walk-failed"
                 },
@@ -1583,12 +1477,6 @@ impl Gatherer {
             return;
         }
         match self.trip {
-            TripStep::Access => {
-                if self.selected_bank.is_some() {
-                    self.advance_trip(TripStep::Open);
-                }
-                return;
-            }
             TripStep::Return => {
                 let arrived = self.resource_return_arrived(tick);
                 if !arrived {
@@ -1687,128 +1575,125 @@ impl Gatherer {
                     self.action_failure(error);
                 }
             },
-            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Select(handle),
-                Poll::Ready(Ok(selected)) => {
-                    if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX {
-                        self.bank_label =
-                            Arc::from(format!("{}; NoCandidate", self.settings().bank));
+            Active::Acquire(mut run) => {
+                let (bank, access, stage) = run.progress();
+                let before = (bank.map(|bank| bank.tile), access.copied(), stage);
+                let result = run.poll(tick, OpenGate::Open);
+                let (bank, access, stage) = run.progress();
+                let after = (bank.map(|bank| bank.tile), access.copied(), stage);
+                if before != after {
+                    self.dirty = true;
+                    if (before.0, before.1) != (after.0, after.1) {
+                        if let (Some(bank), Some(access)) = (bank, access) {
+                            self.bank_label = Arc::from(format!(
+                                "{}; access:{},{},{}",
+                                bank.name, access.x, access.z, access.level,
+                            ));
+                        }
+                    }
+                }
+                match result {
+                    Poll::Pending
+                    | Poll::Ready(Err(ActionError::Held | ActionError::BudgetExhausted)) => {
+                        self.active = Active::Acquire(run);
+                    }
+                    Poll::Ready(Ok(AcquireOutcome::Done(receipt))) => {
+                        self.retained.deposited =
+                            self.retained.deposited.saturating_add(receipt.deposited);
+                        if receipt.deposited > 0 && self.retained.recovery == RecoveryState::Idle {
+                            self.retained.haul_since_death = true;
+                        }
+                        self.scratch.kept_unbankable |= receipt.kept_unbankable;
+                        // Retain the accepted attribution: any completed
+                        // withdrawal makes a later full pack a supply block.
+                        self.scratch.withdrew_supplies |= receipt.withdrew_any;
+                        self.sync_retained(tick);
+                        match self.trip {
+                            TripStep::Deposit => {
+                                if self.scratch.kept_unbankable
+                                    && tick.cx.snapshot().stock().pack_full() != Some(false)
+                                {
+                                    self.deposit_failure(ActionError::BankDeposit(
+                                        crate::bank::ops::DepositFailure::Unbankable,
+                                    ));
+                                    return;
+                                }
+                                self.advance_trip(TripStep::Supply {
+                                    return_to_work: true,
+                                    deposit_products: false,
+                                });
+                                self.set_event("deposit confirmed");
+                            }
+                            TripStep::Supply { return_to_work, .. } => {
+                                self.scratch.needs = None;
+                                if self.retained.recovery == (RecoveryState::Pending { step: 3 }) {
+                                    self.advance_trip(TripStep::Idle);
+                                    self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
+                                } else if return_to_work {
+                                    self.advance_trip(TripStep::Validate);
+                                } else {
+                                    self.advance_trip(TripStep::Idle);
+                                }
+                                self.needs_validate = true;
+                                self.set_event("bank closed; validating equipment");
+                            }
+                            _ => unreachable!("an acquisition belongs to a deposit or supply trip"),
+                        }
+                    }
+                    Poll::Ready(Ok(AcquireOutcome::ChildDue { .. })) => {
                         self.fail(
-                            "bank-unavailable",
-                            format!("bank-unavailable:{}", self.settings().bank),
+                            "action-error",
+                            "a Gatherer bank-only supply request selected a child",
                         );
-                    } else {
-                        self.selected_bank = Some(selected);
-                        self.advance_trip(TripStep::Access);
-                        self.set_event("bank selected");
                     }
+                    Poll::Ready(Err(error)) => self.acquire_failure(&run, error),
                 }
-                Poll::Ready(Err(error)) => {
-                    self.fail(
-                        "bank-unavailable",
-                        format!("bank selection failed: {error:?}"),
-                    );
-                }
-            },
-            Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Open(handle),
-                Poll::Ready(Ok(())) => {
-                    self.advance_trip(TripStep::Deposit);
-                }
-                Poll::Ready(Err(ActionError::Failed(message)))
-                    if matches!(
-                        message.as_ref(),
-                        "bank did not open" | "bank item table unavailable"
-                    ) =>
-                {
-                    self.begin_trip(tick);
-                }
-                Poll::Ready(Err(error)) => {
-                    self.fail("bank-unavailable", format!("bank open failed: {error:?}"));
-                }
-            },
-            Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Deposit(handle),
-                Poll::Ready(Ok(deposited)) => {
-                    self.retained.deposited = self.retained.deposited.saturating_add(deposited);
-                    if deposited > 0 && self.retained.recovery == RecoveryState::Idle {
-                        self.retained.haul_since_death = true;
-                    }
-                    self.sync_retained(tick);
-                    if self.scratch.kept_unbankable
-                        && tick.cx.snapshot().stock().pack_full() != Some(false)
-                    {
-                        self.deposit_failure(ActionError::BankDeposit(
-                            crate::bank::ops::DepositFailure::Unbankable,
-                        ));
-                        return;
-                    }
-                    self.advance_trip(TripStep::Withdraw);
-                    self.set_event("deposit confirmed");
-                }
-                Poll::Ready(Err(error)) => self.deposit_failure(error),
-            },
-            Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Withdraw(handle),
-                Poll::Ready(Ok(true)) => {
-                    // Known limit (accepted 2026-10-15): this marks any
-                    // completed withdrawal, not one that filled the pack. If a
-                    // withdrawal leaves one free slot and a Strange box fills it
-                    // during Close, the stop names supplies, not the box. The
-                    // stop itself is still correct: the pack is full.
-                    self.scratch.withdrew_supplies = true;
-                    self.scratch.withdrawals = None;
-                    if let Some(item) = self.supply_missing.take() {
-                        self.fail("supply-missing", format!("supply-missing:{item}"));
-                        return;
-                    }
-                    self.advance_trip(TripStep::Close);
-                    self.set_event("withdrawal confirmed");
-                }
-                Poll::Ready(Ok(false)) => {
-                    self.fail("bank-withdraw-failed", "supply withdrawal was incomplete");
-                }
-                Poll::Ready(Err(error)) => {
-                    self.fail(
-                        "bank-withdraw-failed",
-                        format!("supply withdrawal failed: {error:?}"),
-                    );
-                }
-            },
-            Active::Close(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Close(handle),
-                Poll::Ready(Ok(_)) => {
-                    if self.retained.recovery == (RecoveryState::Pending { step: 3 }) {
-                        self.advance_trip(TripStep::Idle);
-                        self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
-                    } else {
-                        self.advance_trip(TripStep::Validate);
-                    }
-                    self.needs_validate = true;
-                    self.set_event("bank closed; validating equipment");
-                }
-                Poll::Ready(Err(ActionError::Failed(message)))
-                    if message.as_ref() == "bank did not close" =>
-                {
-                    if tick
-                        .cx
-                        .snapshot()
-                        .bank_session()
-                        .is_some_and(|session| session.value.open)
-                    {
-                        self.begin_close(tick);
-                    } else {
-                        self.fail("bank-close-failed", format!("bank-close-failed: {message}"));
-                    }
-                }
-                Poll::Ready(Err(error)) => {
-                    self.action_failure(error);
-                }
-            },
+            }
         }
         if tick.cx.interaction_event_spent() {
             self.fence.seal();
         }
+    }
+
+    fn acquire_failure(&mut self, run: &AcquireRun, error: ActionError) {
+        if let Some(block) = run.block() {
+            self.fail(block.code(), Arc::clone(&block.message));
+            return;
+        }
+        if let ActionError::Failed(message) = &error {
+            for code in [
+                "tool-missing",
+                "tool-unusable",
+                "bank-unavailable",
+                "bank-close-failed",
+            ] {
+                if message
+                    .strip_prefix(code)
+                    .is_some_and(|tail| tail.starts_with(':'))
+                {
+                    let detail = if code.starts_with("tool-") {
+                        message
+                            .split_once(": ")
+                            .map_or(message.as_ref(), |(_, detail)| detail)
+                    } else {
+                        message.as_ref()
+                    };
+                    self.fail(code, Arc::from(detail));
+                    return;
+                }
+            }
+        }
+        let code = match run.progress().2 {
+            "Select" | "Access" | "Open" => "bank-unavailable",
+            "Deposit" => "bank-deposit-failed",
+            "Withdraw" => "bank-withdraw-failed",
+            "Close" => "bank-close-failed",
+            _ => {
+                self.action_failure(error);
+                return;
+            }
+        };
+        self.fail(code, format!("{code}: {error:?}"));
     }
 
     fn begin_stray_modal(&mut self, tick: &mut NativeTick<'_>) -> bool {
@@ -1862,13 +1747,12 @@ impl Gatherer {
         if self.needs_validate {
             match self.validate(&mut tick.cx) {
                 Validation::Pending => return,
-                Validation::Wear(tool) => {
-                    self.tool = tool;
-                    self.begin_wear(tick);
-                    return;
-                }
                 Validation::Ready => self.needs_validate = false,
             }
+        }
+        if matches!(self.active, Active::Acquire(_)) {
+            self.begin_trip(tick);
+            return;
         }
         if self.begin_eat(tick) {
             return;
@@ -1877,25 +1761,24 @@ impl Gatherer {
             self.begin_trip(tick);
             return;
         }
-        let snapshot = tick.cx.snapshot();
-        if let Some(stats) = snapshot.stats() {
-            if self.admit_supply(SupplyPlan::plan(
-                &self.prepared,
-                stats.value,
-                snapshot.stock(),
-            )) {
-                if self.trip != TripStep::Idle {
-                    self.begin_trip(tick);
-                }
-                return;
+        let pack_full = tick.cx.snapshot().stock().pack_full() == Some(true);
+        if pack_full && self.settings().disposition.eq_ignore_ascii_case("Bank") {
+            self.start_dispose(tick);
+            self.begin_trip(tick);
+            return;
+        }
+        if self.admit_supply(&tick.cx) {
+            if self.trip != TripStep::Idle {
+                self.begin_trip(tick);
             }
+            return;
         }
         let Some(area) = self.area else {
             self.needs_validate = true;
             return;
         };
         let snapshot = tick.cx.snapshot();
-        if snapshot.stock().pack_full() == Some(true) {
+        if pack_full {
             self.start_dispose(tick);
             if self.trip != TripStep::Idle {
                 self.begin_trip(tick);
@@ -2243,11 +2126,7 @@ impl Gatherer {
             }
             Active::Walk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
-            Active::Select(_)
-            | Active::Open(_)
-            | Active::Deposit(_)
-            | Active::Withdraw(_)
-            | Active::Close(_) => ("banking", NativePhase::Working),
+            Active::Acquire(_) => ("banking", NativePhase::Working),
         }
     }
 
@@ -2316,7 +2195,22 @@ impl Gatherer {
             trips: u32::from(self.trips),
             xp: self.xp,
             xp_per_hour: None,
-            bank: Arc::clone(&self.bank_label),
+            bank: if self.bank_label.as_ref() == "—" {
+                Arc::clone(&self.bank_label)
+            } else {
+                let stage = match &self.active {
+                    Active::Acquire(run) => run.progress().2,
+                    _ => match self.trip {
+                        TripStep::Idle => "Idle",
+                        TripStep::Deposit => "Deposit",
+                        TripStep::Supply { .. } => "Supply",
+                        TripStep::Validate => "Validate",
+                        TripStep::Return => "Return",
+                    },
+                };
+                Arc::from(format!("{}; {stage}", self.bank_label))
+            },
+            bank_seen: None,
             last_progress: self.last_gameplay_tick,
             deaths: self.retained.deaths,
             recoveries: self.retained.recoveries,
@@ -2362,7 +2256,8 @@ impl Gatherer {
         }
         self.dirty = false;
         let (_, native_phase) = self.phase();
-        let data = self.status_data(tick.cx.snapshot().inventory().map(|rows| rows.value));
+        let mut data = self.status_data(tick.cx.snapshot().inventory().map(|rows| rows.value));
+        data.bank_seen = crate::acquire::plan::Counts::bank_seen(&tick.cx.snapshot().stock());
         status::publish(
             tick.output,
             self.run,
@@ -3034,11 +2929,146 @@ mod tests {
             )
         }
 
-        fn missing_message(&self) -> String {
-            format!(
-                "supply-missing:{}",
-                self.prepared.supply.bait.as_ref().unwrap().name
-            )
+        fn assert_missing(&self, failure: &ScriptFailure) {
+            let name = &self.prepared.supply.bait.as_ref().unwrap().name;
+            assert_eq!(failure.code.as_ref(), "supply-missing");
+            assert!(failure.message.starts_with(&format!(
+                "no {name} in the pack, worn, or in the bank as seen "
+            )));
+            assert!(failure.message.ends_with(&format!(
+                "(0 rows); nobody sells it; waiting: put a {name} in the pack"
+            )));
+        }
+    }
+
+    #[test]
+    fn acquire_tool_failures_keep_the_gatherer_codes_and_detail() {
+        use crate::quester::families::tests::with_tick;
+
+        let fixture = BaitFixture::new();
+        for code in ["tool-missing", "tool-unusable"] {
+            let mut gatherer = fixture.gatherer(GatherRetained::default());
+            let mut ledger = None;
+            with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+                let request =
+                    gatherer.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
+                let run = AcquireRun::new(
+                    request,
+                    AcquirePlan::empty(),
+                    &gatherer.prepared.banks,
+                    &tick.cx,
+                );
+                gatherer.acquire_failure(
+                    &run,
+                    ActionError::Failed(Arc::from(format!("{code}: observed tool detail"))),
+                );
+            });
+            let failure = gatherer
+                .failure
+                .expect("the core failure stops this request");
+            assert_eq!(failure.code.as_ref(), code);
+            assert_eq!(failure.message.as_ref(), "observed tool detail");
+        }
+    }
+
+    #[test]
+    fn a_partial_supply_hold_keeps_the_admitted_target_when_the_due_gate_clears() {
+        use crate::quester::families::tests::{def, with_tick_bank};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+
+        let mut fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut ledger = None;
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.hint),
+            &mut ledger,
+            1,
+            |tick| {
+                assert!(gatherer.admit_supply(&tick.cx));
+            },
+        );
+        let admitted = Arc::clone(gatherer.scratch.needs.as_ref().unwrap());
+        let bait = fixture.prepared.supply.bait.as_ref().unwrap();
+        let mut inventory = fixture.snapshot.inventory().to_vec();
+        inventory.push(ItemView {
+            def: def(bait.id, &bait.name),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 1,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 3214,
+        });
+        fixture.snapshot.seed_inventory(inventory, 28);
+        gatherer.interrupt(Interrupt::Hold(true));
+        assert!(gatherer.active_matches_none());
+        assert!(Arc::ptr_eq(
+            gatherer.scratch.needs.as_ref().unwrap(),
+            &admitted,
+        ));
+        gatherer.interrupt(Interrupt::Hold(false));
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.hint),
+            &mut ledger,
+            2,
+            |tick| {
+                let snapshot = tick.cx.snapshot();
+                assert!(!SupplyPlan::due(
+                    &fixture.prepared,
+                    snapshot.stats().unwrap().value,
+                    snapshot.stock(),
+                ));
+                gatherer.begin_trip(tick);
+            },
+        );
+        assert!(gatherer.failure.is_none());
+        assert!(matches!(gatherer.active, Active::Acquire(_)));
+        assert!(Arc::ptr_eq(
+            gatherer.scratch.needs.as_ref().unwrap(),
+            &admitted,
+        ));
+        assert_eq!(
+            admitted
+                .iter()
+                .find(|need| need.item == bait.id)
+                .unwrap()
+                .target,
+            10,
+        );
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox[0].effect,
+            crate::native::HostEffect::BankPick(_),
+        ));
+    }
+
+    #[test]
+    fn unchanged_acquire_progress_does_not_republish_status() {
+        use crate::quester::families::tests::{with_tick, with_tick_bank};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut ledger = None;
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.hint),
+            &mut ledger,
+            1,
+            |tick| {
+                assert!(gatherer.admit_supply(&tick.cx));
+                gatherer.poll_active(tick);
+            },
+        );
+        gatherer.dirty = false;
+        for now in 2..4 {
+            with_tick(&fixture.snapshot, &mut ledger, now, |tick| {
+                gatherer.poll_active(tick);
+            });
+            assert!(
+                !gatherer.dirty,
+                "the pending bank pick has not changed stage"
+            );
         }
     }
 
@@ -3080,30 +3110,29 @@ mod tests {
         snapshot.seed_bank_observation(1, 1, Some(vec![banked_bait]), Vec::new());
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |tick| {
-            let verdict = SupplyPlan::plan(
-                &gatherer.prepared,
-                tick.cx.snapshot().stats().unwrap().value,
-                tick.cx.snapshot().stock(),
-            );
-            assert!(
-                matches!(verdict, SupplyVerdict::Trip(_) | SupplyVerdict::TripToLearn),
-                "bait is due: {verdict:?}"
-            );
-            assert!(gatherer.admit_supply(verdict));
+            assert!(gatherer.admit_supply(&tick.cx));
         });
-        gatherer.trip = TripStep::Deposit;
         with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.begin_trip(tick));
         with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
         assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-        assert_eq!(gatherer.trip, TripStep::Withdraw);
-        with_tick(&snapshot, &mut ledger, 4, |tick| gatherer.begin_trip(tick));
-        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
-        assert!(matches!(gatherer.active, Active::Withdraw(_)));
-        let withdrawals = gatherer.scratch.withdrawals.as_ref().unwrap();
-        assert!(
-            withdrawals.iter().any(|row| row.id == bait.id),
-            "{withdrawals:?}"
-        );
+        let Active::Acquire(run) = &gatherer.active else {
+            panic!("the supply request owns the withdrawal");
+        };
+        assert_eq!(run.progress().2, "Withdraw");
+        assert!(gatherer
+            .scratch
+            .needs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|need| need.item == bait.id));
+        with_tick(&snapshot, &mut ledger, 4, |tick| gatherer.poll_active(tick));
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox[0].effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                on: false
+            })
+        ));
     }
 
     #[test]
@@ -3118,55 +3147,67 @@ mod tests {
             gatherer.tick(tick).unwrap()
         });
 
-        assert_eq!(gatherer.trip, TripStep::Select);
+        assert!(matches!(
+            gatherer.trip,
+            TripStep::Supply {
+                return_to_work: true,
+                deposit_products: true
+            }
+        ));
+        assert!(matches!(gatherer.active, Active::Acquire(_)));
         assert!(
-            matches!(gatherer.active, Active::Select(_)),
+            matches!(
+                ledger.as_ref().unwrap().outbox[0].effect,
+                crate::native::HostEffect::BankPick(_)
+            ),
             "supply admission must begin the bank selector immediately"
         );
     }
 
     #[test]
-    fn gatherer_tickfix_bank_ready_without_event_begins_next_child_same_tick() {
-        use crate::quester::families::tests::with_tick;
+    fn gatherer_tickfix_deposit_receipt_begins_supply_child_same_tick() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
         gatherer.needs_validate = false;
-        gatherer.trip = TripStep::Open;
-        let bank_tile = WorldTile {
-            x: 3245,
-            z: 3423,
-            level: 0,
-        };
-        let access = Arc::new(crate::bank::BankStandAccess {
-            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
-            stand_tile: bank_tile,
-            kind: crate::bank::AccessKind::Booth,
-            stand_op: 2,
-            name: Some(Arc::from("Bank booth")),
-            choose: None,
-        });
+        gatherer.trip = TripStep::Deposit;
+        let bait = fixture.prepared.supply.bait.as_ref().unwrap();
         let mut snapshot = fixture.snapshot;
-        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        snapshot.seed_bank_observation(
+            1,
+            1,
+            Some(vec![ItemView {
+                def: def(bait.id, &bait.name),
+                container: ItemContainer::Bank,
+                action_family: ItemActionFamily::Component,
+                slot: 0,
+                count: 20,
+                actions: vec![Some("Withdraw-1".into())],
+                component_id: 1,
+            }]),
+            Vec::new(),
+        );
         let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, 1, |tick| {
-            gatherer.active = Active::Open(
-                tick.actions
-                    .begin::<bank::Open>(bank::OpenArgs { access }, &mut tick.cx)
-                    .unwrap(),
-            );
-        });
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
         with_tick(&snapshot, &mut ledger, 2, |tick| {
             gatherer.tick(tick).unwrap()
         });
-
-        assert_eq!(gatherer.trip, TripStep::Deposit);
-        assert!(
-            matches!(gatherer.active, Active::Deposit(_)),
-            "an observed Open completion with a free interaction budget must begin Deposit"
-        );
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(
+            gatherer.trip,
+            TripStep::Supply {
+                return_to_work: true,
+                deposit_products: false
+            }
+        ));
+        let Active::Acquire(run) = &gatherer.active else {
+            panic!("the deposit receipt starts the second request in the same frame");
+        };
+        assert_eq!(run.progress().2, "Withdraw");
         assert!(
             ledger.as_ref().unwrap().outbox.is_empty(),
-            "beginning Deposit must not emit an operation"
+            "starting the withdrawal child does not itself send an interaction"
         );
     }
 
@@ -3175,19 +3216,21 @@ mod tests {
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
-        gatherer.trip = TripStep::Withdraw;
-        gatherer.scratch.withdrawals = Some(Arc::<[bank::Withdrawal]>::from([]));
+        gatherer.trip = TripStep::Supply {
+            return_to_work: true,
+            deposit_products: false,
+        };
+        gatherer.scratch.needs = Some(Arc::from([]));
         let mut snapshot = fixture.snapshot;
         snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
         let mut ledger = None;
 
         with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
 
-        assert_eq!(gatherer.trip, TripStep::Close);
-        assert!(
-            matches!(gatherer.active, Active::Close(_)),
-            "an empty withdrawal plan must skip its machine and begin Close"
-        );
+        let Active::Acquire(run) = &gatherer.active else {
+            panic!("the close-only request owns the modal");
+        };
+        assert_eq!(run.progress().2, "Close");
         assert!(
             ledger.as_ref().unwrap().outbox.is_empty(),
             "starting Close does not issue the close operation until a later poll"
@@ -3195,138 +3238,112 @@ mod tests {
     }
 
     #[test]
-    fn gatherer_caps_timed_out_bank_open_attempts() {
-        use crate::quester::families::tests::with_tick;
-        let fixture = BaitFixture::new();
-        let mut gatherer = fixture.gatherer(GatherRetained::default());
-        let bank_tile = WorldTile {
-            x: 3245,
-            z: 3423,
-            level: 0,
-        };
-        let access = Arc::new(crate::bank::BankStandAccess {
-            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
-            stand_tile: bank_tile,
-            kind: crate::bank::AccessKind::Booth,
-            stand_op: 2,
-            name: Some(Arc::from("Bank booth")),
-            choose: None,
-        });
-        gatherer.trip = TripStep::Open;
-        gatherer.selected_bank = Some(SelectedBank {
-            bank_index: 0,
-            access_tile: bank_tile,
-            kind: PickKind::Reachable,
-            access: Some(access),
-        });
-        let mut ledger = None;
-
-        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
-            gatherer.begin_trip(tick);
-            gatherer.poll_active(tick);
-        });
-        assert_eq!(gatherer.scratch.bank_open_attempts, 1);
-        for tick_number in [9, 17] {
-            with_tick(&fixture.snapshot, &mut ledger, tick_number, |tick| {
-                gatherer.poll_active(tick)
-            });
-            assert!(gatherer.failure.is_none());
-            assert_eq!(gatherer.trip, TripStep::Open);
-            assert!(gatherer.selected_bank.as_ref().unwrap().access.is_some());
-            assert!(matches!(gatherer.active, Active::Open(_)));
-        }
-        assert_eq!(gatherer.scratch.bank_open_attempts, MAX_BANK_OPEN_ATTEMPTS);
-
-        with_tick(&fixture.snapshot, &mut ledger, 25, |tick| {
-            gatherer.poll_active(tick)
-        });
-        let failure = gatherer.failure.as_ref().expect("open retries are capped");
-        assert_eq!(failure.code.as_ref(), "bank-unavailable");
-        assert_eq!(
-            failure.message.as_ref(),
-            "bank-unavailable: bank did not open after 3 attempts"
-        );
-    }
-    #[test]
-    fn gatherer_caps_timed_out_close_attempts() {
-        use crate::quester::families::tests::with_tick;
+    fn full_pack_deposits_before_the_second_request_reports_a_session_shortage() {
+        use crate::quester::families::tests::{def, with_tick_bank};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
         let mut fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let rod = fixture.snapshot.inventory()[0].clone();
+        let mut pack = vec![rod.clone()];
+        for slot in 1..28 {
+            pack.push(ItemView {
+                def: def(317, "Raw shrimps"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            });
+        }
+        let side = pack
+            .iter()
+            .map(|row| ItemView {
+                container: ItemContainer::BankSide,
+                action_family: ItemActionFamily::Component,
+                actions: vec![Some("Deposit-All".into())],
+                ..row.clone()
+            })
+            .collect();
+        fixture.snapshot.seed_inventory(pack, 28);
+        fixture
+            .snapshot
+            .seed_bank_observation(10, 1, Some(Vec::new()), side);
+        let mut ledger = None;
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.session),
+            &mut ledger,
+            1,
+            |tick| gatherer.tick(tick).unwrap(),
+        );
+        assert!(
+            gatherer.failure.is_none(),
+            "the first request has no supply needs"
+        );
+        assert_eq!(gatherer.trip, TripStep::Deposit);
+        assert!(gatherer.scratch.needs.is_none());
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.session),
+            &mut ledger,
+            2,
+            |tick| gatherer.tick(tick).unwrap(),
+        );
+        let deposit = ledger.as_mut().unwrap().outbox.remove(0);
+        assert!(matches!(
+            deposit.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                id: 317,
+                ..
+            })
+        ));
+        assert!(
+            gatherer.failure.is_none(),
+            "a known shortage cannot preempt the haul"
+        );
+        ledger.as_mut().unwrap().complete_interaction(
+            &deposit.authority(),
+            crate::native::InteractionReceipt {
+                request_id: deposit.request_id.get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: deposit.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        fixture.snapshot.seed_inventory(vec![rod], 28);
         fixture
             .snapshot
             .seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
-        let mut gatherer = fixture.gatherer(GatherRetained::default());
-        gatherer.trip = TripStep::Close;
-        let mut ledger = None;
-
-        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
-            gatherer.begin_close(tick);
-            gatherer.poll_active(tick);
-        });
-        assert_eq!(gatherer.scratch.bank_close_attempts, 1);
-        for (timeout_tick, retry_tick, attempt) in [(9, 10, 2), (18, 19, 3)] {
-            with_tick(&fixture.snapshot, &mut ledger, timeout_tick, |tick| {
-                gatherer.poll_active(tick)
-            });
-            assert!(gatherer.failure.is_none());
-            assert_eq!(gatherer.scratch.bank_close_attempts, attempt);
-            with_tick(&fixture.snapshot, &mut ledger, retry_tick, |tick| {
-                gatherer.poll_active(tick)
-            });
-        }
-
-        with_tick(&fixture.snapshot, &mut ledger, 27, |tick| {
-            gatherer.poll_active(tick)
-        });
-        let failure = gatherer.failure.as_ref().expect("close retries are capped");
-        assert_eq!(failure.code.as_ref(), "bank-close-failed");
-        assert_eq!(
-            failure.message.as_ref(),
-            "bank-close-failed: bank did not close after 3 attempts"
+        with_tick_bank(
+            &fixture.snapshot,
+            Some(&fixture.session),
+            &mut ledger,
+            3,
+            |tick| gatherer.tick(tick).unwrap(),
         );
-    }
-
-    #[test]
-    fn gatherer_fails_a_shut_bank_with_a_stuck_side_root_at_the_bound() {
-        use crate::quester::families::tests::with_tick;
-        let mut fixture = BaitFixture::new();
-        fixture
-            .snapshot
-            .seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
-        let side = fixture.snapshot.modals().side;
-        let mut gatherer = fixture.gatherer(GatherRetained::default());
-        gatherer.trip = TripStep::Close;
-        let mut ledger = None;
-
-        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
-            gatherer.active =
-                Active::Close(tick.actions.begin::<bank::Close>((), &mut tick.cx).unwrap());
-            gatherer.poll_active(tick);
-        });
-        fixture
-            .snapshot
-            .seed_bank_observation(-1, 1, None, Vec::new());
-        fixture.snapshot.seed_side_modal(side);
-        with_tick(&fixture.snapshot, &mut ledger, 2, |tick| {
-            tick.cx.active_now = std::time::Duration::from_secs(60);
-            gatherer.poll_active(tick);
-        });
-        assert!(gatherer.failure.is_none());
-        assert!(matches!(gatherer.active, Active::Close(_)));
-
-        with_tick(&fixture.snapshot, &mut ledger, 9, |tick| {
-            tick.cx.active_now = std::time::Duration::from_secs(60);
-            gatherer.poll_active(tick);
-        });
-        let failure = gatherer
-            .failure
-            .as_ref()
-            .expect("a shut bank with a stuck side root is bounded");
-        assert_eq!(failure.code.as_ref(), "bank-close-failed");
-        assert_eq!(
-            failure.message.as_ref(),
-            "bank-close-failed: bank did not close"
+        fixture.assert_missing(
+            gatherer
+                .failure
+                .as_ref()
+                .expect("the second request checks the now-observed empty bank"),
         );
-        assert!(matches!(gatherer.active, Active::None));
+        assert_eq!(gatherer.retained.deposited, 27);
+        assert_eq!(fixture.snapshot.inventory().len(), 1);
+        assert_eq!(fixture.snapshot.modals().main, 10);
+        assert!(fixture.snapshot.bank_loaded());
+        assert!(matches!(
+            gatherer.trip,
+            TripStep::Supply {
+                return_to_work: true,
+                deposit_products: false
+            }
+        ));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
     /// design-bank-snapshot §2.4 at the validate boundary: a shortage the
@@ -3350,13 +3367,18 @@ mod tests {
             if in_place {
                 assert_eq!(validation, Validation::Pending, "{origin:?}");
                 let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
-                assert_eq!(failure.code.as_ref(), "supply-missing");
-                assert_eq!(failure.message.as_ref(), fixture.missing_message());
+                fixture.assert_missing(failure);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no walk is armed");
             } else {
                 assert_eq!(validation, Validation::Ready, "{origin:?}");
                 assert!(gatherer.failure.is_none(), "{origin:?}");
-                assert_eq!(gatherer.trip, TripStep::Select, "{origin:?}");
+                assert!(matches!(
+                    gatherer.trip,
+                    TripStep::Supply {
+                        return_to_work: true,
+                        deposit_products: true
+                    }
+                ));
                 assert_eq!(gatherer.last_event.as_ref(), "bank trip due");
             }
             assert!(ledger.is_none(), "admission emits no action");
@@ -3384,12 +3406,17 @@ mod tests {
             let origin = bank.map(api::bank_memory::BankMemory::origin);
             if in_place {
                 let failure = gatherer.failure.as_ref().expect("a Session shortage fails");
-                assert_eq!(failure.code.as_ref(), "supply-missing", "{origin:?}");
-                assert_eq!(failure.message.as_ref(), fixture.missing_message());
+                fixture.assert_missing(failure);
                 assert_eq!(gatherer.trip, TripStep::Idle, "no reprovision walk");
             } else {
                 assert!(gatherer.failure.is_none(), "{origin:?}");
-                assert_eq!(gatherer.trip, TripStep::Select, "{origin:?}");
+                assert!(matches!(
+                    gatherer.trip,
+                    TripStep::Supply {
+                        return_to_work: true,
+                        deposit_products: true
+                    }
+                ));
             }
             assert_eq!(
                 gatherer.retained.recovery,

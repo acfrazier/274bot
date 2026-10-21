@@ -384,13 +384,13 @@ impl AcquireRun {
                         .iter()
                         .find(|row| row.def.id == id && row.count > 0)
                         .ok_or_else(|| {
-                            ActionError::Unavailable(Arc::from(
-                                "the selected item left the inventory",
+                            ActionError::Failed(Arc::from(
+                                "tool-missing: the selected tool left the inventory",
                             ))
                         })?;
                     let name = row.def.name.as_deref().ok_or_else(|| {
-                        ActionError::Unavailable(Arc::from(
-                            "the selected item has no observed name",
+                        ActionError::Failed(Arc::from(
+                            "tool-missing: the selected tool has no observed name",
                         ))
                     })?;
                     let action = row
@@ -402,8 +402,8 @@ impl AcquireRun {
                                 || action.eq_ignore_ascii_case("Wear")
                         })
                         .ok_or_else(|| {
-                            ActionError::Unavailable(Arc::from(
-                                "the selected item has no observed equip action",
+                            ActionError::Failed(Arc::from(
+                                "tool-unusable: the selected tool has no observed equip action",
                             ))
                         })?;
                     let handle = tick.actions.begin::<OneOp>(
@@ -458,6 +458,23 @@ impl AcquireRun {
 
     pub fn block(&self) -> Option<&AcquireBlock> {
         self.block.as_deref()
+    }
+
+    /// Borrow the selected location and stage without another status owner.
+    pub(crate) fn progress(&self) -> (Option<&NamedBank>, Option<&WorldTile>, &'static str) {
+        let stage = match self.phase {
+            Phase::Select => "Select",
+            Phase::Walk => "Access",
+            Phase::Open => "Open",
+            Phase::Deposit => "Deposit",
+            Phase::Replan | Phase::Resume => "Replan",
+            Phase::Actions => "Withdraw",
+            Phase::Close => "Close",
+            Phase::Wear => "Wear",
+            Phase::Child => "Child",
+            Phase::Done => "Done",
+        };
+        (self.bank.as_ref(), self.target.as_ref(), stage)
     }
 
     pub fn cancel(&mut self, actions: &mut NativeActions) {
@@ -542,29 +559,7 @@ impl AcquireRun {
     }
 
     fn replan(&self, tick: &NativeTick<'_>, live: bool) -> Result<AcquireVerdict, ActionError> {
-        let snapshot = tick.cx.snapshot();
-        let data = api::game_data::for_revision(tick.cx.pin().revision)
-            .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
-        let world = WorldFacts {
-            data: Some(&data),
-            members: snapshot.world().is_some_and(|world| world.value.members),
-        };
-        let stock = snapshot.stock();
-        if live {
-            let rows = snapshot.bank().ok_or_else(|| {
-                ActionError::Unavailable(Arc::from("bank item table unavailable"))
-            })?;
-            plan::plan(
-                &self.request,
-                &LiveCounts {
-                    stock,
-                    rows: rows.value,
-                },
-                world,
-            )
-        } else {
-            plan::plan(&self.request, &stock, world)
-        }
+        plan_frame(&self.request, &tick.cx, live)
     }
 
     fn refuse(&mut self, block: AcquireBlock) -> Poll<Result<AcquireOutcome, ActionError>> {
@@ -659,6 +654,11 @@ impl AcquireRun {
                 Poll::Ready(Err(ActionError::Failed(message)))
                     if message.as_ref() == "bank did not close" =>
                 {
+                    if !bank_open(&tick.cx) {
+                        return Poll::Ready(Err(ActionError::Failed(Arc::from(format!(
+                            "bank-close-failed: {message}"
+                        )))));
+                    }
                     self.phase = Phase::Close;
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -679,6 +679,44 @@ impl AcquireRun {
         } else {
             Poll::Pending
         }
+    }
+}
+
+/// An open bank is fresher than remembered rows when a consumer chains requests.
+pub(crate) fn plan_current(
+    request: &AcquireRequest,
+    cx: &ActionContext<'_>,
+) -> Result<AcquireVerdict, ActionError> {
+    plan_frame(request, cx, bank_open(cx))
+}
+
+fn plan_frame(
+    request: &AcquireRequest,
+    cx: &ActionContext<'_>,
+    live: bool,
+) -> Result<AcquireVerdict, ActionError> {
+    let snapshot = cx.snapshot();
+    let data = api::game_data::for_revision(cx.pin().revision)
+        .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+    let world = WorldFacts {
+        data: Some(&data),
+        members: snapshot.world().is_some_and(|world| world.value.members),
+    };
+    let stock = snapshot.stock();
+    if live {
+        let rows = snapshot
+            .bank()
+            .ok_or_else(|| ActionError::Unavailable(Arc::from("bank item table unavailable")))?;
+        plan::plan(
+            request,
+            &LiveCounts {
+                stock,
+                rows: rows.value,
+            },
+            world,
+        )
+    } else {
+        plan::plan(request, &stock, world)
     }
 }
 

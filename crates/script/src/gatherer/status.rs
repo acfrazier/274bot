@@ -1,8 +1,10 @@
+use crate::acquire::BankSeen;
 use crate::native::{
     NativeOutput, NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue,
 };
 use crate::shim::ScriptPaint;
 use crate::CompiledId;
+use api::bank_memory::Origin;
 use api::selected::RunKey;
 use std::sync::Arc;
 
@@ -24,6 +26,7 @@ pub struct StatusData {
     pub xp: i32,
     pub xp_per_hour: Option<i32>,
     pub bank: Arc<str>,
+    pub bank_seen: Option<BankSeen>,
     pub last_progress: u64,
     pub deaths: u8,
     pub recoveries: u8,
@@ -76,6 +79,12 @@ macro_rules! status_rows {
                 i64::from($data.xp_per_hour.unwrap_or(-1))
             ),
             $emit!("bank", "Bank", Text, Arc::clone(&$data.bank)),
+            $emit!(
+                "bank_seen",
+                "Bank seen (at status update)",
+                Text,
+                bank_seen_text($data.bank_seen)
+            ),
             $emit!(
                 "last_progress",
                 "Last progress",
@@ -181,6 +190,49 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
     })
 }
 
+fn bank_seen_text(seen: Option<BankSeen>) -> Arc<str> {
+    seen.map_or_else(
+        || Arc::from("unknown"),
+        |seen| bank_seen_text_at(seen, std::time::SystemTime::now()),
+    )
+}
+
+fn bank_seen_text_at(seen: BankSeen, now: std::time::SystemTime) -> Arc<str> {
+    use std::fmt::Write;
+
+    let origin = match seen.origin {
+        Origin::Session => "Session",
+        Origin::Hint => "Hint (saved)",
+        Origin::Unknown => return Arc::from("unknown"),
+    };
+    // Match the core's relative-age rule, including future/overflow fallback.
+    // This text is fixed at publication; G2 owns typed clock presentation.
+    let age = std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(seen.observed_at_unix))
+        .and_then(|observed| now.duration_since(observed).ok());
+    let mut text = String::with_capacity(64);
+    text.push_str(origin);
+    if let Some(age) = age {
+        let seconds = age.as_secs();
+        if seconds < 60 {
+            text.push_str(", less than a minute ago");
+        } else if seconds < 3_600 {
+            let _ = write!(text, ", {} min ago", seconds / 60);
+        } else if seconds < 86_400 {
+            let _ = write!(text, ", {} hr ago", seconds / 3_600);
+        } else {
+            let days = seconds / 86_400;
+            let _ = write!(
+                text,
+                ", {days} {} ago",
+                if days == 1 { "day" } else { "days" }
+            );
+        }
+    }
+    let _ = write!(text, ", {} rows", seen.rows);
+    Arc::from(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +277,7 @@ mod tests {
             xp: 75,
             xp_per_hour: None,
             bank: Arc::from(""),
+            bank_seen: None,
             last_progress: 7,
             deaths: 0,
             recoveries: 0,
@@ -290,5 +343,41 @@ mod tests {
             StatusValue::Integer(-1),
             "missing xp_per_hour publishes -1",
         );
+        assert_eq!(value("bank_seen"), StatusValue::Text(Arc::from("unknown")),);
+    }
+
+    #[test]
+    fn bank_seen_keeps_provenance_and_relative_age_without_a_clock_formatter() {
+        assert_eq!(bank_seen_text(None).as_ref(), "unknown");
+        let now_secs = 1_000_000;
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_secs);
+        let mut seen = BankSeen {
+            origin: Origin::Session,
+            observed_at_unix: now_secs - 12 * 60,
+            rows: 37,
+            count: 0,
+        };
+        assert_eq!(
+            bank_seen_text_at(seen, now).as_ref(),
+            "Session, 12 min ago, 37 rows",
+        );
+        seen.origin = Origin::Hint;
+        seen.observed_at_unix = now_secs - 3 * 86_400;
+        assert_eq!(
+            bank_seen_text_at(seen, now).as_ref(),
+            "Hint (saved), 3 days ago, 37 rows",
+        );
+        for timestamp in [now_secs + 1, u64::MAX] {
+            seen.observed_at_unix = timestamp;
+            assert_eq!(
+                bank_seen_text_at(seen, now).as_ref(),
+                "Hint (saved), 37 rows"
+            );
+            seen.origin = Origin::Session;
+            assert_eq!(bank_seen_text_at(seen, now).as_ref(), "Session, 37 rows");
+            seen.origin = Origin::Hint;
+        }
+        seen.origin = Origin::Unknown;
+        assert_eq!(bank_seen_text_at(seen, now).as_ref(), "unknown");
     }
 }

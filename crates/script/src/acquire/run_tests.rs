@@ -983,6 +983,147 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 }
 
 #[test]
+fn chained_request_plans_from_open_rows_instead_of_stale_session_memory() {
+    for (remembered, observed) in [(0, 7), (7, 0)] {
+        let (mut snapshot, _bank, _banks) = fixture();
+        open_bank(
+            &mut snapshot,
+            Some(if observed > 0 {
+                vec![bank_row(ITEM, "Widget", observed)]
+            } else {
+                Vec::new()
+            }),
+            Vec::new(),
+        );
+        let memory = BankMemory::seeded(&[(ITEM, remembered)], Origin::Session);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                5,
+                1,
+                Presence::Held,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::BANK,
+            )],
+            None,
+            None,
+            false,
+            true,
+            CloseBank::LeaveOpen,
+        );
+        let mut ledger = None;
+        crate::quester::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                let remembered_verdict =
+                    plan::plan(&request, &tick.cx.snapshot().stock(), WorldFacts::default())
+                        .unwrap();
+                let current_verdict = plan_current(&request, &tick.cx).unwrap();
+                if observed > 0 {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Blocked(_)));
+                    let AcquireVerdict::Plan(plan) = current_verdict else {
+                        panic!("the open bank has the required item");
+                    };
+                    assert_eq!(plan.withdrawal_count, 1);
+                    let row = plan.withdrawals[0].as_ref().unwrap();
+                    assert_eq!((row.id, row.target), (ITEM, 5));
+                } else {
+                    assert!(matches!(remembered_verdict, AcquireVerdict::Plan(_)));
+                    let AcquireVerdict::Blocked(block) = current_verdict else {
+                        panic!("the open bank disproves the stale remembered stock");
+                    };
+                    assert_eq!(block.reason, BlockReason::SupplyMissing);
+                    assert_eq!(block.looked.bank.unwrap().count, 0);
+                }
+            },
+        );
+        assert!(ledger.is_none(), "planning never emits an action");
+    }
+}
+
+#[test]
+fn wear_admission_keeps_the_gatherer_tool_failure_codes() {
+    for (case, expected) in [
+        (0, "tool-missing: the selected tool left the inventory"),
+        (1, "tool-missing: the selected tool has no observed name"),
+        (
+            2,
+            "tool-unusable: the selected tool has no observed equip action",
+        ),
+    ] {
+        let (mut snapshot, _bank, banks) = fixture();
+        let row = item(ITEM, "Widget", 1, ItemContainer::Inventory, &["Wield"]);
+        snapshot.seed_inventory(vec![row.clone()], 28);
+        let request = request(
+            BankStage::Planned,
+            vec![need(
+                ITEM,
+                "Widget",
+                1,
+                1,
+                Presence::Wielded,
+                NeedKind::Required,
+                SourceSet::PACK | SourceSet::WORN,
+            )],
+            None,
+            None,
+            false,
+            false,
+            CloseBank::Close,
+        );
+        let mut ledger = None;
+        let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+        let mut changed = row;
+        let inventory = match case {
+            0 => Vec::new(),
+            1 => {
+                changed.def.name = None;
+                vec![changed]
+            }
+            2 => {
+                changed.actions.clear();
+                vec![changed]
+            }
+            _ => unreachable!(),
+        };
+        snapshot.seed_inventory(inventory, 28);
+        assert!(matches!(
+            poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open),
+            Poll::Ready(Err(ActionError::Failed(message))) if message.as_ref() == expected
+        ));
+        assert!(ledger.is_none(), "a missing equip action emits nothing");
+    }
+}
+
+#[test]
+fn shut_bank_with_stuck_side_root_fails_before_wear_or_completion() {
+    let (mut snapshot, bank, banks) = fixture();
+    open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
+    let side = snapshot.modals().side;
+    let mut request = authored_request(Some(bank), false, Vec::new());
+    request.close = CloseBank::Close;
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(is_close(first_effect(&ledger)));
+    complete_interaction(&mut ledger, 1);
+    snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+    snapshot.seed_side_modal(side);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert!(matches!(
+        poll_at(&mut run, &snapshot, None, &mut ledger, 9, OpenGate::Open),
+        Poll::Ready(Err(ActionError::Failed(message)))
+            if message.as_ref() == "bank-close-failed: bank did not close"
+    ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
 fn acquisition_owner_layout() {
     use std::mem::size_of;
     println!(

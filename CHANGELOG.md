@@ -56,6 +56,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
+- Gatherer now shows whether its bank information was seen this session or
+  saved from an earlier session, with its age at the last status update.
+- Gatherer supply trips now share the native acquisition flow. A full pack
+  is still deposited before a missing supply is reported, and a held tool
+  that can be wielded is equipped without a bank trip.
 
 #### Scenario checks
 

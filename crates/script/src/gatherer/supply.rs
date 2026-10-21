@@ -5,9 +5,7 @@
 
 use super::card::Prepared;
 use super::settings::{GathererSettings, Skill};
-use crate::acquire::{
-    unbankable_index, Need, NeedKind, Presence, SourceSet, UNBANKABLE_ALIASES,
-};
+use crate::acquire::{unbankable_index, Need, NeedKind, Presence, SourceSet, UNBANKABLE_ALIASES};
 use crate::native::{ActionError, ConfigError};
 use api::game_data::{SelectedGameData, TeleportSpell};
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod};
@@ -589,9 +587,8 @@ impl SupplyPlan {
         };
         let selected_tool = best_tool(prepared, stats, inventory, equipment);
         selected_tool.is_none()
-            || selected_tool.is_some_and(|tool| {
-                !tool.worn && can_wield(prepared, tool.id, inventory, stats)
-            })
+            || selected_tool
+                .is_some_and(|tool| !tool.worn && can_wield(prepared, tool.id, inventory, stats))
             || supplies_due(&prepared.supply, &prepared.settings, stock)
     }
 
@@ -731,12 +728,9 @@ fn tool_need(
 fn usable_tool_ids(prepared: &Prepared, stats: &[StatView]) -> Vec<i32> {
     let mut ids = Vec::new();
     match prepared.settings.skill_kind() {
-        Skill::Woodcutting => append_static_tool_ids(
-            &mut ids,
-            api::gather_tools::AXES,
-            &prepared.selected,
-            stats,
-        ),
+        Skill::Woodcutting => {
+            append_static_tool_ids(&mut ids, api::gather_tools::AXES, &prepared.selected, stats)
+        }
         Skill::Mining => append_static_tool_ids(
             &mut ids,
             api::gather_tools::PICKAXES,
@@ -1013,11 +1007,7 @@ mod tests {
             .unwrap_or_else(|_| panic!("the acquisition core rejected the test request"))
     }
 
-    fn core_plan(
-        prepared: &Prepared,
-        stats: &[StatView],
-        stock: Stock<'_>,
-    ) -> AcquireVerdict {
+    fn core_plan(prepared: &Prepared, stats: &[StatView], stock: Stock<'_>) -> AcquireVerdict {
         let needs = SupplyPlan::build(prepared, stats, stock)
             .unwrap_or_else(|_| panic!("the supply builder rejected the selected facts"));
         core_plan_needs(needs, stock)
@@ -1125,17 +1115,21 @@ mod tests {
         let prepared = prepare(settings);
         let held = [item(1275, "Rune pickaxe", 1, ItemContainer::Inventory)];
         let mut mining_stats = stats(&prepared);
-        let mining = mining_stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        let mining = mining_stats
+            .iter_mut()
+            .find(|stat| stat.index == 14)
+            .unwrap();
         mining.base = 40;
         mining.effective = 41;
         assert_eq!(
-            best_tool(&prepared, &mining_stats, &held, &[])
-                .unwrap()
-                .id,
+            best_tool(&prepared, &mining_stats, &held, &[]).unwrap().id,
             1275
         );
 
-        let mining = mining_stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        let mining = mining_stats
+            .iter_mut()
+            .find(|stat| stat.index == 14)
+            .unwrap();
         mining.base = 41;
         mining.effective = 40;
         assert!(best_tool(&prepared, &mining_stats, &held, &[]).is_none());
@@ -1151,13 +1145,19 @@ mod tests {
         let axe = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
         let mut attack_stats = stats(&prepared);
         {
-            let attack = attack_stats.iter_mut().find(|stat| stat.index == 0).unwrap();
+            let attack = attack_stats
+                .iter_mut()
+                .find(|stat| stat.index == 0)
+                .unwrap();
             attack.base = 39;
             attack.effective = 99;
         }
         assert!(!can_wield(&prepared, 1359, &axe, &attack_stats));
         {
-            let attack = attack_stats.iter_mut().find(|stat| stat.index == 0).unwrap();
+            let attack = attack_stats
+                .iter_mut()
+                .find(|stat| stat.index == 0)
+                .unwrap();
             attack.base = 40;
             attack.effective = 1;
         }
@@ -1240,16 +1240,8 @@ mod tests {
             .unwrap();
         assert_eq!(tool.name.as_ref(), expected_name);
         assert_eq!(tool.presence, Presence::Carried);
-        let rune_rank = tool
-            .alternatives
-            .iter()
-            .position(|&id| id == 1359)
-            .unwrap();
-        let bronze_rank = tool
-            .alternatives
-            .iter()
-            .position(|&id| id == 1351)
-            .unwrap();
+        let rune_rank = tool.alternatives.iter().position(|&id| id == 1359).unwrap();
+        let bronze_rank = tool.alternatives.iter().position(|&id| id == 1351).unwrap();
         assert!(rune_rank < bronze_rank);
 
         let plan = planned(core_plan_needs(needs, stock));
@@ -1502,12 +1494,7 @@ mod tests {
     fn session_hint_and_unknown_bank_origins_follow_core_verdicts() {
         let prepared = bait_fishing(10);
         let (tool_id, tool_name) = known_tool(&prepared);
-        let held = [item(
-            tool_id,
-            &tool_name,
-            1,
-            ItemContainer::Inventory,
-        )];
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
         let stats = stats(&prepared);
         assert!(due(&prepared, &stats, &held, &[]));
 
@@ -1533,12 +1520,7 @@ mod tests {
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.as_ref().unwrap();
         let (tool_id, tool_name) = known_tool(&prepared);
-        let held = [item(
-            tool_id,
-            &tool_name,
-            1,
-            ItemContainer::Inventory,
-        )];
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
         let stats = stats(&prepared);
         let hint = memory(&[(bait.id, 3)], Origin::Hint);
         let hinted = planned(core_plan(&prepared, &stats, with_bank(&held, &[], &hint)));
@@ -1585,11 +1567,7 @@ mod tests {
 
         let empty = memory(&[], Origin::Session);
         assert!(matches!(
-            core_plan(
-                &prepared,
-                &current_stats,
-                with_bank(&held, &[], &empty)
-            ),
+            core_plan(&prepared, &current_stats, with_bank(&held, &[], &empty)),
             AcquireVerdict::Satisfied
         ));
 
@@ -1636,10 +1614,7 @@ mod tests {
             rune_rows[0].per_cast,
             ItemContainer::Inventory,
         ));
-        let bank_rows: Vec<_> = rune_rows
-            .iter()
-            .map(|rune| (rune.id, 10_000))
-            .collect();
+        let bank_rows: Vec<_> = rune_rows.iter().map(|rune| (rune.id, 10_000)).collect();
         let bank = memory(&bank_rows, Origin::Session);
         let mut stats = stats(&prepared);
         stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
@@ -1675,21 +1650,14 @@ mod tests {
         actual.sort_unstable_by_key(|row| row.0);
         assert_eq!(actual, expected);
 
-        let full_cast: Vec<_> = std::iter::once(item(
-            1359,
-            "Rune axe",
-            1,
-            ItemContainer::Inventory,
-        ))
-        .chain(rune_rows.iter().map(|rune| {
-            item(
-                rune.id,
-                &rune.name,
-                rune.per_cast,
-                ItemContainer::Inventory,
-            )
-        }))
-        .collect();
+        let full_cast: Vec<_> =
+            std::iter::once(item(1359, "Rune axe", 1, ItemContainer::Inventory))
+                .chain(
+                    rune_rows.iter().map(|rune| {
+                        item(rune.id, &rune.name, rune.per_cast, ItemContainer::Inventory)
+                    }),
+                )
+                .collect();
         assert!(!due(&prepared, &stats, &full_cast, &[]));
         let full_needs = SupplyPlan::build(&prepared, &stats, pages(&full_cast, &[])).unwrap();
         assert!(rune_rows
@@ -1698,14 +1666,7 @@ mod tests {
 
         let worn_runes: Vec<_> = rune_rows
             .iter()
-            .map(|rune| {
-                item(
-                    rune.id,
-                    &rune.name,
-                    rune.per_cast,
-                    ItemContainer::Equipment,
-                )
-            })
+            .map(|rune| item(rune.id, &rune.name, rune.per_cast, ItemContainer::Equipment))
             .collect();
         let axe = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
         assert!(due(&prepared, &stats, &axe, &worn_runes));
@@ -1720,10 +1681,7 @@ mod tests {
             .iter()
             .find(|spell| {
                 spell.available()
-                    && spell
-                        .runes
-                        .iter()
-                        .any(|rune| rune.count > 1)
+                    && spell.runes.iter().any(|rune| rune.count > 1)
                     && spell
                         .runes
                         .iter()
@@ -1743,10 +1701,7 @@ mod tests {
 
         let result = SupplyPlan::build(&prepared, &stats, pages(&held, &[]));
 
-        assert!(matches!(
-            result,
-            Err(ActionError::Unavailable(_))
-        ));
+        assert!(matches!(result, Err(ActionError::Unavailable(_))));
     }
 
     #[test]
@@ -2052,7 +2007,10 @@ mod tests {
                 assert!(!SupplyPlan::due(&prepared, &stats, stock));
             }
         });
-        assert_eq!(idle.bytes_total, 0, "unchanged admission polls allocate nothing");
+        assert_eq!(
+            idle.bytes_total, 0,
+            "unchanged admission polls allocate nothing"
+        );
 
         let due = allocation_counter::measure(|| {
             for _ in 0..1_000 {

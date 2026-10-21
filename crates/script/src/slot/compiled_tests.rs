@@ -896,6 +896,15 @@ fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
 }
 
 fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, tick: u32) {
+    gatherer_tick_with_bank(slot, snapshot, tick, None);
+}
+
+fn gatherer_tick_with_bank(
+    slot: &mut SlotScript,
+    snapshot: &api::snapshot::GameSnapshot,
+    tick: u32,
+    bank: Option<&api::bank_memory::BankMemory>,
+) {
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut NullDriver::default(),
         tick: u64::from(tick),
@@ -905,7 +914,10 @@ fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, 
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: crate::CompiledTick::default(),
+        compiled: crate::CompiledTick {
+            bank_memory: bank,
+            ..Default::default()
+        },
     });
 }
 
@@ -925,6 +937,56 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     slot
+}
+
+#[test]
+fn gatherer_bank_seen_status_demotes_to_a_saved_hint_after_relog() {
+    use api::bank_memory::{BankMemory, FrameEvent};
+    use api::snapshot::ItemContainer;
+
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_inventory(Vec::new(), 28);
+    let mut row = snapshot.equipment()[0].clone();
+    row.container = ItemContainer::Bank;
+    row.count = 2;
+    snapshot.seed_main_modal(10, Vec::new());
+    snapshot.seed_bank_observation(5382, 1, Some(vec![row]), Vec::new());
+    let mut memory = BankMemory::default();
+    let observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        - 3 * 86_400;
+    assert_eq!(memory.track(&snapshot, observed_at), FrameEvent::Opened);
+    let mut slot = gatherer_slot(93);
+    let bank_seen = |slot: &SlotScript| {
+        let status = slot
+            .native_status()
+            .expect("published native Gatherer status");
+        let field = status
+            .fields
+            .iter()
+            .find(|field| field.key == "bank_seen")
+            .expect("the shared status projection includes bank_seen");
+        let crate::native::StatusValue::Text(value) = &field.value else {
+            panic!("bank_seen is a typed text field");
+        };
+        Arc::clone(value)
+    };
+    gatherer_tick_with_bank(&mut slot, &snapshot, 1, Some(&memory));
+    assert_eq!(bank_seen(&slot).as_ref(), "Session, 3 days ago, 1 rows");
+
+    memory.relogged();
+    snapshot.seed_main_modal(-1, Vec::new());
+    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+    assert!(slot.reconnect_session_work());
+    slot.on_is_up(true);
+    gatherer_tick_with_bank(&mut slot, &snapshot, 2, Some(&memory));
+    assert_eq!(
+        bank_seen(&slot).as_ref(),
+        "Hint (saved), 3 days ago, 1 rows"
+    );
+    slot.stop();
 }
 
 fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
@@ -1008,6 +1070,10 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
             );
             assert_ne!(operation, "Drop", "the tool is protected");
             equip_tick = Some(tick);
+            assert!(
+                !slot.has_native_actions(),
+                "wear-only acquisition must not also queue a bank operation",
+            );
             break;
         }
     }
