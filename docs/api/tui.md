@@ -131,8 +131,8 @@ Browse card, grouped by category as the Script tab's Browse groups them.
 highlighted card, `Esc` (or a click outside) keeps the card as it was.
 Picking changes no assignment, no Browse pick, no profile form and no run.
 
-**Fleet actions.** `m` Load + log in, `U` Log out, `T` Start and `E` Stop
-(Script tab), and the palette's **Assign**, **Assign & restart** and **Copy
+**Fleet actions.** `m` Load + log in, `U` Log out, `T` Start fleet and `E`
+Stop fleet (Script tab), and the palette's **Assign**, **Assign & restart** and **Copy
 settings** each ask core for a plan. With rows marked the plan covers every
 marked profile, hidden ones too; with nothing marked it covers the loaded
 bots the filter shows and asks first. Unloaded profiles are reached only by
