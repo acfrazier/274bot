@@ -8478,12 +8478,10 @@ mod bank_conservation_tests {
     fn bank_close_boundary_rejects_an_unverified_receipt_without_a_selected_bank() {
         let mut slot = open_bank_slot(&[(KEBAB_ID, 4)]);
         slot.observe_running(None, slot.capture()).unwrap();
-        assert!(!slot
-            .witness
-            .pending_bank_trip
-            .as_ref()
-            .unwrap()
-            .deposit_verified);
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(!receipt.deposit_verified);
+        let (_, snapshot) = bank_fixture(&[(KEBAB_ID, 4)]);
+        slot.snapshot = snapshot;
         assert!(slot.apply_status(&bank_close_status("—")).is_err());
         assert!(!slot.witness.bank_closed_observed);
     }
@@ -8494,12 +8492,8 @@ mod bank_conservation_tests {
         slot.observe_running(None, slot.capture()).unwrap();
         slot.apply_status(&bank_close_status("Draynor; Validate"))
             .unwrap();
-        assert!(slot
-            .witness
-            .pending_bank_trip
-            .as_ref()
-            .unwrap()
-            .deposit_verified);
+        let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
+        assert!(receipt.deposit_verified);
         assert!(slot.witness.bank_closed_observed);
     }
 
