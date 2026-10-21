@@ -469,7 +469,7 @@ impl Play {
             ifaces_mut_template,
             queue: Arc::new(QueueMutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str, _: crate::SlotFrameInput| {}),
-            #[cfg(any(feature = "live-harness", feature = "test-support"))]
+            #[cfg(any(test, feature = "test-support"))]
             post_native_player_info: None,
             spawned: HashSet::new(),
             arms: HashMap::new(),
