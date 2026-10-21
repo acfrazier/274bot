@@ -998,7 +998,7 @@ fn finish_test_run(data: &SelectedGameData, max_ticks: u32) -> CombatRun {
         original_npc_types: Arc::from([original.id]),
         options: DialogueOptions {
             prefer: Arc::from([Arc::from("Carlem Aber Camerinthum Purchai Gabindo")]),
-            choose: Some(4),
+            strict: true,
             ..DialogueOptions::default()
         },
         max_ticks,
@@ -3098,6 +3098,84 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
             }) if action.eq_ignore_ascii_case("Talk-to")
         )
     }));
+}
+
+#[test]
+fn killed_report_keeps_demon_incantation_under_finish_dialogue() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let original = data.npc_by_config("delrith").unwrap().id;
+    let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
+    let mut run = finish_test_run(&data, 100);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    seed_finish_target(&mut snapshot, Some(42), true);
+    snapshot.seed_npcs(vec![finish_npc(42, original)]);
+    let mut ledger = None;
+
+    with_step_context(&snapshot, &mut ledger, 1, |cx| {
+        run.begin_combat(cx).unwrap()
+    });
+    assert!(with_step_context(&snapshot, &mut ledger, 2, |cx| run.poll(cx)).is_pending());
+    assert_eq!(run.finish_target_index, Some(42));
+
+    seed_finish_target(&mut snapshot, None, false);
+    snapshot.seed_npcs(vec![finish_npc(42, weakened)]);
+    assert!(with_step_context(&snapshot, &mut ledger, 3, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    assert!(matches!(&run.phase, Phase::FinishWait));
+    assert!(run.action.is_none());
+    assert_eq!(run.finish_target_index, Some(42));
+
+    assert!(with_step_context(&snapshot, &mut ledger, 4, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::FinishWait));
+    assert!(!ledger.as_ref().unwrap().outbox.iter().any(|row| {
+        matches!(
+            &row.effect,
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { .. })
+        )
+    }));
+    snapshot.seed_chat_modal(2480, vec!["Select an Option".into()]);
+    snapshot.seed_chat_options(
+        vec![
+            api::snapshot::ChatOptionView {
+                component_id: 11,
+                text: "Carlem Gabindo Purchai Zaree Camerinthum".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 12,
+                text: "Purchai Zaree Gabindo Carlem Camerinthum".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 13,
+                text: "Purchai Camerinthum Aber Gabindo Carlem".into(),
+            },
+            api::snapshot::ChatOptionView {
+                component_id: 14,
+                text: "Carlem Aber Camerinthum Purchai Gabindo".into(),
+            },
+        ],
+        -1,
+    );
+    assert!(with_step_context(&snapshot, &mut ledger, 5, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::FinishDialogue));
+    assert_eq!(run.finish_ticks_elapsed, 2);
+    assert!(run.finish_ticks_elapsed <= u64::from(run.finish.as_ref().unwrap().max_ticks));
+    let answers: Vec<_> = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|row| match &row.effect {
+            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Answer { option }) => {
+                Some(*option)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(answers, vec![4]);
 }
 
 #[test]

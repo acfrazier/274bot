@@ -67,6 +67,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   talking to Keli. Gertrude's Cat includes the fence landing tile and walks
   its yard waypoints in order. Monk's Friend skips the ring-stone walk near
   the ladder or inside the cave.
+- Fixed Demon Slayer's incantation handoff. The Quester answers Gypsy Aris's
+  phrase by menu text after Delrith's kill report.
 - Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
   fixtures may start at an explicit seeded stand such as a bank instead of
   requiring the Path's authored start anchor.
