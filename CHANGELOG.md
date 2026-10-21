@@ -71,9 +71,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   fixtures may start at an explicit seeded stand such as a bank instead of
   requiring the Path's authored start anchor.
 - An initial wall-facing `Interact` or `UseOn` loc walk retries once from
-  the wall tile after a `RouteEnded`, `Blocked` or `Failed` receipt contains
-  `native walk route failed:`. The retry stays pending across action-budget
-  exhaustion; other walk failures remain terminal.
+  the wall tile after a typed `NoPath` receipt. The retry stays pending
+  across action-budget exhaustion; other walk failures remain terminal.
 
 #### Scenario checks
 

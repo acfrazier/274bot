@@ -664,6 +664,8 @@ pub struct WalkStall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
+    /// The host route planner found no route satisfying the request.
+    NoPath,
     UserInput,
     RouteEnded,
     /// A Traveller hop reached its finite budget without its aim being reached.
@@ -722,6 +724,11 @@ impl WalkReceipt {
             WalkEnd::UserInput => Err(ActionError::UserInput),
             WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
             WalkEnd::Cancelled => Err(ActionError::Cancelled),
+            WalkEnd::NoPath => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> =
+                    LazyLock::new(|| Arc::from("walk has no route"));
+                Arc::clone(&REASON)
+            }))),
             WalkEnd::RouteEnded => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                 static REASON: LazyLock<Arc<str>> =
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));

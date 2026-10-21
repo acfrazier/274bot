@@ -6878,8 +6878,8 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
         post_user_input_walk_receipt(&mut ledger, 3);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
-            receipt.end = WalkEnd::Blocked;
-            receipt.detail = Some(Arc::from("native walk route failed: no route"));
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(Arc::from("unrelated host route detail"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             for _ in 0..31 {
@@ -6924,16 +6924,15 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
         post_user_input_walk_receipt(&mut ledger, 6);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
-            receipt.end = WalkEnd::RouteEnded;
-            receipt.detail = Some(Arc::from("native walk route failed: no route"));
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = None;
         }
         let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(
             result,
-            Poll::Ready(Err(ActionError::Blocked(reason)))
-                if reason.as_ref() == "native walk route failed: no route"
+            Poll::Ready(Err(ActionError::Blocked(_)))
         ));
         assert_eq!(
             ledger
@@ -6999,8 +6998,8 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
         post_user_input_walk_receipt(&mut ledger, 3);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
-            receipt.end = WalkEnd::Failed;
-            receipt.detail = Some(Arc::from("native walk route failed: no path"));
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = Some(Arc::from("unrelated host route detail"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
             for _ in 0..31 {
@@ -7045,16 +7044,15 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
         post_user_input_walk_receipt(&mut ledger, 6);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
-            receipt.end = WalkEnd::Failed;
-            receipt.detail = Some(Arc::from("native walk route failed: no path"));
+            receipt.end = WalkEnd::NoPath;
+            receipt.detail = None;
         }
         let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(
             result,
-            Poll::Ready(Err(ActionError::Blocked(reason)))
-                if reason.as_ref() == "native walk route failed: no path"
+            Poll::Ready(Err(ActionError::Blocked(_)))
         ));
         assert_eq!(
             ledger
@@ -7732,31 +7730,27 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
 }
 
 #[test]
-fn loc_wall_fallback_requires_native_route_failure_detail() {
-    for end in [WalkEnd::RouteEnded, WalkEnd::Blocked, WalkEnd::Failed] {
-        let receipt = mapped_walk_receipt(
-            end,
-            Some(Arc::from("prefix: native walk route failed: no path")),
-        );
-        assert!(reach::loc_wall_route_failed(&receipt));
-    }
-
-    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
-        WalkEnd::RouteEnded,
+fn loc_wall_fallback_requires_typed_no_path() {
+    assert!(reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::NoPath,
         None,
     )));
-    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+    assert!(reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::NoPath,
+        Some(Arc::from("a changed host diagnostic")),
+    )));
+
+    for end in [
+        WalkEnd::RouteEnded,
         WalkEnd::Blocked,
-        Some(Arc::from("a different native walk failure")),
-    )));
-    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
         WalkEnd::Failed,
-        Some(Arc::from("a different native walk failure")),
-    )));
-    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
         WalkEnd::Arrived,
-        Some(Arc::from("native walk route failed: no path")),
-    )));
+    ] {
+        assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+            end,
+            Some(Arc::from("native walk route failed: no path")),
+        )));
+    }
 }
 
 /// Runs one acquisition the way the runner does (begin, then poll on the
