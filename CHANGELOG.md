@@ -34,6 +34,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - A capture frame that fills the input queue is reported, instead of
   dropping events silently.
 
+### Random events
+
+- The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
+- Shared axe and pick swing messages no longer start recovery.
+
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
@@ -96,6 +101,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tick.
 - Game-tick counts now advance only for applied `PLAYER_INFO` packets;
   unrelated player-family invalidations no longer inflate scenario receipts.
+#### Gatherer
+
+- Fixed: the Gatherer searches distance 0 through 7 from two observed tiles.
+  The first is the last player tile before the event. The second is the tile
+  from the first snapshot that shows the tool change or event message. This
+  covers events that run before or after movement in the same tick. Distance
+  zero is valid because `MAP_FINDSQUARE` returns its input coordinate when no
+  ring tile qualifies (`ServerOps.ts:328-331`).
+  When adjacent inventory snapshots identify one removed tool, the Gatherer
+  selects that tool's exact head. Otherwise, it selects only a new head of
+  the same kind. It waits three observed game ticks for a delayed head.
+  It still refits the tool after pickup. It returns to the bank if no head
+  appears in that time, if one later tick confirms a missing head, or after
+  the ground head's 200-tick lifetime. A full pack with nothing to drop
+  returns to the bank at once.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 

@@ -394,6 +394,65 @@ pub(crate) fn guardian_event_cell(
         },
     }
 }
+/// Exercise tier identity: a Rune axe head is really dropped before the
+/// Bronze axe event, so recovery must take the newly spawned Bronze head.
+pub(crate) fn guardian_skill_lost_axe_same_kind_head_scenario() -> Scenario {
+    const RUNE_AXE_HEAD_ID: i32 = 520;
+    let mut scenario = guardian_event_cell(
+        "guardian_skill_lost_axe_same_kind_head",
+        Activity::Woodcutting,
+        "lost axe",
+        Trigger::Skill(9),
+        Oracle::LostTool {
+            tool_ids: &[BRONZE_AXE_ID],
+        },
+    );
+    let observe_event = scenario
+        .steps
+        .pop()
+        .expect("the lost-axe event observation is the final step");
+    scenario.steps.push(Step {
+        name: "seed an unrelated Rune axe head",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| cheat(client, "give macro_rune_hatchethead 1").is_sent()),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: RUNE_AXE_HEAD_ID,
+                count: 1,
+            },
+            budget_ticks: 120,
+        },
+    });
+    scenario.steps.push(Step {
+        name: "drop the Rune axe head beside the player",
+        kind: StepKind::Perform {
+            send: Box::new(|client, snapshot| {
+                let Some(head) = snapshot
+                    .inventory()
+                    .iter()
+                    .find(|item| item.def.id == RUNE_AXE_HEAD_ID)
+                else {
+                    return false;
+                };
+                matches!(
+                    Interactions::new(snapshot, client)
+                        .interact(OpTarget::Item(head), ActionSpec::Label("Drop".to_string()),),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemIdAtMost {
+                id: RUNE_AXE_HEAD_ID,
+                count: 0,
+            },
+            budget_ticks: 120,
+        },
+    });
+    scenario.steps.push(observe_event);
+    scenario
+}
 
 /// `(scenario name, activity, event, trigger, oracle)` for every cell.
 pub(crate) const GUARDIAN_EVENT_CELLS: &[(&str, Activity, &str, Trigger, Oracle)] = &[

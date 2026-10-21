@@ -193,10 +193,11 @@ content) is needed by:
 
 <!-- engine-patch-cells:0002 -->
 `guardian_skill_big_fish`, `guardian_skill_ent`, `guardian_skill_gas`,
-`guardian_skill_lost_axe`, `guardian_skill_lost_pickaxe`,
-`guardian_skill_river_troll`, `guardian_skill_rock_golem`,
-`guardian_skill_shade`, `guardian_skill_tree_spirit`,
-`guardian_skill_watchman`, `guardian_skill_whirlpool`, `guardian_skill_zombie`
+`guardian_skill_lost_axe`, `guardian_skill_lost_axe_same_kind_head`,
+`guardian_skill_lost_pickaxe`, `guardian_skill_river_troll`,
+`guardian_skill_rock_golem`, `guardian_skill_shade`,
+`guardian_skill_tree_spirit`, `guardian_skill_watchman`,
+`guardian_skill_whirlpool`, `guardian_skill_zombie`
 <!-- /engine-patch-cells -->
 
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
@@ -211,9 +212,13 @@ account (combat level 3, 10 Hitpoints) does real work: the Gatherer fishing at
 Catherby (general events and the fishing events), mining at Varrock East,
 chopping west of Lumbridge (oaks at Draynor for the ent), and the catalog BoneBurier and Thiever cards at
 Lumbridge for the prayer and thieving events. Each cell seeds only the
-account's own skill and tool, waits for the activity's first XP, then sends
-the one trigger (again only after the content's busy reply). It never adds an
-NPC itself.
+account's own skill and required items, waits for the activity's first XP,
+then sends one trigger after the content's busy reply. It never adds an NPC
+itself.
+
+The `guardian_skill_lost_axe_same_kind_head` variant also seeds a Rune axe
+head and drops it with an inventory action before triggering the event. Its
+Bronze axe oracle checks that the Guardian recovers the event's own tier.
 
 The oracle (`crates/scenario/src/random_episode.rs`) judges the Guardian's
 documented behaviour for the event's class from the host hold and the
