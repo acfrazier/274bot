@@ -875,6 +875,21 @@ export function tick(api) {
 }
 "#;
 
+/// The active-seat backlog fixture has no navigation world or danger policy.
+struct AllowWalkDanger;
+
+impl script::native::WalkDangerQuery for AllowWalkDanger {
+    fn check(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+    ) -> script::native::WalkDanger<'_> {
+        script::native::WalkDanger::Allowed
+    }
+}
+
 struct GatherReconnectRig {
     tile: WorldTile,
     snapshot: GameSnapshot,
@@ -889,6 +904,7 @@ struct GatherReconnectRig {
     tick: u64,
     external_session: api::identity::SessionKey,
     service_arm: Option<Arc<SlotArm>>,
+    walk_danger: Option<&'static dyn script::native::WalkDangerQuery>,
 }
 
 impl GatherReconnectRig {
@@ -961,6 +977,7 @@ impl GatherReconnectRig {
             external_session,
             service_arm,
             tick: 1,
+            walk_danger: None,
         }
     }
 
@@ -1024,7 +1041,10 @@ impl GatherReconnectRig {
             inv: None,
             snapshot: Some(snapshot),
             obj_names: Some(names.as_ref()),
-            compiled: script::CompiledTick::default(),
+            compiled: script::CompiledTick {
+                walk_danger: self.walk_danger,
+                ..Default::default()
+            },
         };
         slot.on_game_tick(&mut context);
         drop(slot);
@@ -1446,6 +1466,7 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 #[test]
 fn guardian_no_navigation_terminal_drains_after_guardian_release() {
     let mut rig = GatherReconnectRig::new();
+    rig.walk_danger = None;
     let token = rig.start_through_host();
     rig.expect_running_page(token);
     assert!(rig.slot().lock().unwrap().api_owns_foreground());
@@ -1501,6 +1522,7 @@ fn guardian_no_navigation_terminal_drains_after_guardian_release() {
 #[test]
 fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
     let mut rig = GatherReconnectRig::new();
+    rig.walk_danger = Some(&AllowWalkDanger);
     let token = rig.start_through_host();
     rig.expect_running_page(token);
     let _ = rig.probe("globalThis.__stop = true");
@@ -1520,8 +1542,12 @@ fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
         );
     }
     rig.slot().lock().unwrap().seat_guardian_hold(false);
+    assert!(
+        rig.slot().lock().unwrap().api_owns_foreground(),
+        "the active-seat fixture must remain live throughout the forty held frames"
+    );
     let deadline = Instant::now() + Duration::from_secs(60);
-    while rig.slot().lock().unwrap().api_owns_foreground() {
+    loop {
         let _ = rig.drain_host();
         if !rig.slot().lock().unwrap().api_owns_foreground() {
             break;
