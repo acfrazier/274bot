@@ -249,15 +249,16 @@ pub(crate) fn gatherer_native_status(
         in_gatherer_window(bot.start_tick, tick, budget_ticks)
             && bot.last_status_sample_tick != Some(tick)
     });
-    if new_status_sample
-        && is_resource_wait_sample(
+    if new_status_sample {
+        bot.last_status_sample_tick = tick;
+        if is_resource_wait_sample(
             state,
             status.phase,
             bot.final_phase_label.as_deref(),
             bot.final_event.as_deref(),
-        )
-    {
-        bot.resource_wait_samples = bot.resource_wait_samples.saturating_add(1);
+        ) {
+            bot.resource_wait_samples = bot.resource_wait_samples.saturating_add(1);
+        }
     }
 }
 
@@ -345,18 +346,15 @@ fn build_gatherer_geometry(
         api::selected::Knowledge::Known(targets) => targets,
         _ => return Err("gatherer_method_targets_not_complete".to_owned()),
     };
-    let target_ids: HashSet<i32> = targets
-        .iter()
-        .filter_map(|target| match target.entity {
-            api::selected::EntityId::Loc(id)
-                if target.class == api::gather_methods::TargetClass::Resource =>
-            {
-                Some(id)
-            }
-            _ => None,
-        })
-        .collect();
-    if target_ids.is_empty() {
+    let target_ids = targets.iter().filter_map(|target| match target.entity {
+        api::selected::EntityId::Loc(id)
+            if target.class == api::gather_methods::TargetClass::Resource =>
+        {
+            Some(id)
+        }
+        _ => None,
+    });
+    if target_ids.clone().next().is_none() {
         return Err("gatherer_method_has_no_resource_loc_targets".to_owned());
     }
     let region = api::gather_methods::SceneRegionInput {
@@ -390,7 +388,7 @@ fn build_gatherer_geometry(
         let api::selected::EntityId::Loc(id) = spot.entity else {
             continue;
         };
-        if !target_ids.contains(&id) {
+        if !target_ids.clone().any(|target_id| target_id == id) {
             continue;
         }
         candidate_placements = candidate_placements.saturating_add(1);
@@ -500,7 +498,7 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
     };
     let budget_ticks = fleet.budget_ticks;
     let new_tick = bot.last_tick != Some(tick);
-    let should_sample = new_tick && in_gatherer_window(bot.start_tick, tick, budget_ticks);
+    let should_sample = new_tick && bot.start_tick.is_some_and(|start| tick > start);
     let combat = combat.filter(|level| *level > 0);
     let anchor = bot.anchor;
     if let (Some(anchor), Some(combat), Some(_), Some(_)) = (
@@ -990,13 +988,15 @@ mod tests {
     const R2_XP: [i32; 10] = [175, 0, 125, 0, 25, 75, 0, 75, 75, 125];
     const R2_WAITS: [u32; 10] = [68, 71, 72, 70, 71, 71, 72, 72, 71, 72];
     const R2_CHOPS: [u64; 10] = [63, 173, 175, 169, 39, 176, 56, 51, 53, 172];
+    const R2_STAND_TICKS: [u64; 10] = [65, 173, 177, 169, 41, 178, 56, 51, 55, 172];
     const R3_STARTS: [u64; 10] = [32, 32, 32, 32, 30, 31, 32, 29, 31, 32];
     const R3_XP: [i32; 10] = [225, 0, 0, 50, 25, 0, 0, 50, 75, 225];
     const R3_WAITS: [u32; 10] = [60, 72, 71, 66, 69, 72, 66, 68, 68, 64];
     const R3_CHOPS: [u64; 10] = [35, 35, 35, 35, 33, 36, 35, 34, 36, 35];
+    const R3_STAND_TICKS: [u64; 10] = [35, 37, 35, 35, 35, 36, 37, 34, 36, 35];
     const R2_TREE_IDS: [i32; 10] = [1278; 10];
     const R2_TREE_TILES: [(i32, i32); 10] = [(3103, 3222); 10];
-    const R2_STAND_TILES: [(i32, i32); 10] = [(3102, 3222); 10];
+    const R2_STAND_TILES: [(i32, i32); 10] = [(3104, 3224); 10];
     const R3_TREE_IDS: [i32; 10] = [1276; 10];
     const R3_TREE_TILES: [(i32, i32); 10] = [
         (3107, 3229),
@@ -1012,11 +1012,11 @@ mod tests {
     ];
     const R3_STAND_TILES: [(i32, i32); 10] = [
         (3108, 3228),
-        (3110, 3226),
-        (3110, 3226),
+        (3110, 3227),
+        (3110, 3227),
         (3108, 3228),
         (3108, 3228),
-        (3104, 3228),
+        (3107, 3228),
         (3108, 3228),
         (3108, 3228),
         (3108, 3228),
@@ -1024,24 +1024,40 @@ mod tests {
     ];
 
     // Compact typed replay of `oracle/r2-oracle.json` and
-    // `live-raw/danger-select-n10-r3/oracle.json`. XP, resource-wait counts,
-    // window starts, and first safe Chop request receipts are copied per bot;
-    // tree origins and safe stand tiles come from `oracle/eligibility.json`.
-    // A representative stand sample sits at start+10: the oracle's proof is
-    // existence within the budget, not a same-tick stand/request pair.
-    fn retained_fleet(
-        prefix: &str,
-        starts: &[u64; 10],
-        xp: &[i32; 10],
-        waits: &[u32; 10],
-        chop_ticks: &[u64; 10],
-        tree_ids: &[i32; 10],
-        tree_tiles: &[(i32, i32); 10],
-        stand_tiles: &[(i32, i32); 10],
+    // `live-raw/danger-select-n10-r3/oracle.json`. Safe stand ticks and tiles
+    // are the first matching samples in each run's samples.diagnostics.jsonl;
+    // eligibility.json authenticates the tree access tiles. All retained
+    // observations keep their original client tick and per-bot XP values.
+    struct RetainedFleetReceipt<'a> {
+        prefix: &'a str,
+        starts: &'a [u64; 10],
+        xp: &'a [i32; 10],
+        waits: &'a [u32; 10],
+        chop_ticks: &'a [u64; 10],
+        tree_ids: &'a [i32; 10],
+        tree_tiles: &'a [(i32, i32); 10],
+        stand_ticks: &'a [u64; 10],
+        stand_tiles: &'a [(i32, i32); 10],
         phase: NativePhase,
-        phase_label: &str,
-        event: &str,
-    ) -> GathererFleet {
+        phase_label: &'a str,
+        event: &'a str,
+    }
+
+    fn retained_fleet(receipt: RetainedFleetReceipt<'_>) -> GathererFleet {
+        let RetainedFleetReceipt {
+            prefix,
+            starts,
+            xp,
+            waits,
+            chop_ticks,
+            tree_ids,
+            tree_tiles,
+            stand_ticks,
+            stand_tiles,
+            phase,
+            phase_label,
+            event,
+        } = receipt;
         let anchor = WorldTile {
             x: 3109,
             z: 3228,
@@ -1082,7 +1098,7 @@ mod tests {
                     successful_chop_dispatches: 1,
                     window_chop_dispatches: 1,
                     safe_stand_trees: vec![SafeStandReceipt {
-                        tick: start + 10,
+                        tick: stand_ticks[index],
                         id: tree_ids[index],
                         origin,
                         tile: WorldTile {
@@ -1114,10 +1130,10 @@ mod tests {
         };
         let geometry = Arc::new(GathererGeometry {
             trees: vec![
-                tree(1278, 3103, 3222, &[(3102, 3222)]),
+                tree(1278, 3103, 3222, &[(3102, 3222), (3104, 3224)]),
                 tree(1276, 3107, 3229, &[(3107, 3228), (3108, 3228)]),
                 tree(1276, 3111, 3226, &[(3110, 3226), (3110, 3227)]),
-                tree(1276, 3105, 3228, &[(3104, 3228), (3105, 3227)]),
+                tree(1276, 3105, 3228, &[(3104, 3228), (3105, 3227), (3107, 3228)]),
             ],
             candidate_placements: 4,
             excluded_placements: 0,
@@ -1141,35 +1157,37 @@ mod tests {
     }
 
     fn r2_fleet() -> GathererFleet {
-        retained_fleet(
-            "gm1d8f7qgp",
-            &R2_STARTS,
-            &R2_XP,
-            &R2_WAITS,
-            &R2_CHOPS,
-            &R2_TREE_IDS,
-            &R2_TREE_TILES,
-            &R2_STAND_TILES,
-            NativePhase::Working,
-            "working",
-            "gathering",
-        )
+        retained_fleet(RetainedFleetReceipt {
+            prefix: "gm1d8f7qgp",
+            starts: &R2_STARTS,
+            xp: &R2_XP,
+            waits: &R2_WAITS,
+            chop_ticks: &R2_CHOPS,
+            tree_ids: &R2_TREE_IDS,
+            tree_tiles: &R2_TREE_TILES,
+            stand_ticks: &R2_STAND_TICKS,
+            stand_tiles: &R2_STAND_TILES,
+            phase: NativePhase::Working,
+            phase_label: "working",
+            event: "gathering",
+        })
     }
 
     fn r3_fleet() -> GathererFleet {
-        retained_fleet(
-            "gm1dorefg4",
-            &R3_STARTS,
-            &R3_XP,
-            &R3_WAITS,
-            &R3_CHOPS,
-            &R3_TREE_IDS,
-            &R3_TREE_TILES,
-            &R3_STAND_TILES,
-            NativePhase::Waiting,
-            "waiting",
-            GATHERER_RESOURCE_WAIT,
-        )
+        retained_fleet(RetainedFleetReceipt {
+            prefix: "gm1dorefg4",
+            starts: &R3_STARTS,
+            xp: &R3_XP,
+            waits: &R3_WAITS,
+            chop_ticks: &R3_CHOPS,
+            tree_ids: &R3_TREE_IDS,
+            tree_tiles: &R3_TREE_TILES,
+            stand_ticks: &R3_STAND_TICKS,
+            stand_tiles: &R3_STAND_TILES,
+            phase: NativePhase::Waiting,
+            phase_label: "waiting",
+            event: GATHERER_RESOURCE_WAIT,
+        })
     }
 
     fn failure(fleet: &GathererFleet) -> String {
@@ -1203,11 +1221,8 @@ mod tests {
                 assert_eq!(bot.window_end_tick, Some(end));
                 assert_eq!(bot.last_tick, Some(end));
                 assert_eq!(bot.native_status_tick, Some(end));
-                assert_ne!(
-                    bot.safe_stand_trees[0].tick,
-                    bot.chop_receipts[0].tick,
-                    "standing proof and real Chop request are independent samples"
-                );
+                assert!(bot.safe_stand_trees[0].tick > start);
+                assert!(bot.safe_stand_trees[0].tick <= end);
                 if bot.window_end_xp == Some(0) {
                     assert!(bot.resource_wait_samples > 0);
                 }
@@ -1321,6 +1336,39 @@ mod tests {
         blocked.bots.get_mut("gm1d8f7qgp_0").unwrap().final_phase =
             Some(NativePhase::Blocked);
         assert!(failure(&blocked).starts_with("gatherer_final_blocked:"));
+    }
+
+    #[test]
+    fn safety_failures_after_the_proof_budget_still_fail_the_cell() {
+        let mut denied = r2_fleet();
+        let bot = denied.bots.get_mut("gm1d8f7qgp_0").unwrap();
+        let after_budget = bot.window_end_tick.unwrap() + 1;
+        bot.last_tick = Some(after_budget);
+        bot.native_status_tick = Some(after_budget);
+        bot.first_denied = Some(DeniedSample {
+            tick: after_budget,
+            tile: WorldTile {
+                x: 3104,
+                z: 3229,
+                level: 0,
+            },
+            zone: 514,
+        });
+        assert!(failure(&denied).starts_with("gatherer_denied_position:"));
+
+        let mut blocked = r2_fleet();
+        let bot = blocked.bots.get_mut("gm1d8f7qgp_0").unwrap();
+        bot.last_tick = Some(after_budget);
+        bot.native_status_tick = Some(after_budget);
+        bot.final_phase = Some(NativePhase::Blocked);
+        assert!(failure(&blocked).starts_with("gatherer_final_blocked:"));
+
+        let mut dead = r2_fleet();
+        let bot = dead.bots.get_mut("gm1d8f7qgp_0").unwrap();
+        bot.last_tick = Some(after_budget);
+        bot.native_status_tick = Some(after_budget);
+        bot.deaths = 1;
+        assert!(failure(&dead).starts_with("gatherer_death:"));
     }
 
     #[test]
