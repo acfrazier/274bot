@@ -101,6 +101,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Eye of newt scenario check now allows the measured banking cycle at
   the normal game speed, with 50% headroom. Its old three-minute deadline
   stopped the check during the return from Draynor.
+- The Duel Arena clue check now recognises all obstacle-fight pens and their
+  boundary tiles. A valid duel no longer misses the handshake witness when
+  its players start at the east edge or in another obstacle pen.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
