@@ -244,7 +244,10 @@ fn open_map_world() -> TuiApp {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["alice".into(), "bob".into()];
     app.focused = Some(0);
-    app.fleet = vec![member("alice", Phase::Ready), member("bob", Phase::Offline)];
+    app.fleet_model.set_universe_for_test(
+        vec![member("alice", Phase::Ready), member("bob", Phase::Offline)],
+        &[],
+    );
     app.detail = Some(ready_detail("alice", (1, 1, 0)));
     app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
         &nav::grid::StepGrid::fixture_open_3x3(),
@@ -1154,12 +1157,15 @@ fn run_map_keyboard_walkthrough(width: u16, height: u16) {
     let alice = app.profile_id_for_name("alice");
     seam.press(&mut app, ch('g'), AppAction::MarkAll(vec![alice]));
     assert_eq!(app.walk_send.mode, WalkSendMode::Group);
-    assert_eq!(app.walk_send.walk_label(), "Walk 1 bots");
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
     assert!(
-        app.table
-            .selection
+        app.fleet_model
+            .marks()
             .contains(app.profile_id_for_name("alice"))
-            && !app.table.selection.contains(app.profile_id_for_name("bob")),
+            && !app
+                .fleet_model
+                .marks()
+                .contains(app.profile_id_for_name("bob")),
         "the group is the fleet's row selection: only eligible alice"
     );
     assert_eq!(
@@ -1844,4 +1850,159 @@ fn capacity_warning_is_whole_above_the_header_at_80x24() {
     let mut app = TuiApp::new("274bot headless");
     let rows = draw(&mut app, 80, 24);
     assert!(rows[0].contains("274bot"), "no warning, no banner");
+}
+
+/// Every member of `app` can walk.
+fn all_eligible(_: &str) -> WalkSlotStatus {
+    WalkSlotStatus::eligible(tile(1, 1))
+}
+
+/// The Group checklist is the fleet model's marks: it has no flags of its
+/// own, so its count follows `SetMark` and `MarkAll` through the command
+/// seam and nothing else.
+#[test]
+fn the_group_checklist_count_follows_the_models_marks() {
+    let mut seam = Seam::new();
+    let mut app = crate::test_support::fleet_app(&["alice", "bob"]);
+    app.refresh_walk_send(all_eligible);
+    let count = |app: &TuiApp| app.walk_send.checked_count(app.fleet_model.marks());
+    assert_eq!(count(&app), 0);
+    seam.apply(&mut app, AppAction::SetMark("alice".into(), true));
+    assert_eq!(count(&app), 1, "a mark checks the row");
+    assert!(app.walk_send.rows()[0].checked(app.fleet_model.marks()));
+    assert!(!app.walk_send.rows()[1].checked(app.fleet_model.marks()));
+    seam.apply(&mut app, AppAction::SetMark("bob".into(), true));
+    assert_eq!(count(&app), 2);
+    seam.apply(&mut app, AppAction::SetMark("alice".into(), false));
+    assert_eq!(count(&app), 1, "an unmark unchecks it");
+    // An ineligible marked row is not checked.
+    app.refresh_walk_send(|name| {
+        if name == "bob" {
+            WalkSlotStatus::excluded(WalkExclude::NoPosition)
+        } else {
+            all_eligible(name)
+        }
+    });
+    assert_eq!(count(&app), 0);
+    // Group mode with nothing checked marks every eligible row through
+    // `MarkAll`, and keeps no flag of its own.
+    let alice = app.profile_id_for_name("alice");
+    assert_eq!(app.toggle_walk_send_mode(), AppAction::MarkAll(vec![alice]));
+    assert_eq!(count(&app), 0, "nothing is checked before MarkAll lands");
+    seam.apply(&mut app, AppAction::MarkAll(vec![alice]));
+    assert_eq!(count(&app), 1);
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
+}
+
+/// A warm, unchanged Group Map draw borrows the cached Walk label: it is
+/// not rebuilt (no count, no new string) until a mark, the rows or the
+/// mode moves, and then it is rebuilt once in its own buffer.
+#[test]
+fn a_steady_group_map_draw_reuses_the_walk_label() {
+    let mut seam = Seam::new();
+    let mut app = open_map_world();
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.refresh_walk_send(all_eligible);
+    let ids = vec![
+        app.profile_id_for_name("alice"),
+        app.profile_id_for_name("bob"),
+    ];
+    seam.press(&mut app, ch('g'), AppAction::MarkAll(ids));
+    assert_eq!(app.walk_send.mode, WalkSendMode::Group);
+    let first = text(&draw(&mut app, 160, 40));
+    assert!(first.contains("Walk 2 bots"), "{first}");
+    let builds = app.walk_send.label_builds;
+    let buffer = app.walk_send.walk_label().as_ptr();
+    for _ in 0..5 {
+        draw(&mut app, 160, 40);
+    }
+    assert_eq!(
+        app.walk_send.label_builds, builds,
+        "steady draws rebuild nothing"
+    );
+    assert_eq!(
+        app.walk_send.walk_label().as_ptr(),
+        buffer,
+        "the same string"
+    );
+
+    seam.apply(&mut app, AppAction::SetMark("bob".into(), false));
+    let after = text(&draw(&mut app, 160, 40));
+    assert!(
+        after.contains("Walk 1 bots"),
+        "an unmark moves the label: {after}"
+    );
+    assert_eq!(app.walk_send.label_builds, builds + 1, "rebuilt once");
+    assert_eq!(
+        app.walk_send.walk_label().as_ptr(),
+        buffer,
+        "in its own buffer"
+    );
+    draw(&mut app, 160, 40);
+    assert_eq!(app.walk_send.label_builds, builds + 1);
+}
+
+/// Unloading a marked profile keeps its mark: the table still shows it
+/// marked and counts it, and once it is loaded again the Group checklist
+/// has it checked.
+#[test]
+fn unloading_a_marked_profile_keeps_its_mark_for_the_next_group_walk() {
+    use frontend_core::ProfileIdentity;
+    let mut seam = Seam::with_profiles(&[("alice", 1), ("bob", 2)]);
+    let mut app = crate::test_support::fleet_app(&["alice", "bob"]);
+    let ids = [ProfileIdentity::uid(1), ProfileIdentity::uid(2)];
+    crate::test_support::set_profile_ids(&mut app, &ids);
+    seam.apply(&mut app, AppAction::SetMark("bob".into(), true));
+    assert!(app.fleet_model.marks().contains(ids[1]));
+
+    // Bob logs out: he leaves the members but stays a vault profile.
+    app.names = vec!["alice".into()];
+    app.profile_ids = vec![ids[0]];
+    app.fleet_model.set_universe_for_test(
+        vec![member("alice", Phase::Ready), FleetRow::for_profile("bob")],
+        &ids,
+    );
+    app.focused = Some(0);
+    assert!(
+        app.fleet_model.marks().contains(ids[1]),
+        "the mark outlives the member"
+    );
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("[x]"), "the table still shows it: {screen}");
+    assert!(screen.contains("2/2 shown · marked 1"), "{screen}");
+
+    // He logs in again: the checklist has him checked.
+    app.names = vec!["alice".into(), "bob".into()];
+    app.profile_ids = ids.to_vec();
+    app.fleet_model.set_universe_for_test(
+        vec![member("alice", Phase::Ready), member("bob", Phase::Ready)],
+        &ids,
+    );
+    app.refresh_walk_send(all_eligible);
+    let marks = app.fleet_model.marks();
+    let rows = app.walk_send.rows();
+    assert!(!rows[0].checked(marks));
+    assert!(rows[1].checked(marks), "bob is checked again");
+    assert_eq!(app.walk_send.checked_count(marks), 1);
+    // Entering Group mode keeps the existing mark: no `MarkAll`.
+    assert_eq!(app.toggle_walk_send_mode(), AppAction::None);
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
+}
+
+/// The Space key on the Map toggles the focused bot's mark through
+/// `SetMark`, from the model's marks.
+#[test]
+fn space_on_the_map_toggles_the_focused_bots_model_mark() {
+    let mut seam = Seam::new();
+    let mut app = open_map_world();
+    app.refresh_walk_send(all_eligible);
+    assert_eq!(
+        app.toggle_walk_send_focused(),
+        AppAction::SetMark("alice".into(), true)
+    );
+    seam.apply(&mut app, AppAction::SetMark("alice".into(), true));
+    assert_eq!(
+        app.toggle_walk_send_focused(),
+        AppAction::SetMark("alice".into(), false)
+    );
 }

@@ -60,9 +60,9 @@ impl<Io> OperatorSession<Io> {
                 let names = self.admitted_names(request);
                 for name in &names {
                     let identity = self.profile_identity_or_synthetic(name);
-                    let applied = match surface.models().marks.as_deref_mut() {
-                        Some(marks) => {
-                            marks.set(identity, on);
+                    let applied = match surface.models().fleet.as_deref_mut() {
+                        Some(fleet) => {
+                            fleet.set_mark(identity, on);
                             Applied::Done
                         }
                         None => no_model("marks"),
@@ -72,25 +72,25 @@ impl<Io> OperatorSession<Io> {
                 self.release_names(names);
                 return;
             }
-            FleetRow::Filter => match surface.models().fleet_filter.as_deref_mut() {
-                Some(filter) => {
-                    filter.commit();
+            FleetRow::Filter => match surface.models().fleet.as_deref_mut() {
+                Some(fleet) => {
+                    fleet.commit_filter();
                     Applied::Done
                 }
                 None => no_model("fleet filter"),
             },
-            FleetRow::Sort(order) => match surface.models().fleet_filter.as_deref_mut() {
-                Some(filter) => {
-                    filter.set_order(order);
+            FleetRow::Sort(order) => match surface.models().fleet.as_deref_mut() {
+                Some(fleet) => {
+                    fleet.set_order(order);
                     Applied::Done
                 }
                 None => no_model("fleet order"),
             },
             FleetRow::MarkAll => {
                 let staged = std::mem::take(self.commands.mark_all_staging());
-                let applied = match surface.models().marks.as_deref_mut() {
-                    Some(marks) => {
-                        marks.mark_all(staged.iter().copied());
+                let applied = match surface.models().fleet.as_deref_mut() {
+                    Some(fleet) => {
+                        fleet.mark_all(staged.iter().copied());
                         Applied::Done
                     }
                     None => no_model("marks"),
@@ -98,9 +98,9 @@ impl<Io> OperatorSession<Io> {
                 *self.commands.mark_all_staging() = staged;
                 applied
             }
-            FleetRow::ClearMarks => match surface.models().marks.as_deref_mut() {
-                Some(marks) => {
-                    marks.clear();
+            FleetRow::ClearMarks => match surface.models().fleet.as_deref_mut() {
+                Some(fleet) => {
+                    fleet.clear_marks();
                     Applied::Done
                 }
                 None => no_model("marks"),

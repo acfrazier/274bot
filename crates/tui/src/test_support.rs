@@ -6,7 +6,8 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
-use frontend_core::{FleetCounts, FleetRow, Phase, SlotDetail};
+use frontend_core::scripts::ScriptRunState;
+use frontend_core::{FleetCounts, FleetRow, Phase, ProfileIdentity, SlotDetail};
 
 use crate::app::TuiApp;
 
@@ -56,7 +57,8 @@ pub fn ready_detail(name: &str) -> SlotDetail {
 pub fn fleet_app(names: &[&str]) -> TuiApp {
     let mut app = TuiApp::new(TITLE);
     app.names = names.iter().map(|n| n.to_string()).collect();
-    app.fleet = names.iter().map(|n| ready(n, 2)).collect();
+    app.fleet_model
+        .set_universe_for_test(names.iter().map(|n| ready(n, 2)).collect(), &[]);
     app.counts = FleetCounts {
         loaded: names.len(),
         ready: names.len(),
@@ -66,6 +68,34 @@ pub fn fleet_app(names: &[&str]) -> TuiApp {
     app.detail = names.first().map(|name| ready_detail(name));
     app.refresh();
     app
+}
+
+/// Give the app's members these vault identities (the model's rows keep
+/// their order), as the production session's projection does.
+pub fn set_profile_ids(app: &mut TuiApp, ids: &[ProfileIdentity]) {
+    app.profile_ids = ids.to_vec();
+    let rows: Vec<FleetRow> = app
+        .fleet_model
+        .rows()
+        .iter()
+        .map(FleetRow::snapshot)
+        .collect();
+    app.fleet_model.set_universe_for_test(rows, ids);
+}
+
+/// Mark the first `count` rows' scripts as running.
+pub fn run_scripts(app: &mut TuiApp, count: usize) {
+    let mut rows: Vec<FleetRow> = app
+        .fleet_model
+        .rows()
+        .iter()
+        .map(FleetRow::snapshot)
+        .collect();
+    for row in rows.iter_mut().take(count) {
+        row.set_script(ScriptRunState::Running);
+    }
+    let ids = app.fleet_model.identities().to_vec();
+    app.fleet_model.set_universe_for_test(rows, &ids);
 }
 
 pub fn rows(buf: &Buffer) -> Vec<String> {

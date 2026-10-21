@@ -1744,7 +1744,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     let mut app = TuiApp::new("274bot headless");
     app.map_active = true;
     session.pump(&mut app);
-    assert!(!app.fleet[0].walking());
+    assert!(!app.fleet_model.rows()[0].walking());
 
     let destination = Tile {
         x: 1,
@@ -1755,8 +1755,11 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     session.arm_walk_on(&mut app, destination);
     assert_eq!(app.error, None);
     session.pump(&mut app);
-    assert!(app.fleet[0].walking(), "the armed walk shows on the row");
-    assert!(app.fleet[0].busy());
+    assert!(
+        app.fleet_model.rows()[0].walking(),
+        "the armed walk shows on the row"
+    );
+    assert!(app.fleet_model.rows()[0].busy());
     assert!(session.core.walk_route_armed("alice"));
 }
 
@@ -2832,7 +2835,7 @@ fn marked_login_and_logout_show_the_report_of_the_command_over_the_marks() {
     let iso = IsolatedStores::enter("tui-marked-login-logout-command");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let alice = session.core.profile_identity_or_synthetic("alice");
-    app.table.selection.set_for_test(alice, true);
+    app.fleet_model.set_mark_for_test(alice, true);
 
     dispatch(&mut session, &mut app, AppAction::LoginMarked);
     let report = app.error.clone().expect("the login report is shown");
@@ -4404,7 +4407,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     // marked.
     for name in ["bob", "carol", "erin"] {
         let id = session.core.profile_identity(name).unwrap();
-        app.table.selection.set_for_test(id, true);
+        app.fleet_model.set_mark_for_test(id, true);
     }
     assert_eq!(command.availability(&app), Ok(()));
 
@@ -4507,7 +4510,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     let id = session.core.profile_identity("bob").unwrap();
-    app.table.selection.set_for_test(id, true);
+    app.fleet_model.set_mark_for_test(id, true);
 
     let vault_file = iso.dir().join("vault");
     let rows_before = script_settings_rows(&session);
@@ -4814,10 +4817,9 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let done = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     dispatch(&mut session, &mut app, done);
     let shown: Vec<&str> = app
-        .table
-        .shown()
-        .iter()
-        .map(|&i| app.names[i].as_str())
+        .fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
         .collect();
     assert_eq!(shown, ["bob", "bobby"]);
     for (w, h) in SIZES {
@@ -4828,13 +4830,13 @@ fn fleet_session_filters_marks_shown_and_assigns_marked() {
     // Mark all shown marks exactly the filtered rows.
     let mark = app.run_command(crate::commands::Command::MarkAllShown);
     dispatch(&mut session, &mut app, mark);
-    assert_eq!(app.table.selection.len(), 2);
+    assert_eq!(app.fleet_model.marks().len(), 2);
     for name in ["bob", "bobby"] {
         let id = session.core.profile_identity(name).unwrap();
-        assert!(app.table.selection.contains(id), "{name} is marked");
+        assert!(app.fleet_model.marks().contains(id), "{name} is marked");
     }
     let alice = session.core.profile_identity("alice").unwrap();
-    assert!(!app.table.selection.contains(alice));
+    assert!(!app.fleet_model.marks().contains(alice));
 
     // Assign the card to the marked bots through the bulk confirmation.
     let action = app.run_command(crate::commands::Command::ScriptAssignMarked);

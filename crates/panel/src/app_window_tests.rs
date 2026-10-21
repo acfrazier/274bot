@@ -241,7 +241,7 @@ fn with_vault(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
 fn with_marked_bob(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
     add_vault(state);
     let bob = state.session.core.profile_identity("bob").unwrap();
-    state.session.fleet_selection.set_for_test(bob, true);
+    state.session.fleet_model.set_mark_for_test(bob, true);
     state.session.open_window(PanelWindow::Fleet);
     None
 }

@@ -1120,7 +1120,7 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
 
     // Marks persist when focus moves to Bob, but plain Start must skip
     // Alice before it can queue a card or save an assignment there.
-    s.fleet_selection.mark_all_for_test([
+    s.fleet_model.mark_all_for_test([
         frontend_core::ProfileIdentity::uid(1),
         frontend_core::ProfileIdentity::uid(2),
     ]);
@@ -1692,7 +1692,7 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
         &path.to_string_lossy(),
     ));
     let identity = s.core.profile_identity("alice").unwrap();
-    s.fleet_selection.set_for_test(identity, true);
+    s.fleet_model.set_mark_for_test(identity, true);
     s.fleet_assign_restart_selected();
     assert_eq!(s.core.script_state("alice"), ScriptRunState::Stopping);
 
@@ -1937,7 +1937,7 @@ fn fleet_report_follows_a_start_all_that_lands_while_marked_rows_wait() {
     s.persist_successful_assignment("carol", bad.assignment());
     for name in ["alice", "bob", "carol"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
 
     s.fleet_start_selected();
@@ -2003,7 +2003,7 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
         .unwrap();
     for name in ["alice", "bob"] {
         let identity = s.core.profile_identity(name).unwrap();
-        s.fleet_selection.set_for_test(identity, true);
+        s.fleet_model.set_mark_for_test(identity, true);
     }
 
     s.fleet_assign_selected();
@@ -2260,7 +2260,7 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     focus_profile(&mut s, "alice");
     s.script_sel = Some(ScriptChoice::loaded(card.source(), card.identity_id()));
     let bob = s.core.profile_identity("bob").unwrap();
-    s.fleet_selection.set_for_test(bob, true);
+    s.fleet_model.set_mark_for_test(bob, true);
 
     // Newly assigned: alice has no per-card key, only a legacy override.
     s.scripts

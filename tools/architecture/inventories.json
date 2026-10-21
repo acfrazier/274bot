@@ -58,6 +58,22 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetMarkCounts",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetMarkCounts",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F1: Copy row and mark counts of the fleet model."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetModel",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetModel",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F1: the front end's one fleet model (profile universe, marks, filter, order), lent through Models::with_fleet."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/group_walk.rs|MarkedWalk",
       "path": "crates/frontend-core/src/group_walk.rs",
       "symbol": "MarkedWalk",

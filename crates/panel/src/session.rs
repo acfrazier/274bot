@@ -908,20 +908,14 @@ pub struct Session {
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
-    /// Separate Fleet window and the shared identity-keyed marked rows.
+    /// Separate Fleet window open.
     pub fleet_open: bool,
-    pub fleet_selection: frontend_core::MarkedSelection,
-    /// The Fleet window's filter text and row order (staged text; the
-    /// `SetFleetFilter`/`SetFleetSort` commands change what is shown).
-    pub fleet_filter: frontend_core::FleetFilter,
+    /// The one fleet model (rows, marks, filter, order) the Fleet window,
+    /// the MultiBox rail and the Grid all read; changed by commands only.
+    pub fleet_model: frontend_core::FleetModel,
     /// The draw policy the render mirror (`focus`) follows; changed by
     /// `SetDraw` only.
     pub(crate) draw: frontend_core::DrawPolicy,
-    /// Reused buffer for the Fleet window's shown-row indices.
-    pub(crate) fleet_shown: Vec<usize>,
-    /// Reused buffer for the sorted mark universe [`Self::prune_fleet_marks`]
-    /// prunes against; kept so a steady frame allocates nothing there.
-    pub(crate) fleet_universe: Vec<frontend_core::ProfileIdentity>,
     pub fleet_report: Option<String>,
     /// Set by a marked Start: the fleet report follows the running Start
     /// report (and a later Stop all) until the next marked Stop.
@@ -1427,16 +1421,13 @@ impl Session {
             import_delete_understood: false,
             profiles_split: [0.4, 0.35],
             fleet_open: false,
-            fleet_selection: frontend_core::MarkedSelection::default(),
-            fleet_filter: frontend_core::FleetFilter::new(frontend_core::FleetOrder::Name),
+            fleet_model: frontend_core::FleetModel::new(),
             draw: frontend_core::DrawPolicy::new(
                 capture_pref,
                 sidecar_50_pref,
                 focused_50_pref,
                 true,
             ),
-            fleet_shown: Vec::new(),
-            fleet_universe: Vec::new(),
             fleet_report: None,
             fleet_report_follows_start: false,
             fleet_restart_confirm: false,
@@ -2343,9 +2334,10 @@ impl Session {
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
         self.core.advance_removals(Instant::now());
-        // Fleet marks follow the profile universe at this sync, not at
-        // the Fleet window's draw: a closed window prunes the same.
-        self.prune_fleet_marks();
+        // The fleet model follows the core's rows and the vault at this
+        // sync, whether or not a fleet surface is drawn (two integer
+        // comparisons when nothing moved).
+        self.fleet_model.refresh(&self.core);
         if self.background_ack_open && self.background_bot_count() == 0 {
             self.background_ack_open = false;
         }
@@ -3114,13 +3106,12 @@ impl Session {
                 map_desk: &mut self.map_desk,
                 models: frontend_core::Models::none()
                     .with_scripts(&mut self.scripts)
-                    .with_marks(&mut self.fleet_selection)
+                    .with_fleet(&mut self.fleet_model)
                     .with_editor(&mut self.profile_editor)
                     .with_import(&mut self.profile_import)
                     .with_loadouts(&mut self.loadouts)
                     .with_quester(&mut self.quester_paths)
                     .with_walk_globals(&mut self.walk_permissions)
-                    .with_fleet_filter(&mut self.fleet_filter)
                     .with_draw(&mut self.draw),
                 frame_hook: None,
             },
@@ -4040,39 +4031,6 @@ impl Session {
         self.core.profile_identity_or_synthetic(name)
     }
 
-    /// Prune the fleet marks to this surface's universe — every vault
-    /// profile, or the projected rows while no vault is open (the same
-    /// universe the Fleet window rows are built over). Runs at the
-    /// per-frame sync (`pump_status`), whether or not the Fleet window
-    /// is drawn, and allocates nothing once the kept universe buffer
-    /// is warm: identities come straight off the vault profiles, are
-    /// sorted in place, and membership is the core's binary search.
-    pub(crate) fn prune_fleet_marks(&mut self) {
-        if self.fleet_selection.is_empty() {
-            return;
-        }
-        let mut universe = std::mem::take(&mut self.fleet_universe);
-        universe.clear();
-        match self.core.vault_open() {
-            true => universe.extend(
-                self.core
-                    .profiles()
-                    .map(|profile| frontend_core::ProfileIdentity::uid(profile.uid())),
-            ),
-            false => universe.extend(
-                self.core
-                    .fleet_view()
-                    .rows()
-                    .iter()
-                    .map(|row| self.fleet_identity(row.name())),
-            ),
-        }
-        universe.sort_unstable();
-        universe.dedup();
-        self.fleet_selection.retain_sorted(&universe);
-        self.fleet_universe = universe;
-    }
-
     pub fn refresh_walk_send(&mut self) {
         let names = self.walk_send_names();
         let mut rows = Vec::with_capacity(names.len());
@@ -4086,15 +4044,17 @@ impl Session {
             });
         }
         self.walk_send.rows = rows;
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     pub fn set_walk_send_mode(&mut self, mode: WalkSendMode) {
         self.walk_send.mode = mode;
-        if mode == WalkSendMode::Group && self.walk_send.checked_count(&self.fleet_selection) == 0 {
+        if mode == WalkSendMode::Group
+            && self.walk_send.checked_count(self.fleet_model.marks()) == 0
+        {
             self.walk_send_all_eligible();
         }
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     pub fn walk_send_all_eligible(&mut self) {
@@ -4107,7 +4067,7 @@ impl Session {
             .collect::<Vec<_>>();
         self.core.stage_mark_all(identities);
         self.submit(OperatorCommand::MarkAll, Targets::Application);
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     /// Open (or bring forward) the WalkTo picker for the Fleet window's
@@ -4117,12 +4077,12 @@ impl Session {
         self.open_window(PanelWindow::WalkTo);
         self.refresh_walk_send();
         self.walk_send.mode = WalkSendMode::Group;
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     pub fn walk_send_none(&mut self) {
         self.submit(OperatorCommand::ClearMarks, Targets::Application);
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     /// Mark or unmark the Send list's bot at `index` in the shared set. A bot
@@ -4137,7 +4097,7 @@ impl Session {
         if let Some(name) = name {
             self.submit(OperatorCommand::SetMark(checked), Targets::Profile(&name));
         }
-        self.walk_send.sync_walk_label(&self.fleet_selection);
+        self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
     /// Walk every marked bot to the confirmed destination through the typed

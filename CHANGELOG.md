@@ -27,12 +27,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   panel's own window state no longer rewrites them.
 - A capture frame that fills the input queue is reported, instead of
   dropping events silently.
+- Fleet: the Fleet table, the MultiBox rail and the Grid use one filter, sort
+  and set of marks. The sort offers Load order (the default), Name and
+  Status. The Fleet table lists profiles that are not loaded as "not
+  loaded", and the rail lists them in a folded "Not loaded" group where you
+  can mark them. A profile keeps its mark when the filter hides it or when
+  it is unloaded, until the profile is deleted.
 
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
+- The fleet table lists every profile, including the ones that are not
+  loaded (state "not loaded"), with the same marks and filter as the panel.
+  A profile keeps its mark when the filter hides it or when it is unloaded,
+  until the profile is deleted. The Map's group send uses the same marks.
 
 ### Map baking
 
@@ -51,6 +61,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   changes to one of these settings wait for the disk, the later change
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
+
+#### Profiles
+
+- Deleting a profile no longer leaves the result of the delete waiting
+  forever; it now reports when the delete is saved.
 
 #### Banking
 

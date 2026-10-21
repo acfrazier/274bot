@@ -651,12 +651,12 @@ impl<Io> OperatorSession<Io> {
                 if let Some(old) = pending.renamed_from {
                     self.hold_durable(&old);
                     self.cancel_profile_start(&old);
-                    if let Some(vault) = self.vault.as_mut() {
+                    if let Some(vault) = self.vault_for_write() {
                         vault.stage_remove(&old);
                     }
                     changes.push(VaultChange::Remove(old));
                 }
-                if let Some(vault) = self.vault.as_mut() {
+                if let Some(vault) = self.vault_for_write() {
                     vault.stage_upsert(pending.profile);
                 }
                 self.submit_write_at(

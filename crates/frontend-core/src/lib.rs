@@ -64,8 +64,8 @@ pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
 pub use fleet::{
-    contains_ci, fill_visible_indices, fill_visible_row_indices, fleet_row_matches, member_row,
-    state_label, Fleet, FleetFilter,
+    contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetFilter,
+    FleetMarkCounts, FleetModel, NOT_LOADED,
 };
 pub use group_walk::{MarkedWalk, WalkInputs};
 pub use map_bake::{

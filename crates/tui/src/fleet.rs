@@ -1,9 +1,12 @@
-//! Fleet table: the loaded bots with a keyboard cursor, explicit row
-//! selection (checkboxes, "selected N of M") and a filter. Moving the
+//! Fleet table: every profile the operator can load (the loaded bots and
+//! the vault profiles that are not loaded), a keyboard cursor, explicit row
+//! marks (checkboxes, "marked N") and a filter. The rows, marks, filter and
+//! shown order live in the core `FleetModel`; this module keeps only the
+//! presentation: the cursor, the scroll window and the edit flag. Moving the
 //! cursor never changes the selected bot (the core `select`); Enter or a
-//! click on a row does. Rows are drawn only for the visible window and the
-//! filter scans member metadata without allocating, so a 1,000-member fleet
-//! costs O(members) per frame and nothing at all while headless.
+//! click on a loaded row does. Rows are drawn only for the visible window,
+//! so a 1,000-profile fleet costs O(window) per frame and nothing at all
+//! while headless.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -11,12 +14,8 @@ use ratatui::style::{Modifier, Style};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-use frontend_core::scripts::ScriptRunState;
 use frontend_core::views::run_state_label;
-use frontend_core::{
-    fill_visible_indices, member_row, profile_id_at, state_label, FleetFilter, FleetOrder,
-    FleetRow, MarkedSelection, ProfileIdentity,
-};
+use frontend_core::{state_label, FleetModel, ProfileIdentity};
 
 use crate::layout::SizeClass;
 
@@ -33,141 +32,79 @@ pub enum FilterEdit {
     Clear,
 }
 
-/// Renderer-local fleet state. Marks are the shared identity-based selection
-/// ("selected N of M"); they never change the selected bot and are dropped
-/// when their member leaves the fleet. The marks and the filter are
-/// operator models the command seam changes (`SetMark`, `MarkAll`,
-/// `ClearMarks`, `SetFleetFilter`); the cursor, the scroll window and the
-/// edit flag are presentation only.
-#[derive(Debug)]
+/// Renderer-local fleet state: presentation only. The rows, marks, filter
+/// and shown order are the core `FleetModel`'s; the cursor is a position in
+/// its shown rows that follows its profile (by identity) when the rows or
+/// the filter change.
+#[derive(Debug, Default)]
 pub struct FleetState {
     /// Cursor position in the shown (filtered) rows.
     pub cursor: usize,
     /// First shown row of the drawn window.
     pub scroll: usize,
-    /// Shared checkbox state; identities are stable across renames.
-    pub selection: MarkedSelection,
-    /// The filter text and row order: the field edits the staged text and
-    /// `SetFleetFilter` commits it to the filter the rows are shown with.
-    pub filter: FleetFilter,
     /// The filter line is being edited.
     pub editing: bool,
-    /// Member indices passing the filter, in fleet order.
-    shown: Vec<usize>,
-    /// The member under the cursor, so a filter or membership change keeps
-    /// the cursor on the same bot while it is still shown.
-    cursor_name: String,
-}
-
-impl Default for FleetState {
-    fn default() -> Self {
-        Self {
-            cursor: 0,
-            scroll: 0,
-            selection: MarkedSelection::default(),
-            filter: FleetFilter::new(FleetOrder::LoadOrder),
-            editing: false,
-            shown: Vec::new(),
-            cursor_name: String::new(),
-        }
-    }
+    /// The profile under the cursor, so a filter or membership change keeps
+    /// the cursor on the same profile while it is still shown.
+    cursor_identity: Option<ProfileIdentity>,
+    /// The model generation the cursor was last fitted to.
+    synced: Option<u64>,
 }
 
 impl FleetState {
-    /// Recompute the shown rows for `names` (their projected `rows`), keep
-    /// the cursor on the same member when possible and drop marks of
-    /// departed identities. `ids` parallels `names`; missing ids use a
-    /// deterministic fixture identity.
-    pub fn sync_with_ids(&mut self, names: &[String], ids: &[ProfileIdentity], rows: &[FleetRow]) {
-        fill_visible_indices(
-            names,
-            rows,
-            self.filter.text(),
-            self.filter.order(),
-            &mut self.shown,
-        );
-        if !self.cursor_name.is_empty() {
-            if let Some(pos) = self
-                .shown
+    /// Fit the cursor to `model`'s shown rows: keep it on the same profile
+    /// when that is still shown, else clamp it. Does nothing while the model
+    /// has not moved since the last call.
+    pub fn sync(&mut self, model: &FleetModel) {
+        if self.synced == Some(model.generation()) {
+            return;
+        }
+        self.synced = Some(model.generation());
+        if let Some(identity) = self.cursor_identity {
+            if let Some(pos) = model
+                .shown()
                 .iter()
-                .position(|&index| names[index] == self.cursor_name)
+                .position(|&index| model.identity(index) == Some(identity))
             {
                 self.cursor = pos;
             }
         }
-        self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
-        self.remember_cursor(names);
-        let identities = (0..names.len()).filter_map(|index| profile_id_at(ids, names, index));
-        self.selection.retain(identities);
+        self.cursor = self.cursor.min(model.shown().len().saturating_sub(1));
+        self.remember_cursor(model);
     }
 
-    fn remember_cursor(&mut self, names: &[String]) {
-        self.cursor_name.clear();
-        if let Some(name) = self.shown.get(self.cursor).and_then(|&i| names.get(i)) {
-            self.cursor_name.push_str(name);
-        }
+    fn remember_cursor(&mut self, model: &FleetModel) {
+        self.cursor_identity = model
+            .shown()
+            .get(self.cursor)
+            .and_then(|&index| model.identity(index));
     }
 
-    pub fn shown(&self) -> &[usize] {
-        &self.shown
-    }
-
-    /// The member index under the cursor.
-    pub fn cursor_member(&self) -> Option<usize> {
-        self.shown.get(self.cursor).copied()
+    /// The universe row index under the cursor.
+    pub fn cursor_row(&self, model: &FleetModel) -> Option<usize> {
+        model.shown().get(self.cursor).copied()
     }
 
     /// Move the cursor by `delta` shown rows (clamped).
-    pub fn move_cursor(&mut self, delta: isize, names: &[String]) {
-        if self.shown.is_empty() {
+    pub fn move_cursor(&mut self, delta: isize, model: &FleetModel) {
+        if model.shown().is_empty() {
             return;
         }
-        let last = self.shown.len() - 1;
+        let last = model.shown().len() - 1;
         self.cursor = self.cursor.saturating_add_signed(delta).min(last);
-        self.remember_cursor(names);
+        self.remember_cursor(model);
     }
 
-    pub fn cursor_to(&mut self, position: usize, names: &[String]) {
-        if self.shown.is_empty() {
+    pub fn cursor_to(&mut self, position: usize, model: &FleetModel) {
+        if model.shown().is_empty() {
             return;
         }
-        self.cursor = position.min(self.shown.len() - 1);
-        self.remember_cursor(names);
+        self.cursor = position.min(model.shown().len() - 1);
+        self.remember_cursor(model);
     }
 
-    /// The `SetMark` request that flips member `index`'s row mark, using
-    /// the stable id when the caller has a vault projection and a fixture
-    /// id otherwise: the member's name and the value its mark takes.
-    pub fn toggled_mark(
-        &self,
-        names: &[String],
-        ids: &[ProfileIdentity],
-        index: usize,
-    ) -> Option<(String, bool)> {
-        let name = names.get(index)?;
-        let identity = profile_id_at(ids, names, index)?;
-        Some((name.clone(), !self.selection.contains(identity)))
-    }
-
-    pub fn is_marked_id(&self, identity: ProfileIdentity) -> bool {
-        self.selection.contains(identity)
-    }
-
-    /// The identities of the shown rows: the rows `MarkAll` marks for
-    /// "select all shown".
-    pub fn shown_identities(
-        &self,
-        names: &[String],
-        ids: &[ProfileIdentity],
-    ) -> Vec<ProfileIdentity> {
-        self.shown
-            .iter()
-            .filter_map(|&index| profile_id_at(ids, names, index))
-            .collect()
-    }
-
-    /// Keep the cursor inside a window of `rows` lines.
-    fn scroll_into_view(&mut self, rows: usize) {
+    /// Keep the cursor inside a window of `rows` lines over `shown` rows.
+    fn scroll_into_view(&mut self, rows: usize, shown: usize) {
         if rows == 0 {
             return;
         }
@@ -176,22 +113,28 @@ impl FleetState {
         } else if self.cursor >= self.scroll + rows {
             self.scroll = self.cursor + 1 - rows;
         }
-        self.scroll = self.scroll.min(self.shown.len().saturating_sub(rows));
+        self.scroll = self.scroll.min(shown.saturating_sub(rows));
     }
 }
 
-/// The table widget over the fleet `names` and the core's projected `rows`.
-/// `ids` parallels `names` and keeps row marks stable through sorting/filter.
-/// `selected` is the selected bot's member index; `keys` is whether the
-/// fleet pane has keyboard focus (the cursor row is drawn reversed only
-/// then, so the operator sees where keys go).
+/// The `SetMark` request that flips universe row `index`'s mark: the
+/// profile's name and the value its mark takes. Any row (loaded or not) can
+/// be marked.
+pub fn toggled_mark(model: &FleetModel, index: usize) -> Option<(String, bool)> {
+    let row = model.rows().get(index)?;
+    Some((row.name().to_owned(), !model.is_marked(index)))
+}
+
+/// The table widget over the core's fleet model: its shown rows, loaded
+/// and not. `selected` is the focused bot's identity (it gets the `*`
+/// marker; an unloaded row is never focused); `keys` is whether the fleet
+/// pane has keyboard focus (the cursor row is drawn reversed only then, so
+/// the operator sees where keys go).
 pub struct FleetTable<'a> {
-    pub names: &'a [String],
-    pub ids: &'a [ProfileIdentity],
-    pub rows: &'a [FleetRow],
+    pub model: &'a FleetModel,
     pub restart_badges: &'a HashSet<ProfileIdentity>,
     pub state: &'a mut FleetState,
-    pub selected: Option<usize>,
+    pub selected: Option<ProfileIdentity>,
     pub keys: bool,
     pub class: SizeClass,
 }
@@ -240,16 +183,14 @@ impl FleetTable<'_> {
     /// caller's buttons.
     pub fn render(self, area: Rect, buf: &mut Buffer, reserve: u16) -> FleetHits {
         let Self {
-            names,
-            ids,
-            rows: fleet,
+            model,
             state,
             selected,
             restart_badges,
             keys,
             class,
         } = self;
-        state.sync_with_ids(names, ids, fleet);
+        state.sync(model);
         if area.height == 0 || area.width < 12 {
             return FleetHits::default();
         }
@@ -257,15 +198,16 @@ impl FleetTable<'_> {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let bottom = area.y + area.height;
         let mut y = area.y;
-        if state.editing || !state.filter.text().is_empty() {
+        let filter = model.filter();
+        if state.editing || !filter.text().is_empty() {
             let mut x = area.x;
             put(buf, &mut x, y, right, "/filter: ", dim);
             // The field shows what is typed while it is edited, the
             // applied filter otherwise.
             let line = if state.editing {
-                state.filter.staged()
+                filter.staged()
             } else {
-                state.filter.text()
+                filter.text()
             };
             put(buf, &mut x, y, right, line, Style::default());
             if state.editing {
@@ -306,9 +248,9 @@ impl FleetTable<'_> {
             y += 1;
         }
         let rows_h = bottom.saturating_sub(y).saturating_sub(1 + reserve);
-        state.scroll_into_view(usize::from(rows_h));
+        state.scroll_into_view(usize::from(rows_h), model.shown().len());
         let rows = Rect::new(area.x, y, area.width, rows_h);
-        if rows_h > 0 && names.is_empty() {
+        if rows_h > 0 && model.rows().is_empty() {
             let mut x = area.x;
             put(
                 buf,
@@ -318,27 +260,31 @@ impl FleetTable<'_> {
                 "no bots loaded: m loads every vault profile",
                 dim,
             );
-        } else if rows_h > 0 && state.shown().is_empty() {
+        } else if rows_h > 0 && model.shown().is_empty() {
             let mut x = area.x;
             put(
                 buf,
                 &mut x,
                 y,
                 right,
-                "no member matches (Esc clears the filter)",
+                "no profile matches (Esc clears the filter)",
                 dim,
             );
         }
         for line in 0..rows_h {
             let position = state.scroll + usize::from(line);
-            let Some(&member) = state.shown().get(position) else {
+            let Some(&index) = model.shown().get(position) else {
                 break;
             };
-            let name = names[member].as_str();
-            let row = member_row(names, fleet, member);
+            let row = &model.rows()[index];
+            let identity = model.identities()[index];
+            let loaded = row.loaded();
             let is_cursor = position == state.cursor;
-            let is_selected = selected == Some(member);
+            let is_selected = loaded && selected == Some(identity);
             let mut style = Style::default();
+            if !loaded {
+                style = style.add_modifier(Modifier::DIM);
+            }
             if is_selected {
                 style = style.add_modifier(Modifier::BOLD);
             }
@@ -346,18 +292,13 @@ impl FleetTable<'_> {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             cell.clear();
-            let identity = profile_id_at(ids, names, member).expect("fleet row identity");
-            cell.push_str(if state.is_marked_id(identity) {
-                "[x]"
-            } else {
-                "[ ]"
-            });
+            cell.push_str(if model.is_marked(index) { "[x]" } else { "[ ]" });
             cell.push_str(if is_cursor { " >" } else { "  " });
             cell.push(if is_selected { '*' } else { ' ' });
             let restart_required = restart_badges.contains(&identity);
             push_fitted(
                 &mut cell,
-                name,
+                row.name(),
                 name_w.saturating_sub(usize::from(restart_required)),
             );
             if restart_required {
@@ -365,7 +306,8 @@ impl FleetTable<'_> {
             }
             cell.push(' ');
             let world_at = cell.len();
-            match row.and_then(|row| row.world()) {
+            match row.world() {
+                _ if !loaded => cell.push('-'),
                 Some(world) => {
                     let _ = write!(cell, "w{world}");
                 }
@@ -374,22 +316,24 @@ impl FleetTable<'_> {
             let world_len = cell.len() - world_at;
             cell.extend(std::iter::repeat_n(' ', WORLD.saturating_sub(world_len)));
             cell.push(' ');
-            push_fitted(&mut cell, state_label(row), STATE);
+            push_fitted(&mut cell, state_label(Some(row)), STATE);
             if wide {
                 cell.push(' ');
                 let queue_at = cell.len();
-                match row.and_then(|row| row.queue()) {
-                    Some(place) => {
+                match row.queue() {
+                    Some(place) if loaded => {
                         let _ = write!(cell, "{}/{}", place.position, place.total);
                     }
-                    None => cell.push('-'),
+                    _ => cell.push('-'),
                 }
                 let queue_len = cell.len() - queue_at;
                 cell.extend(std::iter::repeat_n(' ', QUEUE.saturating_sub(queue_len)));
                 cell.push(' ');
-                cell.push_str(run_state_label(
-                    row.map_or(ScriptRunState::Idle, |row| row.script()),
-                ));
+                cell.push_str(if loaded {
+                    run_state_label(row.script())
+                } else {
+                    "-"
+                });
             }
             if is_cursor && keys {
                 let used = cell.chars().count();
@@ -404,17 +348,24 @@ impl FleetTable<'_> {
         let count_y = rows.y + rows_h;
         if count_y < bottom {
             cell.clear();
+            let counts = model.counts();
             let _ = write!(
                 cell,
-                "{}/{} shown · selected {} of {}",
-                state.shown().len(),
-                names.len(),
-                state.selection.len(),
-                names.len()
+                "{}/{} shown · marked {}",
+                counts.shown(),
+                counts.rows(),
+                counts.marked()
             );
-            // The selected bot also heads the detail pane; name it here only
+            if counts.hidden_marked() > 0 {
+                let _ = write!(cell, " ({} not shown)", counts.hidden_marked());
+            }
+            // The focused bot also heads the detail pane; name it here only
             // when it fits whole.
-            if let Some(name) = selected.and_then(|i| names.get(i)) {
+            if let Some(row) = selected
+                .and_then(|identity| model.index_of(identity))
+                .map(|index| &model.rows()[index])
+            {
+                let name = row.name();
                 if cell.chars().count() + 7 + name.chars().count() <= usize::from(area.width) {
                     let _ = write!(cell, " · BOT {name}");
                 }
