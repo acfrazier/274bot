@@ -5376,11 +5376,8 @@ impl RouteTargetCursor {
         if let Some(geometry) = request.live_geometry.as_ref() {
             return Ok((RouteTargetMode::Geometry, geometry.flags.len(), None));
         }
-        let radius = crate::walk_permissions::RouteRadiusGeometry::new(
-            request.to,
-            request.radius,
-        )
-        .ok_or(RouteJobError::Budget)?;
+        let radius = crate::walk_permissions::RouteRadiusGeometry::new(request.to, request.radius)
+            .ok_or(RouteJobError::Budget)?;
         let capacity = radius
             .len()
             .checked_add(usize::from(

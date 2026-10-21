@@ -529,8 +529,7 @@ fn qualify_gatherer_fleet(scenario: &mut scenario::Scenario, n: usize) -> Result
             let tick = snapshot.tick();
             let mut first = ready_tick.lock().unwrap();
             let start = *first.get_or_insert(tick);
-            tick >= start
-                && tick - start >= GATHERER_FLEET_BUDGET_TICKS.saturating_sub(1)
+            tick >= start && tick - start >= GATHERER_FLEET_BUDGET_TICKS.saturating_sub(1)
         }),
     };
     step.wait = scenario::Wait {

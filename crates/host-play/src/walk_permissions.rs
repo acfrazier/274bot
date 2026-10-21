@@ -513,11 +513,7 @@ pub(crate) struct LocAccessGeometry {
 }
 
 impl LocAccessGeometry {
-    fn from_loc(
-        loc: &api::snapshot::LocView,
-        target: api::WorldTile,
-        radius: i32,
-    ) -> Option<Self> {
+    fn from_loc(loc: &api::snapshot::LocView, target: api::WorldTile, radius: i32) -> Option<Self> {
         use api::query::loc_approach::{distance_from, LocApproach};
 
         distance_from(loc, target)?;
@@ -533,11 +529,7 @@ impl LocAccessGeometry {
         })
     }
 
-    pub(crate) fn candidate_at(
-        self,
-        tile: api::WorldTile,
-        flags: i32,
-    ) -> Option<api::WorldTile> {
+    pub(crate) fn candidate_at(self, tile: api::WorldTile, flags: i32) -> Option<api::WorldTile> {
         let approach = self.approach?;
         if flags & client::dash3d::CollisionFlag::SQ_BLOCKED != 0
             || !approach.can_operate(self.target, tile, flags)
@@ -554,12 +546,7 @@ impl LocAccessGeometry {
             .checked_add(i32::from(approach.length).checked_sub(1)?)?;
         let nearest_x = tile.x.clamp(self.target.x, max_x);
         let nearest_z = tile.z.clamp(self.target.z, max_z);
-        (tile
-            .x
-            .abs_diff(nearest_x)
-            .max(tile.z.abs_diff(nearest_z))
-            <= self.radius)
-            .then_some(tile)
+        (tile.x.abs_diff(nearest_x).max(tile.z.abs_diff(nearest_z)) <= self.radius).then_some(tile)
     }
 }
 
