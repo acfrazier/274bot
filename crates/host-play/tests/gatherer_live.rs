@@ -9564,7 +9564,7 @@ fn site_initial_nav_matches(
     target: Option<&str>,
 ) -> bool {
     nav["armed"] == true
-        && phase == Some("walking")
+        && matches!(phase, Some("walking" | "surveying"))
         && target.is_some_and(|target| target != "—")
         && site_nav_targets_area(nav, anchor)
 }
