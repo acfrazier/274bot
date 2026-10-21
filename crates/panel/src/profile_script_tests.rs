@@ -430,13 +430,13 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
         .arm("alice")
         .unwrap()
         .wants_login());
-    assert_eq!(s.core.members(), ["alice".to_string()]);
     s.scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
     let path = write_bot(&dir, "unlock-focus.ts", BOT_TS);
     let card = s.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());
     start_sel(&mut s, "alice", sel).expect("a loaded script starts on the unlock's bot");
+    assert_eq!(s.core.members(), ["alice".to_string()]);
 }
 
 #[test]

@@ -4821,7 +4821,10 @@ fn set_multibox_restores_last_focus_when_focus_not_on_wall() {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
-    s.select("alice");
+    // Focus alice without opening her slot: a focused profile that is not
+    // a fleet member (a Select that opens a slot loads the bot).
+    s.set_focus_for_test("alice");
+    assert!(!s.core.members().iter().any(|m| m == "alice"));
     s.core.fleet_mut().add("bob");
     crate::ui_state::save(
         &s.preferences,
