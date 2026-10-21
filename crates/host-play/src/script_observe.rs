@@ -406,6 +406,7 @@ pub(crate) fn script_observe_cached_with_channels(
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
+    let mut walk_permissions = None;
     let mut channel_generation = 0;
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
@@ -694,7 +695,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // Load Gather owns its own committed permissions; other native
         // ticks use the compiled card's current permissions. Pass the
         // same callback value to selection and route admission.
-        let walk_permissions = slot
+        walk_permissions = slot
             .api_gather_walk_permissions()
             .or_else(|| slot.native_walk_permissions());
         if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {

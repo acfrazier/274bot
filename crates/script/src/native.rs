@@ -198,6 +198,12 @@ impl PreparedConfig {
         })
     }
 
+    /// Prepare settings for the fixed card installed by `SlotScript::start_test_script`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test_script(revision: u64, bag: Arc<SettingsBag>) -> Arc<Self> {
+        Self::new(CompiledId("test"), 1, revision, bag, ())
+    }
+
     pub fn card(&self) -> CompiledId {
         self.card
     }
