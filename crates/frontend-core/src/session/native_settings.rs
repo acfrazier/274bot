@@ -33,7 +33,7 @@ impl NativeCopyCancellation {
         self.cancelled.store(true, Ordering::Relaxed);
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)
     }
 }
@@ -67,6 +67,11 @@ struct AssignmentIntent {
 /// At most this many settings receipts may wait for the shared worker.
 /// This bounds retained drafts when an operator repeatedly saves while full.
 const MAX_PENDING_NATIVE_SETTINGS: usize = 64;
+
+/// A fleet settings copy keeps at most this many native saves and live
+/// deliveries in flight, so a single edit made during a large copy still
+/// finds room; the copy queues the rest ([`OperatorSession::native_copy_room`]).
+const COPY_IN_FLIGHT: usize = MAX_PENDING_NATIVE_SETTINGS - MAX_PENDING_NATIVE_SETTINGS / 4;
 
 type NativePreparation = PreparedTask<Result<host_play::PreparedScriptConfig, StartError>>;
 
@@ -142,6 +147,11 @@ impl ArmMirror {
 }
 
 impl<Io> OperatorSession<Io> {
+    /// How many more native saves a fleet settings copy may start now.
+    pub(crate) fn native_copy_room(&self) -> usize {
+        COPY_IN_FLIGHT.saturating_sub(self.preparations.len() + self.deliveries.len())
+    }
+
     pub(super) fn queue_native_delivery(
         &mut self,
         op: OperationId,

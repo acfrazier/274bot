@@ -924,6 +924,10 @@ pub struct Session {
     /// The Fleet window's count-bearing labels, rebuilt only when the fleet
     /// model's generation moves.
     pub(crate) fleet_labels: crate::fleet::FleetLabels,
+    /// The one world picker every Switch world entry opens (a world marker,
+    /// the Fleet window's World / login cell and its Marks menu entry);
+    /// closed until one asks.
+    pub(crate) world_picker: crate::world_picker::WorldPicker,
     /// Core-owned map custody: staged actions, selected destination, cache
     /// demand, bake consent and panel input channel.
     pub(crate) map_desk: frontend_core::MapDesk,
@@ -1444,6 +1448,7 @@ impl Session {
             ),
             fleet_card_filter: None,
             fleet_labels: crate::fleet::FleetLabels::default(),
+            world_picker: crate::world_picker::WorldPicker::default(),
             walkto_open: false,
             route_through_zones: false,
             walk_permissions,

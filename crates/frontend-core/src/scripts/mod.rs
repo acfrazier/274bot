@@ -3107,6 +3107,7 @@ impl Scripts {
                 core.set_outcome(op, &write.profile, outcome);
             }
         }
+        self.pump_copy_queues(core);
         self.sync.observe_restart_activation(core);
         if let Some(summary) = self.sync.take_settled_summary() {
             self.show(summary);

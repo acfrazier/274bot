@@ -1078,3 +1078,179 @@ fn an_empty_filtered_grid_frees_its_tile_views() {
         rig.state.views.keys().collect::<Vec<_>>()
     );
 }
+
+/// Publish `name` as a connected, in-game slot on public world `world`.
+fn publish_on_world(session: &Session, name: &str, world: u16) {
+    let mut rows = session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap();
+    rows.retain(|row| row.username != name);
+    rows.push(SlotStatus {
+        username: name.into(),
+        world: Some(world),
+        connected: true,
+        ingame: true,
+        scene_state: 2,
+        ..SlotStatus::default()
+    });
+}
+
+/// A rig on the MultiBox rail (or the Grid) over `alice` on world 2 and
+/// `bob` on world 3, settled until both caps are drawn; the server offers
+/// `worlds`. `None` when the host has no GPU.
+fn world_rig(label: &str, grid: bool, worlds: Option<&[u16]>) -> Option<(Rig, TestDir)> {
+    let (mut session, dir) = session_with_play(label, &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = grid;
+    if let Some(worlds) = worlds {
+        session.core.set_public_worlds_for_test(worlds);
+    }
+    publish_on_world(&session, "alice", 2);
+    publish_on_world(&session, "bob", 3);
+    let mut rig = Rig::new(Drive::UiFrame, session)?;
+    rig.frames_until("both caps are drawn", |rig| {
+        drawn_caps(&rig.text, &["alice", "bob"]).len() == 2
+    });
+    rig.frame(Pointer::Away);
+    Some((rig, dir))
+}
+
+/// The world marker of each cap one frame drew, in drawn order (the first
+/// of the five items `rail_cap` records).
+fn world_markers(rig: &mut Rig) -> Vec<[f32; 4]> {
+    super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    rig.frame(Pointer::Away);
+    super::TEST_RAIL_ITEM_BOUNDS
+        .with_borrow(|bounds| bounds.as_chunks::<5>().0.iter().map(|cap| cap[0]).collect())
+}
+
+/// A left click at `at`, then frames that show the result.
+fn click_at(rig: &mut Rig, at: [f32; 2]) {
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at(at, true, Pointer::Away);
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at(at, false, Pointer::Away);
+    rig.frame_at([2.0, 2.0], false, Pointer::Away);
+}
+
+/// The picker's rows as one frame draws them: each world, whether it is
+/// ticked and its rectangle.
+fn picker_rows(rig: &mut Rig) -> Vec<crate::world_picker::EntryRecord> {
+    rig.frame(Pointer::Away);
+    crate::world_picker::take_entries()
+}
+
+/// A click on a world marker of the rail or of a Grid cell opens the one
+/// world picker for that bot, with its world ticked; picking another world
+/// plans a Switch world for that bot alone, and the Fleet window opens to
+/// show the plan's confirmation (Confirm and Cancel); nothing runs before
+/// Confirm. Picking the world the bot is on submits nothing. The marker was
+/// a plain disc.
+fn a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(grid: bool) {
+    let label = if grid { "grid-world" } else { "rail-world" };
+    let Some((mut rig, _dir)) = world_rig(label, grid, Some(&[1, 2, 3])) else {
+        return;
+    };
+    let markers = world_markers(&mut rig);
+    assert_eq!(markers.len(), 2, "one marker per loaded bot");
+    assert!(!rig.session().fleet_open);
+    let commands = rig.session().core.commands().reports().count();
+
+    // alice's marker (the first cap): her own world 2 is ticked.
+    click_at(&mut rig, centre(markers[0]));
+    assert_eq!(rig.session().world_picker.target(), Some("alice"));
+    let rows = picker_rows(&mut rig);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.world, row.ticked))
+            .collect::<Vec<_>>(),
+        [(1, false), (2, true), (3, false)]
+    );
+    assert!(
+        rig.text.contains("Switch world of alice") && rig.text.contains("World 3"),
+        "the frame drew the picker:\n{}",
+        rig.text
+    );
+    assert!(rig.session().core.fleet_plan().is_none());
+
+    // Her own world: nothing is submitted, the picker closes.
+    let own = rows.iter().find(|row| row.world == 2).unwrap().rect;
+    click_at(&mut rig, centre(own));
+    assert!(!rig.session().world_picker.is_open());
+    assert!(rig.session().core.fleet_plan().is_none());
+    assert!(!rig.session().fleet_open);
+    assert_eq!(rig.session().core.commands().reports().count(), commands);
+
+    // bob's marker ticks his own world 3; picking 1 plans him alone.
+    let markers = world_markers(&mut rig);
+    click_at(&mut rig, centre(markers[1]));
+    assert_eq!(rig.session().world_picker.target(), Some("bob"));
+    let rows = picker_rows(&mut rig);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.world, row.ticked))
+            .collect::<Vec<_>>(),
+        [(1, false), (2, false), (3, true)]
+    );
+    let other = rows.iter().find(|row| row.world == 1).unwrap().rect;
+    click_at(&mut rig, centre(other));
+    let plan = rig.session().core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.action(), frontend_core::FleetAction::SwitchWorld(1));
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["bob"]);
+    let prompt = plan.prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 bot to world 1: bob."),
+        "{prompt}"
+    );
+    assert!(rig.session().fleet_open, "the Fleet window shows the plan");
+    rig.frame(Pointer::Away);
+    assert!(
+        rig.text.contains("Move 1 bot to world 1: bob.") && rig.text.contains("Confirm"),
+        "the frame draws the plan row:\n{}",
+        rig.text
+    );
+    let ran = rig
+        .session()
+        .core
+        .commands()
+        .reports()
+        .any(|report| report.command() == OperatorCommand::SwitchWorld(1));
+    assert!(!ran, "nothing runs before Confirm");
+}
+
+#[test]
+fn a_rail_world_marker_opens_the_picker_and_a_pick_plans_that_bot() {
+    a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(false);
+}
+
+#[test]
+fn a_grid_world_marker_opens_the_picker_and_a_pick_plans_that_bot() {
+    a_world_marker_opens_the_picker_and_a_pick_plans_that_bot(true);
+}
+
+/// On a server with one world the marker is not clickable: a click opens no
+/// picker, plans nothing and opens no window.
+#[test]
+fn a_world_marker_is_not_clickable_on_a_one_world_server() {
+    for grid in [false, true] {
+        let label = if grid {
+            "grid-world-local"
+        } else {
+            "rail-world-local"
+        };
+        let Some((mut rig, _dir)) = world_rig(label, grid, None) else {
+            return;
+        };
+        let markers = world_markers(&mut rig);
+        assert_eq!(markers.len(), 2, "the markers are still drawn");
+        click_at(&mut rig, centre(markers[0]));
+        assert!(!rig.session().world_picker.is_open());
+        assert!(rig.session().core.fleet_plan().is_none());
+        assert!(!rig.session().fleet_open);
+        assert_eq!(rig.session().error, None);
+    }
+}

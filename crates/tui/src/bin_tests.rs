@@ -3036,6 +3036,364 @@ fn marked_login_and_logout_show_the_report_of_the_command_over_the_marks() {
     assert!(!report.contains("bob"), "bob is not marked: {report}");
 }
 
+/// Publish `name` as a bot in game on public world `world`, as its slot
+/// does: into the host's shared status rows. The next pump projects it.
+fn publish_on_world(session: &TuiSession, name: &str, world: u16) {
+    let mut rows = session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap();
+    rows.retain(|row| row.username != name);
+    rows.push(host_play::SlotStatus {
+        username: name.into(),
+        world: Some(world),
+        connected: true,
+        ingame: true,
+        scene_state: 2,
+        ..host_play::SlotStatus::default()
+    });
+}
+
+/// A session whose loaded `names` are in game on world 2 of a server with
+/// worlds 1, 2 and 3, and the app after one pump.
+fn tui_on_worlds(iso: &IsolatedStores, names: &[&str]) -> (TuiSession, TuiApp) {
+    let (mut session, mut app) = tui_with_profiles(iso, names);
+    session.core.set_public_worlds_for_test(&[1, 2, 3]);
+    for name in names {
+        publish_on_world(&session, name, 2);
+    }
+    session.pump(&mut app);
+    (session, app)
+}
+
+/// Move the fleet cursor onto `name`'s row.
+fn cursor_on(app: &mut TuiApp, name: &str) {
+    let position = app
+        .fleet_model
+        .shown_rows()
+        .position(|(_, row)| row.name() == name)
+        .expect("the row is shown");
+    app.table.sync(&app.fleet_model);
+    app.table.cursor_to(position, &app.fleet_model);
+}
+
+/// The members of every Switch world command to `world` in the command
+/// book, one list of subjects per command.
+fn switch_world_members(
+    session: &TuiSession,
+    world: u16,
+) -> Vec<Vec<frontend_core::command::Subject>> {
+    session
+        .core
+        .commands()
+        .reports()
+        .filter(|report| report.command() == OperatorCommand::SwitchWorld(world))
+        .map(|report| {
+            report
+                .members()
+                .iter()
+                .map(|member| member.subject())
+                .collect()
+        })
+        .collect()
+}
+
+/// The world `name`'s vault row saves for its next login.
+fn saved_world(session: &TuiSession, name: &str) -> Option<u16> {
+    session
+        .core
+        .profile(name)
+        .expect("a vault profile")
+        .settings_draft()
+        .world()
+}
+
+/// `W` opens the picker over the worlds core cached when the play started
+/// (the server's list, nothing fetched) with the bot's own world ticked: the
+/// cursor row's, not the selected bot's.
+#[test]
+fn w_opens_the_picker_over_the_cached_worlds_with_the_bots_own_world_ticked() {
+    use crate::test_support::{ch, draw, key, text};
+    let iso = IsolatedStores::enter("tui-world-picker-lists");
+    let (mut session, mut app) = tui_on_worlds(&iso, &["alice", "bob"]);
+    publish_on_world(&session, "bob", 3);
+    session.pump(&mut app);
+    assert_eq!(
+        session
+            .core
+            .switch_world_choices()
+            .expect("a public server")
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+
+    let action = app.on_key(ch('W'));
+    assert_eq!(action, AppAction::PickWorld(Some("alice".into())));
+    dispatch(&mut session, &mut app, action);
+    assert!(matches!(&app.modal, Some(Modal::WorldPicker(_))));
+    let shown = text(&draw(&mut app, 120, 40));
+    for want in [
+        "Switch world of alice",
+        "[ ] World 1",
+        "[x] World 2",
+        "[ ] World 3",
+    ] {
+        assert!(shown.contains(want), "{want}: {shown}");
+    }
+    assert_eq!(
+        app.on_key(key(crossterm::event::KeyCode::Esc)),
+        AppAction::None
+    );
+
+    // On bob's row the ticked world is his own, 3.
+    cursor_on(&mut app, "bob");
+    let action = app.on_key(ch('W'));
+    assert_eq!(action, AppAction::PickWorld(Some("bob".into())));
+    dispatch(&mut session, &mut app, action);
+    let shown = text(&draw(&mut app, 120, 40));
+    assert!(shown.contains("Switch world of bob"), "{shown}");
+    assert!(shown.contains("[x] World 3"), "{shown}");
+    assert!(!shown.contains("[x] World 2"), "{shown}");
+    assert_eq!(app.error, None);
+}
+
+/// A server with one world (a local one) has no switching: `W` and the
+/// palette entry say so on the message line and open nothing.
+#[test]
+fn a_one_world_server_offers_no_picker() {
+    use crate::test_support::ch;
+    let iso = IsolatedStores::enter("tui-world-picker-local");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    publish_on_world(&session, "alice", 2);
+    session.pump(&mut app);
+    assert!(session.core.switch_world_choices().is_none());
+
+    let action = app.on_key(ch('W'));
+    assert_eq!(action, AppAction::PickWorld(Some("alice".into())));
+    dispatch(&mut session, &mut app, action);
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.error.take().as_deref(),
+        Some("Switch world: this server has one world")
+    );
+    let action = app.run_command(crate::commands::Command::PickWorldMarked);
+    assert_eq!(action, AppAction::PickWorld(None));
+    dispatch(&mut session, &mut app, action);
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.error.take().as_deref(),
+        Some("Switch world: this server has one world")
+    );
+    assert!(session.core.fleet_plan().is_none());
+}
+
+/// Picking the world the bot is already on submits nothing: no plan, no
+/// command, no write, and no message.
+#[test]
+fn picking_the_bots_own_world_submits_nothing() {
+    use crate::test_support::{ch, key};
+    let iso = IsolatedStores::enter("tui-world-picker-same");
+    let (mut session, mut app) = tui_on_worlds(&iso, &["alice"]);
+    let commands = session.core.commands().reports().count();
+
+    let action = app.on_key(ch('W'));
+    dispatch(&mut session, &mut app, action);
+    assert!(matches!(&app.modal, Some(Modal::WorldPicker(_))));
+    // The cursor starts on the ticked world: Enter picks it.
+    let action = app.on_key(key(crossterm::event::KeyCode::Enter));
+    assert_eq!(action, AppAction::None);
+    dispatch(&mut session, &mut app, action);
+
+    assert!(app.modal.is_none());
+    assert!(session.core.fleet_plan().is_none());
+    assert_eq!(session.core.commands().reports().count(), commands);
+    session.core.flush_writes();
+    assert_eq!(saved_world(&session, "alice"), None);
+    assert_eq!(app.error, None);
+}
+
+/// Picking another world stages the cursor's bot alone (a marked bot is not
+/// added) and plans a Switch world for exactly that bot. The confirm
+/// overlay shows core's prompt; nothing runs and nothing is saved before
+/// Confirm; Cancel writes nothing; Confirm runs one Switch world command
+/// over that bot only, and the message line shows its result.
+#[test]
+fn picking_another_world_plans_that_bot_and_runs_only_on_confirm() {
+    use crate::test_support::{ch, draw, key, text};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-world-picker-plan");
+    let (mut session, mut app) = tui_on_worlds(&iso, &["alice", "bob", "carol"]);
+    // bob is marked, but a world marker's pick is about the cursor row.
+    let bob = session.core.profile_identity("bob").unwrap();
+    app.fleet_model.set_mark_for_test(bob, true);
+    let alice = session.core.profile_identity("alice").unwrap();
+
+    let pick_world_3 = |session: &mut TuiSession, app: &mut TuiApp| {
+        let action = app.on_key(ch('W'));
+        dispatch(session, app, action);
+        // The highlight starts on World 2, alice's own: one Down is World 3.
+        app.on_key(key(KeyCode::Down));
+        let action = app.on_key(key(KeyCode::Enter));
+        assert_eq!(action, AppAction::PlanSwitchWorld(Some("alice".into()), 3));
+        dispatch(session, app, action);
+    };
+
+    pick_world_3(&mut session, &mut app);
+    let plan = session.core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.action(), frontend_core::FleetAction::SwitchWorld(3));
+    assert!(plan.needs_confirm(), "a Switch world plan always asks");
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice"]);
+    let prompt = plan.prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 bot to world 3: alice."),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("bob"), "the mark did not join: {prompt}");
+    assert!(
+        matches!(
+            &app.modal,
+            Some(Modal::Confirm(confirm)) if matches!(
+                &confirm.kind,
+                ConfirmKind::FleetPlan {
+                    action: frontend_core::FleetAction::SwitchWorld(3),
+                    prompt: shown,
+                } if shown == &prompt
+            )
+        ),
+        "the confirm overlay shows core's prompt: {:?}",
+        app.modal
+    );
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains("Switch world"), "{screen}");
+    assert!(screen.contains("Move 1 bot to world 3: alice."), "{screen}");
+    assert!(
+        switch_world_members(&session, 3).is_empty(),
+        "nothing ran before Confirm"
+    );
+
+    // Esc cancels: the plan goes and nothing was written.
+    let action = app.on_key(key(KeyCode::Esc));
+    assert_eq!(action, AppAction::CancelFleetPlan);
+    dispatch(&mut session, &mut app, action);
+    assert!(session.core.fleet_plan().is_none());
+    session.core.flush_writes();
+    assert!(switch_world_members(&session, 3).is_empty());
+    assert_eq!(saved_world(&session, "alice"), None);
+
+    // Again, and Enter confirms: one command, one member, alice.
+    pick_world_3(&mut session, &mut app);
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::RunFleetPlan);
+    dispatch(&mut session, &mut app, action);
+    assert!(session.core.fleet_plan().is_none(), "the plan ran");
+    assert_eq!(
+        switch_world_members(&session, 3),
+        [[frontend_core::command::Subject::Profile(alice)]]
+    );
+    session.core.flush_writes();
+    assert_eq!(
+        saved_world(&session, "alice"),
+        Some(3),
+        "the world is saved before the relog"
+    );
+    assert_eq!(saved_world(&session, "bob"), None);
+    assert_eq!(saved_world(&session, "carol"), None);
+    // The relog has not finished: the one member is pending, and the
+    // message line shows core's one result.
+    let result = session.core.fleet_result().expect("one result");
+    assert_eq!(result.action(), frontend_core::FleetAction::SwitchWorld(3));
+    assert_eq!(result.counts().pending, 1, "{}", result.text());
+    assert!(
+        result.text().starts_with("Switch world: "),
+        "{}",
+        result.text()
+    );
+    assert_eq!(app.error.as_deref(), Some(result.text()));
+}
+
+/// The palette's Switch world of marked… opens the same picker with no
+/// profile staged: the plan covers the marked bots and no other.
+#[test]
+fn the_marked_world_action_plans_over_the_marks() {
+    use crate::test_support::{key, text};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-world-picker-marked");
+    let (mut session, mut app) = tui_on_worlds(&iso, &["alice", "bob", "carol"]);
+    let alice = session.core.profile_identity("alice").unwrap();
+    let carol = session.core.profile_identity("carol").unwrap();
+    app.fleet_model.set_mark_for_test(alice, true);
+    app.fleet_model.set_mark_for_test(carol, true);
+
+    let action = app.run_command(crate::commands::Command::PickWorldMarked);
+    assert_eq!(action, AppAction::PickWorld(None));
+    dispatch(&mut session, &mut app, action);
+    let shown = text(&crate::test_support::draw(&mut app, 120, 40));
+    assert!(shown.contains("Switch world of marked"), "{shown}");
+    assert!(!shown.contains("[x] World"), "no world is ticked: {shown}");
+    // World 1 is first; two Downs reach World 3.
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Down));
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::PlanSwitchWorld(None, 3));
+    dispatch(&mut session, &mut app, action);
+
+    let plan = session.core.fleet_plan().expect("the plan waits");
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["alice", "carol"]);
+    assert!(
+        plan.prompt()
+            .starts_with("Move 2 marked bots to world 3: alice, carol."),
+        "{}",
+        plan.prompt()
+    );
+    assert!(switch_world_members(&session, 3).is_empty());
+    let action = app.on_key(key(KeyCode::Enter));
+    dispatch(&mut session, &mut app, action);
+    let members = switch_world_members(&session, 3);
+    assert_eq!(members.len(), 1, "one command");
+    let mut subjects = members.into_iter().next().unwrap();
+    subjects.sort_by_key(|subject| format!("{subject:?}"));
+    let mut want = vec![
+        frontend_core::command::Subject::Profile(alice),
+        frontend_core::command::Subject::Profile(carol),
+    ];
+    want.sort_by_key(|subject| format!("{subject:?}"));
+    assert_eq!(subjects, want, "the marked bots, and not bob");
+}
+
+/// A plan core refuses ("no bot to act on") shows its reason on the message
+/// line, as every fleet plan refusal does; no confirm overlay opens and
+/// nothing runs.
+#[test]
+fn a_refused_world_plan_shows_core_s_reason_on_the_message_line() {
+    use crate::test_support::{ch, key};
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-world-picker-refused");
+    let (mut session, mut app) = tui_with_loaded(&iso, &["alice", "bob"], &["bob"]);
+    session.core.set_public_worlds_for_test(&[1, 2, 3]);
+    publish_on_world(&session, "bob", 2);
+    session.pump(&mut app);
+    // alice is a vault profile that is not loaded: there is no bot to move.
+    cursor_on(&mut app, "alice");
+
+    let action = app.on_key(ch('W'));
+    dispatch(&mut session, &mut app, action);
+    assert!(matches!(&app.modal, Some(Modal::WorldPicker(_))));
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::PlanSwitchWorld(Some("alice".into()), 1));
+    dispatch(&mut session, &mut app, action);
+
+    assert!(app.modal.is_none(), "a refusal opens no confirmation");
+    assert_eq!(
+        app.error.as_deref(),
+        Some("Switch world: no bot to act on (alice: not loaded)")
+    );
+    assert!(session.core.fleet_plan().is_none());
+    assert!(switch_world_members(&session, 1).is_empty());
+}
+
 /// Save log runs through `SaveLog`: the write happens off the UI thread
 /// and the log pane's status follows it to the saved file.
 #[test]

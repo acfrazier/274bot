@@ -92,8 +92,10 @@ pub enum OperatorCommand {
     /// Offline it is a plain login; a stronger row (Log in, Log out, Remove)
     /// supersedes its pending login half.
     RelogNow,
-    /// Switch to a world: the contract row composed today of Logout, a world
-    /// save and Log in (B03 `03-lifecycle.md:50`); no single current command.
+    /// Switch a logged-in bot to a public world: save its world, then a
+    /// turnover that relogs it through the login queue
+    /// (`session/world_switch.rs`; the fleet plan's world picker). Settled
+    /// by the relog, not by the post.
     SwitchWorld(u16),
     /// Persist the auto-login preference (`OperatorSession::set_auto_login`,
     /// `session.rs:2053-2064`).
@@ -983,9 +985,7 @@ impl OperatorCommand {
     /// How a pending member settles.
     pub const fn settles(self) -> Settles {
         match self {
-            Self::Login | Self::Logout | Self::RelogNow | Self::SwitchWorld(_) => {
-                Settles::IntentApplied
-            }
+            Self::Login | Self::Logout | Self::RelogNow => Settles::IntentApplied,
             Self::Select
             | Self::SetMark(_)
             | Self::MarkAll
@@ -1136,6 +1136,8 @@ pub enum SkipReason {
     /// the Discard / Keep editing decision was staged instead
     /// (`session/chooser.rs:193-200,282-285,295-299`).
     DecisionStaged,
+    /// The bot is already on the requested world (Switch world).
+    AlreadyOnWorld,
 }
 
 /// Why a member failed.

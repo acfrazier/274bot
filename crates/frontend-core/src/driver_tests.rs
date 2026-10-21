@@ -210,11 +210,6 @@ fn targets_must_fit_the_row() {
         .expect_err("application row"),
         SubmitError::WrongTargets(OperatorCommand::SetRenderAll(true))
     );
-    assert_eq!(
-        d.submit(OperatorCommand::SwitchWorld(1), Targets::Profile("alice"))
-            .expect_err("no entry point"),
-        SubmitError::NoEntryPoint(OperatorCommand::SwitchWorld(1))
-    );
 }
 
 #[test]
@@ -2302,14 +2297,12 @@ fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
     (d, start)
 }
 
-/// The existing bound of 64 pending native settings saves (a known issue
-/// for 0.2.6): a planned native copy to 66 bots saves 64, and the result
-/// names each refused bot as failed with the reason; none stays Pending.
-#[test]
-fn a_native_copy_over_the_pending_save_bound_names_every_refused_bot() {
-    let names: Vec<String> = (0..67).map(|index| format!("bot{index:02}")).collect();
+/// `count` bots on Gatherer, bot000 focused (the copy's source), every
+/// other bot marked and a planned native Copy settings waiting.
+fn copy_to_many(test: &str, count: usize) -> HeadlessDriver {
+    let names: Vec<String> = (0..count).map(|index| format!("bot{index:03}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut d = driver("f3-copy-bound", &refs);
+    let mut d = driver(test, &refs);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
     d.session_mut()
         .play_mut()
@@ -2317,51 +2310,96 @@ fn a_native_copy_over_the_pending_save_bound_names_every_refused_bot() {
         .bind_script_test_data(data);
     load(&mut d, &refs);
     let select = d
-        .submit(OperatorCommand::Select, Targets::Profile("bot00"))
+        .submit(OperatorCommand::Select, Targets::Profile("bot000"))
         .expect("select");
     settle(&mut d, select.request());
     mark(&mut d, &refs);
     set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
-    d.submit(OperatorCommand::SetMark(false), Targets::Profile("bot00"))
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("bot000"))
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
-    assert_eq!(plan_names(&d).len(), 66);
-    let run = run_plan(&mut d);
-    settle(&mut d, run);
-    let report = d.report(run).expect("report");
-    let refused: Vec<_> = report
-        .members()
-        .iter()
-        .filter(|member| {
-            member
-                .terminal()
-                .is_some_and(|t| !matches!(t, Settlement::Completed(_)))
-        })
-        .map(|member| member.detail().unwrap_or_default().to_owned())
-        .collect();
-    assert_eq!(refused.len(), 2, "{refused:?}");
-    for detail in &refused {
+    assert_eq!(plan_names(&d).len(), count - 1);
+    d
+}
+
+/// Poll as front-end frames do until the fleet result settles (a paced
+/// copy takes several rounds of saves).
+fn settle_result(d: &mut HeadlessDriver) {
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    while !d
+        .session()
+        .fleet_result()
+        .is_some_and(crate::FleetResult::settled)
+    {
+        assert!(std::time::Instant::now() < deadline, "the result hung");
+        d.session_mut().flush_writes();
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+fn starts_held(d: &HeadlessDriver) -> bool {
+    d.session()
+        .play()
+        .expect("play")
+        .script_start_wait_reason()
+        .is_some()
+}
+
+/// Known issue `fleet-copy-settings-64-limit`, fixed in 0.2.6: a planned
+/// native copy to more bots than the bound of pending native saves (64)
+/// keeps a bounded number in flight, queues the rest and saves every
+/// target; new Starts wait until the last save is accepted.
+#[test]
+fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
+    for count in [67, 151] {
+        let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
+        let command = d.session().fleet_plan().expect("plan").command();
+        d.submit(command, Targets::Plan).expect("run");
+        assert!(starts_held(&d), "{count}: Starts wait for the copy");
+        let queued = d
+            .models()
+            .scripts()
+            .last_settings_sync()
+            .expect("copy report")
+            .pending();
+        assert_eq!(queued, count - 1, "{count}: every target waits its turn");
+        settle_result(&mut d);
+        let result = d.session().fleet_result().expect("result");
+        assert_eq!(result.counts().done, count - 1, "{}", result.text());
+        assert_eq!(result.counts().failed, 0, "{}", result.text());
+        assert_eq!(result.counts().skipped, 0, "{}", result.text());
         assert!(
-            detail.contains("too many pending native settings saves"),
-            "{detail}"
+            !starts_held(&d),
+            "{count}: the hold ends with the last save"
         );
     }
+}
+
+/// Cancel while targets still wait for room: no waiting target is written
+/// (each is reported skipped, "settings copy cancelled"), the saves
+/// already started settle, and new Starts are released.
+#[test]
+fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
+    let mut d = copy_to_many("f4-copy-cancel", 151);
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("run");
+    d.submit(OperatorCommand::CancelSettingsSync, Targets::Application)
+        .expect("cancel");
+    settle_result(&mut d);
     let result = d.session().fleet_result().expect("result");
-    assert!(result.settled(), "{}", result.text());
-    assert_eq!(result.counts().failed, 2, "{}", result.text());
-    assert_eq!(result.counts().done, 64, "{}", result.text());
+    let counts = result.counts();
+    assert!(counts.skipped >= 150 - 48, "{}", result.text());
+    assert!(counts.done + counts.failed <= 48, "{}", result.text());
+    assert_eq!(counts.done + counts.failed + counts.skipped, 150);
     assert!(
-        result
-            .text()
-            .starts_with("Copy settings to: failed 2: bot65 (")
-            && result
-                .text()
-                .contains("(script: too many pending native settings saves)"),
+        result.text().contains("(settings copy cancelled)"),
         "{}",
         result.text()
     );
+    assert!(!starts_held(&d), "Cancel releases the start hold");
 }
 
 /// Review F3 r2-1: a fleet Start joins a single Start's untallied
@@ -3223,4 +3261,414 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         }
         _ => {}
     }
+}
+
+// ---- F4: Switch world through the fleet plan ----
+
+fn arm_of(d: &HeadlessDriver, name: &str) -> std::sync::Arc<host_play::SlotArm> {
+    d.session()
+        .play()
+        .and_then(|play| play.arm(name))
+        .expect("live arm")
+}
+
+/// Publish `name`'s status row as its slot would, then two frames: the
+/// fleet result follows a member settled by the first on the next.
+fn publish(d: &mut HeadlessDriver, name: &str, edit: impl FnOnce(&mut host_play::SlotStatus)) {
+    {
+        let play = d.session().play().expect("play");
+        let mut rows = play.statuses.lock().unwrap();
+        if !rows.iter().any(|row| row.username == name) {
+            rows.push(host_play::SlotStatus {
+                username: name.into(),
+                ..host_play::SlotStatus::default()
+            });
+        }
+        edit(
+            rows.iter_mut()
+                .find(|row| row.username == name)
+                .expect("row"),
+        );
+    }
+    d.poll();
+    d.poll();
+}
+
+/// A finished login: a new owner session for `name`, in game on `world`.
+fn log_in_on(d: &mut HeadlessDriver, name: &str, world: u16) {
+    let arm = arm_of(d, name);
+    if !arm.login_wanted() {
+        arm.arm_explicit_login();
+    }
+    arm.complete_login_for_test();
+    publish(d, name, |row| {
+        row.connected = true;
+        row.ingame = true;
+        row.scene_state = 2;
+        row.world = Some(world);
+        row.startup_phase = host_play::StartupPhase::Ready;
+        row.error = None;
+    });
+}
+
+/// A driver whose server lists public worlds 1-3, with `names` loaded and
+/// in game on world 1.
+fn world_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver(test, names);
+    d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
+    load(&mut d, names);
+    for name in names {
+        log_in_on(&mut d, name, 1);
+    }
+    d
+}
+
+/// Plan Switch world (for `target` alone when given): the plan command's
+/// terminal and its refusal text.
+fn plan_switch(
+    d: &mut HeadlessDriver,
+    world: u16,
+    target: Option<&str>,
+) -> (Option<Terminal>, Option<String>) {
+    if let Some(name) = target {
+        d.session_mut().stage_plan_target(name);
+    }
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::SwitchWorld(world)),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    (
+        terminal_app(d, planned.request()),
+        d.session()
+            .command_failure(planned.request())
+            .map(str::to_owned),
+    )
+}
+
+fn saved_world(d: &HeadlessDriver, name: &str) -> Option<u16> {
+    d.session()
+        .vault()
+        .and_then(|vault| vault.get(name))
+        .and_then(|profile| profile.settings.world)
+}
+
+fn member_detail(d: &HeadlessDriver, request: RequestId, name: &str) -> String {
+    let subject = Subject::Profile(d.session().profile_identity_or_synthetic(name));
+    d.report(request)
+        .and_then(|report| report.member(subject))
+        .and_then(|member| member.detail())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Confirm the waiting Switch world plan; its writes stay where they are.
+fn confirm_switch(d: &mut HeadlessDriver) -> RequestId {
+    let command = d.session().fleet_plan().expect("a plan waits").command();
+    d.submit(command, Targets::Plan).expect("run").request()
+}
+
+/// Let the world saves land and the relogs post.
+fn land_saves(d: &mut HeadlessDriver) {
+    d.session_mut().flush_writes();
+    d.poll();
+    d.poll();
+}
+
+/// The world bubble's switch: one bot, always asked; the world is saved
+/// before anything logs out; the intent post settles nothing; the member
+/// is done only when a new session is in game on the new world.
+#[test]
+fn a_world_switch_saves_first_then_relogs_and_settles_on_the_new_session() {
+    let mut d = world_driver("f4-switch", &["alice", "bob"]);
+    mark(&mut d, &["bob"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let plan = d.session().fleet_plan().expect("plan");
+    assert!(plan.needs_confirm(), "a world switch always asks");
+    assert_eq!(plan_names(&d), ["alice"], "the bubble's bot, not the marks");
+    assert_eq!(
+        d.session().fleet_plan().expect("plan").prompt(),
+        "Move 1 bot to world 2: alice. Each logs out and back in through the login \
+         queue; a running script continues after it reconnects."
+    );
+
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    d.poll();
+    let alice = arm_of(&d, "alice");
+    assert_eq!(terminal(&d, run, "alice"), None, "pending on its save");
+    assert!(
+        !alice.wants_logout(),
+        "nothing logs out while the world save is held"
+    );
+    drop(held);
+    land_saves(&mut d);
+    assert_eq!(saved_world(&d, "alice"), Some(2));
+    assert!(alice.wants_logout(), "the durable save posts the turnover");
+    assert!(alice.wants_login(), "the turnover logs back in");
+    assert_eq!(alice.world_choice(), Some(2));
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        None,
+        "posting the switch is not the relog"
+    );
+    assert!(!arm_of(&d, "bob").wants_logout(), "bob was not in the plan");
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: pending 1"
+    );
+
+    log_in_on(&mut d, "alice", 2);
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: alice"
+    );
+}
+
+/// Picking the current world, a world off the server's list and a server
+/// with one world each write and relog nothing; the headless row is no
+/// longer refused for want of an entry point.
+#[test]
+fn switch_world_refusals_write_and_relog_nothing() {
+    let mut d = world_driver("f4-refusals", &["alice"]);
+    let (terminal_same, why) = plan_switch(&mut d, 1, Some("alice"));
+    assert!(matches!(terminal_same, Some(Settlement::Failed(_))));
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: no bot to act on (alice: already on this world)")
+    );
+    let (_, why) = plan_switch(&mut d, 9, None);
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: world 9 is not on this server's world list")
+    );
+    let direct = d
+        .submit(OperatorCommand::SwitchWorld(9), Targets::Profile("alice"))
+        .expect("the headless row is admitted")
+        .request();
+    assert_eq!(
+        terminal(&d, direct, "alice"),
+        Some(rejected(crate::command::Rejection::NotApplicable))
+    );
+    let same = d
+        .submit(OperatorCommand::SwitchWorld(1), Targets::Profile("alice"))
+        .expect("admitted")
+        .request();
+    assert_eq!(
+        terminal(&d, same, "alice"),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::AlreadyOnWorld
+        )))
+    );
+    land_saves(&mut d);
+    assert_eq!(saved_world(&d, "alice"), None, "nothing was saved");
+    assert!(!arm_of(&d, "alice").wants_logout(), "nothing relogged");
+
+    let mut local = driver("f4-one-world", &["alice"]);
+    load(&mut local, &["alice"]);
+    log_in_on(&mut local, "alice", 1);
+    let (_, why) = plan_switch(&mut local, 2, Some("alice"));
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: this server has one world")
+    );
+    assert!(local.session().switch_world_choices().is_none());
+}
+
+/// A marked batch admits the bots in game elsewhere and names each
+/// refusal once: queued, logging in, already there, not logged in.
+#[test]
+fn a_mixed_switch_admits_ready_bots_and_names_each_refusal_once() {
+    let names = ["alice", "bob", "carol", "dave", "erin"];
+    let mut d = world_driver("f4-mixed", &names);
+    arm_of(&d, "bob").request_relog();
+    publish(&mut d, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Queueing;
+    });
+    publish(&mut d, "carol", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Connecting;
+    });
+    log_in_on(&mut d, "dave", 2);
+    let logout = d
+        .submit(OperatorCommand::Logout, Targets::Profile("erin"))
+        .expect("logout");
+    settle(&mut d, logout.request());
+    publish(&mut d, "erin", |row| {
+        row.connected = false;
+        row.ingame = false;
+    });
+    mark(&mut d, &names);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    assert_eq!(plan_names(&d), ["alice"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 marked bot to world 2: alice.")
+            && prompt.ends_with(
+                " Skipped 4: bob: queued for login, carol: logging in, dave: already on \
+                 this world, erin: not logged in."
+            ),
+        "{prompt}"
+    );
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    log_in_on(&mut d, "alice", 2);
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    let result = d.session().fleet_result().expect("result");
+    assert_eq!(
+        result.text(),
+        "Switch world: skipped 4: bob (queued for login), carol (logging in), dave \
+         (already on this world), erin (not logged in); done 1: alice"
+    );
+    for name in ["bob", "carol", "dave", "erin"] {
+        assert_eq!(saved_world(&d, name), None, "{name} was not written");
+    }
+}
+
+/// A failed world save fails the member with the save's reason and never
+/// logs the bot out.
+#[test]
+fn a_failed_world_save_never_logs_the_bot_out() {
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-t33-driver-{}-f4-failed-save",
+        std::process::id()
+    ));
+    let mut d = world_driver("f4-failed-save", &["alice"]);
+    let session = arm_of(&d, "alice").session_key();
+    assert_eq!(plan_switch(&mut d, 3, Some("alice")).0, Some(done()));
+    // A directory where the vault file was: the next write cannot publish.
+    let vault = dir.join("vault");
+    std::fs::rename(&vault, dir.join("vault.aside")).expect("vault aside");
+    std::fs::create_dir(&vault).expect("block");
+    let run = confirm_switch(&mut d);
+    for _ in 0..400 {
+        land_saves(&mut d);
+        if terminal(&d, run, "alice").is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        matches!(terminal(&d, run, "alice"), Some(Settlement::Failed(_))),
+        "{:?}",
+        terminal(&d, run, "alice")
+    );
+    assert!(
+        member_detail(&d, run, "alice").starts_with("world not saved"),
+        "{}",
+        member_detail(&d, run, "alice")
+    );
+    let alice = arm_of(&d, "alice");
+    assert!(!alice.wants_logout(), "a failed save never logs out");
+    assert_eq!(alice.session_key(), session, "the connection is intact");
+}
+
+/// Several bots relog one each: every member waits for its own new
+/// session (the host's login queue paces the logins).
+#[test]
+fn each_switched_bot_settles_on_its_own_relog() {
+    let names = ["alice", "bob", "carol"];
+    let mut d = world_driver("f4-several", &names);
+    mark(&mut d, &names);
+    assert_eq!(plan_switch(&mut d, 3, None).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    for name in names {
+        assert!(arm_of(&d, name).wants_logout(), "{name} relogs");
+    }
+    log_in_on(&mut d, "bob", 3);
+    assert_eq!(terminal(&d, run, "bob"), Some(done()));
+    assert_eq!(terminal(&d, run, "alice"), None);
+    assert_eq!(terminal(&d, run, "carol"), None);
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: bob; pending 2"
+    );
+}
+
+/// Log out during the save or the relog cancels the switch: nothing
+/// posts after it and the bot stays logged out.
+#[test]
+fn a_logout_during_the_switch_cancels_it_and_nothing_logs_back_in() {
+    let mut d = world_driver("f4-logout", &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    // alice: Log out while her world save is held.
+    d.submit(OperatorCommand::Logout, Targets::Profile("alice"))
+        .expect("logout");
+    drop(held);
+    land_saves(&mut d);
+    // bob: Log out after his relog was posted.
+    assert!(arm_of(&d, "bob").wants_logout());
+    d.submit(OperatorCommand::Logout, Targets::Profile("bob"))
+        .expect("logout");
+    d.poll();
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            terminal(&d, run, name),
+            Some(Settlement::Cancelled(
+                api::identity::Cancellation::Superseded
+            )),
+            "{name}"
+        );
+        let arm = arm_of(&d, name);
+        assert!(arm.login_latched(), "{name} stays logged out");
+        assert!(!arm.wants_login(), "{name}: nothing logs back in");
+    }
+}
+
+/// Removing a bot whose relog is posted cancels its member.
+#[test]
+fn removing_a_switching_bot_cancels_it() {
+    let mut d = world_driver("f4-remove", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    assert!(arm_of(&d, "alice").wants_logout(), "the relog is posted");
+    d.submit(OperatorCommand::Remove, Targets::Profile("alice"))
+        .expect("remove");
+    d.poll();
+    assert!(
+        matches!(terminal(&d, run, "alice"), Some(Settlement::Cancelled(_))),
+        "{:?}",
+        terminal(&d, run, "alice")
+    );
+}
+
+/// A relog that lands on another world, or a world the host refuses at
+/// login, fails the member with what happened.
+#[test]
+fn a_relog_elsewhere_or_a_refused_world_fails_the_member() {
+    let mut d = world_driver("f4-elsewhere", &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    log_in_on(&mut d, "alice", 1);
+    arm_of(&d, "bob").hold_login_on_error_for_test();
+    publish(&mut d, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Error;
+        row.error = Some("world 2 refused the login".into());
+    });
+    let rejected = Settlement::Failed(CommandFailure::Failed(
+        crate::command::FailureKind::WorldRejected,
+    ));
+    assert_eq!(terminal(&d, run, "alice"), Some(rejected.clone()));
+    assert_eq!(
+        member_detail(&d, run, "alice"),
+        "logged in on world 1 instead"
+    );
+    assert_eq!(terminal(&d, run, "bob"), Some(rejected));
+    assert_eq!(member_detail(&d, run, "bob"), "world 2 refused the login");
 }

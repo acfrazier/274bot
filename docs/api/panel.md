@@ -231,7 +231,9 @@ tile to move that bot before or after it; the new order is saved (see the
 Fleet window). Profiles that are not loaded are listed
 below the tiles in a folded **Not loaded (N)** group: each has a mark
 checkbox and no tile. A tile is
-a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
+a cap — traffic-light dot (on a server with public worlds a disc that
+carries the bot's world number, which opens the [world picker](#world-picker)),
+name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
 body focuses the member. Filtering never changes focus. The dot is error **red**, then ingame **amber**,
 then FIFO-queue **warn**, else grey. **only render focused** mirrors
@@ -258,6 +260,42 @@ reaches **only** the focused cell; the queue card overlays it while queued.
 The rail is hidden in Grid, so the right-hand panel shows the same 1 Hz
 **resource** readout there (the one sample the rail card reads; the panel
 section stays hidden only while the rail is shown).
+
+### World picker
+
+On a server with public worlds (rs2b2t) a cap's status dot is a disc with the
+bot's world number, and it is a button. A click on it (in the rail or on a
+Grid cell), a click on a loaded bot's **World / login** cell in the Fleet
+window (its tooltip reads `click to switch world`), or the **Switch
+world…** entry of the Fleet window's **Marks** menu opens the one world
+picker: a small popup at the pointer that lists the server's worlds, with the
+bot's own world ticked. The list is the server's world list as it was read
+when the session started, so opening the picker fetches nothing and reads no
+file. Click away or press `Esc` to leave it as it was.
+
+Picking the world the bot is already on closes the picker and does nothing.
+Picking another world plans **Switch world** for that bot alone (a bot that
+is marked elsewhere does not join) and opens the Fleet window, or brings it
+forward, so the plan row shows the core's prompt with **Confirm** and
+**Cancel**, as for every fleet plan. The **Switch world…** entry plans over
+the marked bots, hidden marks included, or over the loaded bots shown when
+none is marked; its prompt names the bots it skips, such as one already on
+that world. A Switch world plan always asks first. Nothing is saved or
+relogged before **Confirm**, and **Cancel** writes nothing.
+
+A confirmed switch saves the bot's world on its profile and only then logs
+the bot out and back in on the new world through the login queue, so several
+bots relog at the queue's pace, not all at once. A save that fails leaves
+the bot logged in. A running script continues after the bot reconnects; a
+script that was already paused stays paused. A bot that is queued for login,
+logging in, logged out or not loaded is refused with its reason (`Switch
+world: no bot to act on (alice: queued for login)`, shown on the banner).
+The result line reports each bot's real outcome, not only that the relog
+started.
+
+On a server with one world (a local server) the dot stays a status dot, the
+World / login column is plain text and the **Switch world…** entry is
+disabled with the reason `this server has one world`.
 
 ### Chooser
 
@@ -515,7 +553,9 @@ only stages and submits.
   header is the same box. The menu has **Mark shown**, **Unmark shown**,
   **Invert shown** and **Mark by status** (ready, idle, running, logged out,
   login error, not loaded). These act on the shown rows only; a mark the
-  filter hides stays.
+  filter hides stays. Below them **Switch world…** opens the [world
+  picker](#world-picker) for the marked bots (the loaded bots shown when none
+  is marked).
 - The **action buttons** are **Start**, **Stop**, **Assign** (saves the card
   without starting), **Assign & restart**, **Log in**, **Log out** and
   **Copy settings to**, then **Walk N marked bots** (opens the WalkTo picker
@@ -535,7 +575,8 @@ A click on an action button plans the action. The core freezes the target
 bots, the card, the bots a run would interrupt and the rows it skips, and
 refuses with a reason (shown on the banner) when there is nothing to do. A
 plan that needs no confirmation runs at once. A plan asks first when it
-covers every shown bot, interrupts a running script, or copies settings.
+covers every shown bot, interrupts a running script, copies settings or
+switches world.
 Then a **plan row** under the buttons shows the core's prompt, wrapped,
 with **Confirm** and **Cancel**. Cancel writes nothing. Only one plan
 waits: a newer action replaces it and its prompt starts with `Replaces the
@@ -558,7 +599,9 @@ marked same-card bots, or with no marks to the loaded shown same-card bots;
 the prompt names the skipped bots.
 
 Checkboxes under the result line toggle the status columns: world and login
-state, card, run state (the script error on hover), runtime, last log line,
+state (on a server with public worlds a loaded bot's cell, such as `w2
+ready`, opens the [world picker](#world-picker)), card, run state (the
+script error on hover), runtime, last log line,
 time since the last progress (the watchdog's gameplay clock; `—` while
 paused, out of game or idle) and levels gained since the run's Start (the
 per-skill breakdown on hover). The choice is saved in `panel-ui.json` as
