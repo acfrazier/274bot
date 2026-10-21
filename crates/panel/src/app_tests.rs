@@ -2644,7 +2644,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     // No terminal shot armed: the FAIL returns immediately.
     let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
         .expect("FAIL returns the message");
-    assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
+    assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
     assert!(live.failed.is_some());
 }
 
@@ -2687,7 +2687,7 @@ fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
     let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Written, None)
         .expect("FAIL after the shot writes");
     assert!(live.failed.is_some());
-    assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
+    assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
 }
 
 /// A terminal-shot PASS holds the exit until the shot writes, then
