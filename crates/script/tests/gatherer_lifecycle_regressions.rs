@@ -1950,7 +1950,9 @@ fn assert_resource_return(
     assert_eq!(
         request.arrival,
         nav::contract::ArrivalKind::Area,
-        "resource return from {anchor:?}: {request:?}",
+        "resource return from {anchor:?} to {:?} at radius {}",
+        request.target,
+        request.radius,
     );
     assert_eq!(request.radius, 1);
     assert_eq!(request.target.level, anchor.level);
