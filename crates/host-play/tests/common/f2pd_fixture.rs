@@ -58,7 +58,7 @@ pub fn cell(case: Case<'_>) -> Cell {
         quest: case.quest,
         display: case.display,
         label: case.label.into(),
-        stage: case.stage,
+        stage: Some(case.stage),
         loadout: Some(FixtureLoadout::Path(case.loadout)),
         extra_items: case.items,
         seed_vars: &[],

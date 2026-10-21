@@ -98,6 +98,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
 
+#### Quester
+
+- Fixed five Path errors. Demon Slayer now waits for Silverlight's delayed
+  handoff. Pirate's Treasure estimates its rum and apron at their full-stock
+  prices of 30 gp and 2 gp; its message-scroll journal read still needs S7
+  runtime journal-root handling. Sea Slug no longer reacquires Swamp paste
+  after Holgart takes it. Prince Ali Rescue clears only nearby guards before
+  talking to Keli. Gertrude's Cat includes the fence landing tile and walks
+  its yard waypoints in order. Monk's Friend skips the ring-stone walk near
+  the ladder or inside the cave.
+- Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
+  fixtures may start at an explicit seeded stand such as a bank instead of
+  requiring the Path's authored start anchor.
+- An initial wall-facing `Interact` or `UseOn` loc walk retries once from
+  the wall tile after a typed `NoPath` receipt. The retry stays pending
+  across action-budget exhaustion; other walk failures remain terminal.
+
 #### Scenario checks
 
 - The Ardougne Thiever fight check now prepares food and attacks a real Guard

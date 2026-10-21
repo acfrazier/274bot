@@ -1345,9 +1345,10 @@
                 "leash": 6,
                 "prefer": [
                   "I'm still looking."
-                ]
+                ],
+                "gap_ticks": 3
               },
-              "comment": "With all three keys held there is no menu: Prysin takes the keys and hands Silverlight after two short delays (sir_prysin.rs2:64-76).",
+              "comment": "Prysin closes chat, then calls p_delay(2) twice before he adds Silverlight (content/scripts/areas/area_varrock/scripts/sir_prysin.rs2:67-76). gap_ticks 3 covers the handoff delays.",
               "advances": true,
               "skip_if": {
                 "Any": []

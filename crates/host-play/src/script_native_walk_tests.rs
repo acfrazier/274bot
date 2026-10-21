@@ -1938,7 +1938,7 @@ fn observed_off_settles_cleanup_before_retry_and_leaves_a_later_user_enable_alon
 }
 
 #[test]
-fn an_unroutable_native_walk_delivers_one_failed_terminal() {
+fn an_unroutable_native_walk_delivers_one_no_path_terminal() {
     let mut rig = rig(Some(Arc::new(open_world(3, 1))), false);
     rig.observe(1);
     assert!(
@@ -1947,7 +1947,7 @@ fn an_unroutable_native_walk_delivers_one_failed_terminal() {
         "the planner completes the unreachable request"
     );
     rig.observe(2);
-    assert_eq!(rig.end(), Some(Ok(WalkEnd::Failed)));
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::NoPath)));
     for tick in 3..40 {
         rig.observe(tick);
         rig.step();
@@ -1973,7 +1973,7 @@ fn native_walk_failure_receipt_names_missing_route_supplies() {
 
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
-    assert_eq!(receipt.end, WalkEnd::Failed, "{:?}", receipt.detail);
+    assert_eq!(receipt.end, WalkEnd::NoPath, "{:?}", receipt.detail);
     let detail = receipt
         .detail
         .as_deref()
@@ -2018,14 +2018,14 @@ fn native_walk_routes_skill_gate_with_posted_level_and_no_arm_state() {
         routed,
         "posted Fishing 68 must route the gate with arm state None; end={end:?}"
     );
-    assert_ne!(end, Some(Ok(WalkEnd::Failed)));
+    assert_ne!(end, Some(Ok(WalkEnd::NoPath)));
 }
 
 #[test]
 fn native_walk_refuses_skill_gate_below_level() {
     let (routed, end) = native_walk_gated_on_fishing(67);
     assert!(!routed, "Fishing 67 must not cross a Fishing-68 door");
-    assert_eq!(end, Some(Ok(WalkEnd::Failed)));
+    assert_eq!(end, Some(Ok(WalkEnd::NoPath)));
 }
 
 /// The host's own route arm, as the watchdog's recovery walk and legacy
@@ -2671,7 +2671,7 @@ fn drive_second_walk(rig: &mut Rig, first_tick: u64) -> Vec<Result<WalkEnd, Acti
 }
 
 #[test]
-fn review_control_generic_cancel_then_nopath_delivers_failed() {
+fn review_control_generic_cancel_then_nopath_delivers_no_path() {
     let mut rig = two_walk_rig();
     {
         let slot = rig.slot();
@@ -2687,7 +2687,7 @@ fn review_control_generic_cancel_then_nopath_delivers_failed() {
         std::mem::size_of::<NavBot>()
     );
     assert_eq!(ends.len(), 2, "control: the second walk gets its terminal");
-    assert_eq!(ends[1], Ok(WalkEnd::Failed));
+    assert_eq!(ends[1], Ok(WalkEnd::NoPath));
 }
 
 #[test]
@@ -2721,7 +2721,7 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
         2,
         "after a manual takeover the next native walk's NoPath must reach its owner"
     );
-    assert_eq!(ends[1], Ok(WalkEnd::Failed));
+    assert_eq!(ends[1], Ok(WalkEnd::NoPath));
 }
 
 #[test]
@@ -2790,7 +2790,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         2,
         "after native recovery identity and click, the next native NoPath reaches its owner"
     );
-    assert_eq!(ends[1], Ok(WalkEnd::Failed));
+    assert_eq!(ends[1], Ok(WalkEnd::NoPath));
 }
 
 #[test]
@@ -3113,7 +3113,7 @@ fn manual_config_on_native_pause_revokes_action_resume_makes_fresh_decision() {
     assert_eq!(ends.len(), 2);
     assert_eq!(
         ends[1],
-        Ok(WalkEnd::Failed),
+        Ok(WalkEnd::NoPath),
         "the explicit Resume permits a fresh decision"
     );
     let shared = rig.shared.lock();
@@ -3647,7 +3647,7 @@ fn area_walk_does_not_arrive_on_a_disconnected_candidate() {
     wait_for_native_route_outcome(&rig);
     rig.observe(2);
 
-    assert_eq!(rig.end(), Some(Ok(WalkEnd::Failed)));
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::NoPath)));
     assert!(
         !rig.navs.lock().unwrap()["alice"].has_route(),
         "a standable candidate across a full collision wall is not reachable"
@@ -3663,7 +3663,7 @@ fn zero_radius_area_refuses_a_nonstandable_target() {
 
     let shared = rig.shared.lock();
     let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
-    assert_eq!(receipt.end, WalkEnd::Failed);
+    assert_eq!(receipt.end, WalkEnd::NoPath);
     let detail = receipt
         .detail
         .as_deref()
