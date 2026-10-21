@@ -9811,7 +9811,7 @@ mod tests {
                 .active_before_grinch_start
         );
         assert!(
-            !project_competitor_frames(report, &fresh_accounts, 200, 201, true)
+            project_competitor_frames(report, &fresh_accounts, 200, 201, true)
                 .unwrap_err()
                 .contains("competitor lacks PLAYER_INFO frames in the main cycle window")
         );
