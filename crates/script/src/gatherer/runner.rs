@@ -1586,17 +1586,17 @@ impl Gatherer {
                 }
             },
             Active::Acquire(mut run) => {
-                let (bank, access, stage) = run.progress();
-                let before = (bank.map(|bank| bank.tile), access.copied(), stage);
+                let (bank, access, stage, kind) = run.progress();
+                let before = (bank.map(|bank| bank.tile), access.copied(), stage, kind);
                 let result = run.poll(tick, OpenGate::Open);
-                let (bank, access, stage) = run.progress();
-                let after = (bank.map(|bank| bank.tile), access.copied(), stage);
+                let (bank, access, stage, kind) = run.progress();
+                let after = (bank.map(|bank| bank.tile), access.copied(), stage, kind);
                 if before != after {
                     self.dirty = true;
-                    if (before.0, before.1) != (after.0, after.1) {
-                        if let (Some(bank), Some(access)) = (bank, access) {
+                    if (before.0, before.1, before.3) != (after.0, after.1, after.3) {
+                        if let (Some(bank), Some(access), Some(kind)) = (bank, access, kind) {
                             self.bank_label = Arc::from(format!(
-                                "{}; access:{},{},{}",
+                                "{}; {kind:?}; access:{},{},{}",
                                 bank.name, access.x, access.z, access.level,
                             ));
                         }

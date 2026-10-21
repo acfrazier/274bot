@@ -63,6 +63,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   that can be wielded is equipped without a bank trip. Bank refusals keep
   their specific reason. A refill can withdraw a lower usable tool tier when
   that is what the bank holds.
+- Fixed during development: Gatherer bank status retains the selected route
+  kind and access tile during supply trips.
 
 #### Scenario checks
 

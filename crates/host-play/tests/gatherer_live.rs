@@ -1462,6 +1462,24 @@ impl BankTripReceipt {
         })
     }
 
+    fn withdrawal_observed(
+        &self,
+        inventory_after: &BTreeMap<i32, i32>,
+        bank_after: &BTreeMap<i32, i32>,
+    ) -> bool {
+        inventory_after.iter().any(|(id, count)| {
+            let gained = count.saturating_sub(self.inventory_before.get(id).copied().unwrap_or(0));
+            gained > 0
+                && self
+                    .bank_before
+                    .get(id)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_sub(bank_after.get(id).copied().unwrap_or(0))
+                    == gained
+        })
+    }
+
     fn observe_deposit(
         &mut self,
         inventory_after: &BTreeMap<i32, i32>,
@@ -3065,6 +3083,7 @@ impl GatherSlot {
         }
         self.observe_reprovision_bank(&observation)?;
         self.observe_bank_open(self.witness.status_deposited)?;
+        self.observe_bank_withdrawal();
         let bank_active = self.bank_conservation_active();
         let drop_baseline = self.last_observed_dropped;
         let product_drop_baseline = self.last_observed_product_drops;
@@ -3616,6 +3635,19 @@ impl GatherSlot {
         Ok(())
     }
 
+    fn observe_bank_withdrawal(&mut self) {
+        if self.witness.bank_withdrawal_confirmed || !self.snapshot.bank_loaded() {
+            return;
+        }
+        let Some(receipt) = self.witness.pending_bank_trip.as_ref() else {
+            return;
+        };
+        self.witness.bank_withdrawal_confirmed = receipt.withdrawal_observed(
+            &self.snapshot_inventory_counts(),
+            &self.snapshot_bank_counts(),
+        );
+    }
+
     fn observe_bank_deposit(
         &mut self,
         status: &script::native::ScriptStatus,
@@ -3625,6 +3657,7 @@ impl GatherSlot {
             return Ok(());
         }
         self.observe_bank_open(current_deposited)?;
+        self.observe_bank_withdrawal();
         let event = text_field(status, "last_event");
         if event == Some("deposit confirmed") && self.witness.pending_bank_trip.is_none() {
             return Err(format!(
@@ -4429,12 +4462,6 @@ impl GatherSlot {
                     }
                 }
             }
-            if event == "bank selected" && self.witness.bank_selection_elapsed.is_none() {
-                self.witness.bank_selection_elapsed = self
-                    .witness
-                    .bank_trip_due_at
-                    .map(|started| Instant::now().duration_since(started));
-            }
             self.witness.last_status_event = Some(event.to_owned());
             if let Some(death) = event
                 .strip_prefix("recovered after death ")
@@ -4447,36 +4474,8 @@ impl GatherSlot {
                         Some(self.witness.post_drop_gathers);
                 }
             }
-            if event == "bank selected" {
-                self.witness.bank_selected = true;
-                if self.case == LiveCase::PowerToBank {
-                    let completed = self
-                        .witness
-                        .confirmed_drops
-                        .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
-                        >= self.witness.power_to_bank_edit_slots;
-                    if !self.witness.power_to_bank_edit_requested
-                        || !self.witness.power_to_bank_applied
-                        || !completed
-                    {
-                        return Err(format!(
-                            "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
-                            self.witness
-                        ));
-                    }
-                }
-            }
-            if event == "withdrawal confirmed" {
-                self.witness.bank_withdrawal_confirmed = true;
-            }
             if event == "bank closed; validating equipment" {
                 self.witness.bank_closed_observed = true;
-            }
-            if self.case == LiveCase::FishBait
-                && event == "withdrawal confirmed"
-                && integer_field(status, "bait") == Some(3)
-            {
-                self.witness.bait_exact = true;
             }
             if self.case == LiveCase::WoodcuttingBankUnwieldable && event == "wielding tool" {
                 return Err("unwieldable rune axe wear action was started".into());
@@ -4553,6 +4552,30 @@ impl GatherSlot {
                     }
                 }
             }
+        }
+
+        if !self.witness.bank_selected && self.complete_bank_selection() {
+            if self.case == LiveCase::PowerToBank {
+                let completed = self
+                    .witness
+                    .confirmed_drops
+                    .saturating_sub(self.witness.power_to_bank_edit_drop_baseline)
+                    >= self.witness.power_to_bank_edit_slots;
+                if !self.witness.power_to_bank_edit_requested
+                    || !self.witness.power_to_bank_applied
+                    || !completed
+                {
+                    return Err(format!(
+                        "bank selection preempted the boundary-applied Power to Bank batch: {:?}",
+                        self.witness
+                    ));
+                }
+            }
+            self.witness.bank_selected = true;
+            self.witness.bank_selection_elapsed = self
+                .witness
+                .bank_trip_due_at
+                .map(|started| Instant::now().duration_since(started));
         }
 
         if self.case == LiveCase::FishBaitGate {
@@ -5411,12 +5434,11 @@ impl GatherSlot {
             .as_deref()
             .and_then(|bank| bank.split(';').nth(1))
             .map(str::trim)
-            .filter(|kind| !kind.is_empty())
+            .filter(|kind| matches!(*kind, "NearShortcut" | "Reachable" | "AirFallback"))
     }
 
     fn complete_bank_selection(&self) -> bool {
-        self.witness.bank_selected
-            && self.selected_bank_name().is_some()
+        self.selected_bank_name().is_some()
             && self.selected_bank_kind().is_some()
             && self
                 .witness
@@ -9040,6 +9062,18 @@ mod bank_conservation_tests {
             &mut slot,
             &[(NET_ID, 1), (FEATHERS_ID, 3)],
             &[(FEATHERS_ID, 3)],
+        )
+        .unwrap();
+        assert!(!slot.witness.bank_withdrawal_confirmed);
+    }
+
+    #[test]
+    fn bank_withdrawal_rejects_a_different_bank_delta_quantity() {
+        let mut slot = slot_before_supply_withdrawal();
+        observe_pack_change(
+            &mut slot,
+            &[(NET_ID, 1), (FEATHERS_ID, 3)],
+            &[(FEATHERS_ID, 1)],
         )
         .unwrap();
         assert!(!slot.witness.bank_withdrawal_confirmed);

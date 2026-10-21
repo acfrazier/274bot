@@ -51,6 +51,7 @@ pub struct AcquireRun {
     phase: Phase,
     active: Active,
     bank: Option<NamedBank>,
+    pick_kind: Option<PickKind>,
     explicit: Option<Arc<str>>,
     required_bank_missing: bool,
     access: Option<Arc<BankStandAccess>>,
@@ -118,6 +119,7 @@ impl AcquireRun {
             phase: Phase::Done,
             active: Active::None,
             bank: None,
+            pick_kind: None,
             explicit,
             required_bank_missing,
             access: None,
@@ -460,8 +462,15 @@ impl AcquireRun {
         self.block.as_deref()
     }
 
-    /// Borrow the selected location and stage without another status owner.
-    pub(crate) fn progress(&self) -> (Option<&NamedBank>, Option<&WorldTile>, &'static str) {
+    /// Borrow the selected location, route kind and stage without another owner.
+    pub(crate) fn progress(
+        &self,
+    ) -> (
+        Option<&NamedBank>,
+        Option<&WorldTile>,
+        &'static str,
+        Option<PickKind>,
+    ) {
         let stage = match self.phase {
             Phase::Select => "Select",
             Phase::Walk => "Access",
@@ -474,7 +483,12 @@ impl AcquireRun {
             Phase::Child => "Child",
             Phase::Done => "Done",
         };
-        (self.bank.as_ref(), self.target.as_ref(), stage)
+        (
+            self.bank.as_ref(),
+            self.target.as_ref(),
+            stage,
+            self.pick_kind,
+        )
     }
 
     pub fn cancel(&mut self, actions: &mut NativeActions) {
@@ -591,6 +605,7 @@ impl AcquireRun {
                             .ok_or(ActionError::Stale)?,
                     );
                     self.target = Some(selected.access_tile);
+                    self.pick_kind = Some(selected.kind);
                     self.access = Some(access);
                     self.phase = Phase::Walk;
                 }
