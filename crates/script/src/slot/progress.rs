@@ -94,6 +94,12 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::BankDeposit(reason) => format!("failed:{reason}").into(),
         ActionError::CombatInterrupted => "combat-interrupted".into(),
         ActionError::NeedsEvidence(gates) => format!("needs-evidence:{gates:?}").into(),
+        ActionError::GroundTake(crate::ground_take::GroundRefusal::Capacity) => {
+            "ground-take-capacity".into()
+        }
+        ActionError::GroundTake(crate::ground_take::GroundRefusal::AlreadyOwned { id }) => {
+            format!("ground-take-already-owned:{id}").into()
+        }
     }
 }
 

@@ -218,6 +218,7 @@ fn with_tick_output_reach<R>(
             active_now: Duration::from_millis(tick * 600),
             wall_now: Instant::now(),
             ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
         },
