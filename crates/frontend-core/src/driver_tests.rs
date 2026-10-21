@@ -1046,6 +1046,28 @@ fn delete_profile_settles_done_when_its_write_lands() {
 
 // ---- F2: the saved Load order -------------------------------------------
 
+/// The stored Load order (`"<uid>": <key>` members, by key), named
+/// through the vault: `None` until the file holds one.
+fn stored_order_now(d: &HeadlessDriver) -> Option<Vec<String>> {
+    let file = preferences_file_now(d)?;
+    let members = file.get(crate::PROFILE_ORDER_KEY)?.as_object()?.clone();
+    let vault = d.session().vault()?;
+    let mut keyed: Vec<(i64, String)> = members
+        .iter()
+        .filter_map(|(uid, key)| {
+            let uid: i32 = uid.parse().ok()?;
+            let name = vault.profiles().find(|p| p.uid == uid)?.username.clone();
+            Some((key.as_i64()?, name))
+        })
+        .collect();
+    keyed.sort();
+    Some(keyed.into_iter().map(|(_, name)| name).collect())
+}
+
+fn stored_order(d: &HeadlessDriver) -> Vec<String> {
+    stored_order_now(d).expect("a stored Load order")
+}
+
 fn order_names(d: &HeadlessDriver) -> Vec<String> {
     d.session().profile_order().names().to_vec()
 }
@@ -1099,10 +1121,7 @@ fn a_reorder_saves_the_load_order_and_every_view_follows_it() {
     let op = move_op(&d, "carol", "alice", false);
     assert_eq!(reorder(&mut d, op), Some(done()));
     assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
-    assert_eq!(
-        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
-        serde_json::json!(["carol", "alice", "bob"])
-    );
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
     d.poll();
     assert_eq!(row_names(&d), ["carol", "alice", "bob"]);
     let load = d
@@ -1226,8 +1245,8 @@ fn the_order_follows_create_rename_delete_and_survives_a_restart() {
     // and vault restores the order.
     d.session_mut().flush_writes();
     let start = std::time::Instant::now();
-    while preferences_file_now(&d).and_then(|file| file.get(crate::PROFILE_ORDER_KEY).cloned())
-        != Some(serde_json::json!(["carol", "alicia", "dave"]))
+    while stored_order_now(&d).as_deref()
+        != Some(&["carol", "alicia", "dave"].map(String::from)[..])
     {
         assert!(start.elapsed() < SETTLE_HANG_GUARD, "the order write hung");
         d.poll();
@@ -1260,10 +1279,7 @@ fn a_held_order_write_stays_pending_until_durable() {
     assert_eq!(terminal_app(&d, submitted.request()), None);
     release.send(()).unwrap();
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
-    assert_eq!(
-        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
-        serde_json::json!(["bob", "alice"])
-    );
+    assert_eq!(stored_order(&d), ["bob", "alice"]);
 }
 
 /// A refused write fails the command and puts back the last durable
@@ -1347,10 +1363,7 @@ fn a_superseded_order_write_settles_and_the_newest_order_wins() {
     assert_eq!(settled_app(&mut d, first.request()), Some(done()));
     assert_eq!(settled_app(&mut d, second.request()), Some(done()));
     assert_eq!(order_names(&d), ["carol", "bob", "alice"]);
-    assert_eq!(
-        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
-        serde_json::json!(["carol", "bob", "alice"])
-    );
+    assert_eq!(stored_order(&d), ["carol", "bob", "alice"]);
     let path = d.session().preferences().expect("prefs").path();
     let before = std::fs::metadata(&path).expect("file").modified().ok();
     let bytes = std::fs::read(&path).expect("file");
@@ -1635,4 +1648,118 @@ fn mark_operations_cover_the_shown_rows_and_keep_hidden_marks() {
     assert_eq!(marked(&d), ["bob"], "bob is hidden and keeps his mark");
     assert_eq!(d.models().fleet().counts().hidden_marked(), 1);
     assert_eq!(d.models().fleet().shown_marks(), ShownMarks::None);
+}
+
+/// Review R1: a 600-profile order fits the shared preferences service (a
+/// value is at most 4,096 bytes): reorders become durable through the real
+/// service, a restart restores them, and each profile costs one small
+/// stored member.
+#[test]
+fn a_600_profile_order_is_durable_and_restores_after_a_restart() {
+    let dir = scratch("order-600");
+    let names: Vec<String> = (0..600).map(|i| format!("bot{i:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver_in(&dir, &refs);
+    d.poll();
+    // Move the last profile to the top, then three marked ones to the top.
+    let op = move_op(&d, "bot599", "bot000", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    for name in ["bot300", "bot010", "bot500"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    let expected: Vec<String> = ["bot010", "bot300", "bot500", "bot599"]
+        .into_iter()
+        .map(String::from)
+        .chain(
+            names
+                .iter()
+                .filter(|n| !["bot010", "bot300", "bot500", "bot599"].contains(&n.as_str()))
+                .cloned(),
+        )
+        .collect();
+    assert_eq!(order_names(&d), expected);
+    assert_eq!(stored_order(&d), expected, "durable");
+    // The stored size per profile.
+    let stored = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    let members = stored.as_object().expect("an object");
+    assert_eq!(members.len(), 600);
+    let row_bytes: usize = members
+        .iter()
+        .map(|(uid, key)| crate::PROFILE_ORDER_KEY.len() + 1 + uid.len() + key.to_string().len())
+        .sum();
+    let per_profile = row_bytes as f64 / 600.0;
+    eprintln!(
+        "profile_order: 600 members, {row_bytes} key+value bytes, {per_profile:.1} per profile"
+    );
+    assert!(per_profile < 32.0, "{per_profile} bytes per profile");
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), expected, "restored after a restart");
+}
+
+/// Review R2: a rename keeps the profile's place whether it is held or
+/// fails, because the order is keyed by identity: the live order, the
+/// stored order and the order after a restart all keep it.
+#[test]
+fn a_held_or_failed_rename_keeps_the_saved_place() {
+    let dir = scratch("order-rename-fail");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let op = move_op(&d, "alice", "bob", true);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let saved = ["carol", "bob", "alice"].map(String::from);
+    assert_eq!(order_names(&d), saved);
+    assert_eq!(stored_order(&d), saved);
+    let stored_before = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    // Block the vault file so the rename's write fails.
+    let vault_path = dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).expect("aside");
+    std::fs::create_dir(&vault_path).expect("block");
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "bob", "alicia"],
+        "held: the staged name in the same place"
+    );
+    d.session_mut().flush_writes();
+    std::fs::remove_dir(&vault_path).expect("unblock");
+    std::fs::rename(&aside, &vault_path).expect("restore");
+    d.poll();
+    assert_eq!(order_names(&d), saved, "failed: the old name in its place");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "the stored order never changed"
+    );
+    assert_eq!(stored_order(&d), saved);
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
 }
