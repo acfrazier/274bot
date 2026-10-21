@@ -7338,6 +7338,57 @@ fn compiled_catalog_start_pump_reaches_running() {
 }
 
 #[test]
+fn start_handle_reads_native_runtime_pair_atomically() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Barrier;
+
+    let play = compiled_start_play();
+    let handle = play.script_start_handle();
+    assert_eq!(handle.observe_native_runtime("missing"), None);
+    let mut pending = vec![live_start::PendingCatalogStart::compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    )];
+    assert_eq!(
+        fire_compiled_until_settled(&mut pending, &handle),
+        live_start::StartScriptPump::CompiledRunning
+    );
+    let running = handle.observe_native_runtime("alice").unwrap();
+    assert!(running.1.is_some());
+    let idle_slot = script::SlotScript::new();
+    let idle = (idle_slot.runtime_generation(), idle_slot.native_run());
+    assert_ne!(idle.0, running.0);
+    assert!(idle.1.is_none());
+    let slot = script_slot(&play.scripts, "alice").unwrap();
+    let finished = AtomicBool::new(false);
+    let ready = Barrier::new(2);
+    let mismatch = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut alternate = idle_slot;
+            ready.wait();
+            while !finished.load(Ordering::Acquire) {
+                std::mem::swap(&mut *slot.lock().unwrap(), &mut alternate);
+                std::thread::yield_now();
+                std::mem::swap(&mut *slot.lock().unwrap(), &mut alternate);
+            }
+        });
+        ready.wait();
+        let mut mismatch = None;
+        for _ in 0..4096 {
+            let observed = handle.observe_native_runtime("alice");
+            if observed != Some(running) && observed != Some(idle) {
+                mismatch = Some(observed);
+                break;
+            }
+        }
+        finished.store(true, Ordering::Release);
+        mismatch
+    });
+    assert_eq!(mismatch, None, "a read mixed two real slot runtimes");
+}
+
+#[test]
 fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     let play = compiled_start_play();
     let mut bag = serde_json::Map::new();

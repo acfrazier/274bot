@@ -291,7 +291,8 @@ impl Watch {
         let player = snapshot.local_player()?.value;
         snapshot.inventory()?;
         snapshot.ground_items()?;
-        let here = snapshot.here()?.value;
+        // Match native Walk's server-coordinate arrival, not render interpolation.
+        let here = player.player.network;
         let world = snapshot.world()?.value;
         Some(Self {
             ground_collision: snapshot.ground_collision_generations()?,

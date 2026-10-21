@@ -1335,6 +1335,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/grinch_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/loadout_provision_live.rs",
       "owner": "T1"
     },
@@ -1464,6 +1468,14 @@
     },
     {
       "path": "crates/host-play/tests/session_profile.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_driver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_oracle.rs",
       "owner": "T1"
     },
     {
@@ -5696,6 +5708,10 @@
     },
     {
       "path": "tools/harness/check_server_root_selection.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/harness/grinch_live.py",
       "owner": "T1"
     },
     {

@@ -82,6 +82,47 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
     assert_eq!(slot.state(), RunState::Idle);
 }
 
+#[test]
+fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
+    let mut snapshot = gatherer_snapshot();
+    snapshot.seed_ground_items(Vec::new());
+    assert_eq!(snapshot.inventory().len(), 28);
+    assert!(snapshot.inventory().iter().all(|item| item.def.id != 1959));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_420);
+    slot.start_compiled(
+        "grinch-stop-reason",
+        crate::CompiledId("Grinch"),
+        Arc::new(SettingsBag::from_iter([(
+            "items".into(),
+            serde_json::json!(["1959"]),
+        )])),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    let run = slot.native_run().expect("the real compiled Grinch run");
+    gatherer_tick(&mut slot, &snapshot, 1);
+    assert_eq!(slot.state(), RunState::Error);
+    assert!(slot.native_run().is_none());
+    assert!(!slot.has_instance());
+    assert!(!slot.has_native_actions());
+    let reason = "inventory is full and contains no selected item to deposit";
+    assert_eq!(slot.last_error(), Some(reason));
+    let status = slot
+        .native_status()
+        .expect("a stopped native failure must retain its user-visible reason");
+    assert_eq!(status.run, run);
+    assert_eq!(status.card, crate::CompiledId("Grinch"));
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let failure = status.failure.as_ref().expect("the typed stop failure");
+    assert_eq!(failure.code.as_ref(), "inventory-blocked");
+    assert_eq!(failure.message.as_ref(), reason);
+    slot.stop();
+    assert!(slot.native_status().is_none());
+}
+
 #[cfg(feature = "load")]
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {

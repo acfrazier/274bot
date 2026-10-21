@@ -1424,6 +1424,40 @@ fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
 }
 
 #[test]
+fn return_accepts_network_arrival_while_the_rendered_tile_lags() {
+    let mut driver = Driver::new(RUN);
+    let mut script = driver.create(prepare(settings(&[ITEM])).unwrap());
+    let mut snapshot = ready_snapshot(ANCHOR, Vec::new(), Vec::new(), 28);
+    let reach = reach_view(ANCHOR, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 1));
+    assert!(script.waits_for_evidence());
+
+    let adjacent = tile(ANCHOR.x - 1, ANCHOR.z);
+    set_position(&mut snapshot, adjacent);
+    let reach = reach_view(adjacent, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 2));
+    let (request, target, radius) = latest_walk(&driver).expect("exact anchor return");
+    assert_eq!((target, radius), (ANCHOR, 0));
+    assert_eq!(respond_walk(&mut driver, 2, WalkEnd::Arrived).0, request);
+
+    let mut player = crate::quester::families::tests::local_player(adjacent);
+    player.player.network = ANCHOR;
+    player.player.actor.moving = true;
+    snapshot.seed_local_player(player);
+    let reach = reach_view(ANCHOR, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 3));
+    assert!(script.waits_for_evidence());
+    assert_eq!(script.recovery_anchor(), Some(ANCHOR));
+    assert_eq!(status(&driver).phase, NativePhase::Waiting);
+    assert_eq!(latest_walk(&driver).unwrap().0, request);
+
+    set_position(&mut snapshot, ANCHOR);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 4));
+    assert!(script.waits_for_evidence());
+    assert_eq!(latest_walk(&driver).unwrap().0, request);
+}
+
+#[test]
 fn return_uses_native_walk_receipt_even_when_already_at_anchor() {
     let bank = NamedBank::new("Anchor bank", ANCHOR);
     let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
