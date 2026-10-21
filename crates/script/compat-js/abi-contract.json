@@ -14434,7 +14434,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:167",
+      "runtime": "crates/script/src/shim/input.js:154",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14446,7 +14446,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:170",
+      "runtime": "crates/script/src/shim/input.js:157",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14458,7 +14458,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:173",
+      "runtime": "crates/script/src/shim/input.js:160",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14470,7 +14470,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:176",
+      "runtime": "crates/script/src/shim/input.js:163",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14482,7 +14482,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:179",
+      "runtime": "crates/script/src/shim/input.js:166",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14494,7 +14494,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:182",
+      "runtime": "crates/script/src/shim/input.js:169",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14506,7 +14506,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:185",
+      "runtime": "crates/script/src/shim/input.js:172",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14518,7 +14518,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:188",
+      "runtime": "crates/script/src/shim/input.js:175",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -24310,7 +24310,7 @@
       "selector": "Input.useItemOnLoc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:167",
+      "source": "crates/script/src/shim/input.js:154",
       "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnLoc"
     },
@@ -24320,7 +24320,7 @@
       "selector": "Input.useItemOnNpc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:170",
+      "source": "crates/script/src/shim/input.js:157",
       "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnNpc"
     },
@@ -24330,7 +24330,7 @@
       "selector": "Input.useItemOnObj",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:173",
+      "source": "crates/script/src/shim/input.js:160",
       "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnObj"
     },
@@ -24340,7 +24340,7 @@
       "selector": "Input.useItemOnItem",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:176",
+      "source": "crates/script/src/shim/input.js:163",
       "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnItem"
     },
@@ -24350,7 +24350,7 @@
       "selector": "Input.castOnNpc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:179",
+      "source": "crates/script/src/shim/input.js:166",
       "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnNpc"
     },
@@ -24360,7 +24360,7 @@
       "selector": "Input.castOnLoc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:182",
+      "source": "crates/script/src/shim/input.js:169",
       "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnLoc"
     },
@@ -24370,7 +24370,7 @@
       "selector": "Input.castOnItem",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:185",
+      "source": "crates/script/src/shim/input.js:172",
       "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnItem"
     },
@@ -24380,7 +24380,7 @@
       "selector": "Input.continueDialog",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:188",
+      "source": "crates/script/src/shim/input.js:175",
       "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.continueDialog"
     },

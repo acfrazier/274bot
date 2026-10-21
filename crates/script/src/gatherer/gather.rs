@@ -263,10 +263,11 @@ impl GatherRun {
                     "gather NPC target has no observed instance index".into(),
                 ));
             }
-            EntityId::Obj(_) => InteractReq::Obj {
+            EntityId::Obj(id) => InteractReq::Obj {
                 x: self.args.target.tile.x,
                 z: self.args.target.tile.z,
                 level: self.args.target.tile.level,
+                id: Some(id),
                 name: Some(self.args.target.alias.to_string()),
                 action: self.args.target.op.to_string(),
             },

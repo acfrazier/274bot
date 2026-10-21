@@ -1476,6 +1476,7 @@ mod tests {
                 level: 0,
                 name: Some("Ground item".into()),
                 action: "Take".into(),
+                id: Some(1053),
             },
         ];
         for request in requests {

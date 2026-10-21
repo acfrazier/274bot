@@ -524,6 +524,7 @@ fn interaction_value(request: &InteractReq) -> Value {
             level,
             name,
             action,
+            id,
         } => json!({
             "op": "obj",
             "x": x,
@@ -531,6 +532,7 @@ fn interaction_value(request: &InteractReq) -> Value {
             "level": level,
             "name": name,
             "action": action,
+            "id": id,
         }),
         InteractReq::IfButton { component_id } => {
             json!({"op": "if-button", "component_id": component_id})
@@ -778,6 +780,26 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
 mod tests {
     use super::*;
     use api::snapshot::{NpcView, WorldTile};
+
+    #[test]
+    fn ground_receipt_preserves_optional_selected_id() {
+        for id in [Some(1053), Some(1055), Some(1057), None] {
+            let request = InteractReq::Obj {
+                x: 5,
+                z: 6,
+                level: 0,
+                name: Some("Halloween mask".into()),
+                action: "Take".into(),
+                id,
+            };
+            let value = interaction_value(&request);
+            assert_eq!(value["id"], json!(id));
+            assert_eq!(value["x"], 5);
+            assert_eq!(value["z"], 6);
+            assert_eq!(value["level"], 0);
+            assert_eq!(value["action"], "Take");
+        }
+    }
 
     #[test]
     fn combat_receipt_retains_network_nearby_npc_outside_rendered_cutoff() {

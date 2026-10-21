@@ -1805,6 +1805,12 @@ production selection, built-in filters, nearest ranking, validity or targeting.
 wrapper, predicate, getter, public-override and thrown-value behavior.
 Interactions keep the existing selected-identity checks and host queue.
 
+`GroundItem.interact` and `Input.takeObj` preserve the selected item ID.
+The host requires that exact ID at the requested tile and plane before dispatch.
+A supplied name is diagnostic when an ID is present. A missing selected ID
+sends nothing, even when another item at that tile has the same name.
+External `obj` interaction requests may omit `id` to retain name-and-tile lookup.
+
 ## Hard no
 
 No dummy tick-end opcode. No `Arc<World>` on extras. No bot action API in the

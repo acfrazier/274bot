@@ -587,6 +587,7 @@ fn reach_takes_the_observed_stack_not_the_anchor() {
         InteractReq::Obj {
             x: 3229,
             z: 3302,
+            id: Some(1944),
             ..
         }
     ));

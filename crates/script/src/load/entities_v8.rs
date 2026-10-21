@@ -95,6 +95,14 @@ fn dispatch<'s>(
         Some(56) => entity_actions(scope, args.get(1)),
         Some(57) => ground_item_interact(scope, args.get(1), args.get(2), args.get(3)),
         Some(58) => production_query(scope, args.get(1), args.get(2), args.get(3)),
+        Some(59) => input_take_obj(
+            scope,
+            args.get(1),
+            args.get(2),
+            args.get(3),
+            args.get(4),
+            args.get(5),
+        ),
         _ => Err(cb::not_impl(scope, "entity binding")),
     }
 }
@@ -1950,8 +1958,8 @@ fn ground_item_interact<'s>(
     }
     let row = entity_instance_snap(scope, instance)?;
     let x = cb::get(scope, row, "x")?;
-    let row = entity_instance_snap(scope, instance)?;
     let z = cb::get(scope, row, "z")?;
+    let id = cb::get(scope, row, "id")?;
     let row = entity_instance_snap(scope, instance)?;
     let level = cb::get(scope, row, "level")?;
     let level = if level.is_null_or_undefined() {
@@ -1977,6 +1985,89 @@ fn ground_item_interact<'s>(
             ("level", level),
             ("name", name),
             ("action", verb),
+            ("id", id),
+        ],
+    )?;
+    queue_interaction(scope, queue, request)?;
+    Ok(boolean(scope, true))
+}
+
+fn input_take_obj<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    lx: v8::Local<'s, v8::Value>,
+    lz: v8::Local<'s, v8::Value>,
+    id: v8::Local<'s, v8::Value>,
+    op: v8::Local<'s, v8::Value>,
+    queue: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    if !lx.is_number() || !lz.is_number() {
+        return Ok(boolean(scope, false));
+    }
+    let (Some(lx), Some(lz), Some(id), Some(op)) = (
+        lx.number_value(scope),
+        lz.number_value(scope),
+        id.number_value(scope),
+        op.number_value(scope),
+    ) else {
+        return Ok(boolean(scope, false));
+    };
+    if ![lx, lz, id, op]
+        .into_iter()
+        .all(|value| value.is_finite() && value.fract() == 0.0)
+        || op <= 0.0
+    {
+        return Ok(boolean(scope, false));
+    }
+    let (Some(lx), Some(lz), Some(id), Some(slot)) = (
+        i32::try_from(lx as i64).ok(),
+        i32::try_from(lz as i64).ok(),
+        i32::try_from(id as i64).ok(),
+        usize::try_from(op as i64).ok(),
+    ) else {
+        return Ok(boolean(scope, false));
+    };
+    let Some(state) = entity_pages::state(scope) else {
+        return Ok(boolean(scope, false));
+    };
+    let current_level = crate::observed::with(|scene| scene.latest().here().map(|tile| tile.level));
+    let selected = current_level.and_then(|level| {
+        let pages = state.borrow();
+        pages.generation.ground.as_deref().and_then(|rows| {
+            let row = rows
+                .iter()
+                .find(|row| row.id == id && row.x == lx && row.z == lz && row.level == level)?;
+            let action = row.actions.get(slot - 1)?;
+            if action.is_empty() || action.eq_ignore_ascii_case("hidden") {
+                return None;
+            }
+            let name = match row.name.as_deref() {
+                Some(name) => cb::string(scope, name),
+                None => null(scope),
+            };
+            Some((
+                cb::num(scope, f64::from(row.id)),
+                cb::num(scope, f64::from(row.x)),
+                cb::num(scope, f64::from(row.z)),
+                cb::num(scope, f64::from(row.level)),
+                name,
+                cb::string(scope, action),
+            ))
+        })
+    });
+    let Some((id, x, z, level, name, action)) = selected else {
+        return Ok(boolean(scope, false));
+    };
+    let op = cb::string(scope, "obj");
+    let request = cb::object(
+        scope,
+        &[
+            ("op", op),
+            ("x", x),
+            ("z", z),
+            ("level", level),
+            ("name", name),
+            ("action", action),
+            ("id", id),
         ],
     )?;
     queue_interaction(scope, queue, request)?;
@@ -2183,6 +2274,50 @@ globalThis.checkNativeQuery = () => {
         let isolate = runtime.deno_runtime().v8_isolate();
         isolate.low_memory_notification();
         isolate.get_heap_statistics().used_heap_size()
+    }
+
+    #[test]
+    fn cold_ground_interaction_requests_bound_collected_v8_heap_growth() {
+        const RETAINED_REQUESTS: usize = 2_048;
+        // 512 bytes per request plus 512 KiB of fixed isolate/test headroom.
+        const MAX_GROWTH: usize = 1_572_864;
+        let mut runtime = setup();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.__ground_requests = [];
+globalThis.__ground_queue = request => { globalThis.__ground_requests.push(request); };
+globalThis.__make_ground_requests = count => {
+    const row = {
+        id: 1053, x: 2737, z: 3440, level: 0,
+        name: 'Coins', actions: ['Take'],
+    };
+    const entity = { snap: row };
+    for (let index = 0; index < count; index++) {
+        if (!__rs2b0t_entities_v8(57, entity, 'Take', __ground_queue)) {
+            throw new Error('ground interaction did not queue');
+        }
+    }
+};
+"#,
+            )
+            .unwrap();
+        let baseline = collected_used_heap(&mut runtime);
+        runtime
+            .eval::<()>(format!("__make_ground_requests({RETAINED_REQUESTS});").as_str())
+            .unwrap();
+        let after_requests = collected_used_heap(&mut runtime);
+        let growth = after_requests.saturating_sub(baseline);
+        println!(
+            "Cold ground requests collected V8 used heap: retained={RETAINED_REQUESTS} \
+             baseline={baseline} after={after_requests} growth={growth} limit={MAX_GROWTH}"
+        );
+        assert!(
+            growth <= MAX_GROWTH,
+            "{RETAINED_REQUESTS} retained cold ground requests grew the collected V8 \
+             used heap by {growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, \
+             after {after_requests})"
+        );
     }
 
     #[test]

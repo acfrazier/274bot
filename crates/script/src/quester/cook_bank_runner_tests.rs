@@ -355,7 +355,10 @@ impl CookFixture {
                             self.snapshot.seed_inventory(inventory, 28);
                             self.observe_bank(tick);
                         }
-                        InteractReq::Obj { name, action, .. } => {
+                        InteractReq::Obj {
+                            id, name, action, ..
+                        } => {
+                            assert_eq!(id, Some(1944));
                             assert_eq!(name.as_deref(), Some("Egg"));
                             assert_eq!(action, "Take");
                             let mut inventory = self.snapshot.inventory().to_vec();

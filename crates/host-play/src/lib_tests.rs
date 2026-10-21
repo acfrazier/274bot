@@ -30158,3 +30158,147 @@ fn direct_connection_has_no_world_type() {
     });
     assert_eq!(direct.world_members(), api::selected::Truth::Unknown);
 }
+
+mod ground_selected_identity_tests {
+    use super::*;
+    use script::isolate_fb::{decode_interact_batch, encode_interact_batch};
+    use script::shim::InteractReq;
+
+    fn fixture(ids: &[i32]) -> (GameSnapshot, api::obj_names::ObjNames) {
+        let client = guardian_client();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot.seed_ground_items(
+            ids.iter()
+                .map(|&id| api::snapshot::GroundItemView {
+                    def: api::obj_names::ItemDefView {
+                        id,
+                        name: Some("Halloween mask".into()),
+                        stackable: false,
+                        members: false,
+                        base_value: 1,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    count: 1,
+                    actions: vec![None, None, Some("Take".into())],
+                    tile: WorldTile {
+                        x: 5,
+                        z: 6,
+                        level: 0,
+                    },
+                    distance: 6,
+                })
+                .collect(),
+        );
+        let mut objs = vec![client::config::ObjType::default(); 1058];
+        for id in [1053, 1055, 1057] {
+            objs[id].id = id as i32;
+            objs[id].name = "Halloween mask".into();
+        }
+        (snapshot, api::obj_names::ObjNames::from_objs(&objs))
+    }
+
+    fn request(id: Option<i32>, name: Option<&str>) -> InteractReq {
+        InteractReq::Obj {
+            x: 5,
+            z: 6,
+            level: 0,
+            name: name.map(str::to_owned),
+            action: "Take".into(),
+            id,
+        }
+    }
+
+    fn dispatch(
+        snapshot: &GameSnapshot,
+        names: &api::obj_names::ObjNames,
+        request: InteractReq,
+    ) -> GuardRec {
+        let (navs, world) = empty_nav();
+        let bytes = encode_interact_batch(&[request]);
+        let requests = decode_interact_batch(&bytes).unwrap();
+        let mut rec = GuardRec::default();
+        let wrote = dispatch_script_interact(
+            &mut rec,
+            snapshot,
+            Some(names),
+            Some((4, 5, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            requests,
+        );
+        assert_eq!(wrote, !rec.menus.is_empty());
+        rec
+    }
+
+    #[test]
+    fn wire_to_dispatch_preserves_each_same_name_mask_id() {
+        let (snapshot, names) = fixture(&[1053, 1055, 1057]);
+        for id in [1053, 1055, 1057] {
+            for name in [Some("Halloween mask"), Some("diagnostic name"), None] {
+                let rec = dispatch(&snapshot, &names, request(Some(id), name));
+                assert_eq!(
+                    rec.menus,
+                    [(0, MiniMenuAction::OP_OBJ3, id, 5, 6)],
+                    "the exact ID is authoritative even when its name differs",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disappeared_selected_mask_never_falls_back_to_same_name() {
+        for selected in [1053, 1055, 1057] {
+            let remaining: Vec<_> = [1053, 1055, 1057]
+                .into_iter()
+                .filter(|&id| id != selected)
+                .collect();
+            let (snapshot, names) = fixture(&remaining);
+            let rec = dispatch(
+                &snapshot,
+                &names,
+                request(Some(selected), Some("Halloween mask")),
+            );
+            assert!(rec.menus.is_empty() && rec.walks.is_empty());
+        }
+    }
+
+    #[test]
+    fn exact_ground_id_does_not_override_tile_or_plane() {
+        let (snapshot, names) = fixture(&[1053, 1055, 1057]);
+        for (x, z, level) in [(6, 6, 0), (5, 7, 0), (5, 6, 1)] {
+            let mut request = request(Some(1055), Some("Halloween mask"));
+            if let InteractReq::Obj {
+                x: rx,
+                z: rz,
+                level: rl,
+                ..
+            } = &mut request
+            {
+                *rx = x;
+                *rz = z;
+                *rl = level;
+            }
+            let rec = dispatch(&snapshot, &names, request);
+            assert!(rec.menus.is_empty() && rec.walks.is_empty());
+        }
+    }
+
+    #[test]
+    fn external_ground_request_without_id_keeps_name_and_tile_lookup() {
+        let (snapshot, names) = fixture(&[1057, 1055, 1053]);
+        for name in [Some("hAlLoWeEn MaSk"), None] {
+            assert_eq!(
+                dispatch(&snapshot, &names, request(None, name)).menus,
+                [(0, MiniMenuAction::OP_OBJ3, 1057, 5, 6)],
+            );
+        }
+        assert!(dispatch(&snapshot, &names, request(None, Some("Missing")))
+            .menus
+            .is_empty());
+    }
+}

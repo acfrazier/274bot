@@ -3006,22 +3006,21 @@ impl Combat {
                 }
                 RowKind::Pickup => {
                     let tile = unpack_tile(row.id);
+                    let item = cx
+                        .snapshot()
+                        .ground_items()
+                        .and_then(|ground| {
+                            ground.value.iter().find(|item| {
+                                item.tile == tile && item.def.id == self.ranged().ammo_pick
+                            })
+                        })
+                        .ok_or_else(|| unavailable("planned ammo disappeared"))?;
                     InteractReq::Obj {
                         x: tile.x,
                         z: tile.z,
                         level: tile.level,
-                        name: cx
-                            .snapshot()
-                            .ground_items()
-                            .and_then(|ground| {
-                                ground.value.iter().find(|item| {
-                                    item.tile == tile && item.def.id == self.ranged().ammo_pick
-                                })
-                            })
-                            .ok_or_else(|| unavailable("planned ammo disappeared"))?
-                            .def
-                            .name
-                            .to_owned(),
+                        id: Some(item.def.id),
+                        name: item.def.name.to_owned(),
                         action: "Take".into(),
                     }
                 }
