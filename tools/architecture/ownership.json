@@ -5727,7 +5727,23 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/engine-274/start-274.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-274/status-274.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-274/stop-274.sh",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/pull-274.sh",
       "owner": "T1"
     },
     {
