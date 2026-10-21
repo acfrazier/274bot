@@ -2338,9 +2338,32 @@ mod tests {
         let rum = step_by_id(&hunt, "rum-buy-zambo").unwrap();
         assert_eq!(rum.args["est_gp"], 30);
         assert!(rum.comment.as_deref().unwrap().contains("base cost 30 gp"));
-        let coin_float = u64::from(hunt.quest.as_ref().unwrap().coin_float);
+        let quest = hunt.quest.as_ref().unwrap();
+        let coin_float = u64::from(quest.coin_float);
+        // Count each one-way ship talk in the Path; each costs 30 gp.
+        let fare_cost = hunt
+            .roles
+            .iter()
+            .flat_map(|role| {
+                role.prelude
+                    .iter()
+                    .chain(role.progress_reader.iter())
+                    .chain(
+                        role.sequences
+                            .iter()
+                            .flat_map(|sequence| sequence.steps.iter()),
+                    )
+            })
+            .chain(quest.acquire.values().flatten())
+            .filter(|step| {
+                matches!(
+                    step.args.get("npc").and_then(serde_json::Value::as_str),
+                    Some("captain_tobias" | "customs_officer")
+                )
+            })
+            .fold(0_u64, |total, _| total + 30);
         let purchase_total = coin_float
-            + 4 * 30
+            + fare_cost
             + apron.args["est_gp"].as_u64().unwrap()
             + rum.args["est_gp"].as_u64().unwrap();
         assert_eq!(purchase_total, 282);

@@ -1631,7 +1631,7 @@
                 "radius": 1,
                 "settle_ms": 15000
               },
-              "comment": "Reading the pirate message opens the scroll root (content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:23-27; content/scripts/general/scripts/scroll.rs2:26; content/pack/interface.pack:1136). The default dialogue driver does not close this non-dialogue root, so the advancing journal read still needs S7 runtime journal-root handling.",
+              "comment": "Reading the pirate message opens the scroll root (content/scripts/quests/quest_hunt/scripts/pirate_message.rs2:23-27; content/scripts/general/scripts/scroll.rs2:26; content/pack/interface.pack:1136). The failure persists with the default dialogue driver; the advancing journal read still needs S7 runtime journal-root handling.",
               "skip_if": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3", "hunt:4"] } } },
               "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hunt", "any": ["hunt:3"] } } }
             }
