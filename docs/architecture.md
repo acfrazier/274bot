@@ -819,6 +819,7 @@ has released it.
 | `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
 | `srgb_present.rs` | present-path test helper | test-only |
 | `manual_click_live_tests.rs`, `test_support.rs` | live regressions and fixtures | grouped, not owners |
+| `test_alloc.rs` | test allocator | the panel test binary's allocator: counts allocation calls per thread for the warm-frame checks; test-only |
 
 ### tui
 
