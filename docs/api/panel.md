@@ -223,7 +223,9 @@ bulk — separate from login bulk; see [script.md](script.md)), an
 tile per shown wall member, **Profiles…**, and the 1 Hz resource card. The
 tiles follow the Fleet window's filter and sort (one order for the rail,
 the Grid and the Fleet table; **Load order** by default), and the rail names
-the active filter above them. Profiles that are not loaded are listed
+the active filter above them. In Load order, drag a tile's name onto another
+tile to move that bot before or after it; the new order is saved (see the
+Fleet window). Profiles that are not loaded are listed
 below the tiles in a folded **Not loaded (N)** group: each has a mark
 checkbox and no tile. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
@@ -467,6 +469,15 @@ not loaded reads `not loaded`, distinct from a loaded bot that is
 drop-down (**Load order**, **Name**, **Status**). The rail and the Grid show
 the same filter and order. A mark stays when the filter hides its row or
 the profile is unloaded; it is dropped only when the profile is deleted.
+**Load order** is the saved order: drag a row's name onto another row, or
+press **Move marked to top** (it keeps the marked profiles' order), and the
+new order is saved as `profile_order` in the shared preferences. A profile
+the filter hides keeps its place. Load all logs in bots in this order, a new
+profile goes to the end, a renamed one keeps its place and removing a bot
+from the wall keeps its place. **Name** and **Status** only sort the view:
+they never change the saved order, and reordering needs **Load order**. A
+reorder stays pending until the file is written; if the write fails, the
+error is shown and the last saved order comes back.
 The table's columns share the
 window's width, so it never scrolls sideways, and the action rows and column
 toggles wrap at a narrow width. Its action bar runs on the marked rows only and each action

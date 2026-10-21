@@ -413,9 +413,12 @@ impl<Io> OperatorSession<Io> {
                     if let Some(view) = self.apply_pref_effect(watch.effect) {
                         self.commands.settle_walk_globals(view);
                     }
-                    if let Some((order, audit)) = watch.order {
-                        log_order_saved(watch.request, &audit);
-                        self.durable_order = order;
+                    if let Some(order) = watch.order {
+                        log_order_saved(watch.request, &order.audit);
+                        if order.seq > self.durable_order_seq {
+                            self.durable_order_seq = order.seq;
+                            self.durable_order = order.order;
+                        }
                     }
                     (Settlement::Completed(Completion::Done), None)
                 }
@@ -728,9 +731,11 @@ impl<Io> OperatorSession<Io> {
         for older in self.commands.pref_writes().iter_mut() {
             older.effect = older.effect.superseded_by(PrefEffect::ProfileOrder);
         }
+        self.order_write_seq += 1;
         match write {
             Update::Durable => {
                 log_order_saved(request, &audit);
+                self.durable_order_seq = self.order_write_seq;
                 self.durable_order = self.profile_order.clone();
                 Applied::Done
             }
@@ -740,7 +745,11 @@ impl<Io> OperatorSession<Io> {
                     queued,
                     what: "profile order",
                     effect: PrefEffect::ProfileOrder,
-                    order: Some((self.profile_order.clone(), audit)),
+                    order: Some(OrderWrite {
+                        seq: self.order_write_seq,
+                        order: self.profile_order.clone(),
+                        audit,
+                    }),
                 });
                 Applied::Later
             }
@@ -818,9 +827,18 @@ pub(super) struct PrefWriteWatch {
     /// What the write saves, for a failure's detail.
     pub(super) what: &'static str,
     pub(super) effect: PrefEffect,
-    /// The Load order a reorder's write carries and its audit line, logged
-    /// (and made the durable order) when it is durable.
-    pub(super) order: Option<(crate::profile_order::ProfileOrder, String)>,
+    /// The Load order a reorder's write carries, logged (and made the
+    /// durable order, unless a newer write already is) when it is durable.
+    pub(super) order: Option<OrderWrite>,
+}
+
+/// The Load order one reorder writes.
+pub(super) struct OrderWrite {
+    /// The write's number: a higher one began later.
+    seq: u64,
+    order: crate::profile_order::ProfileOrder,
+    /// The moved names and their old and new places, for the audit line.
+    audit: String,
 }
 
 /// The one audit line of a durable Load order change.

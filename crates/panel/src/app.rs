@@ -63,7 +63,9 @@ use frontend_core::scripts::{
     format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView,
 };
-use frontend_core::{FleetRow, OperatorCommand, Phase, ResourceView, Targets};
+use frontend_core::{
+    FleetOrder, FleetRow, OperatorCommand, Phase, ProfileIdentity, ReorderOp, ResourceView, Targets,
+};
 
 #[path = "live_harness.rs"]
 mod live_harness;
@@ -1556,6 +1558,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 debug_actions,
             },
             &mut marked,
+            None,
         );
         if marked != model.is_marked(index) {
             clicked = Some(TileClick::Mark(index, marked));
@@ -1632,6 +1635,8 @@ enum TileClick {
     Mark(usize, bool),
     Remove(usize),
     Select(usize),
+    /// A tile dropped on another: the reorder it asks for.
+    Move(ReorderOp),
 }
 
 /// Apply a frame's tile click once the session holds its fleet model again.
@@ -1641,6 +1646,10 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
     };
     let index = match clicked {
         TileClick::Mark(index, _) | TileClick::Remove(index) | TileClick::Select(index) => index,
+        TileClick::Move(op) => {
+            session.reorder_profiles(op);
+            return;
+        }
     };
     let Some(name) = session
         .fleet_model
@@ -1656,6 +1665,7 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         }
         TileClick::Remove(_) => session.rail_remove(&name),
         TileClick::Select(_) => session.select(&name),
+        TileClick::Move(_) => {}
     }
 }
 
@@ -5109,6 +5119,9 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         });
     }
     let mut clicked = None;
+    // Dragging a tile reorders the saved Load order, so only that view
+    // offers it.
+    let reorder = model.order() == FleetOrder::LoadOrder;
     for (index, row) in model.shown_rows().filter(|(_, row)| row.loaded()) {
         let labels = &labels[index];
         let name = row.name();
@@ -5129,6 +5142,11 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         );
         let mut marked = model.is_marked(index);
         let restart_required = state.session.scripts.has_restart_badge(name);
+        let mut drag = reorder.then(|| CapDrag {
+            identity: model.identities()[index],
+            dropped: None,
+            dragging: false,
+        });
         let (cap_select, cap_remove, cap_fold) = rail_cap(
             ui,
             row,
@@ -5141,12 +5159,18 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 debug_actions,
             },
             &mut marked,
+            drag.as_mut(),
         );
         if marked != model.is_marked(index) {
             clicked = Some(TileClick::Mark(index, marked));
         }
+        let mut dropped = drag.as_ref().and_then(|drag| drag.dropped);
         let body_clicked = if preview {
-            rail_body(ui, gpu, state, name, draw)
+            let body_clicked = rail_body(ui, gpu, state, name, draw);
+            if reorder && dropped.is_none() {
+                dropped = crate::fleet::profile_drop_target(ui);
+            }
+            body_clicked
         } else {
             false
         };
@@ -5158,6 +5182,9 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             clicked = Some(TileClick::Remove(index));
         } else if cap_select || body_clicked {
             clicked = Some(TileClick::Select(index));
+        }
+        if let Some(op) = dropped.and_then(|moving| crate::fleet::drop_op(&model, moving, index)) {
+            clicked = Some(TileClick::Move(op));
         }
         ui.spacing();
     }
@@ -5196,12 +5223,24 @@ struct CapDrawState {
     debug_actions: bool,
 }
 
+/// One rail cap's reorder gesture, offered only while the fleet shows Load
+/// order: the cap name is a drag source for `identity` and a drop target.
+struct CapDrag {
+    identity: ProfileIdentity,
+    /// Set by [`rail_cap`]: the profile dropped on the name this frame
+    /// ([`ProfileIdentity::raw`]).
+    dropped: Option<u64>,
+    /// Set by [`rail_cap`]: the name is being dragged now.
+    dragging: bool,
+}
+
 fn rail_cap(
     ui: &Ui,
     row: &FleetRow,
     labels: &CapLabels,
     draw: CapDrawState,
     marked: &mut bool,
+    drag: Option<&mut CapDrag>,
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
@@ -5241,13 +5280,19 @@ fn rail_cap(
     ui.same_line_with_pos(marker_x + dot_w + gap + mark_w + gap);
     let name_w =
         (draw.width - btn * 2.0 - dot_w - mark_w - gap * 4.0 - restart_w).max(scale_px(ui, 10.0));
-    let clicked = ui
+    let mut clicked = ui
         .selectable_config(&labels.title)
         .selected(draw.is_focused)
         .size([name_w, 0.0])
         .build();
     #[cfg(test)]
     record_test_rail_item(ui);
+    if let Some(drag) = drag {
+        drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
+        drag.dropped = crate::fleet::profile_drop_target(ui);
+        // A drag is not a click: it must not focus the bot.
+        clicked &= !drag.dragging;
+    }
     if draw.restart_required {
         ui.same_line_with_spacing(0.0, gap);
         ui.text_colored(WARN, "[restart]");
@@ -5312,6 +5357,7 @@ pub(crate) fn draw_test_rail_cap(ui: &Ui, width: f32) -> (Vec<[f32; 4]>, [f32; 4
             debug_actions: true,
         },
         &mut marked,
+        None,
     );
     let bounds = TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
     (bounds, colour)
@@ -5354,6 +5400,7 @@ fn draw_test_rail_mark_tooltip(ui: &Ui, debug_actions: bool) -> &'static str {
             debug_actions,
         },
         &mut marked,
+        None,
     );
     TEST_RAIL_MARK_TOOLTIP.get()
 }

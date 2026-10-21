@@ -202,6 +202,7 @@ impl TuiApp {
         }
         match self.key_scope() {
             "Fleet filter" => "type: name, wN, state · Up/Down move · Enter keep · Esc clear",
+            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · m load all · U logout all",
             "Fleet" => "Up/Down move · Enter select · Space select row · / filter · m load all · U logout all",
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
@@ -345,6 +346,19 @@ impl TuiApp {
                 return AppAction::MarkAll(self.fleet_model.shown_identities().collect());
             }
             Command::ClearMarks => return AppAction::ClearMarks,
+            Command::MoveProfileUp | Command::MoveProfileDown => {
+                let delta = if command == Command::MoveProfileUp {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(op) = self.table.reorder_step(&self.fleet_model, delta) {
+                    return AppAction::ReorderProfiles(op);
+                }
+            }
+            Command::MoveMarkedToTop => {
+                return AppAction::ReorderProfiles(frontend_core::ReorderOp::MarkedToTop);
+            }
             Command::Login => return AppAction::Login,
             Command::Logout => return AppAction::Logout,
             Command::Remove => {
@@ -521,6 +535,14 @@ impl TuiApp {
     fn fleet_key(&mut self, key: KeyEvent) -> AppAction {
         self.table.sync(&self.fleet_model);
         let page = self.regions.fleet_rows.height.max(1) as isize;
+        if key.modifiers == KeyModifiers::ALT {
+            // Pane-scoped reorder keys: the cursor row moves one shown row.
+            match key.code {
+                KeyCode::Up => return self.run_command(Command::MoveProfileUp),
+                KeyCode::Down => return self.run_command(Command::MoveProfileDown),
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.table.move_cursor(-1, &self.fleet_model),
             KeyCode::Down | KeyCode::Char('j') => self.table.move_cursor(1, &self.fleet_model),

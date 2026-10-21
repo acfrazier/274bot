@@ -1321,3 +1321,49 @@ fn removing_a_member_keeps_its_saved_place() {
         "back in place"
     );
 }
+
+/// A second reorder while the first write is held supersedes it: both
+/// settle Done in order, the file and the shown order end at the second,
+/// and later polls write nothing more.
+#[test]
+fn a_superseded_order_write_settles_and_the_newest_order_wins() {
+    let mut d = driver("order-superseded", &["alice", "bob", "carol"]);
+    d.poll();
+    let release = hold_first_write(&d);
+    let op = move_op(&d, "carol", "alice", false);
+    d.session_mut().stage_reorder(op);
+    let first = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("first");
+    let op = move_op(&d, "alice", "bob", true);
+    d.session_mut().stage_reorder(op);
+    let second = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("second");
+    assert_eq!(order_names(&d), ["carol", "bob", "alice"], "shown at once");
+    assert_eq!(terminal_app(&d, first.request()), None, "first pending");
+    assert_eq!(terminal_app(&d, second.request()), None, "second pending");
+    release.send(()).unwrap();
+    assert_eq!(settled_app(&mut d, first.request()), Some(done()));
+    assert_eq!(settled_app(&mut d, second.request()), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "bob", "alice"]);
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        serde_json::json!(["carol", "bob", "alice"])
+    );
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::metadata(&path).expect("file").modified().ok();
+    let bytes = std::fs::read(&path).expect("file");
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        bytes,
+        "no further write"
+    );
+    assert_eq!(
+        std::fs::metadata(&path).expect("file").modified().ok(),
+        before
+    );
+}

@@ -682,6 +682,11 @@ pub struct OperatorSession<Io> {
     /// The last saved Load order known durable: a reorder whose write
     /// fails goes back to it.
     durable_order: crate::profile_order::ProfileOrder,
+    /// The number of the last reorder write begun, and of the newest one
+    /// known durable: writes can be polled out of order, so an older
+    /// write that lands after a newer one never replaces the durable order.
+    order_write_seq: u64,
+    durable_order_seq: u64,
     /// The profiles generation the order was last reconciled at.
     order_reconciled_at: Option<u64>,
     /// Order writes that are not commands (a rename or a reconcile), still
@@ -768,6 +773,8 @@ impl<Io> OperatorSession<Io> {
             profile_order: crate::profile_order::ProfileOrder::default(),
             order_saved: false,
             durable_order: crate::profile_order::ProfileOrder::default(),
+            order_write_seq: 0,
+            durable_order_seq: 0,
             order_reconciled_at: None,
             order_writes: Vec::new(),
             commands: commands::CommandDesk::default(),
@@ -1320,6 +1327,8 @@ impl<Io> OperatorSession<Io> {
             self.profile_order.to_value(),
         ) {
             Ok(host_play::local_state::Update::Durable) => {
+                self.order_write_seq += 1;
+                self.durable_order_seq = self.order_write_seq;
                 self.durable_order = self.profile_order.clone();
             }
             Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
@@ -2117,8 +2126,6 @@ impl<Io> OperatorSession<Io> {
 
     pub fn poll_at(&mut self, now: Instant) {
         self.advance_removals(now);
-        self.reconcile_profile_order();
-        self.poll_order_writes();
         self.poll_host_at(now);
     }
 
@@ -2131,6 +2138,10 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        // The saved Load order follows the vault before anything reads it
+        // (both halves of a split poll reach here).
+        self.reconcile_profile_order();
+        self.poll_order_writes();
         self.transitions.clear();
         self.op_changes.clear();
         self.take_preparations(false);

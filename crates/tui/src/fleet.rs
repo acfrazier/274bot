@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use frontend_core::views::run_state_label;
-use frontend_core::{state_label, FleetModel, ProfileIdentity};
+use frontend_core::{state_label, FleetModel, Placement, ProfileIdentity, ReorderOp};
 
 use crate::layout::SizeClass;
 
@@ -101,6 +101,26 @@ impl FleetState {
         }
         self.cursor = position.min(model.shown().len() - 1);
         self.remember_cursor(model);
+    }
+
+    /// The reorder that moves the cursor's profile one shown row up
+    /// (`delta < 0`, lands before that row) or down (`delta > 0`, lands
+    /// after it). `None` at the first or last shown row, or with no cursor
+    /// row. The target is a shown row; hidden rows keep their place in the
+    /// saved order (the core resolves that).
+    pub fn reorder_step(&self, model: &FleetModel, delta: isize) -> Option<ReorderOp> {
+        let shown = model.shown();
+        let moving = model.identity(*shown.get(self.cursor)?)?;
+        let neighbour = self.cursor.checked_add_signed(delta)?;
+        let target = model.identity(*shown.get(neighbour)?)?;
+        Some(ReorderOp::Move {
+            moving,
+            to: if delta < 0 {
+                Placement::Before(target)
+            } else {
+                Placement::After(target)
+            },
+        })
     }
 
     /// Keep the cursor inside a window of `rows` lines over `shown` rows.
