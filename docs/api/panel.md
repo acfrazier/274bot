@@ -427,8 +427,8 @@ not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
 **Script** Browse / Load / Reload / Start / Pause / Stop are wired
-([script.md](script.md)). Browse lists the compiled native cards
-(Gatherer, Quester, Sherlock) first, then loaded JS/catalog cards.
+([script.md](script.md)). Browse lists compiled native cards
+(Gatherer, Grinch, Quester, Sherlock) first, then loaded JS/catalog cards.
 Load is enabled except while a script is active.
 **Reload** hashes the selected File/catalog card; unchanged origins report
 “Nothing changed; nothing to reload” and skip transpile; confirm restarts
@@ -484,9 +484,18 @@ Parameters **Edit** is live for a loaded card with a settings schema
 `export const SETTINGS` with no V8) and writes the focused profile’s vault
 settings bag. Start-only keys apply on the next Start; live edits reach a
 matching running or paused isolate without restart. Uncollapse shows
-merged rows, or `(no parameters)` when the schema is empty. Successful
-Start persists the per-profile script assignment. **Nav config** is live
-as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map
+merged rows, or `(no parameters)` when the schema is empty. Successful Start
+persists the per-profile script assignment.
+
+Grinch settings use this same Script prefs editor and per-profile vault bag.
+Its saved settings require a restart; the running copy keeps its prepared
+settings until the next Start. The new Start validates the saved choices and
+captures a new anchor. Grinch's `radius` is 1–16 tiles around that exact
+same-plane anchor, with the boundary included; live-zone filtering also
+rejects stale rows. See [Grinch ground-item collection](script.md#grinch-ground-item-collection)
+for its defaults, selected-only bank trip and status contract.
+
+**Nav config** is live as its own non-blocking window (Routing, Display, Path paint, Debug, WalkTo map
 groups): the durable walk permissions — teleports, wilderness
 and bank fetch (all default off) plus **Danger routing**, a full-width drop-down
 (Never, When survivable (the default), Always; When survivable shows the note

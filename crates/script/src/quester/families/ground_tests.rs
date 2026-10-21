@@ -682,6 +682,18 @@ fn selected_id_exclusions_cover_the_last_bit_and_reject_oversized_selections() {
     }
 }
 
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn reach_retained_size_stays_within_reviewed_per_bot_budget() {
+    // Grinch reserves this inline machine for the run. The measured 64-bit
+    // Reach/GroundTake layout is 656 B; the 704 B ceiling allows 48 B headroom.
+    const RETAINED_BUDGET: usize = 704;
+    let reach = std::mem::size_of::<Reach>();
+    let take = std::mem::size_of::<GroundTake>();
+    assert!(reach <= RETAINED_BUDGET, "Reach is {reach} B");
+    assert!(take <= RETAINED_BUDGET, "GroundTake is {take} B");
+}
+
 #[test]
 fn borrowed_empty_and_crowded_ground_scans_allocate_nothing() {
     let here = tile(3216, 3216);

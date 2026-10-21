@@ -52,6 +52,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   relevant evidence without disabling scheduler or connection checks.
 - Native ground-item selections reject more than 32 IDs, so later items
   cannot bypass the selected-ID exclusion bitset.
+- Grinch is a native Gathering card that collects selected visible holiday
+  items around its Start tile. All 18 base choices default on. Set a radius
+  from 1 through 16 tiles, use the nearest reachable or a named bank, and
+  deposit only selected items before returning to the exact Start tile.
+  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  item until the next Start. Saved settings apply on the next Start.
 
 ### Fixed during development
 
