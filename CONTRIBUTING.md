@@ -196,8 +196,11 @@ verifies the rust-analyzer binary (SHA-256
 "$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. It never executes a
 candidate-tree script (including `tools/architecture/run.sh`) and has no
 `ARCH_REPO` override. `path-schema`, `live-harness` and `test-support` are
-exercised through the workspace test lane's feature unification; no CI lane
-runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
+exercised through the workspace test lane's feature unification. The separate
+`grinch-oracles` lane explicitly enables `live-harness,test-support` and runs
+`cargo test -p host-play --features live-harness,test-support --test grinch_live`,
+so the offline Grinch oracles do not depend on workspace feature unification.
+No CI lane runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
 the required `test` status aggregates every lane. It is still a **subset**:
 `SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
 not a headed or engine pass.

@@ -9944,7 +9944,7 @@ fn ranged_ammo_sweep_counts_targeted_ground_stack_units() {
     let action = json!({
         "request": {
             "op": "obj", "x": 2638, "z": 3224, "level": 0,
-            "name": "Arrow", "action": "Take"
+            "name": "Arrow", "action": "Take", "id": 882
         },
         "snapshot": {"ground_items": [
             {"id": 882, "count": 3, "tile": {"x": 2638, "z": 3224, "level": 0}},
@@ -9971,7 +9971,7 @@ fn ranged_ammo_sweep_does_not_double_count_same_tile_stacks() {
     let mut action = json!({
         "request": {
             "op": "obj", "x": 2600, "z": 3372, "level": 0,
-            "name": "Steel arrow", "action": "Take"
+            "name": "Steel arrow", "action": "Take", "id": 886
         },
         "snapshot": {"ground_items": [stack(24), stack(22)]}
     });
@@ -10085,7 +10085,7 @@ fn ranged_sweep_sums_observed_gains_and_accepts_a_content_voided_take() {
             ],
             "request": {
                 "op": "obj", "x": 2456, "z": 3302, "level": 0,
-                "name": "Steel arrow", "action": "Take"
+                "name": "Steel arrow", "action": "Take", "id": 886
             },
             "snapshot": {"ground_items": stacks(counts)}
         })

@@ -207,6 +207,12 @@ jobs:
             real_nav_pack: true
             os: ubuntu-24.04
             command: "cargo test -p script --no-default-features"
+          - lane: grinch-oracles
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p host-play --features live-harness,test-support --test grinch_live"
           - lane: host-play-memory
             free_disk: false
             cache_key: workspace

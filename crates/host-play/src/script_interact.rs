@@ -1028,16 +1028,20 @@ where
                 level,
                 name,
                 action,
+                id,
             } => {
                 let obj = snapshot.ground_items().iter().find(|it| {
                     it.tile.x == x
                         && it.tile.z == z
                         && it.tile.level == level
-                        && name.as_deref().is_none_or(|wanted| {
-                            obj_names
-                                .and_then(|n| n.name(it.def.id))
-                                .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
-                        })
+                        && match id {
+                            Some(wanted) => it.def.id == wanted,
+                            None => name.as_deref().is_none_or(|wanted| {
+                                obj_names
+                                    .and_then(|n| n.name(it.def.id))
+                                    .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                            }),
+                        }
                 });
                 if let Some(obj) = obj {
                     wrote |= matches!(

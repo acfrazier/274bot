@@ -377,6 +377,19 @@ impl ScriptStartHandle {
         })
     }
 
+    /// Observe one slot's generation and native run under the same slot lock.
+    /// Live pumps use this pair at the actual PLAYER_INFO callback; separate
+    /// generation and run reads could straddle a runtime replacement.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_native_runtime(
+        &self,
+        name: &str,
+    ) -> Option<(u64, Option<api::selected::RunKey>)> {
+        let slot = script_slot(&self.scripts, name)?;
+        let slot = slot.lock().ok()?;
+        Some((slot.runtime_generation(), slot.native_run()))
+    }
+
     /// `name`'s latest recorded paint frame (the frame its status row
     /// publishes), for the live pump's File-card receipt watches.
     pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
@@ -394,6 +407,17 @@ impl Play {
     }
 }
 impl Play {
+    /// Install a read-only harness observer before spawning slots. It runs once
+    /// after native execution and same-frame walk completion for each received
+    /// PLAYER_INFO edge. Its storage and call are absent from product builds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_post_native_player_info_observer(
+        &mut self,
+        observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
+    ) {
+        self.post_native_player_info = Some(Arc::new(observer));
+    }
+
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's
     /// per-uid NavBot). WalkTo's [`WalkArm`] map is a different latch.
     pub fn script_nav_paint(&self) -> ScriptNavPaint {

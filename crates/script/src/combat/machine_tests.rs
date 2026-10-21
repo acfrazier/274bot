@@ -69,6 +69,7 @@ impl Runtime {
             active_now: Duration::from_millis(tick * 600),
             wall_now: self.wall,
             ledger: &mut self.ledger,
+            pending_note_progress: None,
             budget: &mut self.budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
@@ -3859,7 +3860,8 @@ fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
                 if let Some(effect) = harness.drain(None).into_single() {
                     assert!(matches!(
                         effect,
-                        HostEffect::Interaction(InteractReq::Obj { .. })
+                        HostEffect::Interaction(InteractReq::Obj { id: Some(id), .. })
+                            if id == ammo.def.id
                     ));
                     pickups += 1;
                 }
