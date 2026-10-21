@@ -2092,18 +2092,29 @@ impl TuiSession {
     /// Run the waiting fleet plan (`Targets::Plan`). The plan's frozen
     /// targets and card decide everything: marks made or changed since
     /// the plan do not join it. The one result view reports the outcome.
+    /// An Assign changes the focused bot's heading when it was a target, so
+    /// the Script pane re-reads it (a pending Browse pick stays).
     fn run_fleet_plan(&mut self, app: &mut TuiApp) {
         let Some(plan) = self.core.fleet_plan() else {
             app.error = Some("fleet: no plan is waiting".into());
             return;
         };
         let command = plan.command();
+        let assigns = matches!(
+            plan.action(),
+            frontend_core::FleetAction::Assign | frontend_core::FleetAction::AssignRestart
+        );
         match self.submit_raw_with(app, command, Targets::Plan) {
             Ok(_) => {
                 // A new result replaces the last one, even with the same
                 // text and no command record (two emptied plans).
                 self.shown_result = None;
                 self.project_fleet_result(app);
+                if assigns {
+                    app.script_sel = app
+                        .focused_name()
+                        .and_then(|name| self.scripts.heading(&self.core, &name));
+                }
             }
             Err(error) => app.error = Some(error),
         }

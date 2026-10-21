@@ -488,7 +488,14 @@ fn a_marked_assign_runs_at_once_on_hidden_marks_too() {
     let assign = rig.action(FleetAction::Assign);
     assert_eq!(assign.label, "Assign 2###fleet-action-2");
 
+    rig.session.set_focus_for_test("alice");
+    assert!(rig.session.script_sel.is_none(), "alice has no card yet");
     rig.click_action(FleetAction::Assign);
+    assert_eq!(
+        rig.session.script_sel.as_ref().map(|sel| sel.label()),
+        Some("Gatherer"),
+        "the focused bot's Script heading follows its new assignment"
+    );
     assert!(
         rig.session.core.fleet_plan().is_none(),
         "one click, no prompt"

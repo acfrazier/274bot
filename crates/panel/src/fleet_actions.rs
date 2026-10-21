@@ -50,13 +50,24 @@ impl Session {
     }
 
     /// Run the waiting plan (the plan row's Confirm). The members' results
-    /// show on the result line, not on the banner.
+    /// show on the result line, not on the banner. An Assign changes the
+    /// focused bot's heading when it was a target, so the Script section
+    /// re-reads it (a pending Browse pick stays).
     pub(crate) fn confirm_fleet_plan(&mut self) {
         let Some(plan) = self.core.fleet_plan() else {
             return;
         };
         let command = plan.command();
+        let assigns = matches!(
+            plan.action(),
+            FleetAction::Assign | FleetAction::AssignRestart
+        );
         self.submit(command, Targets::Plan);
+        if assigns {
+            if let Some(name) = self.focused_name() {
+                self.restore_script_heading(&name);
+            }
+        }
         self.apply_script_notice();
     }
 

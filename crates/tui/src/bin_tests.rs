@@ -5875,6 +5875,9 @@ fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
         let id = session.core.profile_identity(name).unwrap();
         app.fleet_model.set_mark_for_test(id, true);
     }
+    app.names = vec!["alice".into(), "bob".into(), "carol".into(), "dave".into()];
+    app.focused = Some(0);
+    assert!(app.script_sel.is_none(), "alice has no card yet");
 
     // Marked and safe: no overlay, no waiting plan, only the marked.
     let action = app.run_command(crate::commands::Command::Fleet(
@@ -5883,6 +5886,14 @@ fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
     dispatch(&mut session, &mut app, action);
     assert!(app.modal.is_none(), "a marked Assign runs at once");
     assert!(session.core.fleet_plan().is_none());
+    assert_eq!(
+        app.script_sel
+            .as_ref()
+            .and_then(ScriptChoice::loaded_card)
+            .map(|(_, id)| id.to_owned()),
+        Some(card.identity_id().to_owned()),
+        "the focused bot's Script heading follows its new assignment"
+    );
     assert_eq!(assigned(&mut session, "alice"), key);
     assert_eq!(assigned(&mut session, "bob"), key);
     assert_eq!(assigned(&mut session, "carol"), None);
