@@ -3309,10 +3309,7 @@ fn account_name_fingerprint(name: &str) -> [u8; 32] {
     fingerprint
 }
 
-fn parse_sha256_fingerprints(
-    evidence: &Value,
-    field: &str,
-) -> Result<BTreeSet<[u8; 32]>, String> {
+fn parse_sha256_fingerprints(evidence: &Value, field: &str) -> Result<BTreeSet<[u8; 32]>, String> {
     let rows = evidence
         .get(field)
         .and_then(Value::as_array)
@@ -3375,7 +3372,9 @@ fn parse_prelogin_account_store(manifest: &Value) -> Result<PreloginAccountStore
     if evidence["username_hash_scheme"].as_str() != Some("sha256-utf8-ascii-lowercase")
         || evidence["save_suffix"].as_str() != Some(".sav")
     {
-        return Err("scratch account-store evidence uses an unsupported username fingerprint".into());
+        return Err(
+            "scratch account-store evidence uses an unsupported username fingerprint".into(),
+        );
     }
     let profile = evidence["profile"]
         .as_str()
@@ -3390,14 +3389,13 @@ fn parse_prelogin_account_store(manifest: &Value) -> Result<PreloginAccountStore
     }
     let save_directory = format!("data/players/{profile}");
     if evidence["save_directory"].as_str() != Some(save_directory.as_str()) {
-        return Err("scratch account-store evidence has an inconsistent player-save directory".into());
+        return Err(
+            "scratch account-store evidence has an inconsistent player-save directory".into(),
+        );
     }
     Ok(PreloginAccountStore {
         profile: profile.to_owned(),
-        database_usernames: parse_sha256_fingerprints(
-            evidence,
-            "database_username_sha256",
-        )?,
+        database_usernames: parse_sha256_fingerprints(evidence, "database_username_sha256")?,
         profile_saves: parse_sha256_fingerprints(evidence, "profile_save_name_sha256")?,
     })
 }
@@ -3465,8 +3463,9 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
             inputs.evidence_manifest.display()
         )
     })?;
-    let engine_manifest: Value = serde_json::from_slice(&raw_engine)
-        .map_err(|error| format!("parse raw engine evidence for account-store snapshot: {error}"))?;
+    let engine_manifest: Value = serde_json::from_slice(&raw_engine).map_err(|error| {
+        format!("parse raw engine evidence for account-store snapshot: {error}")
+    })?;
     let account_store = parse_prelogin_account_store(&engine_manifest)?;
     let account_store_prelogin = engine_manifest["scratch"]["account_store_prelogin"].clone();
     let engine: EngineEvidence = serde_json::from_slice(&raw_engine)
@@ -4072,8 +4071,7 @@ fn required_server_cycle_window<'a>(
                 let advanced_cycle = logs.cycles.iter().find_map(|event| {
                     let cycle = event.payload["cycle"].as_u64()?;
                     let debug_ordinal = *debug_rows.get(&cycle)?;
-                    if event.server_line_ordinal == 0
-                        || debug_ordinal <= event.server_line_ordinal
+                    if event.server_line_ordinal == 0 || debug_ordinal <= event.server_line_ordinal
                     {
                         return None;
                     }
@@ -4095,8 +4093,7 @@ fn required_server_cycle_window<'a>(
                                     == Some(frame.actor.player_name.as_str())
                         })
                         .and_then(|active| active["player_info_sequence"].as_u64())?;
-                    (actor_sequence > frame.player_info_sequence)
-                        .then_some((cycle, actor_sequence))
+                    (actor_sequence > frame.player_info_sequence).then_some((cycle, actor_sequence))
                 });
                 if let Some((cycle, sequence)) = advanced_cycle {
                     return Err(format!(
@@ -5934,14 +5931,13 @@ fn build_static_trace(
                             })
                     })
             });
-        let (participant, participant_frames) =
-            project_competitor_frames(
-                report,
-                &session.fresh_accounts,
-                first_cycle,
-                last_cycle,
-                active_before,
-            )?;
+        let (participant, participant_frames) = project_competitor_frames(
+            report,
+            &session.fresh_accounts,
+            first_cycle,
+            last_cycle,
+            active_before,
+        )?;
         (Some(participant), participant_frames)
     } else {
         (None, Vec::new())
@@ -8111,7 +8107,9 @@ fn finalize_variant(dir: &Path, case: Case) -> Result<(Value, Result<(), String>
             manifest_path.display()
         )
     })?;
-    if final_manifest["scratch"]["account_store_prelogin"] != meta["account_store_prelogin_at_capture"] {
+    if final_manifest["scratch"]["account_store_prelogin"]
+        != meta["account_store_prelogin_at_capture"]
+    {
         return Err(format!(
             "{} pre-login account-store evidence changed after capture",
             case.slug()
@@ -8295,15 +8293,19 @@ mod tests {
         let existing = fingerprint_hex("GR25FRESH");
         let database_store =
             parse_prelogin_account_store(&manifest(vec![existing.clone()], Vec::new())).unwrap();
-        assert!(validate_fresh_account_names(&database_store, std::slice::from_ref(&name))
-            .unwrap_err()
-            .contains("db.sqlite account table"));
+        assert!(
+            validate_fresh_account_names(&database_store, std::slice::from_ref(&name))
+                .unwrap_err()
+                .contains("db.sqlite account table")
+        );
 
         let save_store =
             parse_prelogin_account_store(&manifest(Vec::new(), vec![existing])).unwrap();
-        assert!(validate_fresh_account_names(&save_store, std::slice::from_ref(&name))
-            .unwrap_err()
-            .contains("data/players/main/gr25fresh.sav"));
+        assert!(
+            validate_fresh_account_names(&save_store, std::slice::from_ref(&name))
+                .unwrap_err()
+                .contains("data/players/main/gr25fresh.sav")
+        );
     }
 
     fn bank_packet_callback_fixture() -> (Vec<BankCallbackObservation>, BankClickEvent) {
@@ -8713,8 +8715,7 @@ mod tests {
                             active["active"].as_bool() == Some(true)
                                 && active["actor"]["account_id"].as_str()
                                     == Some(frame.actor.account_id.as_str())
-                                && active["player_info_sequence"].as_u64()
-                                    == Some(next_sequence)
+                                && active["player_info_sequence"].as_u64() == Some(next_sequence)
                         })
                     })
         }));
@@ -8738,7 +8739,6 @@ mod tests {
             .unwrap_err()
             .contains("shut down before required GRINCH_CLIENT_OUTPUT row"));
     }
-
 
     fn required_cycle_ledger_fixture() -> (ObservedLogs, Vec<ServerCycle>) {
         let mut logs = ObservedLogs::default();
@@ -9702,7 +9702,6 @@ mod tests {
         BTreeSet::from([report.account.clone()])
     }
 
-
     #[test]
     fn competitor_projection_r5_receipt_keeps_earliest_real_send_owner() {
         let report = r5_competitor_send_owner_report();
@@ -9723,9 +9722,11 @@ mod tests {
         let mut report = r5_competitor_send_owner_report();
         report.frames.remove(0);
         let fresh_accounts = fixture_fresh_accounts(&report);
-        assert!(project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
-            .unwrap_err()
-            .contains("competitor send-owning PLAYER_INFO frame is missing"));
+        assert!(
+            project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
+                .unwrap_err()
+                .contains("competitor send-owning PLAYER_INFO frame is missing")
+        );
     }
 
     #[test]
@@ -9733,9 +9734,11 @@ mod tests {
         let mut report = r5_competitor_send_owner_report();
         report.frames[0].player_info_sequence += 1;
         let fresh_accounts = fixture_fresh_accounts(&report);
-        assert!(project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
-            .unwrap_err()
-            .contains("competitor send-owning PLAYER_INFO identity changed"));
+        assert!(
+            project_competitor_frames(&report, &fresh_accounts, 81, 82, true)
+                .unwrap_err()
+                .contains("competitor send-owning PLAYER_INFO identity changed")
+        );
     }
 
     #[test]
@@ -9785,12 +9788,16 @@ mod tests {
                 .0
                 .active_before_grinch_start
         );
-        assert!(!project_competitor_frames(report, &fresh_accounts, 200, 201, true)
-            .unwrap_err()
-            .contains("competitor lacks PLAYER_INFO frames in the main cycle window"));
-        assert!(!project_competitor_frames(report, &BTreeSet::new(), 81, 82, true)
-            .unwrap()
-            .0
-            .fresh_account);
+        assert!(
+            !project_competitor_frames(report, &fresh_accounts, 200, 201, true)
+                .unwrap_err()
+                .contains("competitor lacks PLAYER_INFO frames in the main cycle window")
+        );
+        assert!(
+            !project_competitor_frames(report, &BTreeSet::new(), 81, 82, true)
+                .unwrap()
+                .0
+                .fresh_account
+        );
     }
 }
