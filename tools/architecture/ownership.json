@@ -603,6 +603,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/tests/fleet_plan_alloc.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/tests/map_bake.rs",
       "owner": "T3"
     },
