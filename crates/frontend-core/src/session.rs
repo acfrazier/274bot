@@ -569,6 +569,7 @@ impl MemoryNotice {
 
 mod commands;
 mod fleet;
+mod fleet_plan;
 mod form;
 mod loadouts;
 pub(crate) mod map;
@@ -2142,6 +2143,7 @@ impl<Io> OperatorSession<Io> {
         // (both halves of a split poll reach here).
         self.reconcile_profile_order();
         self.poll_order_writes();
+        self.refresh_fleet_result();
         self.transitions.clear();
         self.op_changes.clear();
         self.take_preparations(false);
