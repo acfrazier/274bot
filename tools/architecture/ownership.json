@@ -4991,6 +4991,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/paint_controls_shape.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/paint_crossings.rs",
       "owner": "T2"
     },
