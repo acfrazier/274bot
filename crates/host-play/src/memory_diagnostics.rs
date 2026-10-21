@@ -33,7 +33,7 @@ struct SafeStandReceipt {
     tile: WorldTile,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PendingChop {
     tick: u64,
     id: i32,
