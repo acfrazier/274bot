@@ -88,7 +88,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Whether `name` has a profile save or rename still being written
     /// (a form save of it, or its first durable row).
-    pub(super) fn profile_write_pending(&self, name: &str) -> bool {
+    pub(crate) fn profile_write_pending(&self, name: &str) -> bool {
         self.profile_saving(name)
             || self
                 .saves_in_flight()
@@ -235,6 +235,7 @@ impl<Io> OperatorSession<Io> {
             }
             targets.retain(|(_, name)| receivers.iter().any(|r| r == name));
             interrupted.retain(|name| receivers.iter().any(|r| r == name));
+            scripts.freeze_settings_sync_targets(targets.clone());
             copy_kind = Some(if card.compiled_id().is_some() {
                 crate::command::CardKind::Native
             } else {
@@ -330,7 +331,8 @@ impl<Io> OperatorSession<Io> {
 
     /// After a planned command opened as `request`: keep its result view
     /// (the plan's skips and the profiles gone since the plan included).
-    pub(super) fn open_fleet_result(&mut self, request: RequestId, plan: FleetPlan) {
+    /// `None`: no target remained, so the result is terminal at once.
+    pub(super) fn open_fleet_result(&mut self, request: Option<RequestId>, plan: FleetPlan) {
         let mut extra = plan.skipped;
         for (identity, name) in &plan.targets {
             let present = self
@@ -371,9 +373,14 @@ impl<Io> OperatorSession<Io> {
         if result.settled {
             return;
         }
-        let Some(report) = self.commands.book().report(result.request) else {
-            return;
+        let report = match result.request {
+            Some(request) => match self.commands.book().report(request) {
+                Some(report) => Some(report),
+                None => return,
+            },
+            None => None,
         };
+        let members = report.map_or(&[][..], |report| report.members());
         let mut counts = ResultCounts::default();
         for row in &result.extra {
             match row.outcome() {
@@ -382,7 +389,7 @@ impl<Io> OperatorSession<Io> {
                 _ => counts.done += 1,
             }
         }
-        for member in report.members() {
+        for member in members {
             match member.terminal() {
                 None => counts.pending += 1,
                 Some(Settlement::Completed(Completion::Done)) => counts.done += 1,
@@ -405,7 +412,7 @@ impl<Io> OperatorSession<Io> {
                 skipped.push((row.profile().to_owned(), reason));
             }
         }
-        for member in report.members() {
+        for member in members {
             let crate::command::Subject::Profile(identity) = member.subject() else {
                 continue;
             };

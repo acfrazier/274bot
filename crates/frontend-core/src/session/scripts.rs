@@ -760,27 +760,25 @@ fn dispatch_settings_sync<Io>(
             broadcast_script_result(names, applied)
         }
         SyncCommandInput::Apply => {
-            let prepared = scripts.prepared_settings_sync().map(|scope| {
-                (
-                    scope.source().to_owned(),
-                    scope
-                        .targets()
-                        .iter()
-                        .chain(scope.skipped().iter().map(|(profile, _)| profile))
-                        .cloned()
-                        .collect::<Vec<_>>(),
-                )
-            });
+            let source = scripts
+                .prepared_settings_sync()
+                .map(|scope| scope.source().to_owned());
             match scripts.apply_settings_sync(core) {
+                // A member settles from the copy's own outcome for it, under
+                // the name the copy wrote (a planned copy follows a rename).
                 Ok(operation) => names
                     .iter()
                     .map(|name| {
-                        let applied = match prepared.as_ref() {
-                            Some((source, _)) if source == name => Applied::Done,
-                            Some((_, targets)) if targets.iter().any(|target| target == name) => {
-                                Applied::Operation(operation)
-                            }
-                            _ => Applied::Skipped(SkipReason::NotReady),
+                        let copied = core
+                            .operations
+                            .get(operation)
+                            .is_some_and(|report| report.outcome(name).is_some());
+                        let applied = if source.as_deref() == Some(name.as_str()) {
+                            Applied::Done
+                        } else if copied {
+                            Applied::Operation(operation)
+                        } else {
+                            Applied::Skipped(SkipReason::NotReady)
                         };
                         (name.clone(), applied)
                     })

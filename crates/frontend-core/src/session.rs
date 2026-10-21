@@ -37,7 +37,7 @@ use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
-const SAVING: &str = "profile is still saving";
+pub(crate) const SAVING: &str = "profile is still saving";
 
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 

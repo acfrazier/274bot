@@ -48,8 +48,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   settings-copy prompts name their targets, and each action keeps one
   result until it settles. A plan is frozen when it is made: a bot marked,
   loaded or made ready later does not join it, and a bot that changed is
-  skipped with its new reason. The Fleet window's mark box covers the
-  shown rows, and its menu marks the shown rows by status.
+  skipped with its new reason. Stop on a bot whose Start is still waiting
+  cancels that Start, and the Start reports it cancelled. The Fleet
+  window's mark box covers the shown rows, and its menu marks the shown
+  rows by status.
 
 ### TUI
 

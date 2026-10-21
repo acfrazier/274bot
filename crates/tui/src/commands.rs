@@ -142,8 +142,8 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Params" => Command::ScriptParams,
         "Reload" | "Confirm" => Command::ScriptReload,
         "Cancel" => Command::ScriptReloadCancel,
-        "Start all" => Command::Fleet(FleetAction::Start),
-        "Stop all" => Command::Fleet(FleetAction::Stop),
+        "Start fleet" => Command::Fleet(FleetAction::Start),
+        "Stop fleet" => Command::Fleet(FleetAction::Stop),
         _ => return None,
     })
 }

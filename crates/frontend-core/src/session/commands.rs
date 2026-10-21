@@ -601,11 +601,19 @@ impl<Io> OperatorSession<Io> {
             }
         };
         if let Err(error) = resolved {
-            // Nothing ran: the plan stays for another try or a Cancel.
-            if let Some(plan) = plan {
-                self.commands.fleet_plan = Some(plan);
-            }
-            return Err(error);
+            return match plan {
+                // Every frozen target is gone: the plan ends here, its
+                // result naming each one skipped.
+                Some(plan) if matches!(error, SubmitError::NoTarget(_)) => {
+                    self.end_emptied_plan(plan, surface)
+                }
+                // Nothing ran: the plan stays for another try or a Cancel.
+                Some(plan) => {
+                    self.commands.fleet_plan = Some(plan);
+                    Err(error)
+                }
+                None => Err(error),
+            };
         }
         let request = match self.open_command(command) {
             Ok(request) => request,
@@ -676,7 +684,7 @@ impl<Io> OperatorSession<Io> {
                     self.select(&name);
                 }
             }
-            self.open_fleet_result(request, plan);
+            self.open_fleet_result(Some(request), plan);
         }
         Ok(submitted)
     }
@@ -813,6 +821,37 @@ impl<Io> OperatorSession<Io> {
             .book
             .open(request, command, &self.commands.targets, &conditions)?;
         Ok(request)
+    }
+
+    /// A plan none of whose frozen targets remains: nothing runs, a copy
+    /// gives back its prepared scope and start hold, and the result is
+    /// terminal at once with every target a named skip. The request is
+    /// minted for the caller but opens no command record (a record needs
+    /// a member).
+    fn end_emptied_plan<S: SlotSurface<Io = Io>>(
+        &mut self,
+        plan: crate::FleetPlan,
+        surface: &mut S,
+    ) -> Result<Submitted, SubmitError> {
+        let request = WorkService::shared()?
+            .lock()
+            .mint_identity(Scope::Process, None)
+            .map_err(|_| SubmitError::IdentityExhausted)?
+            .job();
+        if plan.action() == crate::FleetAction::CopySettings {
+            if let Some(scripts) = surface.models().scripts.as_deref_mut() {
+                scripts.cancel_settings_sync();
+            }
+        }
+        self.open_fleet_result(None, plan);
+        Ok(Submitted {
+            request,
+            operation: None,
+            removal: None,
+            added: 0,
+            bulk: None,
+            marked: None,
+        })
     }
 
     /// Whether the book admitted the application member of `request` as
@@ -999,7 +1038,10 @@ impl<Io> OperatorSession<Io> {
                 self.release_names(names);
             }
             OperatorCommand::StopScript => {
-                let names = self.admitted_names(request);
+                let mut names = self.admitted_names(request);
+                if !matches!(targets, Targets::Everyone) {
+                    self.cancel_waiting_starts(request, command, &mut names, surface, submitted);
+                }
                 match (targets, names.as_slice()) {
                     // One member: today's single Stop, which settles when the
                     // run owner reports the slot idle.
@@ -1796,6 +1838,48 @@ impl<Io> OperatorSession<Io> {
             terminal.0,
             terminal.1.as_deref(),
         );
+    }
+
+    /// Stop's half for a member whose Start still waits for its permit or
+    /// its preparation: the coordinator cancels that Start (it never runs
+    /// later, and its own command settles cancelled), and the member
+    /// settles done here. A member with a live script stays in `names`
+    /// for the host stop.
+    fn cancel_waiting_starts<S: SlotSurface<Io = Io>>(
+        &mut self,
+        request: RequestId,
+        command: OperatorCommand,
+        names: &mut Vec<String>,
+        surface: &mut S,
+        submitted: &mut Submitted,
+    ) {
+        let mut models = surface.models();
+        let Some(scripts) = models.scripts.as_deref_mut() else {
+            return;
+        };
+        let mut cancelled_any = false;
+        let mut index = 0;
+        while index < names.len() {
+            let name = &names[index];
+            let idle = self.play.as_ref().is_none_or(|play| {
+                matches!(
+                    play.script_state(name),
+                    script::RunState::Idle | script::RunState::Error
+                )
+            });
+            if scripts.cancel_queued_as(name, "cancelled") {
+                cancelled_any = true;
+                if idle {
+                    let name = names.remove(index);
+                    self.settle_member(request, command, &name, Applied::Done, submitted);
+                    continue;
+                }
+            }
+            index += 1;
+        }
+        if cancelled_any {
+            scripts.publish_start_places(self);
+        }
     }
 
     /// Settle `name`'s member of `request` as `applied` says.
