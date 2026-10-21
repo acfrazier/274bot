@@ -215,16 +215,33 @@ pub fn shops_for(data: &SelectedGameData) -> &'static [ShopRecord] {
     &joined_shops(data).shops
 }
 
-/// `__rs2b0t_host.content.shops` object keyed by inv. Empty when nothing joined.
-pub fn content_json_value(data: &SelectedGameData) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    for shop in shops_for(data) {
-        map.insert(
-            shop.inv.clone(),
-            serde_json::to_value(shop).expect("shop record json"),
-        );
+/// Posted shops object keyed by inv. Empty when nothing joined.
+///
+/// Serialization keeps the product's insertion order in every configuration.
+/// Shops follow `POSTED_INVS` order, and each record keeps its declared field
+/// order. `serde_json::Map` cannot hold that order without the
+/// `preserve_order` feature, so this type writes the object directly.
+#[derive(Debug, Default)]
+pub struct ContentShops {
+    shops: &'static [ShopRecord],
+}
+
+impl Serialize for ContentShops {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut map = serializer.serialize_map(Some(self.shops.len()))?;
+        for shop in self.shops {
+            map.serialize_entry(&shop.inv, shop)?;
+        }
+        map.end()
     }
-    serde_json::Value::Object(map)
+}
+
+/// `__rs2b0t_host.content.shops` object keyed by inv, in posted order.
+pub fn content_json_value(data: &SelectedGameData) -> ContentShops {
+    ContentShops {
+        shops: shops_for(data),
+    }
 }
 
 pub fn shop_by_inv(data: &SelectedGameData, inv: &str) -> Option<ShopRecord> {
@@ -1043,7 +1060,8 @@ param=shop_title,Fishing shop 2"#,
 
     #[test]
     fn content_json_is_keyed_by_inv_and_omits_unpublished_shops() {
-        let value = content_json_value(&data(ClientRevision::R289));
+        let value = serde_json::to_value(content_json_value(&data(ClientRevision::R289)))
+            .expect("posted shop JSON");
         let obj = value.as_object().expect("shops object");
         assert_eq!(obj.len(), POSTED_INVS.len());
         for inv in POSTED_INVS {
@@ -1055,7 +1073,9 @@ param=shop_title,Fishing shop 2"#,
         assert!(!obj.contains_key("generalshop1"));
         assert!(!obj.contains_key("magearena_staffshop"));
     }
-    /// SHA-256 snapshots of the exact posted JSON bytes on base `375b6fad2`.
+    /// SHA-256 of the posted JSON bytes in the product configuration on base
+    /// `375b6fad2`. Product builds enable `serde_json/preserve_order` through
+    /// `deno_core`, so these are the bytes scripts receive.
     #[test]
     fn posted_shop_json_matches_base_snapshot_bytes() {
         use sha2::{Digest, Sha256};
@@ -1064,12 +1084,12 @@ param=shop_title,Fishing shop 2"#,
             (
                 ClientRevision::R274,
                 18_481,
-                "87d621c493d5bfeb8b58fd901c9df143d70955309e41633718b25772ca8cd0e2",
+                "bb81f8403311dfbdc446a114324b1aa2c57c90ff76af00cdaab601a8d098bd35",
             ),
             (
                 ClientRevision::R289,
                 18_481,
-                "87d621c493d5bfeb8b58fd901c9df143d70955309e41633718b25772ca8cd0e2",
+                "bb81f8403311dfbdc446a114324b1aa2c57c90ff76af00cdaab601a8d098bd35",
             ),
         ] {
             let catalog = data(revision);
