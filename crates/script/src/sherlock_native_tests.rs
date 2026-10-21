@@ -386,43 +386,39 @@ fn with_tick<R>(
     budget.observe(tick);
     let mut actions = NativeActions { _private: () };
     let mut output = Output;
-    let mut native = NativeTick {
-        state: None,
-        service_authority: None,
-        prompt_port: None,
-        actions: &mut actions,
-        cx: crate::native::ActionContext {
-            evidence,
-            observed_walk_outcome_seq: 0,
-            pin: &pin,
-            snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
-            retained: &mut retained,
-            action_id: 0,
-            active_now: Duration::from_millis(tick * 600),
-            wall_now: Instant::now(),
-            ledger,
-            budget: &mut budget,
-            eligible: !world.held,
-        },
-        output: &mut output,
-        pairs: None,
-        frame: HostFrame {
-            here: Some(world.here),
-            snapshot: Some(&world.snapshot),
-            obj_names: None,
-            compiled: crate::CompiledTick {
-                selected: Some(&world.data),
-                reach: None,
-                reach_flood: None,
-                bank_memory: None,
-                collision: None,
-                hold: world.held,
-                world_members: api::selected::Truth::Unknown,
-                interacts: Some(Vec::new()),
-                service_gate: None,
-            },
-        },
-    };
+    let mut native = NativeTick { walk_danger: None, state: None,
+    service_authority: None,
+    prompt_port: None,
+    actions: &mut actions,
+    cx: crate::native::ActionContext {
+        evidence,
+        observed_walk_outcome_seq: 0,
+        pin: &pin,
+        snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
+        retained: &mut retained,
+        action_id: 0,
+        active_now: Duration::from_millis(tick * 600),
+        wall_now: Instant::now(),
+        ledger,
+        budget: &mut budget,
+        eligible: !world.held,
+    },
+    output: &mut output,
+    pairs: None,
+    frame: HostFrame {
+        here: Some(world.here),
+        snapshot: Some(&world.snapshot),
+        obj_names: None,
+        compiled: crate::CompiledTick { walk_danger: None, selected: Some(&world.data),
+        reach: None,
+        reach_flood: None,
+        bank_memory: None,
+        collision: None,
+        hold: world.held,
+        world_members: api::selected::Truth::Unknown,
+        interacts: Some(Vec::new()),
+        service_gate: None, },
+    }, };
     f(&mut native)
 }
 
@@ -1260,17 +1256,15 @@ fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u
         inv: None,
         snapshot: Some(&world.snapshot),
         obj_names: None,
-        compiled: crate::CompiledTick {
-            selected: Some(&world.data),
-            reach: None,
-            reach_flood: None,
-            bank_memory: None,
-            collision: None,
-            hold: world.held,
-            world_members: api::selected::Truth::Unknown,
-            interacts: None,
-            service_gate: None,
-        },
+        compiled: crate::CompiledTick { walk_danger: None, selected: Some(&world.data),
+        reach: None,
+        reach_flood: None,
+        bank_memory: None,
+        collision: None,
+        hold: world.held,
+        world_members: api::selected::Truth::Unknown,
+        interacts: None,
+        service_gate: None, },
     });
 }
 

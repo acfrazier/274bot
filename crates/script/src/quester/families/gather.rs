@@ -402,6 +402,8 @@ impl StepRun for Run {
             &self.settings,
             area,
             SelectionObservation {
+                snapshot: Some(snapshot),
+                walk_danger: cx.tick.walk_danger,
                 world: world.value,
                 locs: locs.value,
                 npcs: npcs.value,

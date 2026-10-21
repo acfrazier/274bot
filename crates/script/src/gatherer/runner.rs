@@ -509,6 +509,7 @@ impl Gatherer {
             self.settings(),
             area,
             ReturnObservation {
+                walk_danger: tick.walk_danger,
                 here: here.value,
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
@@ -1993,6 +1994,8 @@ impl Gatherer {
             area,
             &self.avoid,
             super::select::SelectionObservation {
+                snapshot: Some(snapshot),
+                walk_danger: tick.walk_danger,
                 world: world.value,
                 locs: locs.value,
                 npcs: npcs.value,
