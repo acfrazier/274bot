@@ -1836,8 +1836,8 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
     run_plan(&mut d);
     let _ = d.models_mut().scripts.take_notice();
     assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
-    // Without a game the Starts fail at once; the run may stay open for
-    // its paced queue, so it is polled, not settled.
+    // Without a game data set the Starts fail: the result still settles,
+    // with the failures (a failed Start is a terminal, never Pending).
     let command = d.session().fleet_plan().expect("plan").command();
     d.submit(command, Targets::Plan).expect("run");
     let mut shown = Vec::new();
@@ -1847,11 +1847,20 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
         }
         d.poll();
     };
-    for _ in 0..5 {
+    for _ in 0..400 {
         drain(&mut d, &mut shown);
+        if d.session().fleet_result().is_some_and(|r| r.settled()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     let result = d.session().fleet_result().expect("result");
-    assert!(result.text().starts_with("Start"), "{}", result.text());
+    assert!(result.settled(), "{} | shown {shown:?}", result.text());
+    assert!(
+        result.text().starts_with("Start: failed 2"),
+        "{}",
+        result.text()
+    );
     d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
