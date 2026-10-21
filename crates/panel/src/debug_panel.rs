@@ -102,8 +102,9 @@ fn normalize_names(names: &mut Vec<String>, limit: usize) {
     names.truncate(limit);
 }
 
-/// Which target scope Debug sends use. Mark membership remains in
-/// [`Session::fleet_selection`]; this enum never stores a second mark set.
+/// Which target scope Debug sends use. Mark membership remains in the
+/// shared fleet model ([`Session::fleet_model`]); this enum never stores a
+/// second mark set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DebugTargetMode {
     #[default]
@@ -325,7 +326,7 @@ fn target_rows(session: &Session) -> Vec<TargetRow> {
             .collect(),
         DebugTargetMode::Marked => rows
             .into_iter()
-            .filter(|(identity, _)| session.fleet_selection.contains(*identity))
+            .filter(|(identity, _)| session.fleet_model.marks().contains(*identity))
             .collect(),
     }
 }
@@ -411,7 +412,7 @@ fn draw_target_controls(ui: &Ui, session: &mut Session) {
         session.debug_panel.clear_target_feedback();
     }
     ui.same_line();
-    let marked_count = session.fleet_selection.len();
+    let marked_count = session.fleet_model.marks().len();
     let _disabled = (marked_count == 0).then(|| ui.begin_disabled());
     if ui.button(format!("Marked bots ({marked_count})##debug-target-marked")) {
         session.debug_panel.target_mode = DebugTargetMode::Marked;

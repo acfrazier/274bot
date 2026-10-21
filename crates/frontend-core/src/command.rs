@@ -485,11 +485,11 @@ pub enum DrawSwitch {
 }
 
 /// The fleet row order, owned by the core fleet model
-/// ([`crate::fleet::fill_visible_indices`]): the panel offers `Name`
-/// (its default) and `Status`; the TUI keeps `LoadOrder`.
+/// ([`crate::FleetModel`]). Load order is the default on every surface;
+/// Name and Status are view sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetOrder {
-    /// The order the surface supplied the rows in (load order).
+    /// The order the universe holds the rows in (load order).
     LoadOrder,
     /// By profile name.
     Name,
@@ -498,8 +498,8 @@ pub enum FleetOrder {
 }
 
 impl FleetOrder {
-    /// The orders the panel's Sort drop-down offers.
-    pub const PANEL_CHOICES: [FleetOrder; 2] = [Self::Name, Self::Status];
+    /// The orders the Sort drop-down offers, the default first.
+    pub const CHOICES: [FleetOrder; 3] = [Self::LoadOrder, Self::Name, Self::Status];
 
     /// The drop-down entry.
     pub fn label(self) -> &'static str {

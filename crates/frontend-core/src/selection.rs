@@ -150,49 +150,17 @@ impl MarkedSelection {
         }
     }
 
-    /// Drop marks that no longer have a visible profile row.
-    pub fn retain<I>(&mut self, identities: I)
-    where
-        I: IntoIterator<Item = ProfileIdentity>,
-    {
-        let identities: BTreeSet<_> = identities.into_iter().collect();
-        self.marks.retain(|identity| identities.contains(identity));
-    }
-
     /// Drop marks absent from `sorted`, a caller-kept slice of universe
-    /// identities in ascending order (duplicates are harmless). The
-    /// allocation-free form of [`Self::retain`] for a surface that
-    /// prunes every frame: membership is a binary search over the
-    /// borrowed slice, so nothing is collected.
-    pub fn retain_sorted(&mut self, sorted: &[ProfileIdentity]) {
+    /// identities in ascending order (duplicates are harmless): the fleet
+    /// model's prune when its universe is rebuilt. Membership is a binary
+    /// search over the borrowed slice, so nothing is collected.
+    pub(crate) fn retain_sorted(&mut self, sorted: &[ProfileIdentity]) {
         self.marks
             .retain(|identity| sorted.binary_search(identity).is_ok());
     }
 
     pub fn iter(&self) -> impl Iterator<Item = ProfileIdentity> + '_ {
         self.marks.iter().copied()
-    }
-
-    /// Fixture seam: mark or unmark `identity` without a command (front-end
-    /// tests that arrange marks before the behaviour they check).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_for_test(&mut self, identity: ProfileIdentity, marked: bool) {
-        self.set(identity, marked);
-    }
-
-    /// Fixture seam: mark every identity of `identities` without a command.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn mark_all_for_test<I>(&mut self, identities: I)
-    where
-        I: IntoIterator<Item = ProfileIdentity>,
-    {
-        self.mark_all(identities);
-    }
-
-    /// Fixture seam: drop every mark without a command.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn clear_for_test(&mut self) {
-        self.clear();
     }
 }
 

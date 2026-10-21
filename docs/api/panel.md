@@ -220,10 +220,15 @@ A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
 **Login all** / **Logout all**, then **Start all** / **Stop all** (script
 bulk — separate from login bulk; see [script.md](script.md)), an
 **only render focused** checkbox, one
-tile per wall member, **Profiles…**, and the 1 Hz resource card. A tile is
+tile per shown wall member, **Profiles…**, and the 1 Hz resource card. The
+tiles follow the Fleet window's filter and sort (one order for the rail,
+the Grid and the Fleet table; **Load order** by default), and the rail names
+the active filter above them. Profiles that are not loaded are listed
+below the tiles in a folded **Not loaded (N)** group: each has a mark
+checkbox and no tile. A tile is
 a cap — traffic-light dot, name, **✕** — over a 236×155 body that blits the
 member's `PixelBuf` (or a renderer-off placeholder). Clicking a name or
-body focuses the member. The dot is error **red**, then ingame **amber**,
+body focuses the member. Filtering never changes focus. The dot is error **red**, then ingame **amber**,
 then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
@@ -240,7 +245,8 @@ GPU seat, not glued to `s00`).
 ### Grid
 
 A MultiBox submode (the toggle sits behind MultiBox, unreachable until it
-is on). The Game pane is divided into equal cells — one per member, each
+is on). The Game pane is divided into equal cells — one per shown member,
+in the Fleet window's filter and order, each
 the largest 765:503 box that fits its slot — row-major, with `cols` chosen
 to maximise the cell area. Clicking a cell selects that member; capture
 reaches **only** the focused cell; the queue card overlays it while queued.
@@ -454,9 +460,14 @@ were reassigned or run a different script are skipped and named in the
 status line. **Later** leaves their current scripts running and suppresses
 the prompt until settings change again.
 
-The **Fleet** window (the button beside WalkTo) is the panel's view of the
-shared marked selection: one row per vault profile with a checkbox mark,
-a filter and a full-width **Sort** drop-down. The table's columns share the
+The **Fleet** window (the button beside WalkTo) is the wide view of the
+shared fleet model: one row per profile, loaded or not (a profile that is
+not loaded reads `not loaded`, distinct from a loaded bot that is
+`offline`), with a checkbox mark, a filter and a full-width **Sort**
+drop-down (**Load order**, **Name**, **Status**). The rail and the Grid show
+the same filter and order. A mark stays when the filter hides its row or
+the profile is unloaded; it is dropped only when the profile is deleted.
+The table's columns share the
 window's width, so it never scrolls sideways, and the action rows and column
 toggles wrap at a narrow width. Its action bar runs on the marked rows only and each action
 puts one report in the window, counting every marked bot once with failures

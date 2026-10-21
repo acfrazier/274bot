@@ -291,7 +291,7 @@ impl Confirm {
                         Some(sel) => {
                             let scope = frontend_core::RestartScope::from_rows(
                                 members.iter().map(String::as_str),
-                                &app.fleet,
+                                app.fleet_model.rows(),
                             );
                             let mut lines = vec![format!("Assign {} and start it:", sel.label())];
                             lines.extend(scope.prompt_lines());
@@ -543,13 +543,9 @@ impl TuiApp {
         match item {
             ContextItem::Select(name) => self.select_bot(&name),
             ContextItem::Mark(name) => self
-                .names
-                .iter()
-                .position(|n| *n == name)
-                .and_then(|index| {
-                    self.table
-                        .toggled_mark(&self.names, &self.profile_ids, index)
-                })
+                .fleet_model
+                .index_of_name(&name)
+                .and_then(|index| crate::fleet::toggled_mark(&self.fleet_model, index))
                 .map_or(AppAction::None, |(name, on)| AppAction::SetMark(name, on)),
             ContextItem::Open(name, screen) => {
                 let select = self.select_bot(&name);

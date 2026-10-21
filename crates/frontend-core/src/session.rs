@@ -669,6 +669,11 @@ pub struct OperatorSession<Io> {
     capacity_due: Option<Instant>,
     /// Moves whenever [`Self::capacity_notice`] changes.
     capacity_generation: u64,
+    /// Moves whenever the vault's profile rows may have changed: a staged
+    /// create, rename, delete or settings write, a restore after a failed
+    /// write, or a vault opened or replaced. The fleet model rebuilds its
+    /// profile universe only then.
+    profiles_generation: u64,
     /// Operator commands: the book and their settlement state.
     commands: commands::CommandDesk,
     /// Load all's preferred selection when nothing is selected.
@@ -746,6 +751,7 @@ impl<Io> OperatorSession<Io> {
             capacity_render: RenderPolicyLabel::OnlySelected,
             capacity_due: None,
             capacity_generation: 0,
+            profiles_generation: 0,
             commands: commands::CommandDesk::default(),
             focus_hint: None,
         }
@@ -779,6 +785,7 @@ impl<Io> OperatorSession<Io> {
         play.statuses_into(&mut self.statuses);
         self.play = Some(play);
         self.vault = Some(vault);
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
     }
 
@@ -2538,7 +2545,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
         api::hostlog::register_secret(&profile.password);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_upsert(profile.clone());
         }
         Ok(self.submit_write(
@@ -2598,7 +2605,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(old);
         self.cancel_profile_start(old);
         api::hostlog::register_secret(&profile.password);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_upsert(profile.clone());
             vault.stage_remove(old);
         }
@@ -2681,7 +2688,7 @@ impl<Io> OperatorSession<Io> {
         }
         self.hold_durable(name);
         self.cancel_profile_start(name);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_remove(name);
         }
         Ok(Some(self.submit_write(
@@ -2918,6 +2925,21 @@ impl<Io> OperatorSession<Io> {
         self.vault.is_some()
     }
 
+    /// The open vault for a staged profile change; moves
+    /// [`Self::profiles_generation`] so a fleet model rebuilds its
+    /// profile universe.
+    pub(crate) fn vault_for_write(&mut self) -> Option<&mut Vault> {
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        self.vault.as_mut()
+    }
+
+    /// Moves whenever the vault's profile rows may have changed (a staged
+    /// create, rename, delete or settings write, a restore after a failed
+    /// write, or a vault opened or replaced).
+    pub fn profiles_generation(&self) -> u64 {
+        self.profiles_generation
+    }
+
     /// The staged (vault) row of `name`, as the forms show it.
     pub fn profile(&self, name: &str) -> Option<crate::ProfileView<'_>> {
         self.vault.as_ref()?.get(name).map(crate::ProfileView::new)
@@ -3032,7 +3054,7 @@ impl<Io> OperatorSession<Io> {
             // The copy wait already failed. Still reconcile a late writer's
             // durable result, but do not deliver or announce a second result.
             if written.result.is_err() {
-                if let Some(vault) = self.vault.as_mut() {
+                if let Some(vault) = self.vault_for_write() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
                     }
@@ -3114,7 +3136,7 @@ impl<Io> OperatorSession<Io> {
                         .map(|profile| profile.settings.lowmem),
                     _ => None,
                 };
-                if let Some(vault) = self.vault.as_mut() {
+                if let Some(vault) = self.vault_for_write() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
                     }
@@ -3320,7 +3342,7 @@ impl<Io> OperatorSession<Io> {
     pub fn vault_mut(&mut self) -> Option<&mut Vault> {
         self.flush_writes();
         self.writer = None;
-        self.vault.as_mut()
+        self.vault_for_write()
     }
 
     /// Held by the writer while it gathers and commits a batch; holding it
@@ -3334,6 +3356,7 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn set_vault(&mut self, vault: Option<Vault>) {
         self.flush_writes();
         self.vault = vault;
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
     }
 
