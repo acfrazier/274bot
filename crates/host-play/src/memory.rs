@@ -2946,10 +2946,9 @@ mod tests {
         let run = Run::prepare_unseeded(unit_config(10, Workload::Active), "unit")
             .expect("native Gatherer preparation without RS2B0T");
         assert!(run.card.as_ref().is_some_and(|card| card.catalog.is_none()));
-        let settings = script::gatherer::GathererSettings::from_bag(
-            &run.card.as_ref().unwrap().bag,
-        )
-        .expect("the prepared fleet bag uses native schema coercion");
+        let settings =
+            script::gatherer::GathererSettings::from_bag(&run.card.as_ref().unwrap().bag)
+                .expect("the prepared fleet bag uses native schema coercion");
         assert_eq!(settings.radius, 12);
         assert_eq!(settings.disposition, "Power");
 
