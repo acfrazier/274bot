@@ -1754,6 +1754,15 @@ impl Scripts {
         self.async_work.starts.contains_key(profile)
     }
 
+    /// Whether `profile` waits in a marked catalog restart
+    /// (`pending_marked_action`).
+    pub(super) fn pending_marked_restart(&self, profile: &str) -> bool {
+        self.async_work
+            .pending_marked_action
+            .as_ref()
+            .is_some_and(|action| action.restart && action.profiles.iter().any(|p| p == profile))
+    }
+
     pub(super) fn start_preparation_pending(&self) -> bool {
         !self.async_work.starts.is_empty()
             || self

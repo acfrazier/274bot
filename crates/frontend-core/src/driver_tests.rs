@@ -2718,3 +2718,224 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     again.poll();
     assert_eq!(order_names(&again), saved, "after a restart");
 }
+
+/// Every place a Start can wait before its slot runs it.
+#[derive(Clone, Copy, Debug)]
+enum Waiting {
+    /// A paced place behind another bot's Start (fleet Start).
+    Paced,
+    /// A loaded card's preparation for a single Start (untallied).
+    Preparation,
+    /// A loaded card's preparation for a fleet Start (tallied).
+    FleetPreparation,
+    /// A fleet Assign & restart of a catalog card waiting for the catalog
+    /// scan (nothing written yet).
+    CatalogRestart,
+    /// A fleet Assign & restart waiting for its assignment write.
+    RestartAfterWrite,
+}
+
+/// The three ways an operator withdraws a waiting Start.
+#[derive(Clone, Copy, Debug)]
+enum Withdraw {
+    PlannedStop,
+    StopEveryone,
+    Cancel,
+}
+
+/// Review F3 r3 (shadow High and sol61 1): planned Stop, Stop Everyone and
+/// an explicit Cancel each reach every place a Start waits. The original
+/// command's member settles cancelled, the Stop or Cancel member is done,
+/// and nothing starts later. A catalog Assign & restart withdrawn before
+/// the scan writes nothing; one withdrawn behind its write keeps the
+/// assignment and drops only the Start.
+#[test]
+fn every_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
+    for waiting in [
+        Waiting::Paced,
+        Waiting::Preparation,
+        Waiting::FleetPreparation,
+        Waiting::CatalogRestart,
+        Waiting::RestartAfterWrite,
+    ] {
+        for withdraw in [
+            Withdraw::PlannedStop,
+            Withdraw::StopEveryone,
+            Withdraw::Cancel,
+        ] {
+            withdraw_case(waiting, withdraw);
+        }
+    }
+}
+
+fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
+    let case = format!("{waiting:?}/{withdraw:?}");
+    let dir = scratch(&format!("f3-withdraw-{waiting:?}-{withdraw:?}").to_lowercase());
+    let mut d = driver_in(&dir, &["alice", "bob"]);
+    let path = dir.join("looping.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let js = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        js.source,
+        js.identity_id(),
+    ));
+    let assign = |d: &mut HeadlessDriver, card: crate::scripts::ScriptChoice| {
+        set_card(d, crate::FleetCard::pinned(card));
+        assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));
+        run_plan(d);
+    };
+    let gate = d.session().write_gate();
+    let mut held = None;
+    let (target, original) = match waiting {
+        Waiting::Paced => {
+            let (start, queued) = queued_start(&mut d, &["alice", "bob"]);
+            (queued[0].clone(), start)
+        }
+        Waiting::Preparation => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            assign(&mut d, js);
+            let start = d
+                .submit(OperatorCommand::StartScript, Targets::Profile("alice"))
+                .expect("start")
+                .request();
+            ("alice".to_owned(), start)
+        }
+        Waiting::FleetPreparation => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            assign(&mut d, js);
+            set_card(&mut d, crate::FleetCard::OWN);
+            assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+            let command = d.session().fleet_plan().expect("plan").command();
+            let start = d.submit(command, Targets::Plan).expect("start").request();
+            ("alice".to_owned(), start)
+        }
+        Waiting::CatalogRestart => {
+            let root = dir.join("catalog-root");
+            let scripts = root.join("src/bot/scripts");
+            let card_dir = scripts.join("BoneBurier");
+            std::fs::create_dir_all(&card_dir).expect("catalog");
+            std::fs::write(
+                scripts.join("index.ts"),
+                "import BoneBurier from './BoneBurier/BoneBurier.js';\n\
+                 ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });\n",
+            )
+            .expect("index");
+            std::fs::write(card_dir.join("BoneBurier.ts"), SETTINGS_CARD).expect("card");
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            set_card(
+                &mut d,
+                crate::FleetCard::pinned(crate::scripts::ScriptChoice::from_script(
+                    script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into()),
+                )),
+            );
+            d.models_mut().scripts.stage_start_catalog_root(Some(root));
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::AssignRestart),
+                Some(done())
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let restart = d.submit(command, Targets::Plan).expect("restart").request();
+            ("alice".to_owned(), restart)
+        }
+        Waiting::RestartAfterWrite => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            set_card(&mut d, crate::FleetCard::pinned(js));
+            held = Some(gate.lock().expect("gate"));
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::AssignRestart),
+                Some(done())
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let restart = d.submit(command, Targets::Plan).expect("restart").request();
+            ("alice".to_owned(), restart)
+        }
+    };
+    assert!(
+        d.models().scripts().start_waiting(&target),
+        "{case}: {target}'s Start waits"
+    );
+    assert_eq!(terminal(&d, original, &target), None, "{case}: Pending");
+    let _ = d.models_mut().scripts.take_start_failures();
+    match withdraw {
+        Withdraw::PlannedStop => {
+            d.submit(OperatorCommand::ClearMarks, Targets::Application)
+                .expect("clear marks");
+            mark(&mut d, &[target.as_str()]);
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::Stop),
+                Some(done()),
+                "{case}: a waiting Start is a Stop target"
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let stop = d.submit(command, Targets::Plan).expect("stop").request();
+            assert_eq!(terminal(&d, stop, &target), Some(done()), "{case}: Stop");
+        }
+        Withdraw::StopEveryone => {
+            d.submit(OperatorCommand::StopScript, Targets::Everyone)
+                .expect("stop everyone");
+        }
+        Withdraw::Cancel => {
+            let cancel = d
+                .submit(
+                    OperatorCommand::CancelQueuedStart,
+                    Targets::Profile(&target),
+                )
+                .expect("cancel")
+                .request();
+            assert_eq!(
+                terminal(&d, cancel, &target),
+                Some(done()),
+                "{case}: Cancel"
+            );
+        }
+    }
+    assert!(
+        !d.models().scripts().start_waiting(&target),
+        "{case}: nothing waits after the withdrawal"
+    );
+    drop(held);
+    for _ in 0..400 {
+        d.poll();
+        if terminal(&d, original, &target).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        terminal(&d, original, &target),
+        Some(operator_cancelled()),
+        "{case}: the original command settles cancelled"
+    );
+    d.session_mut().flush_writes();
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    while d.models().scripts().catalog_work_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{case}: catalog scan hung"
+        );
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    no_later_start(&mut d, std::slice::from_ref(&target));
+    assert_eq!(
+        d.session().script_state(&target),
+        crate::scripts::ScriptRunState::Idle,
+        "{case}"
+    );
+    match waiting {
+        Waiting::CatalogRestart => {
+            assert_eq!(assignment(&d, &target), None, "{case}: nothing written")
+        }
+        Waiting::RestartAfterWrite => {
+            assert!(
+                assignment(&d, &target).is_some(),
+                "{case}: the write is kept"
+            )
+        }
+        _ => {}
+    }
+}
