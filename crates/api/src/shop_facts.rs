@@ -49,6 +49,8 @@ pub struct ShopItemFact {
     pub obj: String,
     pub name: String,
     pub baseline: i32,
+    /// Inv stock rate. `World.ts:1173-1198` moves one item toward baseline
+    /// when the engine tick is a multiple of this rate.
     #[serde(rename = "restockTicks")]
     pub restock_ticks: i32,
     pub cost: i32,
@@ -69,6 +71,27 @@ pub struct ShopRecord {
     pub allstock: bool,
     pub items: Vec<ShopItemFact>,
 }
+/// A borrowed shop, keeper identity, and stocked item.
+#[derive(Debug)]
+pub struct VendorFact<'a> {
+    /// The posted shop record.
+    pub record: &'a ShopRecord,
+    /// The keeper's content config alias.
+    pub keeper_config: &'a str,
+    /// The keeper's display name.
+    pub keeper_name: &'a str,
+    /// The selected game's numeric NPC id for `keeper_config`.
+    pub keeper_id: i32,
+    /// The stocked item row from `record`.
+    pub item: &'a ShopItemFact,
+}
+
+#[derive(Debug)]
+struct JoinedKeeper {
+    shop_index: usize,
+    keeper_index: usize,
+    keeper_id: i32,
+}
 
 /// One planned purchase. `estCost` is the stock-sensitive sum, not units×base.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -88,6 +111,7 @@ struct ParsedInv {
 }
 
 struct ParsedKeeper {
+    config: String,
     name: String,
     owned_shop: String,
     sell: i32,
@@ -109,6 +133,7 @@ struct JoinedShops {
     shops: Vec<ShopRecord>,
     by_inv: HashMap<String, usize>,
     by_keeper: HashMap<String, usize>,
+    vendor_keepers: Vec<JoinedKeeper>,
 }
 
 fn parsed_shop_facts() -> &'static ParsedShopFacts {
@@ -153,12 +178,36 @@ fn joined_shops(data: &SelectedGameData) -> &'static JoinedShops {
                     .or_insert(index);
             }
         }
+        let vendor_keepers = join_vendor_keepers(data, &shops, &parsed.keepers);
+
         JoinedShops {
             shops,
             by_inv,
             by_keeper,
+            vendor_keepers,
         }
     })
+}
+fn join_vendor_keepers(
+    data: &SelectedGameData,
+    shops: &[ShopRecord],
+    keepers: &[ParsedKeeper],
+) -> Vec<JoinedKeeper> {
+    let mut joined = Vec::with_capacity(keepers.len());
+    for (keeper_index, keeper) in keepers.iter().enumerate() {
+        let Some(shop_index) = shops.iter().position(|shop| shop.inv == keeper.owned_shop) else {
+            continue;
+        };
+        let Some(keeper_id) = data.npc_by_config(&keeper.config).map(|npc| npc.id) else {
+            continue;
+        };
+        joined.push(JoinedKeeper {
+            shop_index,
+            keeper_index,
+            keeper_id,
+        });
+    }
+    joined
 }
 
 /// Posted shops for this revision, skipping any inv whose obj aliases are missing.
@@ -189,13 +238,84 @@ pub fn shop_by_keeper(data: &SelectedGameData, keeper: &str) -> Option<ShopRecor
     let index = *joined.by_keeper.get(&keeper.trim().to_ascii_lowercase())?;
     joined.shops.get(index).cloned()
 }
+/// Borrowed vendor rows for one numeric item id across the pinned shops.
+///
+/// Each row identifies one keeper for one shop that stocks the item.
+pub fn vendors_for<'a>(
+    data: &'a SelectedGameData,
+    item_id: i32,
+) -> impl Iterator<Item = VendorFact<'a>> + 'a {
+    let item_alias = data
+        .item_by_id(item_id)
+        .and_then(|item| item.alias.as_deref());
+    let joined = joined_shops(data);
+    let keepers = &parsed_shop_facts().keepers;
+    joined.vendor_keepers.iter().filter_map(move |keeper_row| {
+        let item_alias = item_alias?;
+        let record = &joined.shops[keeper_row.shop_index];
+        let keeper = &keepers[keeper_row.keeper_index];
+        let item = record.items.iter().find(|item| item.obj == item_alias)?;
+        Some(VendorFact {
+            record,
+            keeper_config: &keeper.config,
+            keeper_name: &keeper.name,
+            keeper_id: keeper_row.keeper_id,
+            item,
+        })
+    })
+}
 
-/// Frozen `unitPrice`: stock-sensitive per-unit sell price, never below 1.
+/// Borrow the pinned shop and item row for an explicit keeper config alias.
+///
+/// Returns `None` when the keeper or item is not in the pinned shop facts.
+pub fn vendor_by_keeper_config<'a>(
+    data: &'a SelectedGameData,
+    config: &str,
+    item_id: i32,
+) -> Option<VendorFact<'a>> {
+    let item_alias = data.item_by_id(item_id)?.alias.as_deref()?;
+    let joined = joined_shops(data);
+    let keepers = &parsed_shop_facts().keepers;
+    let keeper_row = joined
+        .vendor_keepers
+        .iter()
+        .find(|row| keepers[row.keeper_index].config == config)?;
+    let record = &joined.shops[keeper_row.shop_index];
+    let keeper = &keepers[keeper_row.keeper_index];
+    let item = record.items.iter().find(|item| item.obj == item_alias)?;
+    Some(VendorFact {
+        record,
+        keeper_config: &keeper.config,
+        keeper_name: &keeper.name,
+        keeper_id: keeper_row.keeper_id,
+        item,
+    })
+}
+
+/// Content per-unit buying price, never below 1 gp.
+///
+/// Formula: `shop.rs2:131-147` and `shop.rs2:183-192`.
+/// Integer scaling: `NumberOps.ts:124-126`.
 pub fn unit_price(item: &ShopItemFact, sell: i32, delta: i32, stock: i32) -> i64 {
     let d = i64::from(stock) - i64::from(item.baseline);
     let haggle = (d * i64::from(delta)).clamp(-5000, 1000);
     let pct = (i64::from(sell) - haggle).max(100);
     (pct * i64::from(item.cost) / 1000).max(1)
+}
+/// Total price from `stock`, pricing each unit at the stock left by earlier units.
+///
+/// `units` is the unit count to price, not a held target.
+/// Content: `shop.rs2:66-67`, `shop.rs2:131-147` and `shop.rs2:183-192`.
+/// Integer scaling: `NumberOps.ts:124-126`.
+pub fn quote(rec: &ShopRecord, item: &ShopItemFact, units: i32, stock: i32) -> i64 {
+    (0..units.max(0)).fold(0i64, |total, unit| {
+        total.saturating_add(unit_price(
+            item,
+            rec.sell,
+            rec.delta,
+            stock.saturating_sub(unit),
+        ))
+    })
 }
 
 /// Frozen `buyoutPlan`: casefold name filter, stock>0, descending base cost
@@ -226,11 +346,12 @@ pub fn buyout_plan(
         let mut units = 0i32;
         let mut est_cost = 0i64;
         while units < have {
-            let next = unit_price(item, rec.sell, rec.delta, have - units);
-            if est_cost.saturating_add(next) > left {
+            let next = quote(rec, item, 1, have - units);
+            let next_cost = est_cost.saturating_add(next);
+            if next_cost > left {
                 break;
             }
-            est_cost += next;
+            est_cost = next_cost;
             units += 1;
         }
         left -= est_cost;
@@ -347,6 +468,7 @@ fn parse_keepers(text: &str) -> Vec<ParsedKeeper> {
             continue;
         };
         out.push(ParsedKeeper {
+            config: id.clone(),
             name: field(&lines, "name").unwrap_or(id),
             owned_shop: owned,
             sell,
@@ -685,6 +807,131 @@ mod tests {
     }
 
     #[test]
+    fn vendor_rows_use_keeper_configs_and_item_ids() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let catalog = data(revision);
+            let harpoon_id = catalog.item_by_alias("harpoon").expect("harpoon").id;
+            let vendors: Vec<_> = vendors_for(&catalog, harpoon_id).collect();
+            assert_eq!(vendors.len(), 2, "{revision:?}");
+            assert_eq!(
+                vendors
+                    .iter()
+                    .map(|vendor| vendor.keeper_config)
+                    .collect::<Vec<_>>(),
+                ["gerrant", "harry"],
+                "{revision:?}"
+            );
+            let keepers = [
+                ("Gerrant", "fishingshop", 558, (3013, 3225, 0)),
+                ("Harry", "fishingshop2", 576, (2834, 3445, 0)),
+            ];
+            for (vendor, (name, inv, keeper_id, tile)) in vendors.iter().zip(keepers) {
+                assert_eq!(vendor.keeper_name, name);
+                assert_eq!(vendor.record.inv, inv);
+                assert_eq!(vendor.item.obj, "harpoon");
+                assert_eq!(vendor.keeper_id, keeper_id);
+                assert!(
+                    catalog
+                        .npc_placements()
+                        .expect("NPC placements")
+                        .rows
+                        .iter()
+                        .any(|placement| {
+                            placement.npc_id == keeper_id
+                                && (placement.x, placement.z, placement.plane) == tile
+                        }),
+                    "{revision:?} {name} has a placement"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_vendor_and_stock_coverage_are_exact() {
+        let catalog = data(ClientRevision::R289);
+        let bronze_axe_id = catalog.item_by_alias("bronze_axe").expect("bronze axe").id;
+        let bronze_axe_vendors: Vec<_> = vendors_for(&catalog, bronze_axe_id).collect();
+        assert_eq!(bronze_axe_vendors.len(), 1);
+        assert_eq!(bronze_axe_vendors[0].keeper_config, "bob");
+        assert_eq!(bronze_axe_vendors[0].keeper_name, "Bob");
+
+        let mithril_axe_id = catalog
+            .item_by_alias("mithril_axe")
+            .expect("mithril axe")
+            .id;
+        assert!(vendors_for(&catalog, mithril_axe_id).next().is_none());
+
+        let big_net_id = catalog.item_by_alias("big_net").expect("big net").id;
+        let big_net = vendors_for(&catalog, big_net_id)
+            .next()
+            .expect("Harry sells the big net");
+        assert!(big_net.item.members);
+
+        let harpoon_id = catalog.item_by_alias("harpoon").expect("harpoon").id;
+        let gerrant = vendor_by_keeper_config(&catalog, "gerrant", harpoon_id)
+            .expect("Gerrant's harpoon row");
+        assert_eq!(gerrant.record.inv, "fishingshop");
+        assert_eq!(
+            gerrant.keeper_id,
+            catalog.npc_by_config("gerrant").unwrap().id
+        );
+        assert_eq!(gerrant.item.obj, "harpoon");
+        assert!(vendor_by_keeper_config(&catalog, "gerrant", big_net_id).is_none());
+        assert!(vendor_by_keeper_config(&catalog, "not_pinned", harpoon_id).is_none());
+    }
+
+    #[test]
+    fn duplicate_keeper_display_names_keep_distinct_config_ids() {
+        let catalog = data(ClientRevision::R289);
+        let fixture = parse_keepers(
+            r#"[gerrant]
+name=Shop keeper
+param=owned_shop,fishingshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,700
+param=shop_delta,10
+param=shop_title,Fishing shop
+
+[harry]
+name=Shop keeper
+param=owned_shop,fishingshop2
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,700
+param=shop_delta,10
+param=shop_title,Fishing shop 2"#,
+        );
+        assert_eq!(fixture.len(), 2);
+        assert_eq!(fixture[0].name, fixture[1].name);
+        let joined = join_vendor_keepers(&catalog, shops_for(&catalog), &fixture);
+        assert_eq!(joined.len(), 2);
+        assert_ne!(joined[0].keeper_id, joined[1].keeper_id);
+        assert_eq!(
+            joined[0].keeper_id,
+            catalog.npc_by_config("gerrant").expect("Gerrant config").id
+        );
+        assert_eq!(
+            joined[1].keeper_id,
+            catalog.npc_by_config("harry").expect("Harry config").id
+        );
+    }
+
+    #[test]
+    fn quote_prices_each_unit_at_the_stock_left() {
+        let catalog = data(ClientRevision::R289);
+        let harpoon_id = catalog.item_by_alias("harpoon").expect("harpoon").id;
+        let gerrant = vendor_by_keeper_config(&catalog, "gerrant", harpoon_id)
+            .expect("Gerrant's harpoon row");
+        assert_eq!(quote(gerrant.record, gerrant.item, 1, 2), 5);
+
+        let soulrune_id = catalog.item_by_alias("soulrune").expect("soul rune").id;
+        let soulrune = vendor_by_keeper_config(&catalog, "magic_store_owner", soulrune_id)
+            .expect("Magic Store owner's soul rune");
+        assert_eq!(quote(soulrune.record, soulrune.item, 1, 50), 1250);
+        assert_eq!(quote(soulrune.record, soulrune.item, 1, 49), 1262);
+        assert_eq!(quote(soulrune.record, soulrune.item, 2, 50), 2512);
+    }
+
+    #[test]
     fn unit_price_is_stock_sensitive_and_never_below_one() {
         let item = ShopItemFact {
             obj: "vial_water".into(),
@@ -807,5 +1054,33 @@ mod tests {
         assert_eq!(obj["fishingshop"]["keepers"][0], "Gerrant");
         assert!(!obj.contains_key("generalshop1"));
         assert!(!obj.contains_key("magearena_staffshop"));
+    }
+    /// SHA-256 snapshots of the exact posted JSON bytes on base `375b6fad2`.
+    #[test]
+    fn posted_shop_json_matches_base_snapshot_bytes() {
+        use sha2::{Digest, Sha256};
+
+        for (revision, expected_len, expected_sha256) in [
+            (
+                ClientRevision::R274,
+                18_481,
+                "87d621c493d5bfeb8b58fd901c9df143d70955309e41633718b25772ca8cd0e2",
+            ),
+            (
+                ClientRevision::R289,
+                18_481,
+                "87d621c493d5bfeb8b58fd901c9df143d70955309e41633718b25772ca8cd0e2",
+            ),
+        ] {
+            let catalog = data(revision);
+            let bytes =
+                serde_json::to_vec(&content_json_value(&catalog)).expect("posted shop JSON");
+            assert_eq!(bytes.len(), expected_len, "{revision:?}");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(&bytes)),
+                expected_sha256,
+                "{revision:?}"
+            );
+        }
     }
 }

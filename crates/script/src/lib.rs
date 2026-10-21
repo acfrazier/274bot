@@ -3,6 +3,8 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+/// Inventory-first acquisition shared by native consumers.
+pub mod acquire;
 pub mod api_combat;
 #[cfg(feature = "load")]
 pub mod api_gather;
