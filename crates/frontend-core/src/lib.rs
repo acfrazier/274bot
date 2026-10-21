@@ -96,7 +96,6 @@ pub use profile_form::{
 };
 pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
-pub use profiles::fresh_uid;
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

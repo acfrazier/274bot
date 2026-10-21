@@ -883,13 +883,63 @@ pub const MAX_PREF_KEY_CHARS: usize = 128;
 /// Longest preference value, in bytes.
 pub const MAX_PREF_VALUE_BYTES: usize = 4096;
 
-/// One operator preference write in the `preferences` domain.
+/// Most changes one [`PreferencesEdit`] carries.
+pub const MAX_PREF_EDIT_CHANGES: usize = 1 << 16;
+
+/// Most key and value bytes one [`PreferencesEdit`] carries, summed over
+/// its changes (the preferences file's own bound).
+pub const MAX_PREF_EDIT_BYTES: usize = 1 << 20;
+
+/// One change of a [`PreferencesEdit`]: set a key (`<member>`, or
+/// `<member>.<nested>` for one member of an object) to a JSON value, or
+/// remove it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreferenceChange {
+    key: String,
+    value: Option<String>,
+}
+
+impl PreferenceChange {
+    /// Set `key` to `value` (JSON text).
+    pub fn set(key: &str, value: &str) -> Result<Self, ErrorCode> {
+        check_preference_row(key, value)?;
+        Ok(Self {
+            key: key.to_string(),
+            value: Some(value.to_string()),
+        })
+    }
+
+    /// Remove `key` (nothing when it is absent).
+    pub fn remove(key: &str) -> Result<Self, ErrorCode> {
+        check_preference_row(key, "")?;
+        Ok(Self {
+            key: key.to_string(),
+            value: None,
+        })
+    }
+
+    /// The preference key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The value set; `None` removes the key.
+    pub fn value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+
+    fn len(&self) -> usize {
+        self.key.len() + self.value.as_ref().map_or(0, String::len)
+    }
+}
+
+/// One operator preference write in the `preferences` domain: every
+/// change it carries is applied in one file replacement, or none is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreferencesEdit {
     identity: DomainIdentity,
     expected: Option<StoreVersion>,
-    key: String,
-    value: String,
+    changes: Vec<PreferenceChange>,
 }
 
 impl PreferencesEdit {
@@ -900,18 +950,42 @@ impl PreferencesEdit {
         key: &str,
         value: &str,
     ) -> Result<Self, ErrorCode> {
-        if identity.domain() != LocalStateDomain::Preferences {
+        Self::batch(identity, expected, vec![PreferenceChange::set(key, value)?])
+    }
+
+    /// Apply `changes`, in order, for `identity`, expecting `expected`:
+    /// at least one, at most [`MAX_PREF_EDIT_CHANGES`] and
+    /// [`MAX_PREF_EDIT_BYTES`].
+    pub fn batch(
+        identity: DomainIdentity,
+        expected: Option<StoreVersion>,
+        changes: Vec<PreferenceChange>,
+    ) -> Result<Self, ErrorCode> {
+        let domain = identity.domain();
+        if domain != LocalStateDomain::Preferences {
             return Err(ErrorCode::Validation {
-                domain: identity.domain(),
+                domain,
                 reason: ValidationReason::Identity,
             });
         }
-        check_preference_row(key, value)?;
+        if changes.is_empty() {
+            return Err(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::Empty,
+            });
+        }
+        if changes.len() > MAX_PREF_EDIT_CHANGES
+            || changes.iter().map(PreferenceChange::len).sum::<usize>() > MAX_PREF_EDIT_BYTES
+        {
+            return Err(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::TooLong,
+            });
+        }
         Ok(Self {
             identity,
             expected,
-            key: key.to_string(),
-            value: value.to_string(),
+            changes,
         })
     }
 
@@ -925,14 +999,9 @@ impl PreferencesEdit {
         self.expected
     }
 
-    /// The preference key.
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    /// The preference value.
-    pub fn value(&self) -> &str {
-        &self.value
+    /// The changes, in the order they apply.
+    pub fn changes(&self) -> &[PreferenceChange] {
+        &self.changes
     }
 
     /// Whether this edit may write `current`.
