@@ -5994,8 +5994,7 @@ fn fleet_open_move_to_top(
     }
     let entry = layout.move_to_top;
     assert_ne!(
-        entry,
-        [0.0; 4],
+        entry, [0.0; 4],
         "the Marks menu lists Move marked to top: marks at {marks:?}, menu {:?}",
         layout.marks_menu
     );
@@ -6123,8 +6122,11 @@ fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
         let identity = session.core.profile_identity(name).unwrap();
         session.fleet_model.set_mark_for_test(identity, true);
     }
-    // The labels name the marked count, so the buttons lay out again.
-    // The menu closed after the first click; open it again.
+    // A click on the disabled entry left the menu open: a click away closes
+    // it, then it opens again with the entry enabled.
+    for down in [false, true, false, false] {
+        fleet_reorder_frame(&mut ctx, &mut session, [900.0, 600.0], down);
+    }
     let button = fleet_open_move_to_top(&mut ctx, &mut session);
     click(&mut ctx, &mut session, button);
     assert_eq!(crate::session::reorders_submitted(), before + 1);

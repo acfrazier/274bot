@@ -783,6 +783,13 @@ const SURFACE: &[(&str, Decision)] = &[
             "the Mark column header is the tri-state shown-marks box; each row's checkbox sets that row's mark",
         ),
     ),
+    (
+        "panel/fleet_toolbar.rs::filter_row",
+        Rows(
+            &[C::SetFleetFilter, C::SetFleetSort(crate::FleetOrder::Status)],
+            "the fleet toolbar's filter field and sort drop-down, one row each",
+        ),
+    ),
     // --- panel: fleet plan flow ---
     (
         "panel/fleet_actions.rs::Session::confirm_fleet_plan",

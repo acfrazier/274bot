@@ -921,6 +921,9 @@ pub struct Session {
     /// The Fleet window's card drop-down search text while it is open
     /// (`None` while closed, so each opening starts with an empty search).
     pub(crate) fleet_card_filter: Option<String>,
+    /// The fleet toolbar's filter field buffer, shared by every toolbar on
+    /// screen and edited in place by ImGui (no allocation per frame).
+    pub(crate) fleet_filter_edit: dear_imgui_rs::ImString,
     /// The fleet toolbar's count-bearing labels (one set for every site that
     /// draws the toolbar), rebuilt only when the fleet model's generation
     /// moves.
@@ -1448,6 +1451,7 @@ impl Session {
                 true,
             ),
             fleet_card_filter: None,
+            fleet_filter_edit: dear_imgui_rs::ImString::with_capacity(64),
             fleet_labels: crate::fleet_toolbar::FleetLabels::default(),
             world_picker: crate::world_picker::WorldPicker::default(),
             walkto_open: false,

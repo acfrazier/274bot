@@ -45,6 +45,9 @@ mod srgb_present;
 pub(crate) mod test_support;
 
 #[cfg(test)]
+mod test_alloc;
+
+#[cfg(test)]
 #[path = "manual_click_live_tests.rs"]
 mod manual_click_live_tests;
 

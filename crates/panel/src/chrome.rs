@@ -189,7 +189,7 @@ mod tests {
         let saved = vec!["log".into(), "nope".into(), "status".into()];
         assert_eq!(
             resolve_heading_order(&saved),
-            ["log", "status", "resource", "profile", "script", "debug"]
+            ["log", "status", "fleet", "resource", "profile", "script", "debug"]
         );
         let mut order = resolve_heading_order(&[]);
         move_heading(&mut order, "profile", "status");

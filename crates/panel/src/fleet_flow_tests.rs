@@ -823,7 +823,11 @@ fn name_rect(session: &Session, layout: &FleetLayout, name: &str) -> [f32; 4] {
 /// did nothing.
 #[test]
 fn a_name_click_focuses_the_bot_and_its_mark_box_only_marks_it() {
-    let mut rig = Rig::with_play("fleet-name-focus", &["alice", "bob", "carol"], &["alice", "bob"]);
+    let mut rig = Rig::with_play(
+        "fleet-name-focus",
+        &["alice", "bob", "carol"],
+        &["alice", "bob"],
+    );
     let focused = |rig: &Rig| rig.session.focused_name();
     assert_eq!(focused(&rig).as_deref(), Some("alice"));
 
@@ -836,10 +840,18 @@ fn a_name_click_focuses_the_bot_and_its_mark_box_only_marks_it() {
         .1;
     rig.click(mark);
     assert_eq!(rig.marked_names(), ["bob"]);
-    assert_eq!(focused(&rig).as_deref(), Some("alice"), "a mark never focuses");
+    assert_eq!(
+        focused(&rig).as_deref(),
+        Some("alice"),
+        "a mark never focuses"
+    );
 
     rig.click(name_rect(&rig.session, &rig.layout, "bob"));
-    assert_eq!(focused(&rig).as_deref(), Some("bob"), "Load order name click");
+    assert_eq!(
+        focused(&rig).as_deref(),
+        Some("bob"),
+        "Load order name click"
+    );
     assert_eq!(rig.marked_names(), ["bob"], "a focus never marks");
 
     rig.click(name_rect(&rig.session, &rig.layout, "carol"));

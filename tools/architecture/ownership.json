@@ -2215,6 +2215,14 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/fleet_toolbar.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/fleet_toolbar_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/focus.rs",
       "owner": "T3"
     },
