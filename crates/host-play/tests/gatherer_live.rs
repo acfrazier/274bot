@@ -5829,6 +5829,16 @@ fn fixture_plan(
     }
     Ok((target, plan, task))
 }
+fn real_content_death_fixture(
+    _cell: Cell,
+    _case: LiveCase,
+) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String> {
+    let mut plan = FixturePlan::default();
+    plan.bank_seed.push(("bronze_axe".into(), 3));
+    plan.inventory_seed
+        .extend(DEATH_FILLERS.iter().map(|(_, alias)| ((*alias).into(), 1)));
+    Ok((DRAYNOR_OAK_BANK_START, plan, None))
+}
 
 fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, String> {
     let uid = SystemTime::now()
@@ -5890,6 +5900,17 @@ fn selected_profile(
 }
 
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
+    run_cell_with_fixture(cell, case, fixture_plan)
+}
+
+fn run_cell_with_fixture(
+    cell: Cell,
+    case: LiveCase,
+    fixture_builder: impl FnOnce(
+        Cell,
+        LiveCase,
+    ) -> Result<(WorldTile, FixturePlan, Option<FixtureTask>), String>,
+) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
@@ -5940,7 +5961,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             catalog_root.display()
         ));
     }
-    let (target, mut plan, fixture_task) = fixture_plan(cell, case)?;
+    let (target, mut plan, fixture_task) = fixture_builder(cell, case)?;
     let temp = TempRoot::new(cell_name)?;
     let (profile, template) = selected_profile(nav_pack, engine_dir, catalog_root, temp.path())?;
     if case == LiveCase::BankCost {
@@ -7441,6 +7462,18 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             "xp": witness.last_xp,
         });
     }
+    if case == LiveCase::DeathReturn
+        && fixture_plan.seed_locs.is_empty()
+        && fixture_plan.oak_tiles.is_empty()
+    {
+        fixture_receipt["real_content_death_reprovision"] = json!({
+            "origin": target,
+            "resource": "oak",
+            "scene_locations_seeded": fixture_plan.seed_locs.len(),
+            "fixture_locations_seeded": fixture_plan.oak_tiles.len(),
+        });
+    }
+
     if case == LiveCase::Site {
         receipt["named_site"] = json!({
             "id": cell.site_id(),
@@ -7981,6 +8014,17 @@ fn maze_random_complete(witness: &Witness) -> bool {
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, GATHERER_WC_BANK_TILE, and local 289 engine"]
 fn gatherer_death_return() {
     run_cell(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+}
+
+#[test]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=g4a, and local 289 engine"]
+fn gatherer_death_reprovision_real_content() {
+    run_cell_with_fixture(
+        Cell::Woodcutting,
+        LiveCase::DeathReturn,
+        real_content_death_fixture,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -9769,5 +9813,28 @@ mod named_site_fixture_tests {
         nav["request_id"] = json!(1);
         nav["armed"] = json!(false);
         assert!(!site_return_nav_matches(&nav, anchor, target));
+    }
+}
+#[cfg(test)]
+mod real_content_death_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn death_reprovision_fixture_seeds_account_only() {
+        let (target, plan, task) =
+            real_content_death_fixture(Cell::Woodcutting, LiveCase::DeathReturn).unwrap();
+
+        assert_eq!(target, DRAYNOR_OAK_BANK_START);
+        assert_eq!(plan.bank_seed, vec![("bronze_axe".into(), 3)]);
+        assert_eq!(
+            plan.inventory_seed,
+            DEATH_FILLERS
+                .iter()
+                .map(|(_, alias)| ((*alias).into(), 1))
+                .collect::<Vec<_>>()
+        );
+        assert!(plan.seed_locs.is_empty());
+        assert!(plan.oak_tiles.is_empty());
+        assert!(task.is_none());
     }
 }

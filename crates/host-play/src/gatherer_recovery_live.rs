@@ -496,7 +496,7 @@ fn refused_deposit_recovered(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FrameObservation {
-    tick: Option<u32>,
+    tick: u32,
     bank_session: u64,
     inventory_revision: Option<u64>,
     bank_revision: Option<u64>,
@@ -514,7 +514,7 @@ impl FrameObservation {
 fn recovery_recorder_keeps_same_tick_bank_evidence_without_repeating_tick_interference() {
     let mut previous = None;
     let mut observation = FrameObservation {
-        tick: Some(84),
+        tick: 84,
         bank_session: 0,
         inventory_revision: Some(6),
         bank_revision: None,
@@ -528,7 +528,7 @@ fn recovery_recorder_keeps_same_tick_bank_evidence_without_repeating_tick_interf
     observation.inventory_revision = Some(7);
     observation.bank_revision = Some(2);
     assert_eq!(observation.record_if_changed(&mut previous), Some(false));
-    observation.tick = Some(85);
+    observation.tick = 85;
     assert_eq!(observation.record_if_changed(&mut previous), Some(true));
 }
 
