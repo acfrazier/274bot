@@ -71,10 +71,11 @@
             "args": { "tile": [2561, 3222, 0], "source": "289 maps/m40_50.jm2: location of timer-added wildymirrorladdertop1; content scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:1-10", "radius": 2 },
             "skip_if": { "Any": [
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "childs_blanket" } } },
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2561, 3222, 0], "radius": 2 } } }
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2561, 3222, 0], "radius": 2 } } },
+              { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "drunkmonk_cave" } } }
             ] },
             "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [2561, 3222, 0], "radius": 2 } } },
-            "comment": "The timer adds the ladder when the player is within two tiles. Skip the walk after it reaches that tile (content/scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:1-6)."
+            "comment": "The timer adds the ladder when the player is within two tiles. Skip the walk near that ladder or inside drunkmonk_cave so the cave-side boundary cannot select it again after the climb (content/scripts/quests/quest_drunkmonk/scripts/quest_drunkmonk.rs2:1-6)."
           },
           {
             "id": "climb-down-blanket-ladder", "kind": "interact", "version": 1, "advances": false,
