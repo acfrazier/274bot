@@ -59,6 +59,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   Empty waits stay visible as Waiting; duplicate refusals exclude only that
   item until the next Start. Saved settings apply on the next Start.
 
+### Not in this release
+
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+
 ### Fixed during development
 
 #### Startup and saved state
