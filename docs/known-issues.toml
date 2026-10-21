@@ -131,3 +131,15 @@ listed = "0.2.5"
 target = "0.2.6"
 severity = "medium"
 owner = "T2.rest agility"
+
+[[item]]
+id = "bank-deposit-callback-delay"
+kind = "known-issue"
+area = "Banking"
+text = """`Bank.depositAllMatching` checks about one item per game tick, so large
+  deposits can be slow. A fix is planned for 0.2.6."""
+first = "0.2.4"
+listed = "0.2.5"
+target = "0.2.6"
+severity = "medium"
+owner = "event-driven runtime endpoint"
