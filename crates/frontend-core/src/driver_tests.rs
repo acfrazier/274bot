@@ -2271,6 +2271,156 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
     );
 }
 
+/// Load alice, give her a loaded JS card through a plan, then submit her
+/// own single Start with no frame after it: the card's preparation is
+/// pending (an untallied preparation). Returns the Start command.
+fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
+    let dir = scratch(test);
+    let mut d = driver_in(&dir, &["alice", "bob"]);
+    let path = dir.join("looping.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let card = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let card = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        card.source,
+        card.identity_id(),
+    ));
+    load(&mut d, &["alice"]);
+    mark(&mut d, &["alice"]);
+    set_card(&mut d, crate::FleetCard::pinned(card));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    set_card(&mut d, crate::FleetCard::OWN);
+    let start = d
+        .submit(OperatorCommand::StartScript, Targets::Profile("alice"))
+        .expect("start")
+        .request();
+    assert!(
+        d.models().scripts().has_start_preparation("alice"),
+        "the single Start waits on its card's preparation"
+    );
+    assert_eq!(terminal(&d, start, "alice"), None, "Pending");
+    (d, start)
+}
+
+/// The existing bound of 64 pending native settings saves (a known issue
+/// for 0.2.6): a planned native copy to 66 bots saves 64, and the result
+/// names each refused bot as failed with the reason; none stays Pending.
+#[test]
+fn a_native_copy_over_the_pending_save_bound_names_every_refused_bot() {
+    let names: Vec<String> = (0..67).map(|index| format!("bot{index:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver("f3-copy-bound", &refs);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
+    load(&mut d, &refs);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("bot00"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &refs);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("bot00"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    assert_eq!(plan_names(&d).len(), 66);
+    let run = run_plan(&mut d);
+    settle(&mut d, run);
+    let report = d.report(run).expect("report");
+    let refused: Vec<_> = report
+        .members()
+        .iter()
+        .filter(|member| {
+            member
+                .terminal()
+                .is_some_and(|t| !matches!(t, Settlement::Completed(_)))
+        })
+        .map(|member| member.detail().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(refused.len(), 2, "{refused:?}");
+    for detail in &refused {
+        assert!(
+            detail.contains("too many pending native settings saves"),
+            "{detail}"
+        );
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().failed, 2, "{}", result.text());
+    assert_eq!(result.counts().done, 64, "{}", result.text());
+    assert!(
+        result
+            .text()
+            .starts_with("Copy settings to: failed 2: bot65 (")
+            && result
+                .text()
+                .contains("(script: too many pending native settings saves)"),
+        "{}",
+        result.text()
+    );
+}
+
+/// Review F3 r2-1: a fleet Start joins a single Start's untallied
+/// preparation; the assignment then changes while it waits. The
+/// preparation is withdrawn `reassigned`, and both Start commands settle
+/// (neither stays Pending), and nothing starts.
+#[test]
+fn a_withdrawn_shared_preparation_settles_the_single_and_the_fleet_start() {
+    let (mut d, single) = preparing_start("f3-shared-preparation");
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    let command = d.session().fleet_plan().expect("plan").command();
+    let fleet = d.submit(command, Targets::Plan).expect("fleet").request();
+    assert_eq!(terminal(&d, fleet, "alice"), None, "joined the preparation");
+    let vault = d.session_mut().vault_mut().expect("vault");
+    let mut alice = vault.get("alice").cloned().expect("alice");
+    alice.settings.script_assignment = None;
+    vault.upsert(alice).expect("reassign");
+    settle(&mut d, single);
+    settle(&mut d, fleet);
+    let reassigned = Some(Settlement::Completed(Completion::Skipped(
+        SkipReason::NotReady,
+    )));
+    assert_eq!(terminal(&d, single, "alice"), reassigned, "single Start");
+    assert_eq!(terminal(&d, fleet, "alice"), reassigned, "fleet Start");
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    no_later_start(&mut d, &["alice".to_owned()]);
+    assert_eq!(
+        d.session().script_state("alice"),
+        crate::scripts::ScriptRunState::Idle
+    );
+}
+
+/// Review F3 r2-1: a planned Stop on a bot whose single Start still waits
+/// on its loaded card's preparation cancels that preparation: the Stop
+/// member is done, the Start member cancelled, and nothing starts later.
+#[test]
+fn a_planned_stop_cancels_a_held_loaded_card_preparation() {
+    let (mut d, start) = preparing_start("f3-stop-preparation");
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(
+        plan_names(&d),
+        ["alice"],
+        "a preparing Start is a Stop target"
+    );
+    let stop = run_plan(&mut d);
+    assert_eq!(terminal(&d, stop, "alice"), Some(done()), "Stop");
+    assert_eq!(
+        terminal(&d, start, "alice"),
+        Some(operator_cancelled()),
+        "Start"
+    );
+    no_later_start(&mut d, &["alice".to_owned()]);
+    assert_eq!(
+        d.session().script_state("alice"),
+        crate::scripts::ScriptRunState::Idle
+    );
+}
+
 /// Review F3-4: a plan whose every target is gone at Confirm ends at once
 /// as a terminal result naming each skip; nothing waits.
 #[test]

@@ -2061,7 +2061,12 @@ impl TuiSession {
         };
         let command = plan.command();
         match self.submit_raw_with(app, command, Targets::Plan) {
-            Ok(_) => self.project_fleet_result(app),
+            Ok(_) => {
+                // A new result replaces the last one, even with the same
+                // text and no command record (two emptied plans).
+                self.shown_result = None;
+                self.project_fleet_result(app);
+            }
             Err(error) => app.error = Some(error),
         }
         app.reload_confirm = self.scripts.reload_awaiting_confirm();
