@@ -736,7 +736,7 @@ impl<Io> OperatorSession<Io> {
             Update::Durable => {
                 log_order_saved(request, &audit);
                 self.durable_order_seq = self.order_write_seq;
-                self.durable_order = self.profile_order.clone();
+                self.durable_order.assign_from(&self.profile_order);
                 Applied::Done
             }
             Update::Queued(queued) => {
@@ -747,7 +747,7 @@ impl<Io> OperatorSession<Io> {
                     effect: PrefEffect::ProfileOrder,
                     order: Some(OrderWrite {
                         seq: self.order_write_seq,
-                        order: self.profile_order.clone(),
+                        order: self.profile_order.snapshot(),
                         audit,
                     }),
                 });
@@ -759,7 +759,7 @@ impl<Io> OperatorSession<Io> {
     /// Put back the last durable saved Load order (a reorder whose write
     /// failed), reconciled with the vault.
     fn revert_profile_order(&mut self) {
-        self.profile_order = self.durable_order.clone();
+        self.profile_order.assign_from(&self.durable_order);
         self.order_reconciled_at = None;
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.reconcile_profile_order();

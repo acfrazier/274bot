@@ -88,7 +88,7 @@ impl<Io> OperatorSession<Io> {
                 )),
             );
         }
-        let before = self.profile_order.clone();
+        let before = self.profile_order.snapshot();
         let changed = match op {
             crate::profile_order::ReorderOp::Move { moving, to } => {
                 let (target, after) = match to {

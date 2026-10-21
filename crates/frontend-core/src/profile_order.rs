@@ -44,12 +44,27 @@ pub enum ReorderOp {
 }
 
 /// The saved Load order, reconciled with the vault.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// Not `Clone`: front ends read it ([`Self::names`]); the session copies it
+/// only on an operator change or a write ([`Self::snapshot`],
+/// [`Self::assign_from`]), never per frame.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ProfileOrder {
     names: Vec<String>,
 }
 
 impl ProfileOrder {
+    /// A copy, taken before a reorder or for a queued write.
+    pub(crate) fn snapshot(&self) -> Self {
+        Self {
+            names: self.names.clone(),
+        }
+    }
+
+    /// Become a copy of `other`, reusing this order's buffers.
+    pub(crate) fn assign_from(&mut self, other: &Self) {
+        self.names.clone_from(&other.names);
+    }
+
     /// The order a stored preference value holds: its string entries in
     /// order, a repeated one kept once. Anything else reads as empty.
     pub(crate) fn from_value(value: Option<&Value>) -> Self {
@@ -273,7 +288,7 @@ mod tests {
     #[test]
     fn the_audit_text_names_each_moved_profile() {
         let before = order(&["a", "b", "c"]);
-        let mut after = before.clone();
+        let mut after = before.snapshot();
         after.move_to("c", "a", false);
         assert_eq!(after.moved_from(&before), "c 3→1, a 1→2, b 2→3");
     }
