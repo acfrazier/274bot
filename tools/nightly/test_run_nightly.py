@@ -814,13 +814,15 @@ class RevisionImportTests(unittest.TestCase):
     def test_the_default_revision_is_289(self):
         out = self.import_constants({})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.split(), ["289", "local-289", "unpack-289", "-", "687190c8"])
+        suffix = "-mac" if rn.IS_MAC else "-"
+        self.assertEqual(out.stdout.split(), ["289", "local-289", "unpack-289", suffix, "687190c8"])
 
     @unittest.skipIf(os.name == "nt", "the 274 lane is a Linux guest")
     def test_revision_274_selects_the_lane(self):
         out = self.import_constants({"NIGHTLY_REVISION": "274"})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.split(), ["274", "local-274", "unpack", "-274", "-"])
+        suffix = "-274-mac" if rn.IS_MAC else "-274"
+        self.assertEqual(out.stdout.split(), ["274", "local-274", "unpack", suffix, "-"])
 
     def test_an_unknown_revision_stops_the_runner(self):
         out = self.import_constants({"NIGHTLY_REVISION": "377"})
@@ -880,6 +882,66 @@ class CellsFileTests(unittest.TestCase):
         self.assertIsNone(summary["build"]["error"])
         self.assertEqual([row["cell"] for row in summary["cells"]], ["walk"])
         self.assertIsNone(summary["cells_file"])
+
+
+class QuestJobTests(unittest.TestCase):
+    def test_catalog_cells_are_partitioned_and_explicit_selection_is_intersected(self):
+        catalog = ["walk", "quester_path", "cook", "quester_hint"]
+        self.assertEqual(rn.select_job_cells(catalog, None, "main"), ["walk", "cook"])
+        self.assertEqual(rn.select_job_cells(catalog, None, "quest"), ["quester_path", "quester_hint"])
+        self.assertEqual(rn.select_job_cells(catalog, ["quester_hint", "walk"], "main"), ["walk"])
+        self.assertEqual(rn.select_job_cells(catalog, ["quester_hint", "walk"], "quest"), ["quester_hint"])
+
+    def test_quest_job_uses_engine_q_and_distinct_run_identity(self):
+        root = Path(tempfile.gettempdir()) / "nightly-job-defaults"
+        main = rn.job_defaults("main", False, "289", root, mac=True)
+        quest = rn.job_defaults("quest", False, "289", root, mac=True)
+        self.assertEqual((main["host"], main["game_port"], main["http_port"]), ("127.0.0.1", 44594, 1080))
+        self.assertEqual(main["run_suffix"], "-mac")
+        self.assertEqual(main["tick_ms"], None)
+        self.assertEqual((quest["host"], quest["game_port"], quest["http_port"]), ("127.0.0.1", 44694, 1180))
+        self.assertEqual(quest["profile"], "local-289q")
+        self.assertEqual(quest["run_suffix"], "-mac-quest")
+        self.assertNotEqual(main["name_prefix"], quest["name_prefix"])
+        self.assertEqual(quest["tick_ms"], 300)
+
+    def test_windows_quest_stays_on_engine_b_without_the_tick_override(self):
+        quest = rn.job_defaults("quest", True, "289", Path(tempfile.gettempdir()))
+        self.assertEqual((quest["game_port"], quest["http_port"], quest["label"]), (47594, 3080, "Engine B"))
+        self.assertEqual(quest["tick_ms"], None)
+
+    def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = (root / "home", root / "tmp", root / "evidence", "quester_path", "nq")
+            with mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": None}), \
+                    mock.patch.dict(os.environ, {"QUESTER_TICK_MS": "300"}):
+                main_env = rn.cell_env(*args)
+                lane = rn.lane_env(root / "home", root / "tmp", root / "target", {})
+            self.assertNotIn("QUESTER_TICK_MS", main_env)
+            self.assertNotIn("QUESTER_TICK_MS", lane)
+            with mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": 300}):
+                quest_env = rn.cell_env(*args)
+            self.assertEqual(quest_env["QUESTER_TICK_MS"], "300")
+
+
+class MacQuietLockTests(unittest.TestCase):
+    def test_lock_at_cell_boundary_records_reason_and_does_not_start_cell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock = root / "MAC-QUIET.lock"
+            lock.touch()
+            run_dir, work = root / "run", root / "work"
+            base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="abc123456",
+                                 platform="macos-arm64")
+            with mock.patch.object(rn, "QUIET_LOCK", lock), \
+                    mock.patch.object(rn, "_quiet_lock_reason", None), \
+                    mock.patch.object(rn, "log", lambda _message: None):
+                result = rn.run_cell("quester_path", "tui", root / "missing-tui", run_dir, work, base,
+                                     rn.time.monotonic() + 60)
+            self.assertEqual(result.result, "NOT_RUN")
+            self.assertIn("MAC-QUIET.lock", result.reason)
+            self.assertFalse(work.exists())
 
 
 if __name__ == "__main__":

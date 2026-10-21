@@ -10,9 +10,12 @@
  * the pull as a child process (posix_spawn, not exec), so this binary stays
  * the responsible process for the whole run.
  *
- * It runs one fixed command only:
+ * It runs one fixed entrypoint:
  *   /usr/bin/caffeinate -i /bin/bash $HOME/.local/lib/274bot-nightly/pull-274.sh
- * caffeinate keeps the Mac awake for the duration of the pull.
+ * That script dispatches only the explicit NIGHTLY274_ACTION selected by a
+ * committed LaunchAgent template: the existing 274 pull, the Mac nightly, or
+ * the read-only malbec mirror. The launcher remains the responsible process
+ * for the whole run.
  *
  * Build (on the Mac):
  *   clang -O2 -Wall -o ~/.local/libexec/274bot-nightly/nightly274-launch nightly274-launch.c
