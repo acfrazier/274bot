@@ -2035,7 +2035,10 @@ pub(crate) mod tests {
         let view = SnapshotView::new(Some(&snapshot), stamp);
         assert_eq!(view.walk_loc_arrived(here, tile, 1, id), arrived);
         if quest {
-            assert_eq!(super::super::supply::method_ready(view, method, true), Ok(true));
+            assert_eq!(
+                super::super::supply::method_ready(view, method, true),
+                Ok(true)
+            );
         }
         let mut fishing = FishingSurvey::default();
         let world = scene_around(tile);
@@ -2123,7 +2126,10 @@ pub(crate) mod tests {
             assert_eq!(result.outcome, allowed.outcome, "quest={quest}");
             assert!(matches!(
                 result.outcome,
-                Selection::Exhausted { wait_until: 200, absent: 0 }
+                Selection::Exhausted {
+                    wait_until: 200,
+                    absent: 0
+                }
             ));
         }
     }
@@ -2143,21 +2149,33 @@ pub(crate) mod tests {
     #[test]
     fn danger_without_navigation_waits_for_avoided_tree_in_operating_range() {
         let result = danger_tree_selection_case(None, true, PlacementClass::Avoided, false);
-        assert_eq!(result.outcome, Selection::Exhausted { wait_until: 81, absent: 0 });
+        assert_eq!(
+            result.outcome,
+            Selection::Exhausted {
+                wait_until: 81,
+                absent: 0
+            }
+        );
     }
 
     #[test]
     fn danger_non_live_tree_still_requires_permission_when_not_arrived_or_denied() {
         for quest in [false, true] {
             let distant = danger_tree_selection_case(None, false, PlacementClass::Depleted, quest);
-            assert_eq!(distant.outcome, Selection::Danger(DangerFailure::Unavailable));
+            assert_eq!(
+                distant.outcome,
+                Selection::Danger(DangerFailure::Unavailable)
+            );
             let denied = danger_tree_selection_case(
                 Some(&DenyDanger),
                 true,
                 PlacementClass::Depleted,
                 quest,
             );
-            assert!(matches!(denied.outcome, Selection::Danger(DangerFailure::Denied { .. })));
+            assert!(matches!(
+                denied.outcome,
+                Selection::Danger(DangerFailure::Denied { .. })
+            ));
         }
     }
 

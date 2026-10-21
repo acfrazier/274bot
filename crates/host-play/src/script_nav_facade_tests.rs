@@ -381,11 +381,11 @@ fn tree_snapshot(
     for local_x in 0..WIDTH {
         for local_z in 0..HEIGHT {
             collision_flags.push(
-                i32::try_from(
-                    world
-                        .collision
-                        .walkable_word(base_x + local_x, base_z + local_z, target.level),
-                )
+                i32::try_from(world.collision.walkable_word(
+                    base_x + local_x,
+                    base_z + local_z,
+                    target.level,
+                ))
                 .unwrap_or(CollisionFlag::SQ_BLOCKED),
             );
         }
@@ -707,14 +707,8 @@ fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
                     radius,
                     arrival,
                 );
-                let selector = selection_goal_tiles(
-                    &world,
-                    Some(&unmodeled),
-                    target,
-                    None,
-                    radius,
-                    arrival,
-                );
+                let selector =
+                    selection_goal_tiles(&world, Some(&unmodeled), target, None, radius, arrival);
                 assert_eq!(
                     router, selector,
                     "plain tree tile {target:?} r={radius} arrival={arrival:?}"

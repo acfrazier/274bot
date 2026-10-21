@@ -107,10 +107,8 @@ pub(crate) enum GathererVerdict {
     Fail(String),
 }
 
-static GATHERER_FLEET: LazyLock<Mutex<Option<GathererFleet>>> =
-    LazyLock::new(|| Mutex::new(None));
+static GATHERER_FLEET: LazyLock<Mutex<Option<GathererFleet>>> = LazyLock::new(|| Mutex::new(None));
 static GATHERER_ENABLED: AtomicBool = AtomicBool::new(false);
-
 
 #[derive(Default)]
 struct Slot {
@@ -215,11 +213,7 @@ pub(crate) fn gatherer_script_error(name: &str, error: &str) {
     }
 }
 
-pub(crate) fn gatherer_native_status(
-    name: &str,
-    state: RunState,
-    status: Option<&ScriptStatus>,
-) {
+pub(crate) fn gatherer_native_status(name: &str, state: RunState, status: Option<&ScriptStatus>) {
     let mut all = GATHERER_FLEET.lock().unwrap();
     let Some(fleet) = all.as_mut() else { return };
     let budget_ticks = fleet.budget_ticks;
@@ -297,9 +291,8 @@ fn status_integer(status: &ScriptStatus, key: &str) -> Option<i64> {
 }
 
 fn in_gatherer_window(start_tick: Option<u64>, tick: u64, budget_ticks: u32) -> bool {
-    start_tick.is_some_and(|start| {
-        tick > start && tick <= start.saturating_add(u64::from(budget_ticks))
-    })
+    start_tick
+        .is_some_and(|start| tick > start && tick <= start.saturating_add(u64::from(budget_ticks)))
 }
 
 fn current_tile(c: &client::client::Client) -> Option<WorldTile> {
@@ -398,9 +391,12 @@ fn build_gatherer_geometry(
         else {
             continue;
         };
-        let Some(approach) =
-            api::query::loc_approach::LocApproach::from_loc_def(loc.width, loc.length, 0, loc.forceapproach)
-        else {
+        let Some(approach) = api::query::loc_approach::LocApproach::from_loc_def(
+            loc.width,
+            loc.length,
+            0,
+            loc.forceapproach,
+        ) else {
             continue;
         };
         if u16::from(approach.width) != spot.width || u16::from(approach.length) != spot.length {
@@ -408,14 +404,8 @@ fn build_gatherer_geometry(
         }
         let min_x = spot.origin.x.saturating_sub(1);
         let min_z = spot.origin.z.saturating_sub(1);
-        let max_x = spot
-            .origin
-            .x
-            .saturating_add(i32::from(approach.width));
-        let max_z = spot
-            .origin
-            .z
-            .saturating_add(i32::from(approach.length));
+        let max_x = spot.origin.x.saturating_add(i32::from(approach.width));
+        let max_z = spot.origin.z.saturating_add(i32::from(approach.length));
         let mut safe_stands = Vec::new();
         for x in min_x..=max_x {
             for z in min_z..=max_z {
@@ -467,17 +457,17 @@ fn sample_position(
     let (Some(world), Some(zone_filter), Some(zone_table)) = (
         geometry.world.as_ref(),
         geometry.filter.as_ref(),
-        geometry.world.as_ref().and_then(|world| world.graph.zones.as_ref()),
+        geometry
+            .world
+            .as_ref()
+            .and_then(|world| world.graph.zones.as_ref()),
     ) else {
         return SampledPosition::Missing;
     };
     let Some(filter) = zone_filter.view(zone_table) else {
         return SampledPosition::Missing;
     };
-    match filter
-        .blocking_at(&world.graph.wilderness, tile)
-        .next()
-    {
+    match filter.blocking_at(&world.graph.wilderness, tile).next() {
         Some(zone) => SampledPosition::Denied(DeniedSample { tick, tile, zone }),
         None => SampledPosition::Allowed,
     }
@@ -501,12 +491,9 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
     let should_sample = new_tick && bot.start_tick.is_some_and(|start| tick > start);
     let combat = combat.filter(|level| *level > 0);
     let anchor = bot.anchor;
-    if let (Some(anchor), Some(combat), Some(_), Some(_)) = (
-        anchor,
-        combat,
-        fleet.world.as_ref(),
-        fleet.catalog.as_ref(),
-    ) {
+    if let (Some(anchor), Some(combat), Some(_), Some(_)) =
+        (anchor, combat, fleet.world.as_ref(), fleet.catalog.as_ref())
+    {
         if !fleet.geometries.contains_key(&combat) {
             let geometry = build_gatherer_geometry(c, fleet, anchor, combat);
             fleet.geometries.insert(combat, geometry);
@@ -630,9 +617,7 @@ pub(crate) fn gatherer_requests(name: &str, reqs: &[script::shim::InteractReq]) 
     let Some(bot) = fleet.bots.get_mut(name) else {
         return;
     };
-    bot.pending_chop = bot
-        .last_tick
-        .and_then(|tick| pending_chop(reqs, tick));
+    bot.pending_chop = bot.last_tick.and_then(|tick| pending_chop(reqs, tick));
 }
 
 pub(crate) fn gatherer_sent(name: &str, wrote: bool) {
@@ -680,9 +665,7 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
     if fleet.names.len() < 2 {
         return GathererVerdict::Fail("gatherer_fleet_requires_multiple_bots".to_owned());
     }
-    let (Some(anchor), Some(anchor_owner)) =
-        (fleet.anchor, fleet.anchor_owner.as_deref())
-    else {
+    let (Some(anchor), Some(anchor_owner)) = (fleet.anchor, fleet.anchor_owner.as_deref()) else {
         return GathererVerdict::Pending;
     };
     let mut xp_delta = 0i64;
@@ -1133,7 +1116,12 @@ mod tests {
                 tree(1278, 3103, 3222, &[(3102, 3222), (3104, 3224)]),
                 tree(1276, 3107, 3229, &[(3107, 3228), (3108, 3228)]),
                 tree(1276, 3111, 3226, &[(3110, 3226), (3110, 3227)]),
-                tree(1276, 3105, 3228, &[(3104, 3228), (3105, 3227), (3107, 3228)]),
+                tree(
+                    1276,
+                    3105,
+                    3228,
+                    &[(3104, 3228), (3105, 3227), (3107, 3228)],
+                ),
             ],
             candidate_placements: 4,
             excluded_placements: 0,
@@ -1333,8 +1321,7 @@ mod tests {
         assert!(failure(&native_failure).starts_with("gatherer_native_failure:"));
 
         let mut blocked = r2_fleet();
-        blocked.bots.get_mut("gm1d8f7qgp_0").unwrap().final_phase =
-            Some(NativePhase::Blocked);
+        blocked.bots.get_mut("gm1d8f7qgp_0").unwrap().final_phase = Some(NativePhase::Blocked);
         assert!(failure(&blocked).starts_with("gatherer_final_blocked:"));
     }
 
