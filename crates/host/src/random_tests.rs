@@ -220,6 +220,7 @@ fn plant_ground_obj(c: &mut Client, x: i32, z: i32, obj_id: i32, name: Option<&s
 fn snap_at(c: &mut Client) -> GameSnapshot {
     c.gens.npc = 1;
     c.gens.player = 1;
+    c.gens.player_info = 1;
     c.gens.scene = 1;
     let mut snap = GameSnapshot::new();
     snap.rebuild(c);
@@ -233,6 +234,7 @@ fn snap_at(c: &mut Client) -> GameSnapshot {
 fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
     c.gens.npc = c.gens.npc.wrapping_add(1);
     c.gens.player = c.gens.player.wrapping_add(1);
+    c.gens.player_info = c.gens.player_info.wrapping_add(1);
     c.gens.scene = c.gens.scene.wrapping_add(1);
     c.gens.iface = c.gens.iface.wrapping_add(1);
     c.gens.chat = c.gens.chat.wrapping_add(1);
@@ -424,6 +426,7 @@ fn evade_survives_expired_hit_without_player_generation_advance() {
     let mut snap = GameSnapshot::new();
     c.gens.npc = 1;
     c.gens.player = 1;
+    c.gens.player_info = 1;
     c.gens.scene = 1;
     snap.rebuild(&c);
     assert!(snap.taking_damage());
