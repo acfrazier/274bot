@@ -218,6 +218,7 @@ impl AcquireRun {
                     let handle = tick.actions.begin::<Walk>(
                         WalkRequest {
                             target,
+                            candidate_goals: None,
                             loc_id: None,
                             radius: 0,
                             arrival: nav::contract::ArrivalKind::Reach,
