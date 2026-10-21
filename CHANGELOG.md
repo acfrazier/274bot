@@ -67,6 +67,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   This applies to the initial approach and the return after banking. It fixes
   the Catherby failure from the Fishing Guild when the preferred stand is on
   the Water Obelisk island. A bot already on that island can still use it.
+- The Gatherer applies the card's danger permission before choosing a
+  resource. It skips resources with no access tile outside a denied danger
+  zone, including trees beside the Draynor jail. A safe access tile keeps a
+  resource eligible. If none remain, the failure names the danger zone.
 
 ### Navigation checks
 

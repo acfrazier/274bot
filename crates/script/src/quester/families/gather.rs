@@ -424,6 +424,9 @@ impl StepRun for Run {
             },
             snapshot,
         );
+        if let crate::gatherer::select::Selection::Danger(failure) = selected.outcome {
+            return Poll::Ready(Err(ActionError::Unavailable(failure.to_string().into())));
+        }
         // This is an authored local resource step, not Gatherer's site/Auto
         // survey. Never widen the area or circle unloaded placements.
         let Some(target) = selected
