@@ -2024,6 +2024,7 @@ fn interact_false_is_failure_not_success() {
         waiting: None,
         settle_duration: Duration::from_secs(20),
         walk: None,
+        wall_fallback_tile: None,
         reach: Some(handle),
         default_dialogue: true,
         dialogue_options: None,
@@ -6003,6 +6004,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         deadline: None,
         settle_duration: Duration::from_secs(20),
         walk: None,
+        wall_fallback_tile: None,
         interaction: None,
         accepted: false,
         round_before: None,
@@ -6831,7 +6833,7 @@ fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
 }
 
 #[test]
-fn anchored_use_on_wall_walk_uses_the_network_side() {
+fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
     compile_context_test(|cx| {
         let wall_tile = tile(3167, 3308);
         let network = tile(wall_tile.x + 3, wall_tile.z);
@@ -6871,6 +6873,148 @@ fn anchored_use_on_wall_walk_uses_the_network_side() {
                     && request.radius == 0
                     && request.loc_id.is_none()
         ));
+        post_user_input_walk_receipt(&mut ledger, 3);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::Blocked;
+            receipt.detail = Some(Arc::from("native walk route failed: no route"));
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile
+                    && request.radius == 1
+                    && request.loc_id.is_none()
+        ));
+
+        post_user_input_walk_receipt(&mut ledger, 4);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::RouteEnded;
+            receipt.detail = Some(Arc::from("native walk route failed: no route"));
+        }
+        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |step| run.poll(step))
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "native walk route failed: no route"
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+                .count(),
+            1,
+            "only the fallback walk remains active"
+        );
+        assert!(!ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Interaction(_))));
+    });
+}
+
+#[test]
+fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
+    compile_context_test(|cx| {
+        let wall_tile = tile(3167, 3308);
+        let network = tile(wall_tile.x + 3, wall_tile.z);
+        let rendered = tile(wall_tile.x - 3, wall_tile.z);
+        let (mut snapshot, mut wall, _) = use_on_footprint_fixture(cx, network);
+        wall.id = resolve_loc(cx, "death_harold_door").unwrap();
+        wall.actions = vec![Some("Open".into())];
+        wall.layer = LocLayer::Wall;
+        wall.shape = 0;
+        wall.angle = 2;
+        wall.distance = 3;
+        snapshot.seed_local_player(local_player_with_network(rendered, network));
+        snapshot.seed_locs(vec![wall]);
+        let plan = compile_interact(
+            test_args::<InteractArgs>(serde_json::json!({
+                "target": {"loc": "death_harold_door"},
+                "op": "Open",
+                "anchor": {"tile": [3166, 3308, 0], "source": "network tile fixture"},
+                "radius": 6
+            })),
+            cx,
+        )
+        .unwrap();
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |step| plan.begin(step).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == tile(wall_tile.x + 1, wall_tile.z)
+                    && request.radius == 0
+                    && request.loc_id.is_none()
+        ));
+
+        post_user_input_walk_receipt(&mut ledger, 3);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::Failed;
+            receipt.detail = Some(Arc::from("native walk route failed: no path"));
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|entry| &entry.effect),
+            Some(HostEffect::Walk(request))
+                if request.target == wall_tile
+                    && request.radius == 1
+                    && request.loc_id.is_none()
+        ));
+
+        post_user_input_walk_receipt(&mut ledger, 4);
+        {
+            let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
+            receipt.end = WalkEnd::Failed;
+            receipt.detail = Some(Arc::from("native walk route failed: no path"));
+        }
+        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |step| run.poll(step))
+        });
+        assert!(matches!(
+            result,
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "native walk route failed: no path"
+        ));
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|entry| matches!(&entry.effect, HostEffect::Walk(_)))
+                .count(),
+            1,
+            "only the fallback walk remains active"
+        );
+        assert!(!ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|entry| matches!(&entry.effect, HostEffect::Interaction(_))));
     });
 }
 
@@ -7462,6 +7606,10 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
         let request = reach::loc_walk_request(wall, here, stamp);
         (request.target, request.radius, request.loc_id)
     };
+    let fallback_tile = |wall: &LocView, here: Option<WorldTile>| {
+        let request = reach::loc_walk_request(wall, here, stamp);
+        reach::loc_wall_fallback_tile(wall, &request)
+    };
     // angle, facing tile, far facing-side tile, far loc-side tile, wall-line tile
     for (angle, facing, far_facing, far_own, along) in [
         (0, tile(9, 10), tile(4, 13), tile(16, 7), tile(10, 15)),
@@ -7476,12 +7624,22 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
                 (facing, 0, None),
                 "angle {angle} from {here:?}"
             );
+            assert_eq!(
+                fallback_tile(&door, here),
+                Some(origin),
+                "angle {angle} from {here:?} can retry from the wall tile"
+            );
         }
         for here in [far_own, along, origin] {
             assert_eq!(
                 walk(&door, Some(here)),
                 (origin, 1, None),
                 "angle {angle} from {here:?}"
+            );
+            assert_eq!(
+                fallback_tile(&door, Some(here)),
+                None,
+                "angle {angle} from {here:?} is not a facing-side request"
             );
         }
     }
@@ -7490,6 +7648,12 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
             walk(&wall(shape, 2), Some(tile(16, 10))),
             (origin, 1, None),
             "shape {shape} has no single facing side"
+        );
+        let non_straight = wall(shape, 2);
+        assert_eq!(
+            fallback_tile(&non_straight, Some(tile(16, 10))),
+            None,
+            "shape {shape} has no facing-side fallback"
         );
     }
     let mut footprint = wall(10, 0);
@@ -7502,6 +7666,39 @@ fn loc_walk_request_picks_the_wall_side_by_half_plane_for_every_angle() {
         walk(&footprint, Some(tile(16, 10))),
         (origin, 1, Some(footprint.id))
     );
+    assert_eq!(
+        fallback_tile(&footprint, Some(tile(16, 10))),
+        None,
+        "footprints do not use the wall fallback"
+    );
+}
+
+#[test]
+fn loc_wall_fallback_requires_native_route_failure_detail() {
+    for end in [WalkEnd::RouteEnded, WalkEnd::Blocked, WalkEnd::Failed] {
+        let receipt = mapped_walk_receipt(
+            end,
+            Some(Arc::from("prefix: native walk route failed: no path")),
+        );
+        assert!(reach::loc_wall_route_failed(&receipt));
+    }
+
+    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::RouteEnded,
+        None,
+    )));
+    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::Blocked,
+        Some(Arc::from("a different native walk failure")),
+    )));
+    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::Failed,
+        Some(Arc::from("a different native walk failure")),
+    )));
+    assert!(!reach::loc_wall_route_failed(&mapped_walk_receipt(
+        WalkEnd::Arrived,
+        Some(Arc::from("native walk route failed: no path")),
+    )));
 }
 
 /// Runs one acquisition the way the runner does (begin, then poll on the

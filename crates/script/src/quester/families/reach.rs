@@ -2,7 +2,8 @@
 //! Closed barriers open once; already-open passages use the shared native walk.
 
 use crate::native::{
-    defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest,
+    defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt,
+    WalkRequest,
 };
 use crate::reach_route as route;
 use crate::shim::InteractReq;
@@ -1143,6 +1144,30 @@ pub fn loc_walk_request(
         Some(stand) if on_facing_side(stand) => walk_request(stand, 0, None, required_after),
         _ => walk_request(loc.tile, 1, None, required_after),
     }
+}
+
+/// A straight-wall approach that targets its facing tile may retry from the
+/// wall tile, once, if the native route planner explicitly reports no route.
+pub(super) fn loc_wall_fallback_tile(
+    loc: &api::snapshot::LocView,
+    initial: &WalkRequest,
+) -> Option<WorldTile> {
+    (loc.layer == api::snapshot::LocLayer::Wall
+        && loc_walk_id(loc).is_none()
+        && initial.radius == 0
+        && initial.loc_id.is_none()
+        && initial.target != loc.tile)
+        .then_some(loc.tile)
+}
+
+pub(super) fn loc_wall_route_failed(receipt: &WalkReceipt) -> bool {
+    matches!(
+        receipt.end,
+        WalkEnd::RouteEnded | WalkEnd::Blocked | WalkEnd::Failed
+    ) && receipt
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("native walk route failed:"))
 }
 
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
