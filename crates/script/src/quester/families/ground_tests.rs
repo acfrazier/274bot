@@ -648,6 +648,41 @@ fn selected_ids_use_route_steps_instead_of_air_distance() {
 }
 
 #[test]
+fn selected_id_exclusions_cover_the_last_bit_and_reject_oversized_selections() {
+    let here = tile(3216, 3216);
+    let reach = flood(here, &[]);
+    let ids: Vec<_> = (1959..1992).collect();
+    for (length, index, excluded, eligible) in [
+        (32, 31, 0, true),
+        (32, 31, 1u32 << 31, false),
+        (33, 0, 0, false),
+        (33, 32, 0, false),
+    ] {
+        let posted = snapshot(here, vec![row(ids[index], here, here)]);
+        let mut ledger = None;
+        with_tick_reach(&posted, &reach, &mut ledger, 1, |tick| {
+            assert_eq!(
+                choose_ground(
+                    &tick.cx,
+                    GroundIds::Selected {
+                        ids: &ids[..length],
+                        excluded,
+                        failures: None,
+                    },
+                    None,
+                    WorkArea::at_start(here, 16),
+                    &Avoid::default(),
+                )
+                .reachable()
+                .is_some(),
+                eligible,
+                "length={length} index={index}",
+            );
+        });
+    }
+}
+
+#[test]
 fn borrowed_empty_and_crowded_ground_scans_allocate_nothing() {
     let here = tile(3216, 3216);
     let reach = flood(here, &[]);
