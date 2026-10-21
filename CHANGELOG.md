@@ -68,10 +68,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 #### Gatherer
 
-- Fixed: the Gatherer now picks up the exact axe or pickaxe head that flew
-  off, even when another head is nearby. It waits for the head using game
-  ticks, then goes to the bank if the head is gone or its 200-tick lifetime
-  ends, instead of giving up after a wall-clock timeout.
+- Fixed: the Gatherer now searches for a flown-off head from the event tile.
+  When adjacent inventory snapshots identify one removed tool, it selects
+  that tool's exact head. Otherwise, it selects only a newly appeared head
+  of the same kind. It waits three observed game ticks for a delayed head.
+  It still refits the tool after pickup. It returns to the bank if no head
+  appears in that time, if one later tick confirms a missing head, or after
+  the ground head's 200-tick lifetime. A full pack with nothing to drop
+  returns to the bank at once.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
