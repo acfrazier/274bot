@@ -14,7 +14,8 @@
 //! boundary, not this owner, decides that).
 
 use api::identity::{Cancellation, RequestId, SessionKey, Settlement};
-use api::lifecycle::{Intent, WorldChoice};
+use api::lifecycle::{Intent, ParkReason, WorldChoice};
+use host_play::LoginLatchReason;
 
 use super::commands::Applied;
 use crate::command::{CommandFailure, Completion, FailureKind, Rejection, SkipReason, Subject};
@@ -336,12 +337,21 @@ impl<Io> OperatorSession<Io> {
                 ),
             )
         } else if !arm.login_wanted() && arm.session_key().is_none_or(|key| Some(key) == previous) {
-            // No login is owed and no new session began: a Log out took
-            // the slot before it reconnected. (A new session that is not
-            // ready yet owes no login either; it settles above once ready.)
+            // No login is owed and no new session began. A Log out this
+            // core posted settled the member when it was posted, so what
+            // withdrew the login here is the slot's own latch: name it, as
+            // the book does (`CommandBook::withdrawn_words`), or say only
+            // "cancelled" when the slot names no cause. (A new session that
+            // is not ready yet owes no login either; it settles above once
+            // ready.)
+            let latch = arm.login_latch_reason().map(|reason| match reason {
+                LoginLatchReason::OperatorLogout => ParkReason::OperatorLogout,
+                LoginLatchReason::PersistedLogout => ParkReason::PersistedLogout,
+                LoginLatchReason::RepeatedUnexpectedLogouts { .. } => ParkReason::RepeatGuard,
+            });
             (
                 Settlement::Cancelled(Cancellation::Superseded),
-                Some("logged out before it reconnected".to_owned()),
+                crate::command::CommandBook::withdrawn_words(latch).map(str::to_owned),
             )
         } else {
             return true;
