@@ -667,8 +667,8 @@ impl AcquireShopScript {
             "cell": self.kind.name(),
             "vendor_input": self.kind.vendor_name(),
             "needs": [
-                {"item_id": self.fixture.harpoon.id, "name": self.fixture.harpoon.name, "target": HARPOON_TARGET, "minimum": HARPOON_TARGET, "sources": ["PACK", "SHOP"]},
-                {"item_id": self.fixture.feather.id, "name": self.fixture.feather.name, "target": FEATHER_TARGET, "minimum": FEATHER_TARGET, "sources": ["PACK", "SHOP"]},
+                {"item_id": self.fixture.harpoon.id, "name": self.fixture.harpoon.name.as_ref(), "target": HARPOON_TARGET, "minimum": HARPOON_TARGET, "sources": ["PACK", "SHOP"]},
+                {"item_id": self.fixture.feather.id, "name": self.fixture.feather.name.as_ref(), "target": FEATHER_TARGET, "minimum": FEATHER_TARGET, "sources": ["PACK", "SHOP"]},
             ],
             "coin_policy": {"sources": ["PACK"], "seeded_coins": SEED_COINS},
             "membership_gate": members,
@@ -749,7 +749,9 @@ fn debug_field<'a>(debug: &'a str, field: &str) -> Option<&'a str> {
     let marker = format!("{field}: ");
     let start = debug.find(&marker)?.checked_add(marker.len())?;
     let rest = &debug[start..];
-    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    let end = rest
+        .find(|character| matches!(character, ',' | '}'))
+        .unwrap_or(rest.len());
     Some(rest[..end].trim())
 }
 
@@ -931,18 +933,19 @@ fn trade_records(
         let keeper = type_id
             .and_then(|id| keepers.rows().iter().find(|row| i64::from(row.keeper.keeper_id) == id));
         let config = keeper.map(|row| row.keeper.keeper_config);
-        let allowed_type = match (following_item, members) {
-            (Some(id), Some(members)) if id == i64::from(fixture.harpoon.id) => keepers
-                .candidates_for(data, fixture.harpoon.id, members)
+        let requested_item = match following_item {
+            Some(id) if id == i64::from(fixture.harpoon.id) => Some(fixture.harpoon.id),
+            Some(id) if id == i64::from(fixture.feather.id) => Some(fixture.feather.id),
+            _ => None,
+        };
+        let allowed_type = match (requested_item, members, type_id) {
+            (Some(item_id), Some(members), Some(type_id)) => keepers
+                .candidates_for(data, item_id, members)
                 .any(|candidate| {
-                    i64::from(keepers.rows()[usize::from(candidate.index)].keeper.keeper_id)
-                        == type_id.unwrap_or_default()
-                }),
-            (Some(id), Some(members)) if id == i64::from(fixture.feather.id) => keepers
-                .candidates_for(data, fixture.feather.id, members)
-                .any(|candidate| {
-                    i64::from(keepers.rows()[usize::from(candidate.index)].keeper.keeper_id)
-                        == type_id.unwrap_or_default()
+                    keepers
+                        .rows()
+                        .get(usize::from(candidate.index))
+                        .is_some_and(|row| i64::from(row.keeper.keeper_id) == type_id)
                 }),
             _ => false,
         };
@@ -1358,6 +1361,12 @@ fn run_cell(kind: CellKind) {
     );
     let (close, mut close_failures) = close_analysis(&actions, &shop_frames, baseline_closes);
     let mut failures = Vec::new();
+    if !capture_json["start_baseline"].is_object() {
+        failures.push("generic action capture has no StartScript baseline".into());
+    }
+    if let Some(reason) = capture_json["invalid_reason"].as_str() {
+        failures.push(format!("generic action capture was invalid: {reason}"));
+    }
     if all_shop_buttons != buttons.len() {
         failures.push(format!(
             "captured {} ShopButton actions but parsed {} buy buttons",
@@ -1406,7 +1415,7 @@ fn run_cell(kind: CellKind) {
             i64::from(FEATHER_TARGET - SEED_FEATHERS),
         ),
     ];
-    if sent_buttons != expected_buttons {
+    if sent_buttons.as_slice() != expected_buttons.as_slice() {
         failures.push(format!(
             "sent button sequence {sent_buttons:?} did not match {expected_buttons:?}"
         ));
@@ -1446,6 +1455,7 @@ fn run_cell(kind: CellKind) {
         "acquire_outcome": native_outcome,
         "trade_npcs": trades,
         "buttons": buttons,
+        "action_capture_invalid_reason": capture_json["invalid_reason"],
         "all_shop_button_actions": all_shop_buttons,
         "expected_button_sequence": expected_buttons,
         "button_reconciliations": reconciled,
