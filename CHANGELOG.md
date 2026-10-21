@@ -71,18 +71,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   and unmark the shown rows, and both mark the shown rows by status. In
   the TUI, mark profiles that are not loaded before logging them in.
 - The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
-  **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
-  **Start all** / **Stop all** until the combined fleet toolbar.
+  **Stop fleet** (`E`) and run the fleet action.
 - Switch a bot's world: click its world marker on a MultiBox tile, Grid
   cell or Fleet row and pick a public world, or press `W` on a TUI fleet
-  row. To move several bots, mark them and choose **Switch world…** in the
-  Fleet window's Marks menu or **Switch world of marked…** in the TUI
+  row. To move several bots, mark them and press **Switch world** in the
+  fleet toolbar or choose **Switch world of marked…** in the TUI
   palette. Fleet asks first and names the bots. Each bot saves its new
   world, logs out and logs back in through the login queue; a running
   script continues after it reconnects, and a paused script stays paused.
   A bot that is queued, logging in, not logged in or already on that world
   is skipped with the reason, and a bot whose world could not be saved
-  stays logged in. A server with one world offers no switch.
+  stays logged in. A server with one world offers no switch. An action
+  that a later command takes over (Log in, Log out, Relog now, another
+  Switch world, Remove) reads "cancelled" in the result and names that
+  command.
+- Panel: the MultiBox rail now contains the Fleet card picker, marks,
+  filter, sort and all Fleet actions: Start, Stop, Assign, Assign &
+  restart, Log in, Log out, Walk, Switch world and Copy settings to. The
+  Fleet window keeps its table and shows the same state; clicking a bot's
+  name there focuses it. Grid and single-bot layouts show the actions in
+  the side panel's **fleet** section. The rail's Login all, Logout all,
+  Start all and Stop all buttons are gone: with nothing marked, the fleet
+  buttons act on every loaded bot shown, after asking first.
+- Panel: fold the Fleet toolbar to leave more room for bot previews.
+  Pending questions and action results remain visible, and the bot
+  previews scroll under the toolbar.
+- TUI: the fleet header shows the active card and order. Use `c` to choose
+  a card, `s` to change sort, `a` / `A` to mark or unmark shown rows, and
+  `W` to choose a world; a click on the header's card or sort does the
+  same. The palette offers the same Fleet actions.
+- Walk with nothing marked (the fleet toolbar's Walk, WalkTo's **Group**
+  and the TUI Map's `g`) marks only the loaded bots the filter shows, and
+  of those only the bots that can walk. A bot the filter hides is not
+  added.
 - Copy settings to more than 64 bots now saves every bot. The copy saves a
   few dozen bots at a time and the rest wait their turn; Starts wait until
   the last bot is saved. Cancel stops the bots that are still waiting.

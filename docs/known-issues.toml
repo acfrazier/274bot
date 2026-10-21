@@ -143,15 +143,3 @@ listed = "0.2.5"
 target = "0.2.6"
 severity = "medium"
 owner = "event-driven runtime endpoint"
-
-[[item]]
-id = "fleet-combined-toolbar-planned"
-kind = "not-in-release"
-area = "Fleet"
-text = """The combined fleet toolbar (one toolbar in the rail, the Fleet window
-  and the strip) is planned for 0.2.6."""
-first = "0.2.4"
-listed = "0.2.5"
-target = "0.2.6"
-severity = "low"
-owner = "fleet/rail"

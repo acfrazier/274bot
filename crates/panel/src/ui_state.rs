@@ -89,6 +89,10 @@ pub struct PanelUiState {
     /// (see `fleet_columns`).
     #[serde(default)]
     pub fleet_columns: HashMap<String, bool>,
+    /// The fleet toolbar is open (not folded to its header) in the rail and
+    /// the strip's fleet section. Absent = open. Apart from the tile folds.
+    #[serde(default = "default_true")]
+    pub fleet_toolbar_open: bool,
     /// Debug command recents and favorites. Argument buffers stay ephemeral
     /// because the selected content pin may change command shapes.
     #[serde(default)]
@@ -99,6 +103,7 @@ pub struct PanelUiState {
 /// [`PanelUiState::show_parameters_rail`]).
 pub const PANEL_SECTION_IDS: &[&str] = &[
     "status",
+    "fleet",
     "resource",
     "profile",
     "script",
@@ -159,6 +164,7 @@ impl Default for PanelUiState {
             map_bake: frontend_core::MapBakeChoice::Ask,
             session_log_file: false,
             fleet_columns: HashMap::new(),
+            fleet_toolbar_open: true,
             debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
         }
     }
