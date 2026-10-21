@@ -28,6 +28,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - A capture frame that fills the input queue is reported, instead of
   dropping events silently.
 
+### Random events
+
+- The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
+- Shared axe and pick swing messages no longer start recovery.
+
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and

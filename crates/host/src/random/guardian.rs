@@ -237,7 +237,7 @@ pub struct Guardian {
     tool_handle_base: Option<String>,
     /// Last pre-event tool inventory, ground heads, and player tile.
     tool_baseline: LostToolBaseline,
-    /// First observed tool-loss evidence, if its handle update is delayed.
+    /// First loss evidence from a removed tool or a handle update.
     tool_onset: Option<LostToolOnset>,
     /// The current content-bounded recovery target, if the event is owned.
     tool_recovery: Option<LostToolRecovery>,
@@ -412,7 +412,6 @@ impl Guardian {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
         let active = snap.ingame() && snap.scene_state() == SCENE_READY;
-        let mut new_lost_tool_message_kind = None;
         if active {
             self.refresh_ignored_plants(snap);
             self.revalidate_plant(snap);
@@ -477,11 +476,6 @@ impl Guardian {
                 }
                 self.acting = false;
             }
-            new_lost_tool_message_kind = snap
-                .chat_lines()
-                .iter()
-                .take_while(|line| line.sequence > self.chat_seen)
-                .find_map(|line| lost_tool_message_kind(&line.text));
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
             if self.in_flight && self.dialog_done(snap) {
@@ -557,7 +551,7 @@ impl Guardian {
                 self.tool_onset = None;
             }
             if active && self.tool_recovery.is_none() {
-                self.observe_lost_tool_onset(snap, new_lost_tool_message_kind);
+                self.observe_lost_tool_onset(snap);
             }
             if !ev
                 .as_ref()
@@ -2235,7 +2229,10 @@ impl Guardian {
         });
     }
 
-    fn observe_lost_tool_onset(&mut self, snap: &GameSnapshot, message_kind: Option<bool>) {
+    /// Ordinary woodcutting and mining also send this text.
+    /// See `woodcut.rs2:83` and `mining.rs2:71`.
+    /// A removed tool or handle must confirm loss.
+    fn observe_lost_tool_onset(&mut self, snap: &GameSnapshot) {
         if self.tool_onset.is_some() {
             return;
         }
@@ -2245,10 +2242,7 @@ impl Guardian {
             .iter()
             .chain(snap.equipment().iter())
             .find_map(|item| tool_part(item.def.name.as_deref(), "handle"));
-        let Some(kind) = message_kind
-            .or_else(|| removed.map(|(kind, _)| kind))
-            .or(handle_kind)
-        else {
+        let Some(kind) = removed.map(|(kind, _)| kind).or(handle_kind) else {
             return;
         };
         self.tool_onset = Some(LostToolOnset {
@@ -2477,16 +2471,6 @@ fn lost_tool_head_id(game_data: &SelectedGameData, tool_alias: &str, kind: bool)
         let alias = item.alias.as_deref()?.strip_prefix("macro_")?;
         (alias.strip_prefix(tier)? == part).then_some(item.id)
     })
-}
-/// Content emits these `mes` lines when the lost-tool script starts.
-/// They can precede the inventory update in the decoded snapshot
-/// (`macro_event_lost_axe.rs2:23`; `macro_event_lost_pickaxe.rs2:24`).
-fn lost_tool_message_kind(message: &str) -> Option<bool> {
-    match message.trim() {
-        "You swing your axe at the tree." => Some(false),
-        "You swing your pick at the rock." => Some(true),
-        _ => None,
-    }
 }
 
 /// One `try_move` toward `target`; false when the walk is stuck

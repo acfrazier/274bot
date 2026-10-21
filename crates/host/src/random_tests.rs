@@ -4018,7 +4018,7 @@ fn lost_tool_search_accepts_map_findsquare_origin_fallback() {
 }
 
 #[test]
-fn lost_tool_message_anchors_recovery_before_delayed_handle_update() {
+fn lost_tool_inventory_evidence_anchors_recovery_after_ordinary_swing() {
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4041,14 +4041,162 @@ fn lost_tool_message_anchors_recovery_before_delayed_handle_update() {
     tick_at(&mut c, &mut snap);
     assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
 
-    plant_ground_obj(&mut c, 13, 20, 508, Some("Axe head"));
+    plant_ground_obj(&mut c, 16, 20, 508, Some("Axe head"));
     tick_at(&mut c, &mut snap);
     let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert!(status.hold);
     assert!(
         drv.menus.iter().any(|menu| menu.2 == 508),
-        "the pre-event tile is seven tiles from the head and later snapshots are farther away"
+        "inventory evidence must anchor recovery after the shared swing message"
     );
+}
+
+#[test]
+fn hrr3_probe_ordinary_swing_message_before_event() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    // Tick S: ordinary first swing at a tree. No event.
+    c.add_chat(0, "You swing your axe at the tree.", "");
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    // S+1, S+2: chopping, a log, the tree falls, next tree.
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    // S+3: the real lost-axe event at the next tree.
+    c.add_chat(0, "You swing your axe at the tree.", "");
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    let onset = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    // S+4: the head lands one tile away (p_delay(0)).
+    plant_ground_obj(&mut c, 21, 20, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    let landed = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    eprintln!(
+        "HRR3 stale-swing: event hold={} | landed hold={} menus={:?}",
+        onset.hold,
+        landed.hold,
+        drv.menus.iter().map(|m| (m.1, m.2)).collect::<Vec<_>>()
+    );
+    assert!(onset.hold, "the event just started");
+    assert!(landed.hold, "the head landed one tick after the event");
+    assert!(drv.menus.iter().any(|m| m.2 == 508), "take the event head");
+}
+
+#[test]
+fn lost_tool_ordinary_pick_swing_message_before_event() {
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 20, 20);
+    plant_inv_named(&mut c, 1275, Some("Rune pickaxe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    c.add_chat(0, "You swing your pick at the rock.", "");
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    tick_at(&mut c, &mut snap);
+    guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+
+    c.add_chat(0, "You swing your pick at the rock.", "");
+    plant_inv_named(&mut c, 466, Some("Pickaxe handle"));
+    tick_at(&mut c, &mut snap);
+    let onset = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(
+        onset.hold,
+        "the handle, not the shared swing text, starts recovery"
+    );
+
+    plant_ground_obj(&mut c, 21, 20, 490, Some("Pickaxe head"));
+    tick_at(&mut c, &mut snap);
+    let landed = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+    assert!(landed.hold);
+    assert!(
+        drv.menus.iter().any(|menu| menu.2 == 490),
+        "take the event pickaxe head"
+    );
+}
+
+#[test]
+fn lost_tool_ordinary_swing_does_not_consume_spawn_grace() {
+    for event_delay in [1, 2] {
+        let data = event_game_data();
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 20, 20);
+        plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+
+        tick_at(&mut c, &mut snap);
+        guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        c.add_chat(0, "You swing your axe at the tree.", "");
+        tick_at(&mut c, &mut snap);
+        assert!(
+            !guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold,
+            "an ordinary swing must not start recovery"
+        );
+
+        let (event_tile, head_tile) = if event_delay == 1 {
+            ((18, 20), (27, 20))
+        } else {
+            plant_player(&mut c, "Test", 22, 20);
+            tick_at(&mut c, &mut snap);
+            assert!(!guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
+            ((20, 20), (29, 20))
+        };
+        plant_player(&mut c, "Test", event_tile.0, event_tile.1);
+        plant_inv_named(&mut c, 492, Some("Axe handle"));
+        c.add_chat(0, "You swing your axe at the tree.", "");
+        tick_at(&mut c, &mut snap);
+        let onset = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert!(
+            onset.hold,
+            "real loss evidence must start a fresh grace period"
+        );
+
+        tick_at(&mut c, &mut snap);
+        assert!(
+            guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold,
+            "wait for the content-bounded head spawn"
+        );
+        tick_at(&mut c, &mut snap);
+        assert!(
+            guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold,
+            "the event+2 spawn tick must remain inside the grace period"
+        );
+
+        plant_ground_obj(&mut c, head_tile.0, head_tile.1, 508, Some("Axe head"));
+        tick_at(&mut c, &mut snap);
+        let landed = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
+        assert!(
+            landed.hold,
+            "a delayed event head must keep the event owned"
+        );
+        assert!(
+            drv.menus.iter().any(|menu| menu.2 == 508),
+            "recovery must search from the evidence baseline tile"
+        );
+    }
 }
 
 #[test]
