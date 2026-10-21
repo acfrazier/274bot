@@ -59,13 +59,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 #### Quester
 
-- Fixed six Path errors. Demon Slayer now waits for Silverlight's delayed
-  handoff. Pirate's Treasure closes its message scroll before it reads quest
-  progress and budgets Karamja rum at 30 gp and a white apron at 2 gp. Sea
-  Slug no longer reacquires Swamp paste after Holgart takes it. Prince Ali
-  Rescue clears only nearby guards before it talks to
-  Keli. Gertrude's Cat includes the fence landing tile in its yard. Monk's
-  Friend skips the ring-stone walk after it reaches the ladder.
+- Fixed five Path errors. Demon Slayer now waits for Silverlight's delayed
+  handoff. Pirate's Treasure estimates its rum and apron at their full-stock
+  prices of 30 gp and 2 gp; its message-scroll journal read still needs S7
+  runtime journal-root handling. Sea Slug no longer reacquires Swamp paste
+  after Holgart takes it. Prince Ali Rescue clears only nearby guards before
+  talking to Keli. Gertrude's Cat includes the fence landing tile and walks
+  its yard waypoints in order. Monk's Friend skips the ring-stone walk near
+  the ladder or inside the cave.
 - Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
   fixtures may start at an explicit seeded stand such as a bank instead of
   requiring the Path's authored start anchor.
