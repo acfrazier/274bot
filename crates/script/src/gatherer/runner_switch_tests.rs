@@ -1444,11 +1444,22 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
 }
 
 #[test]
-fn typed_bank_deposit_failure_keeps_the_content_reason() {
-    let (mut gatherer, _) = fixture();
-    gatherer.deposit_failure(ActionError::BankDeposit(
-        crate::bank::ops::DepositFailure::FullStack,
-    ));
+fn acquired_bank_deposit_failure_keeps_the_content_reason() {
+    let (mut gatherer, snapshot) = fixture();
+    let mut ledger = None;
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        let request = gatherer.acquire_request(Arc::from([]), None, CloseBank::Close, &tick.cx);
+        let run = AcquireRun::new(
+            request,
+            AcquirePlan::empty(),
+            &gatherer.prepared.banks,
+            &tick.cx,
+        );
+        gatherer.acquire_failure(
+            &run,
+            ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
+        );
+    });
     let failure = gatherer
         .failure
         .expect("the typed deposit failure is terminal");
