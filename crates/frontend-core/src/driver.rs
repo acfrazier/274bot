@@ -220,11 +220,14 @@ impl HeadlessDriver {
         submitted
     }
 
-    /// One headless tick: [`OperatorSession::poll`]. A queued Nav or
-    /// danger write that settled hands its durable walk view to the lent
-    /// model, as a write durable at submission does.
+    /// One headless tick, as a front end's frame: [`OperatorSession::poll`],
+    /// then the script coordinator's ([`Scripts::poll`]), which settles
+    /// Starts and their commands. A queued Nav or danger write that settled
+    /// hands its durable walk view to the lent model, as a write durable at
+    /// submission does.
     pub fn poll(&mut self) {
         self.session.poll();
+        self.models.scripts.poll(&mut self.session);
         self.models.fleet.refresh(&self.session);
         if let Some(view) = self.session.take_settled_walk_globals() {
             self.models.walk_globals = view;

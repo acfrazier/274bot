@@ -727,6 +727,9 @@ pub struct Scripts {
     catalog_import_update: Option<(PathBuf, Result<usize, String>)>,
     catalog_import_command_result: Option<Result<usize, String>>,
     start_command_failures: Vec<(String, String)>,
+    /// Queued Starts that left the queue skipped: their commands settle
+    /// on the next poll ([`Self::settle_start_command_failures`]).
+    start_command_skips: Vec<(String, String)>,
     /// The card library: catalog, loaded files, transpile cache.
     js: script::JsLibrary,
     /// Legacy global per-card overrides (`script-settings.json`), claimed
@@ -804,6 +807,7 @@ impl Scripts {
             catalog_import_command_result: None,
             catalog_fill_update: None,
             start_command_failures: Vec::new(),
+            start_command_skips: Vec::new(),
             js,
             legacy,
             inject: None,
@@ -3149,6 +3153,10 @@ impl Scripts {
         }
     }
 
+    /// Settle the Start commands of profiles whose Start failed or was
+    /// skipped without a slot terminal (setup failures, and queued Starts
+    /// that left the queue failed or skipped), so a command's report
+    /// never waits on a Start that will not happen.
     fn settle_start_command_failures<Io>(&mut self, core: &mut OperatorSession<Io>) {
         for (profile, reason) in std::mem::take(&mut self.start_command_failures) {
             let Some(commands) = self.pending_start_commands.remove(&profile) else {
@@ -3159,6 +3167,25 @@ impl Scripts {
                     command.request,
                     command.subject,
                     Settlement::Failed(CommandFailure::Failed(FailureKind::StartFailed)),
+                    Some(&reason),
+                );
+            }
+        }
+        for (profile, reason) in std::mem::take(&mut self.start_command_skips) {
+            let Some(commands) = self.pending_start_commands.remove(&profile) else {
+                continue;
+            };
+            let skip = match reason.as_str() {
+                "already active" => crate::command::SkipReason::AlreadyActive,
+                "logged out" | "disconnected" => crate::command::SkipReason::NotLoggedIn,
+                "removed" => crate::command::SkipReason::NotLoaded,
+                _ => crate::command::SkipReason::NotReady,
+            };
+            for command in commands {
+                core.settle_later(
+                    command.request,
+                    command.subject,
+                    Settlement::Completed(Completion::Skipped(skip)),
                     Some(&reason),
                 );
             }
@@ -3290,11 +3317,15 @@ impl Scripts {
     fn credit_failed(&mut self, profile: &str, error: &str) {
         self.tally_record(profile, Outcome::Failed(error.to_string()), LogTo::Slot);
         self.publish_bulk();
+        self.start_command_failures
+            .push((profile.to_string(), error.to_string()));
     }
 
     fn credit_skipped(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
         self.publish_bulk();
+        self.start_command_skips
+            .push((profile.to_string(), reason.to_string()));
     }
     /// The permit was credited, but the worker had not dispatched a script.
     fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
