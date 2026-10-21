@@ -286,6 +286,29 @@ mod tests {
         assert_eq!(model.counts().shown_unloaded(), 1);
     }
 
+    /// The unmarked scope is the loaded, shown rows: a filtered-out row, an
+    /// unloaded row and an unknown profile are outside it.
+    #[test]
+    fn the_unmarked_scope_is_the_loaded_shown_rows() {
+        let mut model = FleetModel::new();
+        model.set_universe_for_test(
+            vec![
+                FleetRow::fixture("carol", Phase::Ready, Some(3), None),
+                FleetRow::fixture("alice", Phase::Ready, Some(4), None),
+                FleetRow::for_profile("bob"),
+            ],
+            &[],
+        );
+        let id = ProfileIdentity::synthetic;
+        assert!(model.in_unmarked_scope(id("carol")));
+        assert!(model.in_unmarked_scope(id("alice")));
+        assert!(!model.in_unmarked_scope(id("bob")), "not loaded");
+        assert!(!model.in_unmarked_scope(id("dave")), "no such profile");
+        model.set_filter_for_test("w3");
+        assert!(model.in_unmarked_scope(id("carol")));
+        assert!(!model.in_unmarked_scope(id("alice")), "filtered out");
+    }
+
     #[test]
     fn remove_drops_only_that_member() {
         let mut fleet = Fleet::default();
@@ -842,6 +865,13 @@ impl FleetModel {
     /// Whether row `index` is shown.
     pub fn is_shown(&self, index: usize) -> bool {
         self.shown_flags.get(index).copied().unwrap_or(false)
+    }
+
+    /// Whether `identity` is in the scope a fleet action covers while
+    /// nothing is marked: a loaded, shown row.
+    pub fn in_unmarked_scope(&self, identity: ProfileIdentity) -> bool {
+        self.index_of(identity)
+            .is_some_and(|index| self.is_shown(index) && self.rows[index].loaded())
     }
 
     /// The shown rows with their indices, in the order.
