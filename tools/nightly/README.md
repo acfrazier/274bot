@@ -176,6 +176,7 @@ and quest jobs through `nightly-mac.sh`; it reads
 the FLOOR status file. To pin a hand run to the just-fetched `origin/dev`:
 
 ```sh
+set -e
 runner="/Volumes/dev-scratch/274bot-worktrees/nightly-mac-quest"
 git -C "$runner" fetch origin +refs/heads/dev:refs/remotes/origin/dev
 sha=$(git -C "$runner" rev-parse --verify origin/dev)
@@ -183,6 +184,7 @@ pinned="/Volumes/dev-scratch/274bot-nightly-mac/origin-dev-$sha.git"
 mkdir -p /Volumes/dev-scratch/274bot-nightly-mac
 git init --bare "$pinned"
 git -C "$runner" push "$pinned" refs/remotes/origin/dev:refs/heads/dev
+test ! -e /Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
 NIGHTLY_REPO="$pinned" NIGHTLY274_ACTION=nightly-mac \
   "$HOME/.local/libexec/274bot-nightly/nightly274-launch"
 ```
