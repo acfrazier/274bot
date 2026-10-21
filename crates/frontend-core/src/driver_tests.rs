@@ -3477,7 +3477,12 @@ fn a_switch_never_posts_to_a_slot_it_was_not_admitted_on() {
     let held = gate.lock().unwrap();
     let run = confirm_switch(&mut d);
     d.poll();
-    let restarted = host_play::SlotArm::new(1, false);
+    // The restarted slot logged in again on world 1 (a SwitchWorld posted
+    // to it would log it out).
+    let restarted = host_play::SlotArm::new(1, true);
+    restarted.configure_world_for_test(1);
+    restarted.complete_login_for_test();
+    restarted.scene_ready_for_test();
     d.session_mut()
         .play_mut_for_test()
         .expect("play")
