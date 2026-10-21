@@ -223,6 +223,46 @@ pub const FIXTURE_PROFILES: &[QuestFixtureProfile] = &[
         display: "The Knight's Sword",
         profile: TestProfile::Base40,
     },
+    QuestFixtureProfile {
+        quest: "drunkmonk",
+        display: "Monk's Friend",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "hazeelcult",
+        display: "Hazeel Cult",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "elena",
+        display: "Plague City",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "druid",
+        display: "Druidic Ritual",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "fluffs",
+        display: "Gertrude's Cat",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "junglepotion",
+        display: "Jungle Potion",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "seaslug",
+        display: "Sea Slug Quest",
+        profile: TestProfile::Base40,
+    },
+    QuestFixtureProfile {
+        quest: "totem",
+        display: "Tribal Totem",
+        profile: TestProfile::Base40,
+    },
     // Operator-mandated Base60 quests (README, Q-RESET qualification floor).
     QuestFixtureProfile {
         quest: "dragon",
