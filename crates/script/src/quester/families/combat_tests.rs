@@ -2592,9 +2592,10 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
             x,
             z,
+            id: Some(id),
             action,
             ..
-        }) if *x == stand.x && *z == stand.z && action == "Take"
+        }) if *x == stand.x && *z == stand.z && *id == item_id && action == "Take"
     ));
 }
 
@@ -2673,8 +2674,11 @@ fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
     assert_eq!(run.loot_index, 2);
     assert!(matches!(
         &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
-        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj { name: Some(name), .. })
-            if name == second.name.as_deref().unwrap()
+        crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
+            id: Some(id),
+            name: Some(name),
+            ..
+        }) if *id == second.id && name == second.name.as_deref().unwrap()
     ));
 }
 
@@ -2696,7 +2700,9 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
         level: 0,
     };
 
-    for (held_bones, expected_index, expected_tile) in [(1, 1, bones_tile), (25, 2, bead_tile)] {
+    for (held_bones, expected_index, expected_tile, expected_id) in
+        [(1, 1, bones_tile, bones.id), (25, 2, bead_tile, bead.id)]
+    {
         let mut run = combat_test_run(
             imp_target(&data),
             None,
@@ -2731,8 +2737,8 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
             crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
-                x, z, action, ..
-            }) if *x == expected_tile.x && *z == expected_tile.z && action == "Take"
+                x, z, id: Some(id), action, ..
+            }) if *x == expected_tile.x && *z == expected_tile.z && *id == expected_id && action == "Take"
         ));
     }
 }
@@ -2837,9 +2843,10 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
             x,
             z,
+            id: Some(id),
             action,
             ..
-        }) if *x == first_tile.x && *z == first_tile.z && action == "Take"
+        }) if *x == first_tile.x && *z == first_tile.z && *id == 1 && action == "Take"
     ));
 
     // The failed item click identifies the closed door; Reach's real recovery
@@ -2894,9 +2901,10 @@ fn lifecycle_followups_unreachable_loot_walk_skips_to_the_next_item() {
         crate::native::HostEffect::Interaction(crate::shim::InteractReq::Obj {
             x,
             z,
+            id: Some(id),
             action,
             ..
-        }) if *x == second_tile.x && *z == second_tile.z && action == "Take"
+        }) if *x == second_tile.x && *z == second_tile.z && *id == 2 && action == "Take"
     ));
 }
 

@@ -9,10 +9,6 @@ function locRow(x, z) {
     return (snap().locs || []).find((l) => l && l.x === x && l.z === z) || null;
 }
 
-function objRow(x, z) {
-    return (snap().ground || []).find((o) => o && o.x === x && o.z === z) || null;
-}
-
 function actionAt(row, op) {
     const operation = Number(op);
     if (!Number.isInteger(operation) || operation < 1) return null;
@@ -89,19 +85,10 @@ export const Input = proxy('Input', {
         });
         return true;
     },
-    takeObj(lx, lz, _objId, op) {
-        const row = objRow(lx, lz);
-        const action = actionAt(row, op);
-        if (!row || !action) return false;
-        queue({
-            op: 'obj',
-            x: row.x,
-            z: row.z,
-            level: row.level ?? 0,
-            name: row.name ?? null,
-            action: String(action),
-        });
-        return true;
+    takeObj(lx, lz, objId, op) {
+        return globalThis.__rs2b0t_entities_v8(
+            59 /* input.takeObj */, lx, lz, Number(objId), Number(op), queue,
+        );
     },
     heldOp(objId, _slot, _comId, op) {
         const rs = snap().inv || [];

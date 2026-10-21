@@ -1463,6 +1463,7 @@ impl ClueRuntime {
             "x": row.tile.x,
             "z": row.tile.z,
             "level": row.tile.level,
+            "id": row.id,
             "name": row.name,
             "action": TAKE,
         })

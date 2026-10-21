@@ -401,6 +401,7 @@ impl Reach {
                                 x: item.tile.x,
                                 z: item.tile.z,
                                 level: item.tile.level,
+                                id: Some(item.def.id),
                                 name: Some(obj.to_string()),
                                 action: op.to_string(),
                             },

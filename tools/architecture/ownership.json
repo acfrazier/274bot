@@ -4843,6 +4843,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/ground_selected_identity.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/herb_data.rs",
       "owner": "T2"
     },
@@ -4892,6 +4896,10 @@
     },
     {
       "path": "crates/script/tests/input_action_at.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/input_ground_identity.rs",
       "owner": "T2"
     },
     {

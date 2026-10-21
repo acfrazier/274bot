@@ -878,6 +878,7 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
             x: int(effect, "x"),
             z: int(effect, "z"),
             level: int(effect, "level"),
+            id: opt_int(effect, "id"),
             name: effect
                 .get("name")
                 .and_then(Value::as_str)

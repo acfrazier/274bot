@@ -3856,7 +3856,8 @@ fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
                 if let Some(effect) = harness.drain(None).into_single() {
                     assert!(matches!(
                         effect,
-                        HostEffect::Interaction(InteractReq::Obj { .. })
+                        HostEffect::Interaction(InteractReq::Obj { id: Some(id), .. })
+                            if id == ammo.def.id
                     ));
                     pickups += 1;
                 }

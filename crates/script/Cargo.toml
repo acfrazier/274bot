@@ -442,6 +442,14 @@ required-features = ["load"]
 name = "crypto_stub"
 required-features = ["load"]
 
+[[test]]
+name = "ground_selected_identity"
+required-features = ["load"]
+harness = false
+[[test]]
+name = "input_ground_identity"
+required-features = ["load"]
+
 [[example]]
 name = "catalog_inventory"
 required-features = ["load"]

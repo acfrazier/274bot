@@ -14,6 +14,13 @@ fn host_js_dts_is_fresh() {
 }
 
 #[test]
+fn ground_identity_request_layout_measurement() {
+    let size = std::mem::size_of::<script::shim::InteractReq>();
+    let alignment = std::mem::align_of::<script::shim::InteractReq>();
+    println!("InteractReq layout: size={size} alignment={alignment}");
+}
+
+#[test]
 fn host_js_dts_includes_required_interfaces() {
     let src = render_host_js_dts();
     assert!(src.contains("export interface FindOptions"));

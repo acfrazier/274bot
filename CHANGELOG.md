@@ -39,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Resuming an interrupted local map bake on Windows now repairs a damaged
   tile instead of failing with "Access is denied".
 
+### Scripts
+
+- Ground-item interactions keep the selected item ID through dispatch. Items
+  with the same name on one tile, such as Halloween masks, no longer substitute
+  for the selected type. Requests without an ID retain name-and-tile lookup.
+
 ### Fixed during development
 
 #### Startup and saved state
