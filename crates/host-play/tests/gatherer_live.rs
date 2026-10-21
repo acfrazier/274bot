@@ -6994,9 +6994,14 @@ fn run_cell_with_fixture(
                     slot.witness.site_initial_walk |= !returning
                         && slot.witness.status_trips == 0
                         && slot.witness.last_status_yielded == 0
-                        && text_field(&status, "phase") == Some("walking")
-                        && text_field(&status, "target").is_some_and(|target| target != "—")
-                        && anchor.is_some_and(|tile| site_nav_targets_area(nav, tile));
+                        && anchor.is_some_and(|anchor| {
+                            site_initial_nav_matches(
+                                nav,
+                                anchor,
+                                text_field(&status, "phase"),
+                                text_field(&status, "target"),
+                            )
+                        });
                     if returning
                         && anchor.is_some_and(|tile| {
                             site_return_nav_matches(
@@ -9552,6 +9557,18 @@ fn site_nav_targets_area(nav: &Value, anchor: WorldTile) -> bool {
     })
 }
 
+fn site_initial_nav_matches(
+    nav: &Value,
+    anchor: WorldTile,
+    phase: Option<&str>,
+    target: Option<&str>,
+) -> bool {
+    nav["armed"] == true
+        && phase == Some("walking")
+        && target.is_some_and(|target| target != "—")
+        && site_nav_targets_area(nav, anchor)
+}
+
 fn site_return_nav_matches(nav: &Value, anchor: WorldTile, target: &str) -> bool {
     let Some(stand) = target
         .split_once("; observation stand:")
@@ -10299,6 +10316,97 @@ mod named_site_fixture_tests {
         ] {
             nav["requested_destination"] = goal;
             assert!(!site_nav_targets_area(&nav, anchor));
+        }
+    }
+
+    fn initial_site_nav() -> Value {
+        json!({
+            "armed": true,
+            "requested": true,
+            "request_id": 2,
+            "arrival": "Area",
+            "requested_radius": 1,
+            "requested_destination": [2846, 3437, 0],
+        })
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_unloaded_resource_approach() {
+        assert!(site_initial_nav_matches(
+            &initial_site_nav(),
+            world_tile(2844, 3429),
+            Some("surveying"),
+            Some("0_44_53_rarefish"),
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_accepts_the_loaded_resource_approach() {
+        assert!(site_initial_nav_matches(
+            &initial_site_nav(),
+            world_tile(2844, 3429),
+            Some("walking"),
+            Some("0_44_53_rarefish"),
+        ));
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_non_approach_phases() {
+        for phase in [None, Some("banking"), Some("gathering"), Some("blocked")] {
+            assert!(!site_initial_nav_matches(
+                &initial_site_nav(),
+                world_tile(2844, 3429),
+                phase,
+                Some("0_44_53_rarefish"),
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_a_missing_resource_target() {
+        for phase in ["walking", "surveying"] {
+            for target in [None, Some("—")] {
+                assert!(!site_initial_nav_matches(
+                    &initial_site_nav(),
+                    world_tile(2844, 3429),
+                    Some(phase),
+                    target,
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_an_unarmed_walk() {
+        let mut nav = initial_site_nav();
+        nav["armed"] = json!(false);
+        for phase in ["walking", "surveying"] {
+            assert!(!site_initial_nav_matches(
+                &nav,
+                world_tile(2844, 3429),
+                Some(phase),
+                Some("0_44_53_rarefish"),
+            ));
+        }
+    }
+
+    #[test]
+    fn initial_site_walk_rejects_goals_outside_the_selected_site() {
+        let mut nav = initial_site_nav();
+        for goal in [
+            json!([2857, 3429, 0]),
+            json!([2846, 3437, 1]),
+            json!([2846, 3437]),
+        ] {
+            nav["requested_destination"] = goal;
+            for phase in ["walking", "surveying"] {
+                assert!(!site_initial_nav_matches(
+                    &nav,
+                    world_tile(2844, 3429),
+                    Some(phase),
+                    Some("0_44_53_rarefish"),
+                ));
+            }
         }
     }
 
