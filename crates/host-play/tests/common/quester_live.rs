@@ -2799,8 +2799,8 @@ pub struct PathCell<'a> {
     /// Selected quest-tab display (checked against the identity row).
     pub display: &'static str,
     pub label: String,
-    /// Stage key with a `progress.rules` varp hint (`squire:3`).
-    pub stage: &'a str,
+    /// Optional authored stage; `None` starts from clean quest state.
+    pub stage: Option<&'a str>,
     pub loadout: Option<scenario::quester::FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
     /// Explicit operator seeds for hint-less stages (released Cook: the stage
@@ -2823,7 +2823,7 @@ pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
             quest_display: spec.display,
             path: &path,
             selected: &selected,
-            stage: Some(spec.stage),
+            stage: spec.stage,
             loadout: spec.loadout,
             extra_items: spec.extra_items,
             seed_vars: spec.seed_vars,
