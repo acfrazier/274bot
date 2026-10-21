@@ -457,42 +457,6 @@ impl FollowRun {
                     }
                     self.transport = Some(hop);
                     return Poll::Watching;
-                } else if edge.kind == TransportKind::Door
-                    && hop
-                        .open_sent_tick
-                        .is_some_and(|sent| snapshot.tick() != sent)
-                    && door_step_pending(edge, here)
-                    && SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to)
-                {
-                    // The Open already carried the player through the
-                    // door's wall onto `at` (Tenzing's 3745
-                    // `open_and_close_door2` teleports the entering player
-                    // onto the loc tile, whose wall is on the far edge, and
-                    // swaps in an inviswall for 3 ticks, so the door never
-                    // reads open): take the clear step to `to` now instead
-                    // of sitting out the cheap budget. A step still behind
-                    // the wall is left to the open-door walk above — a walk
-                    // packet there would cancel the queued Open.
-                    hop.open_sent_tick = None;
-                    let mut ix = Interactions::new(snapshot, d);
-                    let result = ix.pending_door_step(edge.to);
-                    report_walk(options, snapshot, here, edge.to, &result);
-                    match result {
-                        SendResult::Sent { .. } => {
-                            api::host_log!(
-                                Category::NavTrace,
-                                Level::Debug,
-                                "cheap hop door step to {:?}",
-                                edge.to
-                            );
-                        }
-                        SendResult::Refused { reason, .. } => {
-                            fire_leg(options, &hop.leg, LegPhase::Failed);
-                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
-                        }
-                    }
-                    self.transport = Some(hop);
-                    return Poll::Watching;
                 } else if edge.open_loc_id.is_some()
                     && edge.kind != TransportKind::Door
                     && !npc_backed(edge)
@@ -1251,22 +1215,26 @@ impl FollowRun {
                 hop.open_sent_tick = Some(sent_tick);
                 return None;
             }
-            if door_step_pending(edge, here) {
-                if open || SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to) {
-                    let mut ix = Interactions::new(snapshot, d);
-                    let result = ix.pending_door_step(edge.to);
-                    report_walk(options, snapshot, here, edge.to, &result);
-                    return match result {
-                        SendResult::Sent { .. } => None,
-                        SendResult::Refused { reason, .. } => {
-                            fire_leg(options, &hop.leg, LegPhase::Failed);
-                            Some(TravelOutcome::Refused { at: here, reason })
-                        }
-                    };
-                }
-                // The server walked the player onto `at` before the queued
-                // Open fired, and the wall still blocks `at` → `to`: a walk
-                // packet now would cancel that Open. Probe again next poll.
+            let step_pending = door_step_pending(edge, here);
+            if step_pending
+                && (open || SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to))
+            {
+                let mut ix = Interactions::new(snapshot, d);
+                let result = ix.pending_door_step(edge.to);
+                report_walk(options, snapshot, here, edge.to, &result);
+                return match result {
+                    SendResult::Sent { .. } => None,
+                    SendResult::Refused { reason, .. } => {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        Some(TravelOutcome::Refused { at: here, reason })
+                    }
+                };
+            }
+            if step_pending {
+                // Tenzing's entering-door script teleports the player onto `at`, waits
+                // one tick, then teleports across and adds an inviswall for three ticks.
+                // If that wall still blocks `at` → `to`, a walk would cancel the queued Open.
+                // Keep its tick and probe again next poll.
                 hop.open_sent_tick = Some(sent_tick);
             }
         }
