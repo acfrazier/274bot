@@ -20111,6 +20111,7 @@ fn plant_positive_hit(c: &mut Client) {
 fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
     c.gens.npc = c.gens.npc.wrapping_add(1);
     c.gens.player = c.gens.player.wrapping_add(1);
+    c.gens.player_info = c.gens.player_info.wrapping_add(1);
     c.gens.inv = c.gens.inv.wrapping_add(1);
     c.gens.scene = c.gens.scene.wrapping_add(1);
     c.gens.iface = c.gens.iface.wrapping_add(1);
