@@ -6,6 +6,7 @@ use api::snapshot::{
 };
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::{Cache, ObjType};
+use script::native::AllowWalkDanger;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -874,21 +875,6 @@ export function tick(api) {
   }
 }
 "#;
-
-/// The active-seat backlog fixture has no navigation world or danger policy.
-struct AllowWalkDanger;
-
-impl script::native::WalkDangerQuery for AllowWalkDanger {
-    fn check(
-        &self,
-        _target: WorldTile,
-        _loc_id: Option<i32>,
-        _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
-    ) -> script::native::WalkDanger<'_> {
-        script::native::WalkDanger::Allowed
-    }
-}
 
 struct GatherReconnectRig {
     tile: WorldTile,
