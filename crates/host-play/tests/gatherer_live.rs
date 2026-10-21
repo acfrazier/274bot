@@ -4625,6 +4625,13 @@ impl GatherSlot {
             }
             let expected_block = match self.case {
                 LiveCase::FishBaitGate => code == "supply-missing",
+                LiveCase::CoinRunesEmpty => {
+                    code == "supply-missing"
+                        && status.phase == script::native::NativePhase::Blocked
+                        && self.complete_bank_selection()
+                        && self.witness.bank_loaded_observed
+                        && text_field(status, "bank").is_some_and(|bank| bank.ends_with("; Supply"))
+                }
                 LiveCase::OakAbsentArea => {
                     code == "resource-unavailable" && message.starts_with("resource-unavailable")
                 }
@@ -5271,15 +5278,16 @@ impl GatherSlot {
                 Ok(())
             }
             LiveCase::CoinRunesEmpty => {
-                let at_withdraw = self
+                let at_supply = self
                     .witness
                     .last_status_bank
                     .as_deref()
-                    .is_some_and(|bank| bank.ends_with("; Withdraw"));
+                    .is_some_and(|bank| bank.ends_with("; Supply"));
                 if self.witness.failure_code.as_deref() != Some("supply-missing")
-                    || !self.witness.bank_selected
+                    || !self.witness.native_phases.contains("Blocked")
+                    || !self.complete_bank_selection()
                     || !self.witness.bank_loaded_observed
-                    || !at_withdraw
+                    || !at_supply
                     || self.witness.status_trips != 0
                     || self.witness.last_status_yielded != 0
                     || self
@@ -7245,7 +7253,7 @@ fn run_cell_with_fixture(
                     && witness
                         .last_status_bank
                         .as_deref()
-                        .is_some_and(|bank| bank.ends_with("; Withdraw"))
+                        .is_some_and(|bank| bank.ends_with("; Supply"))
             }
             LiveCase::PowerToBank => {
                 witness.power_to_bank_applied

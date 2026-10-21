@@ -68,6 +68,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 #### Scenario checks
 
+- Gatherer's empty-bank reserve check now verifies the blocked supply stage
+  instead of an obsolete withdrawal stage. It still requires a selected,
+  loaded bank and no gathering progress.
 - The Ardougne Thiever fight check now prepares food and attacks a real Guard
   before script Start. It no longer depends on a random stall catch.
 - The AutoFighter bank check now waits for public Bones to leave its starting
