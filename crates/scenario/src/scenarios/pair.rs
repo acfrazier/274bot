@@ -126,15 +126,11 @@ impl ClueFleetWitness {
                         .is_some_and(|text| !text.trim().is_empty())
             });
         slot.confirm |= snap.modals().main == 6412 && exact_obstacles;
-        let in_pen = pair_near(
-            snap,
-            WorldTile {
-                x: 3374,
-                z: 3250,
-                level: 0,
-            },
-            12,
-        );
+        // 289 duelarena.dbrow:7-11 lets the server choose any obstacle pen
+        // and any square in it; a radius around the first pen misses its edge.
+        let in_pen = snap.tile().is_some_and(|(x, z, level)| {
+            level == 0 && DUEL_FIGHT_PENS[3..].iter().any(|pen| within(*pen, x, z))
+        });
         slot.pen |= in_pen;
         slot.casket |= pair_inv_id(snap, 3555) > 0;
         slot.clue_consumed |= slot.casket && pair_inv_id(snap, 3554) == 0;
@@ -2265,6 +2261,65 @@ mod clue_witness_tests {
         assert!(!witness.slots[0].saw_peer, "a stranger is not the helper");
         witness.observe(0, &seen("Solver", &["Stranger", "helper one"]));
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
+    }
+
+    #[test]
+    fn clue_pen_witness_covers_each_engine_obstacle_arena_boundary() {
+        // 289 game_duelarena/configs/duelarena.dbrow:7-11; the server chooses
+        // any free obstacle arena, then any walkable square inside its bounds.
+        for (min_x, max_x, min_z, max_z) in [
+            (3364, 3388, 3244, 3258),
+            (3333, 3357, 3225, 3239),
+            (3364, 3388, 3206, 3220),
+        ] {
+            for (x, z) in [
+                (min_x, min_z),
+                (min_x, max_z),
+                (max_x, min_z),
+                (max_x, max_z),
+            ] {
+                let mut snapshot = GameSnapshot::new();
+                snapshot.seed_ingame(2);
+                snapshot.seed_tile(api::WorldTile { x, z, level: 0 });
+                let mut witness = ClueFleetWitness::default();
+                witness.start();
+                witness.observe(1, &snapshot);
+                assert!(witness.slots[1].pen, "legal obstacle pen tile ({x},{z})");
+                assert!(!witness.slots[1].returned, "pen entry is not a return");
+                snapshot.seed_tile(api::WorldTile {
+                    x: 3368,
+                    z: 3274,
+                    level: 0,
+                });
+                witness.observe(1, &snapshot);
+                assert!(
+                    witness.slots[1].returned,
+                    "the helper returned to the lobby"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clue_pen_witness_rejects_non_obstacle_tiles_other_levels_and_loading() {
+        for (x, z, level, scene) in [
+            (3362, 3250, 0, 2), // close to the old centre, outside every pen
+            (3340, 3250, 0, 2), // an unobstructed arena is not this duel's pen
+            (3368, 3274, 0, 2), // lobby
+            (3374, 3250, 1, 2), // correct coordinates on another level
+            (3374, 3250, 0, 1), // unloaded scene
+        ] {
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(scene);
+            snapshot.seed_tile(api::WorldTile { x, z, level });
+            let mut witness = ClueFleetWitness::default();
+            witness.start();
+            witness.observe(1, &snapshot);
+            assert!(
+                !witness.slots[1].pen && !witness.slots[1].returned,
+                "not an observed obstacle pen: ({x},{z},{level}), scene {scene}"
+            );
+        }
     }
 }
 
