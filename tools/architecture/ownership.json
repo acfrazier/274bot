@@ -2347,6 +2347,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/panel/src/test_alloc.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/test_support.rs",
       "owner": "T3"
     },
