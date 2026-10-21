@@ -1112,15 +1112,18 @@ impl ImportPlan {
     }
 }
 
-/// Map the file onto the vault: the preview. Writes nothing.
+/// Map the file onto the vault: the preview. Writes nothing. A new
+/// profile takes `first_uid` ([`crate::OperatorSession::fresh_uid`]) and
+/// the uids after it.
 pub fn plan_import(
     file: &ExportFile,
     vault: &Vault,
+    first_uid: i32,
     catalog: &impl ImportCatalog,
     choices: impl Into<ImportChoices>,
 ) -> ImportPlan {
     let choices = choices.into();
-    let mut next_uid = crate::fresh_uid(vault);
+    let mut next_uid = first_uid;
     let mut seen = BTreeSet::new();
     let mut accounts = Vec::with_capacity(file.accounts.len());
     for account in &file.accounts {
@@ -2122,7 +2125,13 @@ impl ProfileImport {
         };
         match read_profile_file(&path) {
             Ok(file) => {
-                self.plan = Some(plan_import(&file, vault, scripts.library(), self.choices));
+                self.plan = Some(plan_import(
+                    &file,
+                    vault,
+                    core.fresh_uid(),
+                    scripts.library(),
+                    self.choices,
+                ));
                 self.file = Some((path, file));
                 Ok(())
             }
@@ -2158,7 +2167,13 @@ impl ProfileImport {
 
     fn replan<Io>(&mut self, core: &OperatorSession<Io>, scripts: &Scripts) {
         if let (Some((_, file)), Some(vault)) = (self.file.as_ref(), core.vault()) {
-            self.plan = Some(plan_import(file, vault, scripts.library(), self.choices));
+            self.plan = Some(plan_import(
+                file,
+                vault,
+                core.fresh_uid(),
+                scripts.library(),
+                self.choices,
+            ));
         }
     }
 
@@ -2193,7 +2208,13 @@ impl ProfileImport {
             self.refuse(error.to_string());
             return Err(error);
         };
-        let plan = plan_import(&file, vault, scripts.library(), self.choices);
+        let plan = plan_import(
+            &file,
+            vault,
+            core.fresh_uid(),
+            scripts.library(),
+            self.choices,
+        );
         drop(file);
 
         self.start_run(path, plan);

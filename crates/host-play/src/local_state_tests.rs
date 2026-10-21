@@ -2145,6 +2145,175 @@ fn an_oversize_preference_object_is_written_member_by_member() {
     assert_eq!(written, expected);
 }
 
+/// A preferences document holding a 600-member `order` object (too long
+/// for one row, like the saved Load order of a large fleet): member
+/// `"<uid>"` gets `key(index)`, members `skip` leaves out are absent.
+fn order_document(
+    key: impl Fn(i64) -> i64,
+    skip: impl Fn(i64) -> bool,
+    extra: Option<i64>,
+) -> serde_json::Value {
+    let order: serde_json::Map<String, serde_json::Value> = (0..600)
+        .filter(|index| !skip(*index))
+        .chain(extra)
+        .map(|index| {
+            (
+                (274_000_001 + index).to_string(),
+                serde_json::json!(key(index)),
+            )
+        })
+        .collect();
+    serde_json::json!({"lowmem": true, "order": order})
+}
+
+/// The stored order before the updates below: keys 7, 14, 21, …
+fn order_before() -> serde_json::Value {
+    order_document(|index| (index + 1) * 7, |_| false, None)
+}
+
+/// A renumbered order: every key changes, member 5 is removed and member
+/// 700 is added.
+fn order_renumbered() -> serde_json::Value {
+    order_document(|index| (index + 1) << 16, |index| index == 5, Some(700))
+}
+
+fn preferences_with_order(scratch: &IsolatedEnv) -> Preferences {
+    let preferences = preferences(scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let before = order_before();
+    assert!(before["order"].to_string().len() > api::local_state::MAX_PREF_VALUE_BYTES);
+    write_private(&path, &serde_json::to_vec_pretty(&before).unwrap());
+    preferences.reload().unwrap();
+    preferences
+}
+
+fn file_json(path: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+/// F2 r3 (review R4): an update of an object too long for one row that
+/// changes, removes and adds many members (a renumbered Load order) is
+/// one edit and one file replacement: every member lands together.
+#[test]
+fn a_many_member_update_is_one_file_replacement() {
+    let scratch = IsolatedEnv::enter("local-state-f2-one-replacement");
+    let preferences = preferences_with_order(&scratch);
+    let path = preferences.path();
+    let writes = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&writes);
+    preferences
+        .service()
+        .set_write_hook(Arc::new(move |path, bytes| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            vault::write_private_file(path, bytes)
+        }));
+    let audits = audits(preferences.service());
+    let after = order_renumbered();
+    update_patiently(&preferences, |document| {
+        document.insert("order".into(), after["order"].clone());
+        Ok(())
+    });
+    assert_eq!(writes.load(Ordering::SeqCst), 1, "one file replacement");
+    assert_eq!(audits.lock().unwrap().len(), 1, "one durable commit");
+    assert_eq!(file_json(&path), after);
+    assert_eq!(preferences.value("order"), Some(after["order"].clone()));
+}
+
+/// F2 r3 (review R4): a many-member update whose file replacement fails,
+/// or whose writer dies inside it (an interrupted renumbering), leaves the
+/// file and the held rows exactly as before: no member of it lands. The
+/// next update lands whole.
+#[test]
+fn a_failed_or_interrupted_many_member_update_changes_nothing() {
+    let scratch = IsolatedEnv::enter("local-state-f2-all-or-nothing");
+    let preferences = preferences_with_order(&scratch);
+    let path = preferences.path();
+    let bytes_before = std::fs::read(&path).unwrap();
+    // 0: the disk refuses the replacement; 1: the writer dies in it; then
+    // the real write.
+    let step = Arc::new(AtomicUsize::new(0));
+    let hook_step = Arc::clone(&step);
+    preferences
+        .service()
+        .set_write_hook(Arc::new(move |path, bytes| {
+            match hook_step.load(Ordering::SeqCst) {
+                0 => Err(std::io::Error::other("disk full")),
+                1 => panic!("injected writer death mid-renumbering"),
+                _ => vault::write_private_file(path, bytes),
+            }
+        }));
+    let after = order_renumbered();
+    let renumber = |document: &mut serde_json::Map<String, serde_json::Value>| {
+        document.insert("order".into(), after["order"].clone());
+        Ok(())
+    };
+    for (failure, case) in [(0, "refused"), (1, "interrupted")] {
+        step.store(failure, Ordering::SeqCst);
+        let error = preferences.update(renumber).expect_err(case);
+        assert!(
+            !error.to_string().contains("not durable within"),
+            "{case}: {error}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes_before, "{case}: file");
+        preferences.reload().unwrap();
+        assert_eq!(
+            preferences.value("order"),
+            Some(order_before()["order"].clone()),
+            "{case}: held rows"
+        );
+    }
+    step.store(2, Ordering::SeqCst);
+    update_patiently(&preferences, renumber);
+    assert_eq!(file_json(&path), after);
+}
+
+/// F2 r3 (review R4): two writers (two services on one root, as two
+/// processes) each replace every member of the large object while the
+/// first holds its transaction. The second's edit conflicts, it reads and
+/// merges again, and the file ends holding its object whole: never a mix
+/// of the two, and both updates report durable.
+#[test]
+fn concurrent_many_member_updates_never_mix() {
+    let scratch = IsolatedEnv::enter("local-state-f2-two-writers");
+    let first = preferences_with_order(&scratch);
+    let second = preferences(&scratch);
+    second.reload().unwrap();
+    let path = first.path();
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let held = AtomicBool::new(false);
+    first.service().set_publish_hook(Arc::new(move |_| {
+        if !held.swap(true, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }
+    }));
+    let first_order = order_document(|index| (index + 1) * 1000, |_| false, None);
+    let second_order = order_renumbered();
+    let update = |preferences: Preferences, document: serde_json::Value| {
+        std::thread::spawn(move || {
+            update_patiently(&preferences, |held| {
+                held.insert("order".into(), document["order"].clone());
+                Ok(())
+            });
+        })
+    };
+    let a = update(first.clone(), first_order);
+    entered.recv_timeout(WAIT).unwrap();
+    let b = update(second.clone(), second_order.clone());
+    std::thread::sleep(Duration::from_millis(300));
+    release.send(()).unwrap();
+    a.join().unwrap();
+    b.join().unwrap();
+    assert_eq!(
+        file_json(&path),
+        second_order,
+        "the later writer's object, whole"
+    );
+}
+
 /// T5.2 r3 (grok P2, the same rule in every domain): a preferences file
 /// with a member the service cannot hold as a row is read, but never
 /// rewritten: a write fails and the file keeps every byte.

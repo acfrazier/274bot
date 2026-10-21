@@ -1267,7 +1267,10 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn adopt_profile_order(&mut self, preferences: &crate::UiPreferences) {
         let value = preferences.value(crate::profile_order::PROFILE_ORDER_KEY);
         self.order_saved = value.is_some();
-        self.profile_order = crate::profile_order::ProfileOrder::from_value(value.as_ref());
+        self.profile_order
+            .replace(crate::profile_order::ProfileOrder::from_value(
+                value.as_ref(),
+            ));
         self.durable_order.assign_from(&self.profile_order);
         self.order_reconciled_at = None;
         self.reconcile_profile_order();
@@ -1275,34 +1278,66 @@ impl<Io> OperatorSession<Io> {
 
     /// Make the saved order match the vault (seed, append, drop) and the
     /// fleet members follow it. Moves the profiles generation when the
-    /// order changed, so the fleet views rebuild.
+    /// order changed, so the fleet views rebuild. A profile the vault
+    /// lacks stays stored while a write of it is queued (its deletion is
+    /// not durable, and a failure puts it back in its place); otherwise it
+    /// is dropped, and the saved order is written.
     pub(crate) fn reconcile_profile_order(&mut self) {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
         let before = self.profile_order.names().len();
-        let added = match self.vault.as_ref() {
+        let changed = match self.vault.as_ref() {
             Some(vault) => {
                 let rows = || {
                     vault
                         .profiles()
                         .map(|profile| (profile.uid, profile.username.as_str()))
                 };
+                let durable = &self.durable;
+                let pending = |uid: i32| {
+                    durable
+                        .values()
+                        .any(|profile| profile.as_ref().is_some_and(|p| p.uid == uid))
+                };
                 // The durable copy follows the vault too, so a failed
                 // write's revert shows current names.
-                self.durable_order.reconcile(rows());
-                self.profile_order.reconcile(rows())
+                self.durable_order.reconcile(rows(), pending);
+                self.profile_order.reconcile(rows(), pending)
             }
             None => false,
         };
-        if added || self.profile_order.names().len() != before {
+        if changed || self.profile_order.names().len() != before {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
         }
-        if added && self.order_saved {
+        if changed && self.order_saved {
             self.persist_profile_order_quietly();
         }
         self.order_reconciled_at = Some(self.profiles_generation);
         self.sort_members_by_order();
+    }
+
+    /// After profile writes settle: a held deletion may be durable now, so
+    /// reconcile again (dropping it from the saved order).
+    fn reconcile_after_writes(&mut self) {
+        if self.profile_order.holds_deleted() {
+            self.order_reconciled_at = None;
+            self.reconcile_profile_order();
+        }
+    }
+
+    /// The uid for a new profile: above every uid the vault holds and
+    /// every uid the saved order has held, so a new profile never takes a
+    /// deleted profile's place. Shared by every path that creates a
+    /// profile.
+    pub fn fresh_uid(&self) -> i32 {
+        let vault = self.vault.as_ref().map(crate::profiles::next_vault_uid);
+        let order = self
+            .profile_order
+            .max_uid()
+            .max(self.durable_order.max_uid())
+            .saturating_add(1);
+        vault.unwrap_or(crate::profiles::FIRST_UID).max(order)
     }
 
     /// Order the fleet members by the saved order (stable: a member the
@@ -3000,7 +3035,7 @@ impl<Io> OperatorSession<Io> {
             uid: existing
                 .as_ref()
                 .map(|p| p.uid)
-                .unwrap_or_else(|| crate::fresh_uid(vault)),
+                .unwrap_or_else(|| self.fresh_uid()),
             username: username.to_string(),
             password: draft.password_secret().clone(),
             settings: existing
@@ -3159,15 +3194,25 @@ impl<Io> OperatorSession<Io> {
     /// [`Self::poll`] instead.
     pub fn flush_writes(&mut self) {
         self.take_preparations(true);
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.take_native_deliveries(true);
     }
 
     fn take_writes(&mut self) {
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::try_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.release_abandoned_copy_writes();
     }
