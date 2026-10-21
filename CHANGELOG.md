@@ -81,6 +81,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - When bank selection cannot find a route, the session log now gives the
   routing error, start tile and number of candidate banks and access tiles.
+- Banking now opens a closed chest before it tries the bank action. This
+  lets ClueSolver open the Duel Arena reward bank.
 
 #### Scenario checks
 
