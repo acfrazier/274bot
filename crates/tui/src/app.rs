@@ -230,6 +230,9 @@ pub enum AppAction {
     /// Make this the card the fleet actions use (`SetFleetCard`). Changes
     /// no Browse pick, form or run.
     PickFleetCard(frontend_core::FleetCard),
+    /// Show this fleet order (`SetFleetSort`). The shown rows follow it and
+    /// the cursor stays on its profile.
+    SetFleetSort(frontend_core::FleetOrder),
     /// Open the world picker: `Some(name)` for that profile (`W` over the
     /// fleet row under the cursor), `None` for the marked rows (the
     /// palette's Switch world of marked…). The dispatcher reads the worlds

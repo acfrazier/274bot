@@ -3439,6 +3439,19 @@ impl TuiSession {
         app.table.sync(&app.fleet_model);
     }
 
+    /// Show `order` (`SetFleetSort`). The shown rows follow it and the
+    /// cursor stays on its profile.
+    fn set_fleet_sort(&mut self, app: &mut TuiApp, order: frontend_core::FleetOrder) {
+        if let Err(error) = self.submit_with(
+            app,
+            OperatorCommand::SetFleetSort(order),
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
+        app.table.sync(&app.fleet_model);
+    }
+
     /// Edit the fleet filter text and commit it (`SetFleetFilter`); the
     /// shown rows follow the text.
     fn set_fleet_filter(&mut self, app: &mut TuiApp, edit: crate::fleet::FilterEdit) {
@@ -3998,6 +4011,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::PickFleetCard(card) => session.pick_fleet_card(app, card),
         AppAction::ReorderProfiles(op) => session.reorder_profiles(app, op),
         AppAction::FleetFilter(edit) => session.set_fleet_filter(app, edit),
+        AppAction::SetFleetSort(order) => session.set_fleet_sort(app, order),
         AppAction::SaveLog => session.save_log(app),
         AppAction::SetSessionLog(on) => session.set_session_log(app, on),
         AppAction::MapWilderness(on) => session.set_special_areas(app, on),

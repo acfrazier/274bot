@@ -13,6 +13,28 @@ use frontend_core::FleetAction;
 use std::fs;
 use std::time::{Duration, Instant};
 
+/// The core's Everyone script rows, which no panel button submits since the
+/// fleet toolbar replaced the rail's Start all / Stop all: these tests drive
+/// the rows' own semantics (pacing, queued replacements, reports).
+trait EveryoneScripts {
+    fn script_start_all(&mut self);
+    fn script_stop_all(&mut self);
+}
+
+impl EveryoneScripts for Session {
+    fn script_start_all(&mut self) {
+        let root = self.start_catalog_root();
+        self.scripts.stage_start_catalog_root(root);
+        self.submit_script_command(OperatorCommand::StartScript, Targets::Everyone);
+        self.apply_script_notice();
+    }
+
+    fn script_stop_all(&mut self) {
+        self.submit_script_command(OperatorCommand::StopScript, Targets::Everyone);
+        self.apply_script_notice();
+    }
+}
+
 /// Pin `choice` as the fleet card, as the Fleet window's drop-down does:
 /// stage it and submit `SetFleetCard`, nothing else.
 fn pin_fleet_card(s: &mut Session, choice: ScriptChoice) {

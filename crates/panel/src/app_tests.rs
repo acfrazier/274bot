@@ -5867,10 +5867,10 @@ fn fleet_table_fits_the_window_at_default_and_narrow_sizes() {
     }
 }
 
-/// "Sort:" is a full-width drop-down like Danger routing, and picking an
-/// entry sorts by it.
+/// The Sort drop-down shares the filter's row and runs to the edge, the
+/// filter fills the rest, and picking an entry sorts by it.
 #[test]
-fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
+fn fleet_sort_shares_the_filter_row_and_stores_the_pick() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();
     super::amber_style(&mut ctx);
@@ -5882,13 +5882,20 @@ fn fleet_sort_is_a_full_width_drop_down_that_stores_the_pick() {
         layout = fleet_frame(&mut ctx, &mut session, size, [0.0, 0.0], false);
     }
     let combo = layout.sort_combo;
+    let filter = layout.filter;
     let [content_left, content_right] = layout.content;
     // `-1` width fills to one pixel short of the edge, as Danger routing's does.
     assert!(
-        (combo[0] - content_left).abs() < 1.0 && (content_right - combo[2]).abs() <= 1.5,
-        "the drop-down spans {}..{}, not the window's {content_left}..{content_right}",
+        (content_right - combo[2]).abs() <= 1.5 && (filter[0] - content_left).abs() < 1.0,
+        "the filter spans {}..{} and the drop-down {}..{}, in {content_left}..{content_right}",
+        filter[0],
+        filter[2],
         combo[0],
         combo[2]
+    );
+    assert!(
+        (filter[1] - combo[1]).abs() < 1.0 && filter[2] < combo[0],
+        "one row, filter first"
     );
 
     // Open it, then pick "Status" (the third entry, after the default
@@ -5971,6 +5978,30 @@ fn saved_order(session: &crate::session::Session) -> Vec<String> {
     session.core.profile_order().names().to_vec()
 }
 
+/// Open the toolbar's Marks menu with clicks and return the centre of its
+/// Move marked to top entry.
+fn fleet_open_move_to_top(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> [f32; 2] {
+    let marks = rect_centre(fleet_reorder_setup(ctx, session).marks_button);
+    for down in [false, true, false, false] {
+        fleet_reorder_frame(ctx, session, marks, down);
+    }
+    let mut layout = crate::fleet::FleetLayout::default();
+    for _ in 0..3 {
+        layout = fleet_reorder_frame(ctx, session, [900.0, 600.0], false);
+    }
+    let entry = layout.move_to_top;
+    assert_ne!(
+        entry,
+        [0.0; 4],
+        "the Marks menu lists Move marked to top: marks at {marks:?}, menu {:?}",
+        layout.marks_menu
+    );
+    rect_centre(entry)
+}
+
 /// Dragging a Fleet row's name onto another row moves it in the saved Load
 /// order. A filter hides a marked profile between them: it keeps its place
 /// relative to the others and keeps its mark.
@@ -6023,8 +6054,9 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
     assert_eq!(saved_order(&session), ["bob", "dx", "cx", "ax"]);
 }
 
-/// With the sort set to Name the same drag does nothing and the button is
-/// disabled: no reorder is submitted and the saved order stays.
+/// With the sort set to Name the same drag does nothing and the Marks
+/// menu's Move marked to top is disabled: no reorder is submitted and the
+/// saved order stays.
 #[test]
 fn fleet_row_drag_and_move_marked_do_nothing_outside_load_order() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -6048,7 +6080,7 @@ fn fleet_row_drag_and_move_marked_do_nothing_outside_load_order() {
         rect_centre(layout.names[0]),
         rect_centre(layout.names[3]),
     );
-    let button = rect_centre(layout.move_to_top);
+    let button = fleet_open_move_to_top(&mut ctx, &mut session);
     for down in [false, true, false, false] {
         fleet_reorder_frame(&mut ctx, &mut session, button, down);
     }
@@ -6061,8 +6093,8 @@ fn fleet_row_drag_and_move_marked_do_nothing_outside_load_order() {
     assert!(session.error.is_none(), "{:?}", session.error);
 }
 
-/// `Move marked to top` moves the marked profiles to the top in their
-/// relative order; with nothing marked the button is disabled.
+/// `Move marked to top` (in the Marks menu) moves the marked profiles to
+/// the top in their relative order; with nothing marked it is disabled.
 #[test]
 fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -6071,8 +6103,7 @@ fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
     let (mut session, _dir) = fleet_test_session(&["alice", "bob", "carol", "dave"]);
     session.persist_ui = false;
     session.pump_status();
-    let layout = fleet_reorder_setup(&mut ctx, &mut session);
-    let button = rect_centre(layout.move_to_top);
+    let button = fleet_open_move_to_top(&mut ctx, &mut session);
     let click = |ctx: &mut dear_imgui_rs::Context,
                  session: &mut crate::session::Session,
                  button: [f32; 2]| {
@@ -6093,8 +6124,8 @@ fn fleet_move_marked_to_top_moves_the_marks_in_their_relative_order() {
         session.fleet_model.set_mark_for_test(identity, true);
     }
     // The labels name the marked count, so the buttons lay out again.
-    let layout = fleet_reorder_setup(&mut ctx, &mut session);
-    let button = rect_centre(layout.move_to_top);
+    // The menu closed after the first click; open it again.
+    let button = fleet_open_move_to_top(&mut ctx, &mut session);
     click(&mut ctx, &mut session, button);
     assert_eq!(crate::session::reorders_submitted(), before + 1);
     assert_eq!(

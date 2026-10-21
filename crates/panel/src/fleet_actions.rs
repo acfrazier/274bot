@@ -34,9 +34,10 @@ impl Session {
     /// Plan moving `target` (a world marker's bot; `None`: the marks, or
     /// the loaded shown rows when none is marked) to the public world
     /// `world`: stage the one profile, then plan `SwitchWorld` through the
-    /// same flow as the fleet buttons. A Switch world plan always asks, so
-    /// the Fleet window opens (or comes forward) to show its plan row with
-    /// Confirm and Cancel; a refusal ("no bot to act on (alice: queued for
+    /// same flow as the fleet buttons. A Switch world plan always asks: its
+    /// plan row with Confirm and Cancel shows in every fleet toolbar, and
+    /// the Fleet window opens (or comes forward) to show it when no toolbar
+    /// is on screen. A refusal ("no bot to act on (alice: queued for
     /// login)") shows its reason on the banner. Nothing runs before
     /// Confirm.
     pub(crate) fn plan_world_switch(&mut self, target: Option<&str>, world: u16) {
@@ -46,9 +47,18 @@ impl Session {
         self.submit_fleet_plan(OperatorCommand::PlanFleetAction(FleetAction::SwitchWorld(
             world,
         )));
-        if self.core.fleet_plan().is_some() {
+        if self.core.fleet_plan().is_some() && !self.fleet_toolbar_shown() {
             self.open_window(PanelWindow::Fleet);
         }
+    }
+
+    /// Whether a fleet toolbar is on screen: the Fleet window's, the rail's,
+    /// or the strip's fleet section (drawn while the rail is hidden, unless
+    /// the operator turned the section off).
+    pub(crate) fn fleet_toolbar_shown(&self) -> bool {
+        self.fleet_open
+            || self.rail_shown()
+            || crate::ui_state::panel_section_visible(&self.ui, "fleet")
     }
 
     /// Submit a `PlanFleetAction` row and run the plan at once when it

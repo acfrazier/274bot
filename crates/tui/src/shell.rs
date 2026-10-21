@@ -424,6 +424,7 @@ impl TuiApp {
             selected,
             keys,
             class,
+            header_parts: &mut self.regions.fleet_header,
         }
         .render(inner, buf, rows);
         self.regions.fleet_rows = hits.rows;

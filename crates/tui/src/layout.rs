@@ -6,6 +6,7 @@
 use ratatui::layout::{Position, Rect};
 
 use crate::commands::Command;
+use crate::fleet::HeaderPart;
 
 /// Terminal size class. Compact below 100x30 (80x24 is the floor the shell
 /// is designed for), Standard from 100x30 (120x40 is the reference), Large
@@ -175,6 +176,9 @@ pub struct Regions {
     /// Fleet body rows and the member index shown on its first row.
     pub fleet_rows: Rect,
     pub fleet_first: usize,
+    /// The clickable parts of the fleet header (`card: …`, `sort: …`); a
+    /// part that wraps has one cell run per header row.
+    pub fleet_header: Vec<(Rect, HeaderPart)>,
     /// Map cells (click selects a tile).
     pub map: Rect,
     /// Log rows (drawer or Logs tab); the wheel scrolls them.
@@ -196,6 +200,7 @@ impl Regions {
         self.buttons.clear();
         self.fleet_rows = Rect::default();
         self.fleet_first = 0;
+        self.fleet_header.clear();
         self.map = Rect::default();
         self.log_rows = Rect::default();
         self.message = Rect::default();
@@ -209,6 +214,15 @@ impl Regions {
             .iter()
             .find(|(rect, _)| rect.contains(at))
             .map(|(_, command)| *command)
+    }
+
+    /// The fleet header part under a cell.
+    pub fn header_part_at(&self, col: u16, row: u16) -> Option<HeaderPart> {
+        let at = Position::new(col, row);
+        self.fleet_header
+            .iter()
+            .find(|(rect, _)| rect.contains(at))
+            .map(|(_, part)| *part)
     }
 
     pub fn tab_at(&self, col: u16, row: u16) -> Option<Tab> {
