@@ -1,16 +1,19 @@
 use super::*;
 
 use api::hostlog::{Category, Level};
-/// Lost-tool content chooses a tile within 1–7 squares of the player
-/// (`macro_event_lost_axe.rs2:18`; `macro_event_lost_pickaxe.rs2:20`).
+/// Content calls `map_findsquare(coord, 1, 7, ...)`, so the search uses the
+/// Chebyshev ring around the tile where the event fired, not the moving player
+/// (`macro_event_lost_axe.rs2:18`; `macro_event_lost_pickaxe.rs2:20`;
+/// `ServerOps.ts:298-335`).
 const LOST_TOOL_RADIUS: i32 = 7;
-/// The owner sees the private object immediately; its 100-tick reveal delay
-/// is for other players (`World.ts:1485-1494`; `Zone.ts:321-325`; `Obj.ts:7-9`).
-/// Content's projectile delay is at most one `p_delay` unit for the 1–7 tile
-/// landing range, so wait at most two observed ticks before spawn is overdue
-/// (`macro_event_lost_axe.rs2:18,25-27`; `macro_event_lost_pickaxe.rs2:20,25-29`;
-/// `projectile.rs2:31-35`; `PlayerOps.ts:376-379`).
-const LOST_TOOL_SPAWN_GRACE_TICKS: u32 = 2;
+/// Content adds the head at E+1 or E+2: `p_delay` receives 0 or 1 for the
+/// 1–7-tile projectile range. The client can read only five packets per frame,
+/// and OBJ_ADD follows PLAYER_INFO. Add one delivery tick to the two content
+/// ticks: 2 + 1 = 3 (`macro_event_lost_axe.rs2:18,25-27`;
+/// `macro_event_lost_pickaxe.rs2:20,25-29`; `projectile.rs2:31-35`;
+/// `PlayerOps.ts:376-379`; `Zone.ts:208-219`;
+/// `client/src/client/client.rs:12744`).
+const LOST_TOOL_SPAWN_GRACE_TICKS: u32 = 3;
 /// The lost-tool scripts pass `lootdrop_duration = 200` to `obj_add`; each
 /// `Obj.turn` decrements its lifecycle (`lootdrop.constant:1`;
 /// `macro_event_lost_axe.rs2:27`; `macro_event_lost_pickaxe.rs2:29`;
@@ -168,13 +171,14 @@ struct LostToolTarget {
     id: i32,
     tile: (i32, i32, i32),
     spawn_tick: u32,
+    missing_since_tick: Option<u32>,
 }
-
 #[derive(Debug)]
 struct LostToolRecovery {
     event_tick: u32,
     kind: bool,
     expected_head_id: Option<i32>,
+    origin_tile: Option<(i32, i32, i32)>,
     target: Option<LostToolTarget>,
 }
 /// Per-slot random-event guardian state.
@@ -540,6 +544,19 @@ impl Guardian {
             self.tool_stalled = false;
         } else if !settings.random_events {
             self.tool_stalled = false;
+        } else if self.tool_stalled
+            && self.tool_recovery.as_ref().is_some_and(|recovery| {
+                recovery.target.is_some_and(|target| {
+                    target.missing_since_tick.is_some()
+                        && snap
+                            .inventory()
+                            .iter()
+                            .any(|item| item.count > 0 && item.def.id == target.id)
+                })
+            })
+        {
+            self.tool_stalled = false;
+            self.acting = true;
         }
         let inert_tool = self.tool_stalled
             && ev
@@ -1941,8 +1958,8 @@ impl Guardian {
         }
     }
 
-    /// Refit only from the exact head dropped by this event. Content waits
-    /// use PLAYER_INFO ticks: projectile spawn grace, then obj lifetime.
+    /// Refit only from the exact head dropped by this event. Search stays
+    /// anchored to the event tile. Content waits use PLAYER_INFO ticks.
     fn step_lost_tool<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
         let handle_inv = snap
             .inventory()
@@ -1975,94 +1992,152 @@ impl Guardian {
         let tick = snap.tick();
         let event_tick = recovery.event_tick;
         let expected_head_id = recovery.expected_head_id;
-        if recovery.target.is_none() {
+        let origin_tile = recovery.origin_tile;
+        let mut target = recovery.target;
+        let expected_head_in_pack = expected_head_id.is_some_and(|id| {
+            snap.inventory()
+                .iter()
+                .any(|item| item.count > 0 && item.def.id == id)
+        });
+        if target.is_none() && !expected_head_in_pack {
             let candidate = snap
                 .ground_items()
                 .iter()
-                .filter(|ground| ground.distance <= LOST_TOOL_RADIUS)
-                .filter(|ground| tool_part(ground.def.name.as_deref(), "head") == Some(kind))
-                .filter(|ground| expected_head_id.is_none_or(|id| ground.def.id == id))
-                .filter(|ground| {
-                    self.lost_tool_ground_count_increased(
-                        snap,
-                        ground.def.id,
+                .filter_map(|ground| {
+                    let distance = lost_tool_landing_distance(
+                        origin_tile,
                         (ground.tile.x, ground.tile.z, ground.tile.level),
-                        kind,
-                    )
+                    )?;
+                    if tool_part(ground.def.name.as_deref(), "head") != Some(kind)
+                        || expected_head_id.is_some_and(|id| id != ground.def.id)
+                        || !self.lost_tool_ground_count_increased(
+                            snap,
+                            ground.def.id,
+                            (ground.tile.x, ground.tile.z, ground.tile.level),
+                            kind,
+                        )
+                    {
+                        return None;
+                    }
+                    Some((ground, distance))
                 })
-                .min_by_key(|ground| {
+                .min_by_key(|(ground, distance)| {
                     (
-                        ground.distance,
+                        *distance,
                         ground.tile.level,
                         ground.tile.x,
                         ground.tile.z,
                         ground.def.id,
                     )
                 })
-                .map(|ground| LostToolTarget {
+                .map(|(ground, _)| LostToolTarget {
                     id: ground.def.id,
                     tile: (ground.tile.x, ground.tile.z, ground.tile.level),
                     spawn_tick: tick,
+                    missing_since_tick: None,
                 });
-            let Some(candidate) = candidate else {
-                if tick.wrapping_sub(event_tick) >= LOST_TOOL_SPAWN_GRACE_TICKS {
-                    self.tool_stalled = true;
-                    self.acting = false;
-                } else if let Some(handle) = handle_worn {
-                    if pack_full(snap) {
-                        if let Some(junk) = sacrificial_item(snap) {
-                            let mut ix = Interactions::new(snap, driver);
-                            let _ = ix.interact(
-                                OpTarget::Item(junk),
-                                ActionSpec::Label("Drop".to_string()),
-                            );
-                        }
-                    } else {
-                        let mut ix = Interactions::new(snap, driver);
-                        let _ = ix.interact(
-                            OpTarget::Item(handle),
-                            ActionSpec::Label("Remove".to_string()),
-                        );
-                    }
-                }
-                return;
-            };
-            self.tool_recovery
-                .as_mut()
-                .expect("lost-tool recovery was just observed")
-                .target = Some(candidate);
+            if let Some(candidate) = candidate {
+                target = Some(candidate);
+                self.tool_recovery
+                    .as_mut()
+                    .expect("lost-tool recovery was just observed")
+                    .target = Some(candidate);
+            }
         }
-        let target = self
-            .tool_recovery
-            .as_ref()
-            .and_then(|recovery| recovery.target)
-            .expect("candidate was recorded above");
-        if tick.wrapping_sub(target.spawn_tick) >= LOST_TOOL_GROUND_LIFETIME_TICKS {
-            self.tool_stalled = true;
-            self.acting = false;
-            return;
-        }
-        let head_inv = snap
-            .inventory()
-            .iter()
-            .find(|item| item.count > 0 && item.def.id == target.id);
 
-        let target_ground = snap.ground_items().iter().find(|ground| {
-            ground.def.id == target.id
-                && (ground.tile.x, ground.tile.z, ground.tile.level) == target.tile
+        let target_id = target.map(|target| target.id).or(expected_head_id);
+        let head_inv = target_id.and_then(|id| {
+            snap.inventory()
+                .iter()
+                .find(|item| item.count > 0 && item.def.id == id)
         });
-        let head_ground = target_ground.filter(|ground| ground.distance <= LOST_TOOL_RADIUS);
-        if head_inv.is_none() && head_ground.is_none() {
-            if target_ground.is_none() && lost_tool_tile_in_scene(snap, target.tile) {
+        if target.is_none() && head_inv.is_none() {
+            if pack_full(snap) && sacrificial_item(snap).is_none() {
                 self.tool_stalled = true;
                 self.acting = false;
+                return;
+            }
+            if tick.wrapping_sub(event_tick) >= LOST_TOOL_SPAWN_GRACE_TICKS {
+                self.tool_stalled = true;
+                self.acting = false;
+                return;
+            }
+            if let Some(handle) = handle_worn {
+                if pack_full(snap) {
+                    if let Some(junk) = sacrificial_item(snap) {
+                        let mut ix = Interactions::new(snap, driver);
+                        let _ = ix
+                            .interact(OpTarget::Item(junk), ActionSpec::Label("Drop".to_string()));
+                    }
+                } else {
+                    let mut ix = Interactions::new(snap, driver);
+                    let _ = ix.interact(
+                        OpTarget::Item(handle),
+                        ActionSpec::Label("Remove".to_string()),
+                    );
+                }
             }
             return;
         }
+
+        let mut head_ground = None;
+        if let Some(mut target) = target {
+            let target_ground = snap.ground_items().iter().find(|ground| {
+                ground.def.id == target.id
+                    && (ground.tile.x, ground.tile.z, ground.tile.level) == target.tile
+            });
+            head_ground = target_ground.filter(|ground| {
+                lost_tool_landing_distance(
+                    origin_tile,
+                    (ground.tile.x, ground.tile.z, ground.tile.level),
+                )
+                .is_some()
+            });
+            let target_missing_in_scene =
+                target_ground.is_none() && lost_tool_tile_in_scene(snap, target.tile);
+            let lifetime_elapsed =
+                tick.wrapping_sub(target.spawn_tick) >= LOST_TOOL_GROUND_LIFETIME_TICKS;
+            // PLAYER_INFO precedes zone and inventory updates
+            // (`World.ts:1108-1116`). OBJ_DEL can therefore arrive before
+            // the matching inventory update. Require a later observed
+            // PLAYER_INFO before settling the loss.
+            if head_inv.is_none() && (target_missing_in_scene || lifetime_elapsed) {
+                if target
+                    .missing_since_tick
+                    .is_some_and(|missing| tick.wrapping_sub(missing) >= 1)
+                {
+                    self.tool_stalled = true;
+                    self.acting = false;
+                    return;
+                }
+                if target.missing_since_tick.is_none() {
+                    target.missing_since_tick = Some(tick);
+                    self.tool_recovery
+                        .as_mut()
+                        .expect("lost-tool recovery was just observed")
+                        .target = Some(target);
+                }
+                return;
+            }
+            if target.missing_since_tick.is_some() {
+                target.missing_since_tick = None;
+                self.tool_recovery
+                    .as_mut()
+                    .expect("lost-tool recovery was just observed")
+                    .target = Some(target);
+            }
+            if head_inv.is_none() && head_ground.is_none() {
+                return;
+            }
+        }
+
         if (handle_worn.is_some() || head_inv.is_none()) && pack_full(snap) {
             if let Some(junk) = sacrificial_item(snap) {
                 let mut ix = Interactions::new(snap, driver);
                 let _ = ix.interact(OpTarget::Item(junk), ActionSpec::Label("Drop".to_string()));
+            } else {
+                self.tool_stalled = true;
+                self.acting = false;
             }
             return;
         }
@@ -2110,12 +2185,14 @@ impl Guardian {
             .flatten();
         if !adjacent_baseline {
             self.tool_baseline.tools.clear();
-            self.capture_lost_tool_ground_baseline(snap);
+            // Keep the last non-event ground baseline. This snapshot can
+            // already contain the event's delayed head.
         }
         self.tool_recovery = Some(LostToolRecovery {
             event_tick: tick,
             kind,
             expected_head_id,
+            origin_tile: snap.tile(),
             target: None,
         });
     }
@@ -2282,6 +2359,22 @@ fn lost_tool_tile_in_scene(snap: &GameSnapshot, (x, z, level): (i32, i32, i32)) 
         return false;
     };
     local_x >= 0 && local_x < scene.width && local_z >= 0 && local_z < scene.height
+}
+
+/// Distance from the event tile to a content-eligible landing tile. The
+/// player's later position must not change this search or its target.
+fn lost_tool_landing_distance(
+    origin: Option<(i32, i32, i32)>,
+    tile: (i32, i32, i32),
+) -> Option<i32> {
+    let (origin_x, origin_z, origin_level) = origin?;
+    if tile.2 != origin_level {
+        return None;
+    }
+    let distance = cheb((origin_x, origin_z), (tile.0, tile.1));
+    (1..=LOST_TOOL_RADIUS)
+        .contains(&distance)
+        .then_some(distance)
 }
 
 fn lost_tool_kind(alias: &str) -> Option<bool> {
