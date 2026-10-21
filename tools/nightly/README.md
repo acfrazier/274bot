@@ -177,7 +177,7 @@ the FLOOR status file. To pin a hand run to the just-fetched `origin/dev`:
 
 ```sh
 runner="/Volumes/dev-scratch/274bot-worktrees/nightly-mac-quest"
-git -C "$runner" fetch origin dev
+git -C "$runner" fetch origin +refs/heads/dev:refs/remotes/origin/dev
 sha=$(git -C "$runner" rev-parse --verify origin/dev)
 pinned="/Volumes/dev-scratch/274bot-nightly-mac/origin-dev-$sha.git"
 git init --bare "$pinned"
