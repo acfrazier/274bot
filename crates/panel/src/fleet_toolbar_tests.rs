@@ -255,7 +255,9 @@ fn the_toolbar_fits_every_site_at_every_scale() {
         rig.session.confirm_fleet_plan();
         assert!(rig.session.core.fleet_result().is_some(), "Log in ran");
         let pin = |rig: &mut Rig, choice: ScriptChoice| {
-            rig.session.fleet_model.stage_card(FleetCard::pinned(choice));
+            rig.session
+                .fleet_model
+                .stage_card(FleetCard::pinned(choice));
             rig.session
                 .submit(OperatorCommand::SetFleetCard, Targets::Application);
         };
@@ -422,7 +424,11 @@ fn two_toolbars_on_screen_run_one_plan_once() {
         frame(&mut rig, AWAY, false);
     }
     let (rail, window) = frame(&mut rig, AWAY, false);
-    assert_eq!(crate::fleet::take_plan_rows(), 2, "one plan row per toolbar");
+    assert_eq!(
+        crate::fleet::take_plan_rows(),
+        2,
+        "one plan row per toolbar"
+    );
     let (rail_plan, window_plan) = (rail.plan.unwrap(), window.plan.unwrap());
     assert_eq!(rail_plan.prompt, window_plan.prompt, "one prompt");
     let at = centre(rail_plan.confirm);
@@ -446,8 +452,11 @@ fn two_toolbars_on_screen_run_one_plan_once() {
 fn grid_and_multibox_off_carry_the_toolbar_in_the_strip() {
     let all = names(2);
     let mut rig = Rig::new("toolbar-strip", &all, &all, 1.0);
-    for (multibox, grid, drawn) in [(false, false, true), (true, true, true), (true, false, false)]
-    {
+    for (multibox, grid, drawn) in [
+        (false, false, true),
+        (true, true, true),
+        (true, false, false),
+    ] {
         let strip = |rig: &mut Rig| {
             rig.session.pump_status();
             rig.ctx.prepare_frame(
@@ -500,6 +509,128 @@ fn walk_opens_walkto_over_the_scope() {
     );
     rig.click(place, walk);
     assert!(rig.session.walkto_open);
-    assert_eq!(rig.session.walk_send.mode, crate::session::WalkSendMode::Group);
+    assert_eq!(
+        rig.session.walk_send.mode,
+        crate::session::WalkSendMode::Group
+    );
     assert_eq!(rig.session.fleet_model.marks().len(), 1, "no mark added");
+}
+
+/// One frame that draws the toolbar at each of `sites` (open or folded),
+/// each in its own harness window; no site draws only the empty frame. No
+/// session sync: the frame draws only.
+fn toolbar_frame(rig: &mut Rig, sites: &[Site], open: bool) {
+    rig.session.ui.fleet_toolbar_open = open;
+    rig.ctx
+        .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+    {
+        let ui = rig.ctx.frame();
+        let session = &mut rig.session;
+        for (index, site) in sites.iter().enumerate() {
+            let name = match site {
+                Site::Rail => "Rail toolbar harness",
+                Site::Strip => "Strip toolbar harness",
+                Site::Window => "Window toolbar harness",
+            };
+            ui.window(name)
+                .position([400.0 * index as f32, 0.0], Condition::Always)
+                .size([330.0, 1500.0], Condition::Always)
+                .build(|| match site {
+                    Site::Rail => crate::app::draw_test_rail_toolbar(ui, session),
+                    Site::Strip => {
+                        let open = super::header(ui, session, "fleet");
+                        super::body(ui, session, Site::Strip, open);
+                    }
+                    Site::Window => super::body(ui, session, Site::Window, true),
+                });
+        }
+    }
+    rig.ctx.render();
+}
+
+/// Allocation calls over ten warm frames.
+fn toolbar_frame_calls(rig: &mut Rig, sites: &[Site], open: bool) -> usize {
+    for _ in 0..5 {
+        toolbar_frame(rig, sites, open);
+    }
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..10 {
+        toolbar_frame(rig, sites, open);
+    }
+    crate::test_alloc::alloc_calls() - before
+}
+
+/// A session with 100 bots in scope, a result and a waiting 100-bot plan.
+fn busy_rig(label: &str) -> Rig {
+    let all = names(100);
+    let mut rig = Rig::new(label, &all, &all, 1.0);
+    rig.session.plan_fleet_action(FleetAction::Login);
+    rig.session.confirm_fleet_plan();
+    let gatherer = frontend_core::scripts::CompiledCardId::lookup("Gatherer").unwrap();
+    rig.session
+        .fleet_model
+        .stage_card(FleetCard::pinned(ScriptChoice::compiled(gatherer)));
+    rig.session
+        .submit(OperatorCommand::SetFleetCard, Targets::Application);
+    rig.session.plan_fleet_action(FleetAction::Assign);
+    rig.session.pump_status();
+    assert!(rig.session.core.fleet_plan().is_some());
+    assert!(rig.session.core.fleet_result().is_some());
+    rig
+}
+
+/// Warm toolbar frames make no allocation call at every site (the rail,
+/// the strip, the Fleet window, and the rail and the Fleet window on screen
+/// together), open or folded, with 100 bots in scope, a waiting 100-bot
+/// plan and a result: the labels are cached, the rows are borrowed from the
+/// one model, the filter field is edited in place and nothing is formatted
+/// per frame.
+#[test]
+fn a_warm_toolbar_frame_allocates_nothing_at_any_site() {
+    let mut rig = busy_rig("toolbar-alloc");
+    crate::fleet::set_recording(false);
+    let empty = toolbar_frame_calls(&mut rig, &[], true);
+    let mut calls = Vec::new();
+    for (sites, open) in [
+        (&[Site::Rail][..], true),
+        (&[Site::Rail][..], false),
+        (&[Site::Strip][..], true),
+        (&[Site::Strip][..], false),
+        (&[Site::Window][..], true),
+        (&[Site::Rail, Site::Window][..], true),
+    ] {
+        calls.push((sites, open, toolbar_frame_calls(&mut rig, sites, open)));
+    }
+    crate::fleet::set_recording(true);
+    eprintln!("FLEET-TOOLBAR-ALLOC empty={empty} sites={calls:?}");
+    assert_eq!(empty, 0, "the empty harness frame allocates nothing");
+    for (sites, open, count) in calls {
+        assert_eq!(
+            count, 0,
+            "{sites:?} (open {open}): {count} allocation calls over 10 warm frames"
+        );
+    }
+}
+
+/// Measured 2026-10-21: the one set of toolbar labels for 100 marked bots
+/// (eleven strings) holds 712 bytes, 416 of them on the heap. The ceiling
+/// of 2 KiB keeps about 2.9 times that and fails on a second set per site
+/// or a per-row copy.
+#[test]
+fn the_toolbar_labels_are_one_small_set_per_process() {
+    const CEILING: usize = 2 * 1024;
+    let mut rig = busy_rig("toolbar-label-bytes");
+    for name in names(100) {
+        let identity = rig.session.core.profile_identity(&name).unwrap();
+        rig.session.fleet_model.set_mark_for_test(identity, true);
+    }
+    rig.settle(Place::Rail(crate::rail::RAIL_W));
+    rig.settle(Place::Window([760.0, 460.0]));
+    let labels = &rig.session.fleet_labels;
+    let bytes = std::mem::size_of_val(labels) + labels.heap_bytes();
+    eprintln!(
+        "FLEET-TOOLBAR-LABELS bytes={bytes} heap={}",
+        labels.heap_bytes()
+    );
+    assert!(bytes <= CEILING, "{bytes} bytes of toolbar labels");
 }

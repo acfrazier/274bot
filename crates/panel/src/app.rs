@@ -1735,12 +1735,8 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
                     "script" => script_section(ui, session),
                     "debug" => debug_section(ui, session),
                     "log" => log_section(ui, session, log_last),
-                    "fleet" => {
-                        // The rail carries the toolbar while it is shown.
-                        if !session.rail_shown() {
-                            fleet_section(ui, session);
-                        }
-                    }
+                    // The rail carries the toolbar while it is shown.
+                    "fleet" if !session.rail_shown() => fleet_section(ui, session),
                     _ => {}
                 }
             }
@@ -4866,6 +4862,15 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 rail_tiles(ui, gpu, state);
                 add_bot_button(ui, state);
                 resource_card(ui, state.session.core.resources());
+                #[cfg(test)]
+                {
+                    let (pos, size) = (ui.window_pos(), ui.window_size());
+                    TEST_RAIL_TILES.set(Some(RailTilesRecord {
+                        scroll_y: ui.scroll_y(),
+                        scroll_max_y: ui.scroll_max_y(),
+                        rect: [pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]],
+                    }));
+                }
             });
     });
     if !open {
@@ -5431,6 +5436,19 @@ fn rail_cap(
 std::thread_local! {
     static TEST_RAIL_ITEM_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The rail's scrolling tiles region as the last frame drew it.
+    static TEST_RAIL_TILES: std::cell::Cell<Option<RailTilesRecord>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The rail's scrolling tiles region as a test sees it.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct RailTilesRecord {
+    scroll_y: f32,
+    scroll_max_y: f32,
+    /// `[min_x, min_y, max_x, max_y]`.
+    rect: [f32; 4],
 }
 
 #[cfg(test)]

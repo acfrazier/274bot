@@ -183,13 +183,24 @@ pub(crate) struct PlanRecord {
 #[cfg(test)]
 std::thread_local! {
     static LAYOUT: RefCell<FleetLayout> = RefCell::new(FleetLayout::default());
+    /// Whether [`record`] keeps what it is given (an allocation test turns
+    /// it off, so the test's own records do not count).
+    static RECORDING: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// Record into this thread's fleet layout (a test reads it back with
-/// [`take_layout`]).
+/// [`take_layout`]). Does nothing while recording is off.
 #[cfg(test)]
 pub(crate) fn record(write: impl FnOnce(&mut FleetLayout)) {
-    LAYOUT.with_borrow_mut(write);
+    if RECORDING.get() {
+        LAYOUT.with_borrow_mut(write);
+    }
+}
+
+/// Turn [`record`] on or off on this thread.
+#[cfg(test)]
+pub(crate) fn set_recording(on: bool) {
+    RECORDING.set(on);
 }
 
 /// What the fleet surfaces recorded since the last call.

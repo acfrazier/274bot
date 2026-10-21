@@ -168,6 +168,16 @@ impl FleetLabels {
         ])
     }
 
+    /// The heap bytes the labels hold (their buffers' capacities).
+    #[cfg(test)]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.actions
+            .iter()
+            .chain([&self.marks, &self.folded])
+            .map(String::capacity)
+            .sum()
+    }
+
     /// The buffers of every cached label, to see that a frame kept them.
     #[cfg(test)]
     pub(crate) fn buffers(&self) -> Vec<*const u8> {
@@ -585,8 +595,17 @@ fn filter_row(ui: &Ui, session: &mut Session) {
     } else {
         -1.0
     });
+    // The field edits a buffer the session keeps (an `ImString`: ImGui
+    // edits it in place, so a frame allocates nothing). It follows the
+    // model's filter while no item is being edited.
+    let edit = &mut session.fleet_filter_edit;
+    let committed = session.fleet_model.filter().text();
+    if edit.to_str() != committed && !ui.is_any_item_active() {
+        edit.clear();
+        edit.push_str(committed);
+    }
     let edited = ui
-        .input_text("##fleet-filter", session.fleet_model.staged_filter_mut())
+        .input_text_imstr("##fleet-filter", edit)
         .hint(FILTER_HINT)
         .build();
     #[cfg(test)]
@@ -598,6 +617,9 @@ fn filter_row(ui: &Ui, session: &mut Session) {
         "show the rows whose name, status or world (w3) holds every word; marks stay",
     );
     if edited {
+        let staged = session.fleet_model.staged_filter_mut();
+        staged.clear();
+        staged.push_str(session.fleet_filter_edit.to_str());
         session.submit(OperatorCommand::SetFleetFilter, Targets::Application);
     }
     if one_row {
@@ -747,7 +769,7 @@ pub(crate) fn plan_row(ui: &Ui, session: &mut Session) {
     crate::fleet::count_plan_row();
     ui.text_wrapped(plan.prompt());
     #[cfg(test)]
-    let (prompt, prompt_rect) = (plan.prompt().to_owned(), item_rect(ui));
+    let prompt_rect = item_rect(ui);
     let confirm = ui.button("Confirm##fleet-plan");
     #[cfg(test)]
     let confirm_rect = item_rect(ui);
@@ -756,7 +778,7 @@ pub(crate) fn plan_row(ui: &Ui, session: &mut Session) {
     #[cfg(test)]
     record(|layout| {
         layout.plan = Some(PlanRecord {
-            prompt,
+            prompt: plan.prompt().to_owned(),
             confirm: confirm_rect,
             cancel: item_rect(ui),
         });
@@ -849,10 +871,7 @@ mod tests {
     fn buttons_share_rows_only_while_their_text_fits() {
         // Four columns of the widest fit in 400 with 8 between.
         let rows = button_rows(400.0, 8.0, [60.0, 90.0, 40.0, 70.0, 50.0]);
-        assert_eq!(
-            rows.map(|(_, same)| same),
-            [false, true, true, true, false]
-        );
+        assert_eq!(rows.map(|(_, same)| same), [false, true, true, true, false]);
         assert!(rows.iter().all(|(width, _)| *width == 94.0));
         // 200 wide: the widest (150) has a row of its own; the short ones pair.
         let rows = button_rows(200.0, 8.0, [60.0, 70.0, 150.0, 80.0, 90.0, 40.0]);
