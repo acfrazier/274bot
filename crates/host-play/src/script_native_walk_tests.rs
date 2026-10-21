@@ -2805,7 +2805,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
         Err(WalkGoalsError::TooMany {
             count,
             limit: script::native::WalkGoals::MAX
-        }) if count > limit
+        }) if count > script::native::WalkGoals::MAX
     ), "oversized generated restrictions must not be truncated or dropped");
 }
 
@@ -2900,7 +2900,10 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
             Some(denied),
             "the active follow aim must not enter the denied access stand"
         );
-        assert_ne!(rig.snapshot.tile(), denied);
+        assert_ne!(
+            rig.snapshot.tile(),
+            Some((denied.x, denied.z, denied.level))
+        );
     }
 }
 
