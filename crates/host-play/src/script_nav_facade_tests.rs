@@ -612,11 +612,14 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
 
 #[test]
 fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
-    let Some(path) = std::env::var_os("NAV_PACK") else {
-        eprintln!("SKIP: NAV_PACK is not set");
+    let Some(path) = script::ctx::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real 289 nav pack for router/selector parity",
+    ) else {
         return;
     };
-    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&path)).expect("real nav pack"));
+    let world = Arc::new(NavWorld::load_pack(&path).expect("real nav pack"));
     let trees = [
         (tile(3113, 3235, 0), 1278), // Draynor normal tree.
         (tile(3111, 3226, 0), 1276), // Nearby Draynor tree.
