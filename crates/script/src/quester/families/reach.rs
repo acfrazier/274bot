@@ -1161,13 +1161,7 @@ pub(super) fn loc_wall_fallback_tile(
 }
 
 pub(super) fn loc_wall_route_failed(receipt: &WalkReceipt) -> bool {
-    matches!(
-        receipt.end,
-        WalkEnd::RouteEnded | WalkEnd::Blocked | WalkEnd::Failed
-    ) && receipt
-        .detail
-        .as_deref()
-        .is_some_and(|detail| detail.contains("native walk route failed:"))
+    receipt.end == WalkEnd::NoPath
 }
 
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
