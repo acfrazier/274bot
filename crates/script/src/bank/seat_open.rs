@@ -871,11 +871,10 @@ impl ObjectOpen {
                             Err(error) => return Poll::Ready(Err(error)),
                         }
                     } else {
-                        let target_present = self
-                            .args
-                            .open_first
-                            .as_ref()
-                            .is_none_or(|(name, op)| loc_with_action(cx, name, op).is_some());
+                        // The opener's presence does not mean its bank target is usable.
+                        // 289 duel chest content opens Closed chest before Open chest/Bank.
+                        let target_present =
+                            loc_with_action(cx, &self.args.name, &self.args.op).is_some();
                         self.phase = object_start_phase(&self.args, false, target_present);
                     }
                 }
@@ -2281,6 +2280,140 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native::{ledger, HostEffect};
+    use crate::quester::families::tests::with_tick;
+    use api::snapshot::GameSnapshot;
+
+    fn duel_chest(open: bool) -> LocView {
+        LocView {
+            typecode: 0,
+            info: 0,
+            id: if open { 3194 } else { 3193 },
+            name: Some(if open { "Open chest" } else { "Closed chest" }.into()),
+            description: None,
+            actions: if open {
+                vec![None, Some("Bank".into())]
+            } else {
+                vec![Some("Open".into())]
+            },
+            tile: tile(3382, 3268),
+            distance: 1,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    fn duel_chest_opening() -> OpeningArgs {
+        // 289 game_duelarena/configs/duelarena.loc:70-83 and
+        // scripts/misc_locs.rs2:6-13 require Closed chest/Open, then Open chest/Bank.
+        let mut request = BankSeatArgs::new(BankSeatOperation::OpenObject);
+        request.object_access = Some(BankSeatObjectAccess {
+            name: "Open chest".into(),
+            op: "Bank".into(),
+            open_first_name: Some("Closed chest".into()),
+            open_first_op: Some("Open".into()),
+        });
+        OpeningArgs {
+            request,
+            facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
+            preferences: BankPreferences::default(),
+            hooks: Arc::new(Mutex::new(TransferHooks::default())),
+        }
+    }
+
+    fn take_chest_action(ledger: &mut Option<Box<ledger::Ledger>>) -> (i32, String) {
+        let effects = &mut ledger.as_mut().unwrap().outbox;
+        assert_eq!(effects.len(), 1, "exactly one chest action");
+        let HostEffect::Interaction(InteractReq::Loc { id, action, .. }) = effects.remove(0).effect
+        else {
+            panic!("expected a chest interaction");
+        };
+        (id.unwrap(), action)
+    }
+
+    #[test]
+    fn closed_duel_chest_opens_before_banking_and_waits_for_the_new_state() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_tile(tile(3382, 3269));
+        snapshot.seed_locs(vec![duel_chest(false)]);
+        let mut ledger = None;
+        let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Opening>(duel_chest_opening(), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert_eq!(take_chest_action(&mut ledger), (3193, "Open".into()));
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        snapshot.seed_locs(vec![duel_chest(true)]);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert_eq!(take_chest_action(&mut ledger), (3194, "Bank".into()));
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            assert_eq!(
+                tick.actions.poll(&handle, &mut tick.cx),
+                Poll::Ready(Ok(OpeningValue::Bool(true)))
+            );
+        });
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn already_open_duel_chest_skips_the_opener() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_tile(tile(3382, 3269));
+        snapshot.seed_locs(vec![duel_chest(true)]);
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Opening>(duel_chest_opening(), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert_eq!(take_chest_action(&mut ledger), (3194, "Bank".into()));
+    }
+
+    #[test]
+    fn already_loaded_bank_skips_all_chest_actions() {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_locs(vec![duel_chest(false)]);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<Opening>(duel_chest_opening(), &mut tick.cx)
+                .unwrap();
+            assert_eq!(
+                tick.actions.poll(&handle, &mut tick.cx),
+                Poll::Ready(Ok(OpeningValue::Bool(true)))
+            );
+        });
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
 
     fn tile(x: i32, z: i32) -> WorldTile {
         WorldTile { x, z, level: 0 }
