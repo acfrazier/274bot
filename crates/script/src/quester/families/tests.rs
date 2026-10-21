@@ -2025,6 +2025,7 @@ fn interact_false_is_failure_not_success() {
         settle_duration: Duration::from_secs(20),
         walk: None,
         wall_fallback_tile: None,
+        wall_fallback_pending: None,
         reach: Some(handle),
         default_dialogue: true,
         dialogue_options: None,
@@ -6005,6 +6006,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         settle_duration: Duration::from_secs(20),
         walk: None,
         wall_fallback_tile: None,
+        wall_fallback_pending: None,
         interaction: None,
         accepted: false,
         round_before: None,
@@ -6880,6 +6882,34 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
             receipt.detail = Some(Arc::from("native walk route failed: no route"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            for _ in 0..31 {
+                assert!(tick.cx.budget.transition());
+            }
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(request)
+                    if request.target == wall_tile && request.radius == 1)
+            }),
+            "the retry remains pending after the route receipt uses the last transition"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            for _ in 0..32 {
+                assert!(tick.cx.budget.transition());
+            }
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(request)
+                    if request.target == wall_tile && request.radius == 1)
+            }),
+            "a budget-exhausted retry start remains queued"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
@@ -6891,13 +6921,13 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
                     && request.loc_id.is_none()
         ));
 
-        post_user_input_walk_receipt(&mut ledger, 4);
+        post_user_input_walk_receipt(&mut ledger, 6);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::RouteEnded;
             receipt.detail = Some(Arc::from("native walk route failed: no route"));
         }
-        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+        let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(
@@ -6973,6 +7003,34 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
             receipt.detail = Some(Arc::from("native walk route failed: no path"));
         }
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            for _ in 0..31 {
+                assert!(tick.cx.budget.transition());
+            }
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(request)
+                    if request.target == wall_tile && request.radius == 1)
+            }),
+            "the retry remains pending after the route receipt uses the last transition"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            for _ in 0..32 {
+                assert!(tick.cx.budget.transition());
+            }
+            with_step(tick, |step| run.poll(step))
+        })
+        .is_pending());
+        assert!(
+            !ledger.as_ref().unwrap().outbox.iter().any(|entry| {
+                matches!(&entry.effect, HostEffect::Walk(request)
+                    if request.target == wall_tile && request.radius == 1)
+            }),
+            "a budget-exhausted retry start remains queued"
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 5, |tick| {
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
@@ -6984,13 +7042,13 @@ fn anchored_interact_wall_walk_falls_back_to_the_loc_tile_once() {
                     && request.loc_id.is_none()
         ));
 
-        post_user_input_walk_receipt(&mut ledger, 4);
+        post_user_input_walk_receipt(&mut ledger, 6);
         {
             let receipt = ledger.as_mut().unwrap().walk.as_mut().unwrap();
             receipt.end = WalkEnd::Failed;
             receipt.detail = Some(Arc::from("native walk route failed: no path"));
         }
-        let result = with_tick(&snapshot, &mut ledger, 4, |tick| {
+        let result = with_tick(&snapshot, &mut ledger, 6, |tick| {
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(
