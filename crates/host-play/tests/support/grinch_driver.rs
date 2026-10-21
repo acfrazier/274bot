@@ -3326,7 +3326,7 @@ fn parse_sha256_fingerprints(evidence: &Value, field: &str) -> Result<BTreeSet<[
             ));
         }
         let mut fingerprint = [0; 32];
-        for (index, pair) in bytes.chunks_exact(2).enumerate() {
+        for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
             let high = match pair[0] {
                 b'0'..=b'9' => pair[0] - b'0',
                 b'a'..=b'f' => pair[0] - b'a' + 10,
