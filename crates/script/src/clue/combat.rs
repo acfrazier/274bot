@@ -580,6 +580,7 @@ impl ClueRuntime {
                         "x": drop.tile.x,
                         "z": drop.tile.z,
                         "level": drop.tile.level,
+                        "id": drop.id,
                         "name": drop.name,
                         "action": TAKE,
                     })

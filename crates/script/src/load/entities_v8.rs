@@ -2279,8 +2279,9 @@ globalThis.checkNativeQuery = () => {
     #[test]
     fn cold_ground_interaction_requests_bound_collected_v8_heap_growth() {
         const RETAINED_REQUESTS: usize = 2_048;
-        // 512 bytes per request plus 512 KiB of fixed isolate/test headroom.
-        const MAX_GROWTH: usize = 1_572_864;
+        // The recorded 273,976-byte growth gets 276,024 bytes of headroom.
+        // This 550,000-byte limit allows about 2x the measured growth.
+        const MAX_GROWTH: usize = 550_000;
         let mut runtime = setup();
         runtime
             .eval::<()>(
