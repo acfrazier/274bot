@@ -639,16 +639,12 @@ impl LocAccessWindow {
 
 /// Resolve the exact live-loc geometry inputs used by the router, without
 /// capturing flags or allocating a candidate vector.
-pub(crate) fn route_loc_access_geometry<'a>(
-    snapshot: &'a api::snapshot::GameSnapshot,
+pub(crate) fn route_loc_access_geometry(
+    snapshot: &api::snapshot::GameSnapshot,
     target: api::WorldTile,
     loc_id: i32,
     radius: i32,
-) -> Option<(
-    LocAccessGeometry,
-    LocAccessWindow,
-    &'a api::snapshot::SceneView,
-)> {
+) -> Option<(LocAccessGeometry, LocAccessWindow, &api::snapshot::SceneView)> {
     let scene = snapshot.scene();
     if !api::query::SceneQuery::new(scene, None).contains(target) {
         return None;

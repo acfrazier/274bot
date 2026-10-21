@@ -357,7 +357,7 @@ fn build_gatherer_geometry(
         .zones
         .as_ref()
         .ok_or_else(|| "gatherer_zone_table_unavailable".to_owned())?;
-    let mut zone_filter = nav::zones::ZoneFilterOwned::new(
+    let zone_filter = nav::zones::ZoneFilterOwned::new(
         zone_table.zones().len(),
         Some(combat),
         &[],
@@ -470,7 +470,7 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str) {
     if !GATHERER_ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    let tick = c.gens.player_info as u64;
+    let tick = c.gens.player_info;
     let xp = c.stat_xp.get(GATHERER_WOODCUTTING_STAT).copied();
     let combat = c.local_player.as_ref().map(|player| player.combat_level);
     let tile = current_tile(c);

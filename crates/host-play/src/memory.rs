@@ -1193,6 +1193,10 @@ fn seed_runner(
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "prepared once per memory run; boxing adds an allocation without reducing per-bot state"
+)]
 enum ScriptCard {
     Catalog {
         card: script::JsCard,
