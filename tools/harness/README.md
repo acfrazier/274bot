@@ -59,9 +59,15 @@ it. The runner prefers loopback ports 44794/1280/10098 and records any free-port
 fallback. Protected A/Q ports are never candidates.
 
 A and C copies use unchanged content and map inputs: `content_patch` is null,
-and source-versus-copy content identities must match before and after packing.
-Only the five B cases add static OBJ rows and set tested raw respawn rates to
-502. They preserve existing map rows and use the real config/map packers.
+and source-versus-copy content identities match before and after packing.
+Each B case adds only its exact static OBJ rows to `m49_53.jm2`; it does not
+edit object config. The runner preserves existing map rows, packs the original
+content for a baseline, then runs the real map/config packers after the map-only
+patch. It records and compares before/after hashes for the attested
+`server/obj.dat`, `server/npc.dat`, and `client/config` packs, failing closed if any differ.
+A per-run engine `ObjType.load()` decode records all four named objects'
+actual unchanged default respawn rate of 100; no respawn config override is
+applied. This keeps production source attestation intact.
 Every case records `server_tick_ms: 600` and a plain `{"scratch": authority}`
 manifest. A root Engine A identity fact is not A/C capture authority.
 

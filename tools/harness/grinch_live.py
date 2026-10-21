@@ -41,12 +41,12 @@ CASES = {
           ("c-inventory-blocked", "grinch_c_inventory_blocked_live", 180)],
 }
 OBJECTS = {
-    1959: ("scripts/skill_cooking/configs/cooking_generic/cooking.obj", "pumpkin"),
-    1419: ("scripts/_unpack/225/all.obj", "scythe"),
-    1037: ("scripts/general_use/configs/holiday.obj", "bunnyears"),
-    4079: ("scripts/holidayevents/xmas2004/configs/xmas_yoyo.obj", "xmas_yoyo"),
+    1959: "scripts/skill_cooking/configs/cooking_generic/cooking.obj",
+    1419: "scripts/_unpack/225/all.obj",
+    1037: "scripts/general_use/configs/holiday.obj",
+    4079: "scripts/holidayevents/xmas2004/configs/xmas_yoyo.obj",
 }
-
+ATTESTED_PACK_PATHS = ("server/obj.dat", "server/npc.dat", "client/config")
 
 def dump(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +70,25 @@ def digest_inputs(root: Path, paths: list[Path]) -> str:
     return digest.hexdigest()
 
 
+def require_unchanged_attested_packs(before: dict[str, str], after: dict[str, str]) -> None:
+    expected = set(ATTESTED_PACK_PATHS)
+    for label, hashes in (("before", before), ("after", after)):
+        if set(hashes) != expected:
+            raise RuntimeError(f"{label} attested-pack hashes do not cover exactly {sorted(expected)}")
+        if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+               for value in hashes.values()):
+            raise RuntimeError(f"{label} attested-pack hashes contain an invalid SHA-256")
+    changed = [path for path in ATTESTED_PACK_PATHS if before[path] != after[path]]
+    if changed:
+        details = ", ".join(f"{path}: {before[path]} -> {after[path]}" for path in changed)
+        raise RuntimeError(f"map-only B patch changed attested pack hashes: {details}")
+
+
+def attested_pack_hashes(engine: Path) -> dict[str, str]:
+    pack = engine / "data/pack"
+    return {relative: digest_file(pack / relative) for relative in ATTESTED_PACK_PATHS}
+
+
 def source_identity(engine: Path) -> str:
     paths = [engine / "package.json", engine / "package-lock.json"]
     for directory in (engine / "src", engine / "tools"):
@@ -81,19 +100,6 @@ def content_identity(content: Path) -> str:
     return digest_inputs(content, [path for directory in (content / "scripts", content / "maps")
                                    for path in directory.rglob("*") if path.is_file()])
 
-
-def set_respawn(text: str, alias: str) -> str:
-    section = re.compile(r"(?m)^\[" + re.escape(alias) + r"\]\s*\n(?:(?!^\[)[\s\S])*")
-    matches = list(section.finditer(text))
-    if len(matches) != 1:
-        raise ValueError(f"expected exactly one [{alias}] object definition")
-    match = matches[0]
-    body = match.group(0)
-    if re.search(r"(?m)^respawnrate=", body):
-        body = re.sub(r"(?m)^respawnrate=.*$", "respawnrate=502", body)
-    else:
-        body = body.rstrip("\n") + "\nrespawnrate=502\n\n"
-    return text[:match.start()] + body + text[match.end():]
 
 
 def add_objects(text: str, rows: list[dict]) -> str:
@@ -219,16 +225,14 @@ def copy_inputs(source: Path, destination: Path, source_content: Path) -> tuple[
     return engine, content
 
 
-def patch_content(content: Path, rows: list[dict], evidence: Path) -> dict:
+def patch_content(content: Path, rows: list[dict]) -> tuple[dict, list[dict]]:
     changes = []
-    for item in sorted({row["item_id"] for row in rows}):
-        relative, alias = OBJECTS[item]
-        path = content / relative
-        before = path.read_text(encoding="utf-8")
-        after = set_respawn(before, alias)
-        path.write_text(after, encoding="utf-8")
-        changes.append({"path": relative, "before_sha256": hashlib.sha256(before.encode()).hexdigest(),
-                        "after_sha256": digest_file(path), "alias": alias, "respawnrate": 502})
+    object_hashes_before = {
+        item_id: digest_file(content / relative) for item_id, relative in OBJECTS.items()
+    }
+    unknown_items = sorted({row["item_id"] for row in rows} - OBJECTS.keys())
+    if not rows or unknown_items:
+        raise ValueError(f"B map patch has no rows or unknown object IDs: {unknown_items}")
     by_map: dict[str, list[dict]] = {}
     for row in rows:
         tile = row["tile"]
@@ -241,11 +245,57 @@ def patch_content(content: Path, rows: list[dict], evidence: Path) -> dict:
         path.write_text(after, encoding="utf-8")
         changes.append({"path": relative, "before_sha256": hashlib.sha256(before.encode()).hexdigest(),
                         "after_sha256": digest_file(path), "added_obj_rows": additions})
+    object_hashes_after = {
+        item_id: digest_file(content / relative) for item_id, relative in OBJECTS.items()
+    }
+    if object_hashes_after != object_hashes_before:
+        raise RuntimeError("map-only B patch changed a named OBJ config source")
     raw = json.dumps(changes, sort_keys=True, separators=(",", ":")).encode()
-    dump(evidence / "content-patch.json", {"changes": changes, "sha256": hashlib.sha256(raw).hexdigest()})
-    return {"sha256": hashlib.sha256(raw).hexdigest(), "preserved_existing_map_rows": True,
-            "real_map_packer_used": False, "real_config_packer_used": False,
-            "raw_respawn_rates": {str(row["item_id"]): 502 for row in rows}, "static_spawns": rows}
+    return ({
+        "sha256": hashlib.sha256(raw).hexdigest(), "preserved_existing_map_rows": True,
+        "real_map_packer_used": False, "real_config_packer_used": False,
+        "attested_pack_hashes_before": {}, "attested_pack_hashes_after": {},
+        "raw_respawn_rates": {}, "static_spawns": rows,
+    }, changes)
+
+
+def record_content_patch_evidence(evidence: Path, changes: list[dict], patch: dict) -> None:
+    dump(evidence / "content-patch.json", {
+        "changes": changes,
+        "sha256": patch["sha256"],
+        "attested_pack_hashes_before": patch["attested_pack_hashes_before"],
+        "attested_pack_hashes_after": patch["attested_pack_hashes_after"],
+        "raw_respawn_rates": patch["raw_respawn_rates"],
+        "static_spawns": patch["static_spawns"],
+        "real_map_packer_used": patch["real_map_packer_used"],
+        "real_config_packer_used": patch["real_config_packer_used"],
+    })
+
+
+def decode_respawn_rates(launcher: Path, engine: Path, env: dict[str, str],
+                         log: Path) -> dict[int, int]:
+    item_ids = sorted(OBJECTS)
+    decoder = (
+        "import ObjType from '#/cache/config/ObjType.js'; "
+        "ObjType.load('data/pack'); "
+        "const ids = JSON.parse(process.env.GRINCH_RESPAWN_ITEM_IDS); "
+        "console.log('GRINCH_RESPAWN_RATES=' + JSON.stringify("
+        "Object.fromEntries(ids.map((id) => [id, ObjType.get(id).respawnrate]))));"
+    )
+    run_owned([str(launcher), "--eval", decoder], cwd=engine,
+              env=env | {"GRINCH_RESPAWN_ITEM_IDS": json.dumps(item_ids)},
+              log=log, timeout=120)
+    output = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    records = [line.removeprefix("GRINCH_RESPAWN_RATES=") for line in output
+               if line.startswith("GRINCH_RESPAWN_RATES=")]
+    if len(records) != 1:
+        raise RuntimeError("real ObjType decoder did not emit exactly one respawn-rate record")
+    decoded = json.loads(records[0])
+    expected = {str(item_id) for item_id in item_ids}
+    if not isinstance(decoded, dict) or set(decoded) != expected or any(
+            type(rate) is not int for rate in decoded.values()):
+        raise RuntimeError("real ObjType decoder returned incomplete or invalid respawn rates")
+    return {int(item_id): rate for item_id, rate in decoded.items()}
 
 
 def wait_ready(process: subprocess.Popen, config: dict, deadline: float) -> dict:
@@ -441,7 +491,7 @@ def instrument_take_receipts(engine: Path, directory: Path) -> None:
 
 def command_stop_receipts(directory: Path) -> list[dict]:
     receipts = []
-    for name in ("pack", "capture"):
+    for name in ("baseline-pack", "pack", "respawn-decode", "capture"):
         if not (directory / f"{name}.log").is_file():
             continue
         path = directory / f"{name}.process.json"
@@ -491,11 +541,10 @@ def capture_scratch(args: argparse.Namespace, case: tuple[str, str, int], base_e
     # so TSX's relative module imports still resolve inside the isolated copy.
     launcher = engine / (args.engine_dir / "node_modules/.bin/tsx").resolve().relative_to(
         args.engine_dir.resolve())
-    patch = patch_content(content, fixture_rows(slug), directory) if slug.startswith("b-") else None
     source_content_identity = content_identity(source_content)
     copied_content_identity = content_identity(content)
-    if patch is None and copied_content_identity != source_content_identity:
-        raise RuntimeError("unpatched scratch content differs from source content")
+    if copied_content_identity != source_content_identity:
+        raise RuntimeError("scratch content differs from its source before patching")
     instrument_cycles(engine, directory)
     instrument_take_receipts(engine, directory)
     config_path = engine / "data/config/world.json"
@@ -529,17 +578,33 @@ def capture_scratch(args: argparse.Namespace, case: tuple[str, str, int], base_e
                            for name, port in zip(("game", "web", "management"), ports)},
                  "members_mode": True, "copied_engine_content_map_inputs_and_account_storage": True,
                  "respawn_phase_convention": "first_object_turn_in_take_cycle_and_output_after_lifecycle",
-                 "content_patch": patch, "server_tick_ms": 600, "start_count": 0, "stop_count": 0,
+                 "content_patch": None, "server_tick_ms": 600, "start_count": 0, "stop_count": 0,
                  "process_tree_stopped": False, "engine_a_touched": False, "engine_q_touched": False}
     authority["ports"].update(probed_free_before_start=True, selected_before_login=True)
     process = None
     try:
         command = [str(launcher), "tools/pack/Build.ts"]
+        if slug.startswith("b-"):
+            run_owned(command, cwd=engine, env=env, log=directory / "baseline-pack.log", timeout=900)
+            before_hashes = attested_pack_hashes(engine)
+            patch, changes = patch_content(content, fixture_rows(slug))
+            patch["attested_pack_hashes_before"] = before_hashes
+            authority["content_patch"] = patch
+            authority["content_identity"] = content_identity(content)
+            record_content_patch_evidence(directory, changes, patch)
         run_owned(command, cwd=engine, env=env, log=directory / "pack.log", timeout=900)
-        if patch is None and content_identity(content) != source_content_identity:
+        if slug.startswith("b-"):
+            patch = authority["content_patch"]
+            after_hashes = attested_pack_hashes(engine)
+            patch.update(real_map_packer_used=True, real_config_packer_used=True,
+                         attested_pack_hashes_after=after_hashes)
+            record_content_patch_evidence(directory, changes, patch)
+            patch["raw_respawn_rates"] = decode_respawn_rates(
+                launcher, engine, env, directory / "respawn-decode.log")
+            record_content_patch_evidence(directory, changes, patch)
+            require_unchanged_attested_packs(before_hashes, after_hashes)
+        elif content_identity(content) != source_content_identity:
             raise RuntimeError("unpatched scratch content changed during pack")
-        if patch is not None:
-            patch.update(real_map_packer_used=True, real_config_packer_used=True)
         authority["content_identity"] = content_identity(content)
         check_disk(directory, "start")
         for endpoint in reservations:
@@ -565,7 +630,6 @@ def capture_scratch(args: argparse.Namespace, case: tuple[str, str, int], base_e
             authority["process_tree_stopped"] = stopped["process_tree_stopped"]
             dump(lifecycle, stopped | {"start_count": 1, "stop_count": 1})
         dump(manifest, {"scratch": authority})
-
 
 def run(args: argparse.Namespace) -> None:
     for name in ("engine_dir", "catalog_root", "nav_pack", "evidence_dir", "worktree", "isohome"):
@@ -618,22 +682,21 @@ def run(args: argparse.Namespace) -> None:
 
 def self_test(engine: Path | None = None) -> None:
     # Local input/process checks are not live evidence or an engine qualification.
-    original = "[first]\nname=First\n\n[pumpkin]\nname=Pumpkin\n\n[last]\nname=Last\n"
-    patched = set_respawn(original, "pumpkin")
-    assert "[first]\nname=First" in patched and "[last]\nname=Last" in patched
-    assert patched.count("respawnrate=502") == 1
-    assert set_respawn(patched, "pumpkin") == patched
     map_input = "==== MAP ====\n0 0 0: 1\n\n==== OBJ ====\n0 1 2: 995 4\n"
     rows = fixture_rows("b-pumpkin-respawns")
     changed = add_objects(map_input, rows)
     assert changed.startswith(map_input) and len(rows) == 3
+    assert "0 1 2: 995 4" in changed
     assert "0 49 48: 1959 1" in changed and "0 62 48: 1959 1" in changed
+    pack_hashes = {path: "a" * 64 for path in ATTESTED_PACK_PATHS}
+    require_unchanged_attested_packs(pack_hashes, pack_hashes.copy())
     try:
-        set_respawn(original, "missing")
-    except ValueError:
+        require_unchanged_attested_packs(
+            pack_hashes, pack_hashes | {"server/obj.dat": "b" * 64})
+    except RuntimeError:
         pass
     else:
-        raise AssertionError("an absent object section was accepted")
+        raise AssertionError("a changed attested pack was accepted")
     ports, reservations = reserve_ports()
     try:
         assert len(set(ports)) == 3 and not set(ports) & PROTECTED_PORTS
