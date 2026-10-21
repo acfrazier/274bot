@@ -2155,8 +2155,12 @@ impl Scripts {
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
             if tallied {
                 self.skip_unstarted_tally(profile, reason);
-            } else if kind == StartKind::RestartSettings {
-                self.show(format!("Restart cancelled for {profile}: {reason}"));
+            } else {
+                if kind == StartKind::RestartSettings {
+                    self.show(format!("Restart cancelled for {profile}: {reason}"));
+                }
+                self.start_command_skips
+                    .push((profile.to_string(), reason.to_string()));
             }
             return true;
         }
@@ -2512,23 +2516,25 @@ impl Scripts {
     ) -> (usize, Option<OperationId>) {
         let cancelled = self.admit.drain();
         for entry in &cancelled {
-            self.tally_record(
-                &entry.profile,
-                Outcome::Skipped("cancelled".into()),
-                LogTo::Slot,
-            );
+            self.withdraw_start(&entry.profile, "cancelled");
         }
         let preparing = self.cancel_all_start_preparations();
         for (profile, _, tallied) in &preparing {
             if *tallied {
-                self.skip_unstarted_tally(profile, "cancelled");
+                if let Some(tally) = &mut self.tally {
+                    tally.retract_unstarted(profile);
+                }
+                self.withdraw_start(profile, "cancelled");
+            } else {
+                self.start_command_skips
+                    .push((profile.clone(), "cancelled".to_string()));
             }
         }
         let pending_marked = self
             .cancel_pending_catalog_assignment(None)
             .unwrap_or_default();
         for profile in &pending_marked {
-            self.tally_record(profile, Outcome::Skipped("cancelled".into()), LogTo::Slot);
+            self.withdraw_start(profile, "cancelled");
         }
         let cancelled_any =
             !cancelled.is_empty() || !preparing.is_empty() || !pending_marked.is_empty();
@@ -3175,17 +3181,26 @@ impl Scripts {
             let Some(commands) = self.pending_start_commands.remove(&profile) else {
                 continue;
             };
-            let skip = match reason.as_str() {
-                "already active" => crate::command::SkipReason::AlreadyActive,
-                "logged out" | "disconnected" => crate::command::SkipReason::NotLoggedIn,
-                "removed" => crate::command::SkipReason::NotLoaded,
-                _ => crate::command::SkipReason::NotReady,
+            let terminal = match reason.as_str() {
+                "cancelled" => Settlement::Cancelled(api::identity::Cancellation::Operator),
+                "already active" => Settlement::Completed(Completion::Skipped(
+                    crate::command::SkipReason::AlreadyActive,
+                )),
+                "logged out" | "disconnected" => Settlement::Completed(Completion::Skipped(
+                    crate::command::SkipReason::NotLoggedIn,
+                )),
+                "removed" => Settlement::Completed(Completion::Skipped(
+                    crate::command::SkipReason::NotLoaded,
+                )),
+                _ => {
+                    Settlement::Completed(Completion::Skipped(crate::command::SkipReason::NotReady))
+                }
             };
             for command in commands {
                 core.settle_later(
                     command.request,
                     command.subject,
-                    Settlement::Completed(Completion::Skipped(skip)),
+                    terminal.clone(),
                     Some(&reason),
                 );
             }
@@ -3322,8 +3337,14 @@ impl Scripts {
     }
 
     fn credit_skipped(&mut self, profile: &str, reason: &str) {
-        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
+        self.withdraw_start(profile, reason);
         self.publish_bulk();
+    }
+
+    /// A Start that left the queue or its preparation without running:
+    /// its tally row says why, and its command settles on the next poll.
+    fn withdraw_start(&mut self, profile: &str, reason: &str) {
+        self.tally_record(profile, Outcome::Skipped(reason.to_string()), LogTo::Slot);
         self.start_command_skips
             .push((profile.to_string(), reason.to_string()));
     }

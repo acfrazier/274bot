@@ -397,7 +397,7 @@ pub struct TuiSession {
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<ScriptChoice>,
     /// Shared script coordination (card library and catalog, assignment,
-    /// per-profile parameters, Start/Stop all, reload, Apply to all): the
+    /// per-profile parameters, Start/Stop fleet, reload, Apply to all): the
     /// same owner the panel uses.
     scripts: frontend_core::Scripts,
     /// First-run rs2b0t clone-root folder browser.
@@ -427,7 +427,7 @@ pub struct TuiSession {
     copied_capacity: Option<u64>,
     /// The fleet result last shown on the message line: its command and its
     /// text, so a result is copied there only when it changed.
-    shown_result: Option<(api::identity::RequestId, String)>,
+    shown_result: Option<(Option<api::identity::RequestId>, String)>,
     persist_ui: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,

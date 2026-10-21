@@ -1713,11 +1713,14 @@ fn script_commands_are_reachable_at_80x24() {
     let rows = draw(&mut app, 80, 24);
     let (main_x, main_y) =
         find(&rows, "[Browse b] [Start t] [Pause P] [Stop e] [Load f]").expect("main script row");
-    let (bulk_x, bulk_y) =
-        find(&rows, "[Params v] [Reload R] [Start all T] [Stop all E]").expect("bulk script row");
+    let (bulk_x, bulk_y) = find(
+        &rows,
+        "[Params v] [Reload R] [Start fleet T] [Stop fleet E]",
+    )
+    .expect("bulk script row");
     let at = |x: u16, row: &str, label: &str| x + row.find(label).unwrap() as u16 + 1;
     let main = "[Browse b] [Start t] [Pause P] [Stop e] [Load f]";
-    let bulk = "[Params v] [Reload R] [Start all T] [Stop all E]";
+    let bulk = "[Params v] [Reload R] [Start fleet T] [Stop fleet E]";
     let sel = app.script_sel.as_ref().unwrap().duplicate();
     let clicks = [
         (
@@ -1735,11 +1738,11 @@ fn script_commands_are_reachable_at_80x24() {
     }
     for (label, want) in [
         (
-            "[Start all",
+            "[Start fleet",
             AppAction::PlanFleet(frontend_core::FleetAction::Start),
         ),
         (
-            "[Stop all",
+            "[Stop fleet",
             AppAction::PlanFleet(frontend_core::FleetAction::Stop),
         ),
     ] {

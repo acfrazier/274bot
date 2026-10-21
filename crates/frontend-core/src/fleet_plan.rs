@@ -175,7 +175,9 @@ impl FleetPlan {
 /// the rows the plan skipped), failures first, then skips, then done.
 #[derive(Debug)]
 pub struct FleetResult {
-    pub(crate) request: api::identity::RequestId,
+    /// `None`: every frozen target was gone when the plan ran, so no
+    /// command record exists and the result is its skips alone.
+    pub(crate) request: Option<api::identity::RequestId>,
     pub(crate) action: FleetAction,
     /// Plan-time skips and profiles gone at run time.
     pub(crate) extra: Vec<BulkRow>,
@@ -201,8 +203,9 @@ impl FleetResult {
         self.action
     }
 
-    /// The command record the result follows.
-    pub fn request(&self) -> api::identity::RequestId {
+    /// The command record the result follows (`None`: every frozen target
+    /// was gone when the plan ran).
+    pub fn request(&self) -> Option<api::identity::RequestId> {
         self.request
     }
 

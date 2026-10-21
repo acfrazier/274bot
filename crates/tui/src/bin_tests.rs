@@ -4188,9 +4188,9 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
     dispatch(session, app, action);
 }
 
-/// Start all, Reload (warn, then Confirm) and Stop all from the script
+/// Start fleet, Reload (warn, then Confirm) and Stop fleet from the script
 /// pane go through the same coordinator as the panel: assigned members
-/// start, the warning names both runs, Confirm replaces both, Stop all
+/// start, the warning names both runs, Confirm replaces both, Stop fleet
 /// stops both.
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
@@ -4423,7 +4423,7 @@ fn tui_start_all_paces_admission_through_the_shared_coordinator() {
         .count();
     assert!(
         starting <= frontend_core::scripts::START_ADMIT_PER_FRAME,
-        "TUI Start all dispatched {starting} in the click frame"
+        "TUI Start fleet dispatched {starting} in the click frame"
     );
     assert!(starting > 0 || session.scripts.starts_pending());
     settle_starts(&mut session, &mut app);
@@ -4716,6 +4716,101 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
             .login_latched(),
         "nothing relogs before confirmation"
     );
+    session
+        .submit(OperatorCommand::StopScript, Targets::Everyone)
+        .unwrap();
+}
+
+/// Confirming Relog-now on a Start that is still queued cancels the queued
+/// Start, and the original fleet Start command's member for that bot
+/// settles as skipped (not logged in): it never starts later.
+#[test]
+fn confirmed_relog_settles_the_queued_start_member_and_it_never_starts() {
+    use api::identity::{Cancellation, Settlement};
+    use frontend_core::command::Subject;
+    let iso = IsolatedStores::enter("tui-relog-queued-start-confirmed");
+    let names = ["p0", "p1", "p2", "p3", "p4"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    let path = iso.dir().join("shared.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    let start = session
+        .core
+        .fleet_result()
+        .expect("the Start result")
+        .request()
+        .expect("the Start opened a command record");
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("more Starts than one frame admits")
+        .to_string();
+    assert_eq!(session.core.script_state(&queued), ScriptRunState::Idle);
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::MemoryRelog(queued.clone()),
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(crate::overlay::Modal::Confirm(confirm))
+            if confirm.kind == crate::overlay::ConfirmKind::MemoryRelog(queued.clone())
+    ));
+    // The overlay's own confirm path.
+    press_key(
+        &mut session,
+        &mut app,
+        crate::test_support::key(crossterm::event::KeyCode::Enter),
+    );
+    assert!(app.modal.is_none());
+
+    let identity = session.core.profile_identity_or_synthetic(&queued);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.core.flush_writes();
+        session.pump(&mut app);
+        let member = session
+            .core
+            .commands()
+            .report(start)
+            .and_then(|report| report.member(Subject::Profile(identity)));
+        if let Some(terminal) = member.and_then(|member| member.terminal()) {
+            assert_eq!(
+                terminal,
+                // Relog-now in the same frame retires the session scope the
+                // queued Start was issued under, before the coordinator's
+                // next poll would settle it as NotLoggedIn.
+                &Settlement::Cancelled(Cancellation::ScopeInvalidated),
+                "the queued member of the original Start (detail {:?})",
+                member.and_then(|member| member.detail())
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the queued Start member never settled"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session.scripts.start_queue_place(&queued).is_none(),
+        "the queued Start is gone"
+    );
+    for _ in 0..20 {
+        session.core.flush_writes();
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            session.core.script_state(&queued),
+            ScriptRunState::Idle,
+            "the cancelled Start never starts"
+        );
+    }
     session
         .submit(OperatorCommand::StopScript, Targets::Everyone)
         .unwrap();
