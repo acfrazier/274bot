@@ -1268,7 +1268,7 @@ impl<Io> OperatorSession<Io> {
         let value = preferences.value(crate::profile_order::PROFILE_ORDER_KEY);
         self.order_saved = value.is_some();
         self.profile_order = crate::profile_order::ProfileOrder::from_value(value.as_ref());
-        self.durable_order = self.profile_order.clone();
+        self.durable_order.assign_from(&self.profile_order);
         self.order_reconciled_at = None;
         self.reconcile_profile_order();
     }
@@ -1329,7 +1329,7 @@ impl<Io> OperatorSession<Io> {
             Ok(host_play::local_state::Update::Durable) => {
                 self.order_write_seq += 1;
                 self.durable_order_seq = self.order_write_seq;
-                self.durable_order = self.profile_order.clone();
+                self.durable_order.assign_from(&self.profile_order);
             }
             Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
             Err(error) => order_write_failed(&error),
