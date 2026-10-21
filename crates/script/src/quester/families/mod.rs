@@ -1868,6 +1868,7 @@ impl StepPlan for InteractPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             wall_fallback_tile: None,
+            wall_fallback_pending: None,
             reach: None,
             default_dialogue: self.default_dialogue,
             dialogue_options: self.dialogue_options.clone(),
@@ -1912,6 +1913,8 @@ struct InteractRun {
     walk: Option<ActionHandle<Walk>>,
     /// The wall tile for the one allowed retry of an initial facing-side walk.
     wall_fallback_tile: Option<WorldTile>,
+    /// A retry tile whose walk request has not yet obtained budget.
+    wall_fallback_pending: Option<WorldTile>,
     reach: Option<ActionHandle<reach::Reach>>,
     default_dialogue: bool,
     dialogue_options: Option<dialogue::DialogueOptions>,
@@ -1942,6 +1945,7 @@ impl InteractRun {
         self.dialogue_page = None;
         self.reach = None;
         self.wall_fallback_tile = None;
+        self.wall_fallback_pending = None;
         self.started = false;
         self.round_pick = None;
         self.retargets_left = reach::RETARGET_LIMIT;
@@ -2217,6 +2221,16 @@ impl InteractRun {
             }
             self.clear_round();
         }
+        if let Some(tile) = self.wall_fallback_pending {
+            self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                cx.tick.actions.begin::<Walk>(
+                    reach::walk_request(tile, 1, None, cx.required_after),
+                    &mut cx.tick.cx,
+                ),
+            ))?);
+            self.wall_fallback_pending = None;
+            return Poll::Pending;
+        }
         if let Some(handle) = &self.walk {
             match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
                 Poll::Pending => {
@@ -2226,18 +2240,15 @@ impl InteractRun {
                     // Dropping the handle revokes the approach walk.
                     self.walk = None;
                     self.wall_fallback_tile = None;
+                    self.wall_fallback_pending = None;
                 }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     if let Some(tile) = self.wall_fallback_tile {
                         if reach::loc_wall_route_failed(&receipt) {
-                            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                cx.tick.actions.begin::<Walk>(
-                                    reach::walk_request(tile, 1, None, cx.required_after),
-                                    &mut cx.tick.cx,
-                                ),
-                            ))?);
+                            self.walk = None;
                             self.wall_fallback_tile = None;
+                            self.wall_fallback_pending = Some(tile);
                             return Poll::Pending;
                         }
                     }
@@ -2891,6 +2902,7 @@ impl StepPlan for UseOnPlan {
             settle_duration: Duration::from_millis(self.settle_ms.unwrap_or(20_000)),
             walk: None,
             wall_fallback_tile: None,
+            wall_fallback_pending: None,
             interaction: None,
             round_before: None,
             round_deadline: None,
@@ -2935,6 +2947,8 @@ struct UseOnRun {
     walk: Option<ActionHandle<Walk>>,
     /// The wall tile for the one allowed retry of an initial facing-side walk.
     wall_fallback_tile: Option<WorldTile>,
+    /// A retry tile whose walk request has not yet obtained budget.
+    wall_fallback_pending: Option<WorldTile>,
     interaction: Option<ActionHandle<UseOnAction>>,
     accepted: bool,
     round_before: Option<i32>,
@@ -2970,6 +2984,7 @@ impl UseOnRun {
     fn clear_round(&mut self) {
         self.interaction = None;
         self.wall_fallback_tile = None;
+        self.wall_fallback_pending = None;
         self.accepted = false;
         self.round_before = None;
         self.round_deadline = None;
@@ -3098,6 +3113,7 @@ impl StepRun for UseOnRun {
                 // Dropping the handle revokes the stale walk; pick again below.
                 self.walk = None;
                 self.wall_fallback_tile = None;
+                self.wall_fallback_pending = None;
                 self.chase = None;
                 self.anchor_walk = false;
             }
@@ -3116,13 +3132,9 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Ok(receipt)) => {
                         if let Some(tile) = self.wall_fallback_tile {
                             if reach::loc_wall_route_failed(&receipt) {
-                                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                                    cx.tick.actions.begin::<Walk>(
-                                        reach::walk_request(tile, 1, None, cx.required_after),
-                                        &mut cx.tick.cx,
-                                    ),
-                                ))?);
+                                self.walk = None;
                                 self.wall_fallback_tile = None;
+                                self.wall_fallback_pending = Some(tile);
                                 self.chase = None;
                                 self.anchor_walk = false;
                                 return Poll::Pending;
@@ -3138,6 +3150,16 @@ impl StepRun for UseOnRun {
             }
             if timed_out && !reached_at_deadline {
                 return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
+            }
+            if let Some(tile) = self.wall_fallback_pending {
+                self.walk = Some(std::task::ready!(crate::native::defer_budget(
+                    cx.tick.actions.begin::<Walk>(
+                        reach::walk_request(tile, 1, None, cx.required_after),
+                        &mut cx.tick.cx,
+                    ),
+                ))?);
+                self.wall_fallback_pending = None;
+                return Poll::Pending;
             }
             if self.default_dialogue && self.accepted && until_reached(self.until, &cx.tick.cx) {
                 return Poll::Ready(Ok(StepOutcome {

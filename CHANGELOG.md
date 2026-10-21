@@ -70,10 +70,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
   fixtures may start at an explicit seeded stand such as a bank instead of
   requiring the Path's authored start anchor.
-- An initial wall-facing `Interact` or `UseOn` loc walk now retries once from
-  the wall tile when a `RouteEnded`, `Blocked`, or `Failed` native receipt
-  contains `native walk route failed:`; unrelated walk failures remain
-  terminal.
+- An initial wall-facing `Interact` or `UseOn` loc walk retries once from
+  the wall tile after a `RouteEnded`, `Blocked` or `Failed` receipt contains
+  `native walk route failed:`. The retry stays pending across action-budget
+  exhaustion; other walk failures remain terminal.
 
 #### Scenario checks
 
