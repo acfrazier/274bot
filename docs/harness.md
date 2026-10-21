@@ -343,9 +343,11 @@ names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
 `loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
 `expect` and `mode` control the headless cell's settling; the headed scenario
 always watches native quest completion.
-Its `stand` must match the Path's authored not-started anchor. Without seeds,
-the fixture starts from a clean account and teleports to that anchor after
-relog. `QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
+When supplied, the seed file's `stand` selects the fixture's starting tile and
+may differ from the Path's authored not-started anchor (for example, it may
+start at a bank). Without a seed file, the fixture starts from a clean account
+and teleports to the authored anchor after relog.
+`QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
 zero and non-integer values are rejected. A terminal window shot is captured
 when the scenario completes.
 
