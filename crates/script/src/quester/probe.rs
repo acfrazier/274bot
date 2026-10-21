@@ -130,6 +130,7 @@ impl Probe<'_> {
             active_now: Duration::from_millis(evidence.tick * 600),
             wall_now: Instant::now(),
             ledger: &mut ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
             observed_walk_outcome_seq: 0,

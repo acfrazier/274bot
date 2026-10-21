@@ -14,6 +14,8 @@ pub(crate) struct Runtime {
     pub budget: TickBudget,
     pub clock: ActiveClock,
     pub observed_walk_outcome_seq: u64,
+    /// One confirmed native gameplay change, fenced to its run and session.
+    pub pending_note_progress: Option<RunKey>,
 }
 
 impl Runtime {
@@ -21,6 +23,17 @@ impl Runtime {
         if let Some(ledger) = &mut self.ledger {
             ledger.revoke();
         }
+        self.clear_note_progress();
+    }
+
+    pub fn clear_note_progress(&mut self) {
+        self.pending_note_progress = None;
+    }
+
+    /// Consume the one pending stamp, even when it belongs to an old
+    /// run/session. A stale marker is never carried into the current run.
+    pub fn take_note_progress(&mut self, run: RunKey) -> bool {
+        self.pending_note_progress.take() == Some(run)
     }
 }
 /// Typed host work retains an owner, never a frame borrow. The host must check

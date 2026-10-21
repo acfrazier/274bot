@@ -46,6 +46,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   for the selected type. Requests without an ID retain name-and-tile lookup.
   Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
   retain the selected row's ID.
+- Exact ground Take actions settle from inventory and ground evidence within
+  four later observed game ticks after dispatch. Lost races do not penalize
+  the item tile. Native scripts can report confirmed progress and wait for
+  relevant evidence without disabling scheduler or connection checks.
+- Native ground-item selections reject more than 32 IDs, so later items
+  cannot bypass the selected-ID exclusion bitset.
 
 ### Fixed during development
 

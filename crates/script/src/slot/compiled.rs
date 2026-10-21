@@ -403,6 +403,7 @@ pub(super) fn frame_context<'a>(
         active_now: runtime.clock.now(now).as_duration(),
         wall_now: now,
         ledger: &mut runtime.ledger,
+        pending_note_progress: Some(&mut runtime.pending_note_progress),
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
         observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
@@ -1450,6 +1451,8 @@ impl SlotScript {
     }
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
+        self.evidence_wait_run = None;
+        self.native_runtime.clear_note_progress();
         if reason != StopReason::Completed {
             self.native_runtime.revoke();
         }

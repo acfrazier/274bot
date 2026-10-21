@@ -69,6 +69,7 @@ impl Runtime {
             active_now: Duration::from_millis(tick * 600),
             wall_now: self.wall,
             ledger: &mut self.ledger,
+            pending_note_progress: None,
             budget: &mut self.budget,
             eligible: true,
             observed_walk_outcome_seq: 0,

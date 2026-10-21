@@ -273,6 +273,12 @@ fn error_reason(error: &ActionError) -> Arc<str> {
         ActionError::Blocked(why) => Arc::from(format!("blocked:{why}")),
         ActionError::CombatInterrupted => Arc::from("combat-interrupted"),
         ActionError::NeedsEvidence(_) => Arc::from("needs-evidence"),
+        ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
+            Arc::from("ground-take-capacity")
+        }
+        ActionError::GroundTake(api::ground_take::GroundRefusal::AlreadyOwned { id }) => {
+            Arc::from(format!("ground-take-already-owned:{id}"))
+        }
     }
 }
 
