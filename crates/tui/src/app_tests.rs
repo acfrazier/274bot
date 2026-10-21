@@ -1281,6 +1281,8 @@ fn map_poi_selection_keeps_catalogue_stand_and_blocks_view_only_labels() {
     app.map.selection = None;
     search_and_jump(&mut app, "booth");
     app.names = vec!["poi-walker".into()];
+    app.fleet_model
+        .set_universe_for_test(vec![member("poi-walker", Phase::Ready)], &[]);
     app.refresh_walk_send(|_| WalkSlotStatus::eligible(tile(0, 0)));
     let walker = app.profile_id_for_name("poi-walker");
     Seam::new().press(&mut app, ch('g'), AppAction::MarkAll(vec![walker]));
@@ -1899,6 +1901,33 @@ fn the_group_checklist_count_follows_the_models_marks() {
     assert_eq!(count(&app), 0, "nothing is checked before MarkAll lands");
     seam.apply(&mut app, AppAction::MarkAll(vec![alice]));
     assert_eq!(count(&app), 1);
+    assert_eq!(app.sync_walk_label(), "Walk 1 bots");
+}
+
+/// With nothing marked, the Map's group send (`g`) marks the bots a fleet
+/// action covers without marks: the loaded members the fleet filter
+/// shows. A member the filter hides is not added, though it can walk.
+#[test]
+fn the_group_send_without_marks_keeps_the_shown_scope() {
+    let mut seam = Seam::new();
+    let mut app = open_map_world();
+    assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
+    app.refresh_walk_send(all_eligible);
+    seam.filter(&mut app.fleet_model, "alice");
+    assert!(app.fleet_model.marks().is_empty());
+    assert_eq!(app.fleet_model.counts().shown_loaded(), 1, "bob is hidden");
+    let alice = app.profile_id_for_name("alice");
+    seam.press(&mut app, ch('g'), AppAction::MarkAll(vec![alice]));
+    assert_eq!(app.walk_send.mode, WalkSendMode::Group);
+    let checked: Vec<&str> = app
+        .walk_send
+        .rows()
+        .iter()
+        .filter(|row| row.checked(app.fleet_model.marks()))
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(checked, ["alice"], "the hidden bob is not added");
+    assert_eq!(app.fleet_model.marks().len(), 1);
     assert_eq!(app.sync_walk_label(), "Walk 1 bots");
 }
 

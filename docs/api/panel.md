@@ -216,21 +216,19 @@ extra rasters (`wall_open = false`); every slot keeps running.
 
 ### Rail
 
-A 264px sidecar on the far right (`RAIL_W`): a sticky bulk row with
-**Login all** / **Logout all**, then **Start all** / **Stop all** (script
-bulk — separate from login bulk; see [script.md](script.md); these act on
-every wall member and keep these names until the combined fleet toolbar
-planned for 0.2.6, while the TUI's fleet buttons say **Start fleet** /
-**Stop fleet**), an
-**only render focused** checkbox, one
-tile per shown wall member, **Profiles…**, and the 1 Hz resource card. The
-tiles follow the Fleet window's filter and sort (one order for the rail,
-the Grid and the Fleet table; **Load order** by default), and the rail names
-the active filter above them. In Load order, drag a tile's name onto another
+A 264px sidecar on the far right (`RAIL_W`). At its top is the [fleet
+toolbar](#fleet-toolbar) under a **Fleet** header; the toolbar stays in
+place while the region below it scrolls on its own. That region starts with
+the **only render focused** checkbox, then one tile per shown wall member,
+**Profiles…**, and the 1 Hz resource card. The
+tiles follow the toolbar's filter and sort (one order for the rail,
+the Grid and the Fleet table; **Load order** by default). In Load order,
+drag a tile's name onto another
 tile to move that bot before or after it; the new order is saved (see the
 Fleet window). Profiles that are not loaded are listed
 below the tiles in a folded **Not loaded (N)** group: each has a mark
-checkbox and no tile. A tile is
+checkbox and no tile; mark them and press **Log in** in the toolbar to load
+and log them in. A tile is
 a cap — traffic-light dot (on a server with public worlds a disc that
 carries the bot's world number, which opens the [world picker](#world-picker)),
 name, **✕** — over a 236×155 body that blits the
@@ -259,15 +257,98 @@ to maximise the cell area. Clicking a cell selects that member; capture
 reaches **only** the focused cell; the queue card overlays it while queued.
 The rail is hidden in Grid, so the right-hand panel shows the same 1 Hz
 **resource** readout there (the one sample the rail card reads; the panel
-section stays hidden only while the rail is shown).
+section stays hidden only while the rail is shown), and the [fleet
+toolbar](#fleet-toolbar) in its **fleet** section.
+
+### Fleet toolbar
+
+One toolbar carries every fleet action. The rail draws it at its top under
+a **Fleet** header; while the rail is hidden (Grid, or MultiBox off) the
+right-hand panel draws it in its **fleet** section (a heading like the
+others: drag it to reorder, turn it off under General config → Panel); the
+Fleet window draws it above its table. Every copy shows the same card,
+marks, filter, order, waiting plan and result, and every click goes through
+the same core commands. Every decision behind it (the card, the targets,
+what is skipped, whether to ask first, the prompt and the result text) is
+made in `frontend-core`; the panel only stages and submits.
+
+A click on the **Fleet** header (in the panel: the **fleet** heading)
+folds the toolbar to one summary line such as `5 marked · Gatherer`, and
+the filter while one is set. A waiting plan and the last result stay
+visible under it. The choice is saved in `panel-ui.json` as
+`fleet_toolbar_open`, apart from the tile folds. In the rail the toolbar
+stays in place while the tiles under it scroll.
+
+- **Card** and its drop-down set the fleet card, the card the
+  Start, Assign, Assign & restart and Copy settings buttons use. Its entries
+  are **Each bot's own card** (the default), **Focused bot's card: X** (it
+  follows the focus and reads `(pending)` while the focused bot's Browse
+  pick is not yet its assignment) and then every Browse card, grouped by
+  category in the Browse window's category order. A search field in the
+  open list narrows the entries. Picking a card changes only the fleet
+  card: no assignment, no Browse pick, no profile form change, and nothing
+  starts.
+- The **marks row** has a tri-state box over the shown rows, a **Marks**
+  menu and a count such as `5 marked, 2 not shown`. With no shown row
+  marked, a click on the box marks the shown rows; with some marked, it
+  marks the rest; with all marked, it unmarks them. The Fleet table's Mark
+  column header is the same box. The menu has **Mark shown**, **Unmark
+  shown**, **Invert shown** and **Mark by status** (ready, idle, running,
+  logged out, login error, not loaded). These act on the shown rows only; a
+  mark the filter hides stays. Below them **Move marked to top** moves the
+  marked profiles to the top of the saved Load order (only in Load order).
+- The **filter** (name, status or world such as `w3`; every word must
+  match) and the **sort** drop-down (**Load order**, **Name**, **Status**)
+  share a row while the filter keeps room, else they stack.
+- Nine **action buttons**: **Start**, **Stop**, **Assign** (saves the card
+  without starting), **Assign & restart**, **Log in**, **Log out**,
+  **Walk** (opens the WalkTo picker in group mode; each bot walks to the
+  chosen tile from its own position, and bots that are logged out, have no
+  position or run a script are skipped with that reason; with nothing
+  marked, group mode marks the loaded shown bots that can walk, never a bot
+  the filter hides), **Switch world** (opens
+  the [world picker](#world-picker)) and **Copy settings to**. Each label
+  names its scope: `Stop 3` with marks, `Stop all 12` with none. With marks,
+  an action covers every marked profile, hidden marks included. With no
+  marks it covers the loaded shown bots and asks first. A button is disabled
+  when it has no bot to act on. While the fleet card is **Each bot's own
+  card**, **Assign**, **Assign & restart** and **Copy settings to** are
+  disabled with the tooltip `pick a card above`; Start then runs each bot's
+  saved assignment. The buttons share rows in equal columns while the widest
+  label fits, else pair up two per row, else take one row each; a label is
+  never cut and nothing scrolls sideways. The count-bearing labels are
+  rebuilt only when the fleet model changes, not every frame.
+
+A click on an action button plans the action. The core freezes the target
+bots, the card, the bots a run would interrupt and the rows it skips, and
+refuses with a reason (shown on the banner) when there is nothing to do. A
+plan that needs no confirmation runs at once. A plan asks first when it
+covers every shown bot, interrupts a running script, copies settings or
+switches world.
+Then a **plan row** under the buttons shows the core's prompt, wrapped,
+with **Confirm** and **Cancel**. Cancel writes nothing. Only one plan
+waits: a newer action replaces it and its prompt starts with `Replaces the
+waiting ... plan.` A run acts on the frozen bots: a profile marked or
+loaded after the plan does not join it, and a bot that changed state is
+skipped with its new reason. With two toolbars on screen (the rail and the
+Fleet window) both show the plan; the first Confirm runs it once.
+
+Each run ends in one **result line** under the plan row: failures first,
+then cancellations (each with its reason when one is known, such as
+`a later Relog now took over` or `the automatic login guard stopped
+repeated logins`; otherwise `cancelled`),
+then skips, then done, with counts. It reads as pending until every member
+has really finished (a paced Start counts its queued bots until they
+start or fail). The full text is in a tooltip, and the core logs one line
+when it settles. The banner does not carry a second copy of it.
 
 ### World picker
 
 On a server with public worlds (rs2b2t) a cap's status dot is a disc with the
 bot's world number, and it is a button. A click on it (in the rail or on a
 Grid cell), a click on a loaded bot's **World / login** cell in the Fleet
-window (its tooltip reads `click to switch world`), or the **Switch
-world…** entry of the Fleet window's **Marks** menu opens the one world
+window (its tooltip reads `click to switch world`), or the toolbar's
+**Switch world** button opens the one world
 picker: a small popup at the pointer that lists the server's worlds, with the
 bot's own world ticked. The list is the server's world list as it was read
 when the session started, so opening the picker fetches nothing and reads no
@@ -275,13 +356,16 @@ file. Click away or press `Esc` to leave it as it was.
 
 Picking the world the bot is already on closes the picker and does nothing.
 Picking another world plans **Switch world** for that bot alone (a bot that
-is marked elsewhere does not join) and opens the Fleet window, or brings it
-forward, so the plan row shows the core's prompt with **Confirm** and
-**Cancel**, as for every fleet plan. The **Switch world…** entry plans over
+is marked elsewhere does not join). The plan row of every fleet toolbar on
+screen shows the core's prompt with **Confirm** and **Cancel**, as for every
+fleet plan; when no toolbar is on screen, the Fleet window opens (or comes
+forward) to show it. The toolbar's **Switch world** button plans over
 the marked bots, hidden marks included, or over the loaded bots shown when
 none is marked; its prompt names the bots it skips, such as one already on
 that world. A Switch world plan always asks first. Nothing is saved or
-relogged before **Confirm**, and **Cancel** writes nothing.
+relogged before **Confirm**, and **Cancel** writes nothing. On a server with
+one world the button is disabled with the tooltip `this server has one
+world`.
 
 A confirmed switch saves the bot's world on its profile and only then logs
 the bot out and back in on the new world through the login queue, so several
@@ -484,16 +568,13 @@ Load is enabled except while a script is active.
 matching running bots and **Stops** matching paused bots. Browse’s
 **Refresh catalog** re-scans the catalog root (“Nothing changed.” when the
 scan is identical) with the same confirm/restart/stop policy when owners
-are affected. MultiBox rail **Start all / Stop all** are script bulk
-controls (not login): Start all and the Fleet window's **Start** start one
+are affected. The [fleet toolbar](#fleet-toolbar)'s **Start** starts one
 bot per frame instead of all at once, and waiting rows show `queued k/n`.
-One running report counts every bot once as started, queued, skipped or
-failed while any bot of it still waits or sets up, so a second click joins
-it instead of hiding the first click's results; Start all shows it on the
-banner, a Fleet window Start on its result line. Each skipped or failed bot
-also gets a line in its log. Stop and Stop all cancel bots that are still
-waiting (a Fleet window Stop reports them as cancelled); Stop all also
-stops running and paused wall members and live slots.
+Its result line counts every bot once as started, queued, skipped or
+failed and reads as pending while any bot of it still waits or sets up.
+Each skipped or failed bot also gets a line in its log. The toolbar's
+**Stop** cancels bots that are still waiting and reports them as
+cancelled.
 
 A script's paint draws over the Game chatbox of the focused bot, with its
 buttons below the text. A script that uses the standard paint-controls helper
@@ -513,14 +594,17 @@ status line. **Later** leaves their current scripts running and suppresses
 the prompt until settings change again.
 
 The **Fleet** window (the button beside WalkTo) is the wide view of the
-shared fleet model: one row per profile, loaded or not (a profile that is
-not loaded reads `not loaded`, distinct from a loaded bot that is
-`offline`), with a checkbox mark, a filter and a full-width **Sort**
-drop-down (**Load order**, **Name**, **Status**). The rail and the Grid show
-the same filter and order. A mark stays when the filter hides its row or
-the profile is unloaded; it is dropped only when the profile is deleted.
+shared fleet model: the [fleet toolbar](#fleet-toolbar) over a table with
+one row per profile, loaded or not (a profile that is not loaded reads `not
+loaded`, distinct from a loaded bot that is `offline`), each with a checkbox
+mark. The rail and the Grid show the same filter and order. A mark stays
+when the filter hides its row or the profile is unloaded; it is dropped
+only when the profile is deleted. A click on a loaded bot's name focuses
+it, as a click on a rail cap does; its checkbox only marks it, and a click
+elsewhere in the row does neither.
 **Load order** is the saved order: drag a row's name onto another row, or
-press **Move marked to top** (it keeps the marked profiles' order), and the
+choose **Move marked to top** in the toolbar's **Marks** menu (it keeps the
+marked profiles' order), and the
 new order is saved as `profile_order` in the shared preferences. A profile
 the filter hides keeps its place. Load all logs in bots in this order, a new
 profile goes to the end, a renamed one keeps its place and removing a bot
@@ -529,75 +613,17 @@ they never change the saved order, and reordering needs **Load order**. A
 reorder stays pending until the file is written; if the write fails, the
 error is shown and the last saved order comes back.
 The table's columns share the
-window's width, so it never scrolls sideways, and the action rows and column
+window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.
 
-Above the action buttons the window has three controls. Every decision
-behind them (the card, the targets, what is skipped, whether to ask first,
-the prompt and the result text) is made in `frontend-core`; the window
-only stages and submits.
 
-- **Card** is a full-width drop-down that sets the fleet card, the card the
-  Start, Assign, Assign & restart and Copy settings buttons use. Its entries
-  are **Each bot's own card** (the default), **Focused bot's card: X** (it
-  follows the focus and reads `(pending)` while the focused bot's Browse
-  pick is not yet its assignment) and then every Browse card, grouped by
-  category in the Browse window's category order. A search field in the
-  open list narrows the entries. Picking a card changes only the fleet
-  card: no assignment, no Browse pick, no profile form change, and nothing
-  starts.
-- The **marks row** has a tri-state box over the shown rows, a **Marks**
-  menu and a count such as `5 marked, 2 not shown`. With no shown row
-  marked, a click on the box marks the shown rows; with some marked, it
-  marks the rest; with all marked, it unmarks them. The table's Mark column
-  header is the same box. The menu has **Mark shown**, **Unmark shown**,
-  **Invert shown** and **Mark by status** (ready, idle, running, logged out,
-  login error, not loaded). These act on the shown rows only; a mark the
-  filter hides stays. Below them **Switch world…** opens the [world
-  picker](#world-picker) for the marked bots (the loaded bots shown when none
-  is marked).
-- The **action buttons** are **Start**, **Stop**, **Assign** (saves the card
-  without starting), **Assign & restart**, **Log in**, **Log out** and
-  **Copy settings to**, then **Walk N marked bots** (opens the WalkTo picker
-  in group mode; each marked bot walks to the chosen tile from its own
-  position, and bots that are logged out, have no position or run a script
-  are skipped with that reason) and **Move marked to top**. Each label names
-  its scope: `Stop 3` with marks, `Stop all 12` with none. With marks, an
-  action covers every marked profile, hidden marks included. With no marks
-  it covers the loaded shown bots and asks first. A button is disabled when
-  it has no bot to act on. While the fleet card is **Each bot's own card**,
-  **Assign**, **Assign & restart** and **Copy settings to** are disabled with
-  the tooltip `pick a card above`; Start then runs each bot's saved
-  assignment. The count-bearing labels are rebuilt only when the fleet
-  model changes, not every frame.
 
-A click on an action button plans the action. The core freezes the target
-bots, the card, the bots a run would interrupt and the rows it skips, and
-refuses with a reason (shown on the banner) when there is nothing to do. A
-plan that needs no confirmation runs at once. A plan asks first when it
-covers every shown bot, interrupts a running script, copies settings or
-switches world.
-Then a **plan row** under the buttons shows the core's prompt, wrapped,
-with **Confirm** and **Cancel**. Cancel writes nothing. Only one plan
-waits: a newer action replaces it and its prompt starts with `Replaces the
-waiting ... plan.` A run acts on the frozen bots: a profile marked or
-loaded after the plan does not join it, and a bot that changed state is
-skipped with its new reason.
-
-Each run ends in one **result line** under the plan row: failures first,
-then cancellations (each with its reason when one is known, such as
-`a later Relog now took over` or `the automatic login guard stopped
-repeated logins`; otherwise `cancelled`),
-then skips, then done, with counts. It reads as pending until every member
-has really finished (a paced Start counts its queued bots until they
-start or fail). The full text is in a tooltip, and the core logs one line
-when it settles. The banner does not carry a second copy of it.
 
 The Scripts window's **Apply to same-card members** button copies the
 focused bot's parameters for its own card through the same plan: it stages
-that card, plans **Copy settings to**, and shows the same confirmation. The
-plan row and result line are drawn once, in the Fleet window while it is
-open and in the Scripts window while it is closed. The copy goes to the
+that card, plans **Copy settings to**, and shows the same confirmation in
+every fleet toolbar on screen; while no toolbar is on screen, the Scripts
+window draws the plan row and result line itself. The copy goes to the
 marked same-card bots, or with no marks to the loaded shown same-card bots;
 the prompt names the skipped bots.
 
@@ -698,6 +724,9 @@ when the list is taller than the screen), that chooses **Focused bot**
 (default) or **Group** — a checklist of wall bots with **All eligible /
 None**. The checks are the shared marked-bots set (the rail, Grid and Fleet
 marks), so a mark made anywhere updates the **Walk N bots** count at once.
+Choosing **Group** while no bot that can walk is marked marks the loaded
+bots the fleet filter shows that can walk; **All eligible** marks every
+bot of the list.
 Ineligible bots stay listed,
 greyed, with a host reason (not logged in, no position yet, running a
 script). Group confirm reads **Walk N bots**; each eligible bot gets its
