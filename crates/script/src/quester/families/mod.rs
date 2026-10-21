@@ -2037,7 +2037,7 @@ impl InteractRun {
                     &none,
                 )
                 .reachable()
-                .and_then(|item| reach::ground_route_steps(cx, item))
+                .and_then(|item| item.steps)
                 .map(|steps| (steps, None)),
                 _ => None,
             }
@@ -3050,7 +3050,7 @@ impl UseOnRun {
                 .and_then(|npc| reach::npc_route_steps(cx, npc)),
             "obj" => reach::choose_ground(cx, self.target_id, None, self.area(), &avoid)
                 .reachable()
-                .and_then(|item| reach::ground_route_steps(cx, item)),
+                .and_then(|item| item.steps),
             _ => None,
         };
         if steps.is_some_and(|steps| steps <= reach::RETARGET_STEPS) {

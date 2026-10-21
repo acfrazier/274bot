@@ -1595,6 +1595,39 @@ mod tests {
     }
 
     #[test]
+    fn wait_never_hides_scheduler_or_missing_packet_warnings() {
+        let t = t0();
+        let mut no_packets = ProgressWatchdog::new();
+        no_packets.arm_fresh(t);
+        assert_eq!(
+            no_packets.observe_with_pair_wait(t + SCHEDULER_WARN, true, true),
+            WatchdogAction::WarnNoGamePackets
+        );
+
+        let mut scheduler_stalled = ProgressWatchdog::new();
+        scheduler_stalled.arm_fresh(t);
+        scheduler_stalled.stamp_game_packet_tick(t + Duration::from_secs(5));
+        assert_eq!(
+            scheduler_stalled.observe_with_pair_wait(t + SCHEDULER_WARN, true, true),
+            WatchdogAction::WarnHungLoop
+        );
+    }
+
+    #[test]
+    fn wait_never_hides_hard_stall_after_note_progress() {
+        let t = t0();
+        let mut waiting = ProgressWatchdog::new();
+        waiting.arm_fresh(t);
+        waiting.stamp_note_progress(t + Duration::from_secs(1));
+        assert_eq!(
+            waiting.observe_with_pair_wait(t + Duration::from_secs(1) + HARD_STALL, true, true),
+            WatchdogAction::Restart {
+                reason: RestartReason::Stall
+            }
+        );
+    }
+
+    #[test]
     fn pair_wait_never_hides_a_dead_scheduler() {
         let t = t0();
         let mut waiting = ProgressWatchdog::new();

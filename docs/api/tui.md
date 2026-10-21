@@ -73,7 +73,7 @@ label in its border. Everything is plain text as well as colour.
 | Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Logout buttons. A click on the header's `card: …` part opens the card picker and a click on its `sort: …` part shows the next sort (the same as `c` and `s`). The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world), the status pane's script, phase and reason rows (the same rows as the panel's Status card) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
-| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
+| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Grinch, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back), with its buttons as `[N] label` rows. A script that uses the standard paint-controls helper shows working **Pause** (reads **Resume** while paused) and **Stop** rows; they act on the bot whose paint is shown and are dimmed when the run cannot take them ([script.md](script.md)). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
@@ -192,6 +192,12 @@ only to listed bots still running the same assigned script with its pending
 settings. Stopped, logged-out, reassigned or different-script bots are
 skipped and named in the status line. **Later** leaves their current scripts
 running and suppresses the prompt until settings change again.
+
+Grinch's saved Parameters apply only after a new Start. That Start validates
+the settings and captures a new same-plane anchor. Its `radius` bounds an
+inclusive 1–16 tile square around that anchor, and the live-zone filter
+rejects stale rows. See [Grinch ground-item collection](script.md#grinch-ground-item-collection)
+for all 18 default IDs, selected-only banking, exact-anchor return and status.
 
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
 from its own position. Pressing `g` while no bot that can walk is marked
