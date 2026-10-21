@@ -918,9 +918,10 @@ pub struct Session {
     /// The draw policy the render mirror (`focus`) follows; changed by
     /// `SetDraw` only.
     pub(crate) draw: frontend_core::DrawPolicy,
-    /// The Fleet window's card drop-down search text while it is open
-    /// (`None` while closed, so each opening starts with an empty search).
-    pub(crate) fleet_card_filter: Option<String>,
+    /// The open card drop-down's search text and the toolbar site whose
+    /// drop-down owns it (`None` while every drop-down is closed, so each
+    /// opening starts with an empty search).
+    pub(crate) fleet_card_filter: Option<(crate::fleet_toolbar::Site, String)>,
     /// The fleet toolbar's filter field buffer, shared by every toolbar on
     /// screen and edited in place by ImGui (no allocation per frame).
     pub(crate) fleet_filter_edit: dear_imgui_rs::ImString,
