@@ -4384,6 +4384,30 @@ impl SlotScript {
         }
     }
 
+    fn publish_terminal_native_failure(
+        &mut self,
+        failure: ScriptFailure,
+    ) -> Option<Arc<crate::native::ScriptStatus>> {
+        use crate::native::NativeOutput;
+        let run = self.compiled.as_mut()?;
+        let status = crate::native::ScriptStatus {
+            run: run.run,
+            card: run.config.card(),
+            phase: crate::native::NativePhase::Blocked,
+            active_settings: run.config.revision(),
+            pending_settings: run.pending.as_ref().map(|next| next.revision()),
+            fields: run
+                .output
+                .status
+                .as_ref()
+                .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
+            failure: Some(failure),
+        };
+        // Publish through the same change-only logging seam as card statuses.
+        run.output.status(status);
+        run.output.status.clone()
+    }
+
     /// Use the operator Stop cleanup, retaining only the terminal diagnostic.
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
@@ -4404,24 +4428,9 @@ impl SlotScript {
             return;
         }
 
-        use crate::native::NativeOutput;
-        let run = self.compiled.as_mut().expect("blocked compiled run");
-        let status = crate::native::ScriptStatus {
-            run: run.run,
-            card: run.config.card(),
-            phase: crate::native::NativePhase::Blocked,
-            active_settings: run.config.revision(),
-            pending_settings: run.pending.as_ref().map(|next| next.revision()),
-            fields: run
-                .output
-                .status
-                .as_ref()
-                .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
-            failure: Some(failure),
-        };
-        // Publish through the same change-only logging seam as card statuses.
-        run.output.status(status);
-        let status = run.output.status.clone().expect("blocked status");
+        let status = self
+            .publish_terminal_native_failure(failure)
+            .expect("blocked compiled run");
         let generation = self.runtime_generation;
         self.stop();
         self.lifecycle_receipt = Some(ScriptLifecycleReceipt {

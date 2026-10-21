@@ -61,6 +61,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Grinch checks its network position when it returns to its Start tile.
   A confirmed walking arrival no longer fails while the rendered player
   catches up.
+- Native script failures keep their stop reason visible in the TUI and status
+  pane after the run stops. This includes Grinch stopping with a full pack
+  that contains no selected item to deposit.
 
 ### Not in this release
 
@@ -93,6 +96,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   field before script Start. The receipt records the wait and observed loot.
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
+- Grinch has repeatable live checks for private drops, contested respawns,
+  duplicate refusals and selected-item banking. Each check uses an isolated
+  engine copy and exact post-execution native runtime reads. Only respawn
+  checks patch copied content; the shared engines stay unchanged.
+  Bank checks keep packet arrival and loaded-session association separate and
+  wait for complete server-log evidence without changing client tick frames.
+  Contested checks retain each sender's real frames and check three competitor
+  races, continuous activity and inventory settlement on that sender's tick clock.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
