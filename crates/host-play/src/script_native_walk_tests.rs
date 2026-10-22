@@ -4234,7 +4234,11 @@ fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_c
     assert_eq!(bot.walk_outcome_generation, generation);
     assert!(!bot.walk_outcome_failed);
     assert_eq!(bot.walk_outcome_seq, seq + 1, "the sequence moves");
-    assert_eq!(bot.manual_takeover_watermark, seq + 1, "the watermark moves");
+    assert_eq!(
+        bot.manual_takeover_watermark,
+        seq + 1,
+        "the watermark moves"
+    );
     assert_eq!(
         bot.compiled_walk_cancel_reason(),
         script::native::WalkCancelReason::UserInput

@@ -4959,7 +4959,10 @@ fn m0_manual_failure(status: &Value) -> bool {
 }
 
 fn m0_frame_tick(capture: &CombatCapture) -> Option<i64> {
-    capture.frames.last().and_then(|frame| frame["tick"].as_i64())
+    capture
+        .frames
+        .last()
+        .and_then(|frame| frame["tick"].as_i64())
 }
 
 /// The common takeover facts both cells require: injected once on an active
@@ -5156,7 +5159,11 @@ impl M0Drive {
                 .last()
                 .filter(|status| m0_step_active(status))
                 .cloned();
-            let attack = proof.actions.iter().find(|action| m0_imp_attack(action)).cloned();
+            let attack = proof
+                .actions
+                .iter()
+                .find(|action| m0_imp_attack(action))
+                .cloned();
             let frame = proof.frames.last();
             let engaged = frame.is_some_and(|frame| frame["local_player"]["in_combat"] == true);
             let here = frame.and_then(|frame| {
@@ -11602,7 +11609,9 @@ fn m0_oracle_capture(paused: bool) -> CombatCapture {
         "state_after": if paused { "Paused" } else { "Running" },
         "statuses_before": 1,
     }));
-    let mut lines = vec![format!("{M0_HOST_TAKEOVER} request=3 generation=2 intent_seq=1")];
+    let mut lines = vec![format!(
+        "{M0_HOST_TAKEOVER} request=3 generation=2 intent_seq=1"
+    )];
     if paused {
         capture
             .random_events
@@ -11666,7 +11675,10 @@ fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
     let mut fought_on = m0_oracle_capture(false);
     fought_on.statuses[1]["fields"]["combat_end"] = json!("Killed");
     fought_on.statuses[1]["fields"]["combat_evidence_tick"] = json!(105);
-    assert!(!m0_manual_ready(&fought_on), "a combat report after the takeover");
+    assert!(
+        !m0_manual_ready(&fought_on),
+        "a combat report after the takeover"
+    );
 
     let mut paused = m0_oracle_capture(false);
     paused
@@ -11676,7 +11688,10 @@ fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
 
     let mut early = m0_oracle_capture(false);
     early.frames.truncate(10);
-    assert!(!m0_manual_ready(&early), "fewer than ten ticks after the terminal");
+    assert!(
+        !m0_manual_ready(&early),
+        "fewer than ten ticks after the terminal"
+    );
 
     let mut ineligible = m0_oracle_capture(false);
     m0_event_mut(&mut ineligible, "M0Takeover")["slot_live_walking_operation"] = json!(false);
@@ -11693,7 +11708,9 @@ fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
     m0_event_mut(&mut repeated, "M0HostLog")["lines"]
         .as_array_mut()
         .unwrap()
-        .push(json!(format!("{M0_ROOT_FAILURE} (repeated 2 additional times)")));
+        .push(json!(format!(
+            "{M0_ROOT_FAILURE} (repeated 2 additional times)"
+        )));
     assert!(!m0_manual_ready(&repeated), "a repeated trace line");
 }
 
@@ -11711,7 +11728,10 @@ fn m0_paused_oracle_accepts_a_restart_and_rejects_each_bad_behaviour() {
 
     let mut no_attack = m0_oracle_capture(true);
     no_attack.actions.pop();
-    assert!(!m0_paused_ready(&no_attack), "the restarted step never attacks");
+    assert!(
+        !m0_paused_ready(&no_attack),
+        "the restarted step never attacks"
+    );
 
     let mut no_restart = m0_oracle_capture(true);
     no_restart.statuses.pop();

@@ -6496,8 +6496,8 @@ impl NavBot {
     /// `None`. Its own outcome is still the watermark, so the compiled side
     /// reads `UserInput` for it. The posted Load reason is unchanged.
     pub(crate) fn compiled_walk_cancel_reason(&self) -> script::native::WalkCancelReason {
-        let takeover_outcome =
-            self.manual_takeover_watermark != 0 && self.walk_outcome_seq == self.manual_takeover_watermark;
+        let takeover_outcome = self.manual_takeover_watermark != 0
+            && self.walk_outcome_seq == self.manual_takeover_watermark;
         if takeover_outcome
             || self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput
         {
