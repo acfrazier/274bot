@@ -28,6 +28,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import warnings
 from pathlib import Path
@@ -360,6 +361,38 @@ class StableTreeTests(unittest.TestCase):
                 self.assertEqual((tree2 / "f.txt").read_text(encoding="utf-8"), "v2\n")
                 self.assertEqual(full2, git("rev-parse", "HEAD", cwd=src))
                 self.assertEqual([entry.name for entry in (root / "trees").iterdir()], ["main"])
+
+    def test_existing_tree_fetches_from_the_selected_pinned_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "upstream"
+            source.mkdir()
+            git("init", "-q", cwd=source)
+            git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=source)
+            (source / "source.txt").write_text("pinned\n", encoding="utf-8")
+            git("add", ".", cwd=source)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "pinned", cwd=source)
+            pinned = git("rev-parse", "HEAD", cwd=source)
+            pin_repo = root / "dev-pin.git"
+            subprocess.run(["git", "clone", "-q", "--bare", str(source), str(pin_repo)], check=True)
+
+            (source / "source.txt").write_text("new upstream\n", encoding="utf-8")
+            git("add", ".", cwd=source)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "new upstream", cwd=source)
+            tree = root / "tree"
+            subprocess.run(["git", "clone", "-q", "--no-checkout", str(source), str(tree)], check=True)
+            build_log = root / "build.log"
+
+            with mock.patch.object(rn, "REPO_URL", str(pin_repo)):
+                full, short = rn.update_tree("dev", tree, build_log)
+
+            self.assertEqual(full, pinned)
+            self.assertEqual(short, pinned[:9])
+            self.assertEqual((tree / "source.txt").read_text(encoding="utf-8"), "pinned\n")
+            self.assertEqual(git("remote", "get-url", "origin", cwd=tree), str(pin_repo))
+
 
     def test_prune_trees_keeps_only_stable_branch_trees(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -814,13 +847,15 @@ class RevisionImportTests(unittest.TestCase):
     def test_the_default_revision_is_289(self):
         out = self.import_constants({})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.split(), ["289", "local-289", "unpack-289", "-", "687190c8"])
+        suffix = "-mac" if rn.IS_MAC else "-"
+        self.assertEqual(out.stdout.split(), ["289", "local-289", "unpack-289", suffix, "687190c8"])
 
     @unittest.skipIf(os.name == "nt", "the 274 lane is a Linux guest")
     def test_revision_274_selects_the_lane(self):
         out = self.import_constants({"NIGHTLY_REVISION": "274"})
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.split(), ["274", "local-274", "unpack", "-274", "-"])
+        suffix = "-274-mac" if rn.IS_MAC else "-274"
+        self.assertEqual(out.stdout.split(), ["274", "local-274", "unpack", suffix, "-"])
 
     def test_an_unknown_revision_stops_the_runner(self):
         out = self.import_constants({"NIGHTLY_REVISION": "377"})
@@ -880,6 +915,568 @@ class CellsFileTests(unittest.TestCase):
         self.assertIsNone(summary["build"]["error"])
         self.assertEqual([row["cell"] for row in summary["cells"]], ["walk"])
         self.assertIsNone(summary["cells_file"])
+
+
+class QuestJobTests(unittest.TestCase):
+    def test_catalog_cells_are_partitioned_and_explicit_selection_is_intersected(self):
+        catalog = ["walk", "quester_path", "cook", "quester_hint"]
+        self.assertEqual(rn.select_job_cells(catalog, None, "main"), ["walk", "cook"])
+        self.assertEqual(rn.select_job_cells(catalog, None, "quest"), ["quester_path", "quester_hint"])
+        self.assertEqual(rn.select_job_cells(catalog, ["quester_hint", "walk"], "main"), ["walk"])
+        self.assertEqual(rn.select_job_cells(catalog, ["quester_hint", "walk"], "quest"), ["quester_hint"])
+
+    def test_quest_job_uses_engine_q_and_distinct_run_identity(self):
+        root = Path(tempfile.gettempdir()) / "nightly-job-defaults"
+        main = rn.job_defaults("main", False, "289", root, mac=True)
+        quest = rn.job_defaults("quest", False, "289", root, mac=True)
+        self.assertEqual((main["host"], main["game_port"], main["http_port"]), ("127.0.0.1", 44594, 1080))
+        self.assertEqual(main["run_suffix"], "-mac")
+        self.assertEqual(main["tick_ms"], None)
+        self.assertEqual((quest["host"], quest["game_port"], quest["http_port"]), ("127.0.0.1", 44694, 1180))
+        self.assertEqual(quest["profile"], "local-289q")
+        self.assertEqual(quest["run_suffix"], "-mac-quest")
+        self.assertNotEqual(main["name_prefix"], quest["name_prefix"])
+        self.assertEqual(quest["tick_ms"], 300)
+
+    def test_windows_quest_stays_on_engine_b_without_the_tick_override(self):
+        quest = rn.job_defaults("quest", True, "289", Path(tempfile.gettempdir()))
+        self.assertEqual((quest["game_port"], quest["http_port"], quest["label"]), (47594, 3080, "Engine B"))
+        self.assertEqual(quest["tick_ms"], None)
+
+    def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = (root / "home", root / "tmp", root / "evidence", "quester_path", "nq")
+            with mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": None}), \
+                    mock.patch.dict(os.environ, {"QUESTER_TICK_MS": "300"}):
+                main_env = rn.cell_env(*args)
+                lane = rn.lane_env(root / "home", root / "tmp", root / "target", {})
+            self.assertNotIn("QUESTER_TICK_MS", main_env)
+            self.assertNotIn("QUESTER_TICK_MS", lane)
+            with mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": 300}):
+                quest_env = rn.cell_env(*args)
+            self.assertEqual(quest_env["QUESTER_TICK_MS"], "300")
+
+
+    def test_quest_cell_env_writes_its_private_custom_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            with mock.patch.object(rn, "IS_WINDOWS", False), \
+                    mock.patch.object(rn, "JOB", "quest"), \
+                    mock.patch.object(rn, "PROFILE", "local-289q"), \
+                    mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                    mock.patch.object(rn, "GAME_PORT", 44694), \
+                    mock.patch.object(rn, "HTTP_PORT", 1180), \
+                    mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": 300}):
+                env = rn.cell_env(home, root / "tmp", root / "evidence", "quester_path", "nq")
+
+            self.assertEqual(env["QUESTER_TICK_MS"], "300")
+            self.assertEqual(env["HOME"], str(home))
+            self.assertEqual(env["TMPDIR"], str(root / "tmp"))
+            profile = json.loads((home / ".274bot" / "servers.json").read_text(encoding="utf-8"))
+            self.assertEqual(profile, {
+                "schema_version": 1,
+                "servers": [{
+                    "name": "local-289q",
+                    "revision": 289,
+                    "transport": "tcp",
+                    "worlds": [{
+                        "number": 289,
+                        "host": "127.0.0.1",
+                        "port": 44694,
+                        "node_id": 289,
+                        "asset_host": "127.0.0.1",
+                        "asset_port": 1180,
+                    }],
+                    "login_key": {"engine_dir": None},
+                    "vault": "vault-289q",
+                    "members": None,
+                    "allow_plaintext_offhost": False,
+                }],
+            })
+
+    def test_windows_quest_cell_env_uses_engine_b_without_custom_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            with mock.patch.object(rn, "IS_WINDOWS", True), \
+                    mock.patch.object(rn, "JOB", "quest"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"), \
+                    mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": None}):
+                env = rn.cell_env(home, root / "tmp", root / "evidence", "quester_cook", "wq")
+
+            self.assertNotIn("QUESTER_TICK_MS", env)
+            self.assertFalse((home / ".274bot" / "servers.json").exists())
+
+
+class TemporaryCargoEnvironmentTests(unittest.TestCase):
+    def test_builds_with_ephemeral_home_share_runner_cache_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(rn, "ROOT", root):
+                build = rn.build_env(root / "build")
+                lane = rn.lane_env(root / "home", root / "tmp", root / "target", {})
+            expected = str(root / "sccache")
+            self.assertEqual(build["SCCACHE_DIR"], expected)
+            self.assertEqual(lane["SCCACHE_DIR"], expected)
+
+
+class MacQuietLockTests(unittest.TestCase):
+    def test_lock_at_cell_boundary_records_unavailable_and_does_not_start_cell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock = root / "MAC-QUIET.lock"
+            lock.touch()
+            run_dir, work = root / "run", root / "work"
+            base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="abc123456",
+                                 platform="macos-arm64")
+            with mock.patch.object(rn, "QUIET_LOCK", lock), \
+                    mock.patch.object(rn, "_quiet_lock_reason", None), \
+                    mock.patch.object(rn, "log", lambda _message: None):
+                result = rn.run_cell("quester_path", "tui", root / "missing-tui", run_dir, work, base,
+                                     rn.time.monotonic() + 60)
+            self.assertEqual(result.result, "UNAVAILABLE")
+            self.assertIn("MAC-QUIET", result.reason)
+            self.assertFalse(work.exists())
+
+    @unittest.skipUnless(os.name == "posix", "live process-group test requires POSIX")
+    def test_lock_stops_active_tui_and_panel_cells_as_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="abc123456",
+                                 platform="macos-arm64")
+            command = [sys.executable, "-c", "import time; time.sleep(30)"]
+            for frontend in ("tui", "panel"):
+                with self.subTest(frontend=frontend):
+                    lock = root / f"{frontend}-MAC-QUIET.lock"
+                    run_dir, work = root / f"{frontend}-run", root / f"{frontend}-work"
+                    processes = []
+                    timers = []
+                    original_popen = rn.popen_group
+
+                    def start_cell(cmd, **kwargs):
+                        process = original_popen(cmd, **kwargs)
+                        processes.append(process)
+                        timer = threading.Timer(0.2, lock.touch)
+                        timer.start()
+                        timers.append(timer)
+                        return process
+
+                    patches = [
+                        mock.patch.object(rn, "QUIET_LOCK", lock),
+                        mock.patch.object(rn, "_quiet_lock_reason", None),
+                        mock.patch.object(rn, "IS_WINDOWS", False),
+                        mock.patch.object(rn, "ISOHOME", None),
+                        mock.patch.object(rn, "popen_group", side_effect=start_cell),
+                        mock.patch.object(rn, "tui_cmd", return_value=command),
+                        mock.patch.object(rn, "panel_cmd", return_value=command),
+                        mock.patch.object(rn, "log", lambda _message: None),
+                    ]
+                    for patch in patches:
+                        patch.start()
+                    try:
+                        started = rn.time.monotonic()
+                        result = rn.run_cell(
+                            "quester_path", frontend, root / f"{frontend}-play", run_dir, work, base,
+                            rn.time.monotonic() + 60,
+                        )
+                        elapsed = rn.time.monotonic() - started
+                    finally:
+                        for patch in reversed(patches):
+                            patch.stop()
+                    for timer in timers:
+                        timer.join(timeout=1)
+                    self.assertLess(elapsed, 3)
+                    self.assertEqual(result.result, "UNAVAILABLE")
+                    self.assertTrue(result.reason.startswith("MAC-QUIET:"))
+                    self.assertIsNone(result.first_failure)
+                    self.assertIsNone(result.receipt)
+                    self.assertEqual(len(processes), 1)
+                    self.assertIsNotNone(processes[0].returncode)
+                    self.assertNotIn(processes[0].pid, rn._children)
+
+    @unittest.skipUnless(os.name == "posix", "fast-cell quiet-lock test requires POSIX")
+    def test_quiet_lock_overrides_a_fast_failure_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="abc123456",
+                                 platform="macos-arm64")
+            command = [
+                sys.executable, "-c",
+                "import json,time; time.sleep(0.7); "
+                "print(json.dumps({'scenario':'quester_path','outcome':'FAIL','message':'late failure'}))",
+            ]
+            for frontend in ("tui", "panel"):
+                with self.subTest(frontend=frontend):
+                    lock = root / f"fast-{frontend}-MAC-QUIET.lock"
+                    processes = []
+                    timers = []
+                    original_popen = rn.popen_group
+
+                    def start_cell(cmd, **kwargs):
+                        process = original_popen(cmd, **kwargs)
+                        processes.append(process)
+                        timer = threading.Timer(0.55, lock.touch)
+                        timer.start()
+                        timers.append(timer)
+                        return process
+
+                    patches = [
+                        mock.patch.object(rn, "QUIET_LOCK", lock),
+                        mock.patch.object(rn, "_quiet_lock_reason", None),
+                        mock.patch.object(rn, "IS_WINDOWS", False),
+                        mock.patch.object(rn, "ISOHOME", None),
+                        mock.patch.object(rn, "popen_group", side_effect=start_cell),
+                        mock.patch.object(rn, "tui_cmd", return_value=command),
+                        mock.patch.object(rn, "panel_cmd", return_value=command),
+                        mock.patch.object(rn, "log", lambda _message: None),
+                    ]
+                    for patch in patches:
+                        patch.start()
+                    try:
+                        result = rn.run_cell(
+                            "quester_path", frontend, root / f"fast-{frontend}-play",
+                            root / f"fast-{frontend}-run", root / f"fast-{frontend}-work", base,
+                            rn.time.monotonic() + 60,
+                        )
+                    finally:
+                        for patch in reversed(patches):
+                            patch.stop()
+                        for timer in timers:
+                            timer.join(timeout=1)
+
+                    self.assertEqual(result.result, "UNAVAILABLE")
+                    self.assertTrue(result.reason.startswith("MAC-QUIET:"))
+                    self.assertIsNone(result.first_failure)
+                    self.assertIsNone(result.receipt)
+                    self.assertEqual(len(processes), 1)
+                    self.assertEqual(processes[0].returncode, 0)
+
+    @unittest.skipUnless(os.name == "posix", "untracked process-group test requires POSIX")
+    def test_quiet_stop_ignores_an_untracked_process_group(self):
+        process = rn.popen_group([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertNotIn(process.pid, rn._children)
+            rn.stop_cell_process(process.pid, process)
+            self.assertIsNone(process.poll())
+        finally:
+            rn.kill_tree(process.pid, process)
+            process.wait()
+
+
+@unittest.skipUnless(os.name == "posix" and Path("/bin/bash").is_file(),
+                     "the Mac nightly launcher requires Bash")
+class NightlyMacEnvironmentTests(unittest.TestCase):
+    @staticmethod
+    def make_source(root: Path) -> Path:
+        source = root / "source"
+        source.mkdir()
+        subprocess.run(["git", "init", "-q", str(source)], check=True)
+        git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=source)
+        (source / "source.txt").write_text("first\n", encoding="utf-8")
+        git("add", ".", cwd=source)
+        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "first", cwd=source)
+        return source
+
+    def test_launcher_adds_cargo_home_to_launchd_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self.make_source(root)
+            home = root / "home"
+            cargo_home = home / ".cargo"
+            cargo_bin = cargo_home / "bin"
+            cargo_bin.mkdir(parents=True)
+            cargo = cargo_bin / "cargo"
+            cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            cargo.chmod(0o755)
+
+            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
+            config.parent.mkdir(parents=True)
+            capture = root / "environment.txt"
+            python = root / "capture-python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
+                "\"$PATH\" \"$(command -v cargo)\" >> \"$MAC_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            values = {
+                "NIGHTLY_MAC_RUNNER": root / "runner",
+                "NIGHTLY_MAC_ROOT": root / "nightly-root",
+                "NIGHTLY_MAC_RUNS": root / "runs",
+                "NIGHTLY_MAC_STATUS": root / "status",
+                "NIGHTLY_MAC_CATALOG": root / "catalog",
+                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
+                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
+                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
+                "NIGHTLY_MAC_ISOHOME": root / "isohome",
+                "NIGHTLY_MAC_PYTHON": python,
+                "NIGHTLY_MAC_SOURCE_REPO": source,
+            }
+            config.write_text(
+                "".join(f"{name}={value}\n" for name, value in values.items()),
+                encoding="utf-8",
+            )
+            launchd_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            result = subprocess.run(
+                ["/bin/bash", str(HERE / "nightly-mac.sh")],
+                capture_output=True,
+                check=False,
+                env={
+                    "HOME": str(home),
+                    "MAC_CAPTURE": str(capture),
+                    "PATH": launchd_path,
+                },
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
+
+            self.assertEqual([row[0] for row in rows], ["main", "quest"])
+            for row in rows:
+                self.assertEqual(row[1], str(cargo_home))
+                self.assertTrue(row[2].startswith(f"{cargo_bin}{os.pathsep}"))
+                self.assertEqual(row[3], str(cargo))
+
+    def test_launcher_pins_one_fetched_dev_commit_for_both_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self.make_source(root)
+            first = git("rev-parse", "HEAD", cwd=source)
+            (source / "source.txt").write_text("second\n", encoding="utf-8")
+            git("add", ".", cwd=source)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "second", cwd=source)
+            second = git("rev-parse", "HEAD", cwd=source)
+            git("update-ref", "refs/heads/dev", first, cwd=source)
+
+            home = root / "home"
+            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
+            config.parent.mkdir(parents=True)
+            capture = root / "pinned-jobs.txt"
+            python = root / "capture-python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "repo_head=$(git -C \"$NIGHTLY_REPO\" rev-parse refs/heads/dev)\n"
+                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$NIGHTLY_REPO\" "
+                "\"$NIGHTLY_PINNED_COMMIT\" \"$repo_head\" \"$*\" >> \"$MAC_CAPTURE\"\n"
+                "if [ \"$NIGHTLY_JOB\" = main ]; then\n"
+                "  git -C \"$NIGHTLY_MAC_SOURCE_REPO\" update-ref refs/heads/dev \"$MAC_NEXT_COMMIT\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            values = {
+                "NIGHTLY_MAC_RUNNER": root / "runner",
+                "NIGHTLY_MAC_ROOT": root / "nightly-root",
+                "NIGHTLY_MAC_RUNS": root / "runs",
+                "NIGHTLY_MAC_STATUS": root / "status",
+                "NIGHTLY_MAC_CATALOG": root / "catalog",
+                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
+                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
+                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
+                "NIGHTLY_MAC_ISOHOME": root / "isohome",
+                "NIGHTLY_MAC_PYTHON": python,
+                "NIGHTLY_MAC_SOURCE_REPO": source,
+            }
+            config.write_text(
+                "".join(f"{name}={value}\n" for name, value in values.items()),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["/bin/bash", str(HERE / "nightly-mac.sh")],
+                capture_output=True,
+                check=False,
+                env={
+                    "HOME": str(home),
+                    "MAC_CAPTURE": str(capture),
+                    "MAC_NEXT_COMMIT": second,
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                },
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([row[0] for row in rows], ["main", "quest"])
+            self.assertEqual([row[2] for row in rows], [first, first])
+            self.assertEqual([row[3] for row in rows], [first, first])
+            self.assertEqual(rows[0][1], rows[1][1])
+            self.assertTrue(all("--branch dev" in row[4] for row in rows))
+            self.assertEqual(git("rev-parse", "refs/heads/dev", cwd=source), second)
+
+
+class SourceManifestTests(unittest.TestCase):
+    def test_manifest_covers_run_files_before_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "cells" / "walk").mkdir(parents=True)
+            (run_dir / "summary.json").write_text("{\"commit\":\"abc\"}\n", encoding="utf-8")
+            (run_dir / "cells" / "walk" / "result.json").write_text("{\"result\":\"PASS\"}\n",
+                                                                    encoding="utf-8")
+
+            rn.write_source_manifest(run_dir)
+            rows = [line.split("  ", 1) for line in (run_dir / "SHA256SUMS").read_text(
+                encoding="utf-8").splitlines()]
+
+            self.assertEqual([path for _digest, path in rows],
+                             ["cells/walk/result.json", "summary.json"])
+            for digest, relative in rows:
+                self.assertEqual(digest, rn.sha256(run_dir / relative))
+            self.assertNotIn("SHA256SUMS", [path for _digest, path in rows])
+            self.assertNotIn("DONE", [path for _digest, path in rows])
+
+
+@unittest.skipUnless(os.name == "posix" and Path("/bin/bash").is_file()
+                     and shutil.which("shasum"), "the malbec mirror requires Bash and shasum")
+class MalbecMirrorTests(unittest.TestCase):
+    def run_mirror(self, *, corrupt: bool) -> subprocess.CompletedProcess:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        remote = root / "remote"
+        run_name = "2026-10-22-dev-abcdef123"
+        run_dir = remote / run_name
+        run_dir.mkdir(parents=True)
+        payload = run_dir / "summary.md"
+        payload.write_text("source summary\n", encoding="utf-8")
+        rn.write_source_manifest(run_dir)
+        (run_dir / "DONE").write_text("finished\n", encoding="utf-8")
+
+        rsync = root / "rsync"
+        rsync.write_text(
+            f"#!{sys.executable}\n"
+            "import os, shutil, sys\n"
+            "from pathlib import Path\n"
+            "args = sys.argv[1:]\n"
+            "root = Path(os.environ['FAKE_REMOTE_ROOT'])\n"
+            "remote_arg = args[-1] if '--list-only' in args else args[-2]\n"
+            "relative = remote_arg.split(':/', 1)[1].strip('/')\n"
+            "source = root / relative\n"
+            "if '--list-only' in args:\n"
+            "    entries = root.iterdir() if not relative else source.iterdir()\n"
+            "    for entry in entries:\n"
+            "        mode = 'drwxr-xr-x' if entry.is_dir() else '-rw-r--r--'\n"
+            "        print(f'{mode} 1 bot bot 128 2026-10-22 00:00 {entry.name}')\n"
+            "else:\n"
+            "    destination = Path(args[-1])\n"
+            "    destination.mkdir(parents=True, exist_ok=True)\n"
+            "    for entry in source.iterdir():\n"
+            "        if entry.is_file():\n"
+            "            shutil.copy2(entry, destination / entry.name)\n"
+            "    if os.environ.get('RSYNC_CORRUPT') == '1':\n"
+            "        (destination / 'summary.md').write_text('corrupted\\n', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        rsync.chmod(0o755)
+
+        home = root / "home"
+        config = home / ".config" / "274bot-nightly" / "malbec-mirror.env"
+        config.parent.mkdir(parents=True)
+        destination = root / "mirror"
+        config.write_text(
+            f"NIGHTLY_MALBEC_HOST=malbec\n"
+            f"NIGHTLY_MALBEC_USER=bot\n"
+            f"NIGHTLY_MALBEC_KEY={root / 'key'}\n"
+            f"NIGHTLY_MALBEC_KNOWN_HOSTS={root / 'known-hosts'}\n"
+            f"NIGHTLY_MALBEC_DEST={destination}\n"
+            f"NIGHTLY_MALBEC_RSYNC={rsync}\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            ["/bin/bash", str(HERE / "malbec-mirror-pull.sh")],
+            capture_output=True,
+            check=False,
+            env={
+                "HOME": str(home),
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "FAKE_REMOTE_ROOT": str(remote),
+                "RSYNC_CORRUPT": "1" if corrupt else "0",
+            },
+            text=True,
+        )
+        self.last_destination = destination / run_name
+        self.source_manifest = (run_dir / "SHA256SUMS").read_text(encoding="utf-8")
+        return completed
+
+    def test_mirror_accepts_bytes_that_match_the_source_manifest(self):
+        result = self.run_mirror(corrupt=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("mirrored after malbec SHA256SUMS verification", result.stdout)
+        self.assertTrue(self.last_destination.is_dir())
+        self.assertEqual((self.last_destination / "SHA256SUMS").read_text(encoding="utf-8"),
+                         self.source_manifest)
+        self.assertEqual((self.last_destination / "summary.md").read_text(encoding="utf-8"),
+                         "source summary\n")
+
+    def test_mirror_rejects_bytes_that_differ_from_the_source_manifest(self):
+        result = self.run_mirror(corrupt=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("malbec SHA256SUMS verification failed", result.stdout)
+        self.assertFalse(self.last_destination.exists())
+        self.assertEqual(list(self.last_destination.parent.glob(".incoming-*")), [])
+
+
+@unittest.skipUnless(os.name == "posix" and Path("/bin/sh").is_file(),
+                     "systemd nightly scripts require a POSIX shell")
+class SystemdQuestGateTests(unittest.TestCase):
+    def test_shared_service_keeps_zinfandel_revision_274_off_the_quest_path(self):
+        service = (HERE / "systemd" / "274bot-nightly.service").read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/usr/bin/env NIGHTLY_JOB=main", service)
+        self.assertIn("ExecStartPost=/bin/sh /srv/nightly/runner/tools/nightly/systemd/run-quest-job.sh",
+                      service)
+        self.assertNotIn("Environment=NIGHTLY_ENABLE_QUEST=", service)
+        for timer_name in ("274bot-nightly.timer", "274bot-nightly-274.timer"):
+            timer = (HERE / "systemd" / timer_name).read_text(encoding="utf-8")
+            self.assertIn("Unit=274bot-nightly.service", timer)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "quest-calls.txt"
+            mock_bin = root / "bin"
+            mock_bin.mkdir()
+            python = mock_bin / "python3"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$NIGHTLY_REVISION\" "
+                "\"$NIGHTLY_GAME_PORT\" \"$1\" >> \"$QUEST_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            helper = HERE / "systemd" / "run-quest-job.sh"
+            common_env = {
+                "PATH": f"{mock_bin}:/usr/bin:/bin",
+                "QUEST_CAPTURE": str(capture),
+            }
+            zinfandel = subprocess.run(
+                ["/bin/sh", str(helper)],
+                env={**common_env, "NIGHTLY_REVISION": "274"},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(zinfandel.returncode, 0, zinfandel.stderr)
+            self.assertFalse(capture.exists())
+
+            malbec = subprocess.run(
+                ["/bin/sh", str(helper)],
+                env={**common_env, "NIGHTLY_REVISION": "289", "NIGHTLY_ENABLE_QUEST": "1"},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(malbec.returncode, 0, malbec.stderr)
+            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(rows[0][:3], ["quest", "289", "44694"])
+            self.assertEqual(Path(rows[0][3]).resolve(), (HERE / "run_nightly.py").resolve())
+
+            unsafe_zinfandel = subprocess.run(
+                ["/bin/sh", str(helper)],
+                env={**common_env, "NIGHTLY_REVISION": "274", "NIGHTLY_ENABLE_QUEST": "1"},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(unsafe_zinfandel.returncode, 1)
+            self.assertIn("refusing quest job", unsafe_zinfandel.stderr)
+            self.assertEqual(len(capture.read_text(encoding="utf-8").splitlines()), 1)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-# Windows nightly host: the action of the `274bot-nightly` and
+﻿# Windows nightly host: the action of the `274bot-nightly` and
 # `274bot-nightly-catchup` scheduled tasks (see tools/nightly/README.md).
 # Runs as BotTest without elevation: it reads C:\274bot-nightly\nightly.env,
-# puts the toolchain on PATH and starts run_nightly.py from the runner checkout
-# with the nightly venv's Python. Output goes to logs\<stamp>-<mode>.log/.err.log.
+# puts the toolchain on PATH and starts the main and quest jobs separately
+# with the nightly venv's Python. Output goes to logs\<stamp>-<job>-<mode>.log/.err.log.
 param(
     [ValidateSet('night', 'catch-up')]
     [string]$Mode = 'night'
@@ -27,12 +27,36 @@ New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 Get-ChildItem -LiteralPath $Logs -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
     Remove-Item -Force -ErrorAction SilentlyContinue
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$Out = Join-Path $Logs "$Stamp-$Mode.log"
-$Err = Join-Path $Logs "$Stamp-$Mode.err.log"
 $Python = Join-Path $Root 'venv\Scripts\python.exe'
 $Runner = Join-Path $Root 'runner\tools\nightly\run_nightly.py'
-$Arguments = @('-u', "`"$Runner`"")
-if ($Mode -eq 'catch-up') { $Arguments += '--catch-up' }
-$Process = Start-Process -FilePath $Python -ArgumentList $Arguments -WorkingDirectory $Root -NoNewWindow -Wait `
-    -PassThru -RedirectStandardOutput $Out -RedirectStandardError $Err
-exit $Process.ExitCode
+$Revision = if ($env:NIGHTLY_REVISION) { $env:NIGHTLY_REVISION } else { '289' }
+$RevisionSuffix = if ($Revision -eq '289') { '' } else { "-$Revision" }
+$ExitCode = 0
+foreach ($Job in @('main', 'quest')) {
+    $env:NIGHTLY_JOB = $Job
+    $env:NIGHTLY_ENGINE = 'remote'
+    $env:NIGHTLY_ENGINE_HOST = '127.0.0.1'
+    $env:NIGHTLY_GAME_PORT = '47594'
+    $env:NIGHTLY_HTTP_PORT = '3080'
+    $env:NIGHTLY_ENGINE_LABEL = 'Engine B'
+    Remove-Item Env:QUESTER_TICK_MS -ErrorAction SilentlyContinue
+    if ($Job -eq 'quest') {
+        $env:NIGHTLY_STEPS = 'panel,tui'
+        $env:NIGHTLY_RUN_SUFFIX = "$RevisionSuffix-windows-quest"
+        $env:NIGHTLY_NAME_PREFIX = 'wq'
+        $env:NIGHTLY_PANEL_NAME_PREFIX = 'wqp'
+    } else {
+        $env:NIGHTLY_STEPS = 'lanes,panel,tui'
+        $env:NIGHTLY_RUN_SUFFIX = "$RevisionSuffix-windows"
+        $env:NIGHTLY_NAME_PREFIX = 'nw'
+        $env:NIGHTLY_PANEL_NAME_PREFIX = 'np'
+    }
+    $Out = Join-Path $Logs "$Stamp-$Job-$Mode.log"
+    $Err = Join-Path $Logs "$Stamp-$Job-$Mode.err.log"
+    $Arguments = @('-u', "`"$Runner`"")
+    if ($Mode -eq 'catch-up') { $Arguments += '--catch-up' }
+    $Process = Start-Process -FilePath $Python -ArgumentList $Arguments -WorkingDirectory $Root -NoNewWindow -Wait `
+        -PassThru -RedirectStandardOutput $Out -RedirectStandardError $Err
+    if ($Process.ExitCode -ne 0) { $ExitCode = $Process.ExitCode }
+}
+exit $ExitCode
