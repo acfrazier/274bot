@@ -30930,6 +30930,7 @@ export default class T extends LoopingBot {
                     .assess_walk(
                         script::native::WalkRequest {
                             target: tile(4, 0),
+                            candidate_goals: None,
                             radius: 0,
                             arrival: nav::arrival::ArrivalKind::Reach,
                             loc_id: None,
@@ -31377,7 +31378,84 @@ export default class T extends LoopingBot {
                 .expect("installed Quester")
                 .on_stop(reason);
         }
+    }
 
+    #[test]
+    fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
+        let selected = selected_r289();
+        let quest = cook_quest(&selected);
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let path = compiled_sheep_walk(&selected);
+        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
+        let snapshot = quester_snapshot(&selected, &quest);
+        let control = Arc::new(Mutex::new(None));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(QuesterWalkHarness {
+                    control: Arc::clone(&control),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native Quester");
+            let run = slot.native_run().expect("native Quester run");
+            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
+                run,
+                Arc::clone(&path),
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            ));
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("native Quester must request a walk");
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "native Quester route did not publish across the typed gate"
+        );
+
+        let destination = queued(&rig.navs).expect("Quester route destination");
+        assert!(
+            destination.x > 3220,
+            "the Quester route must reach the far side of the transport"
+        );
+        let slot = slot.lock().unwrap();
+        let run = slot.native_run().expect("native Quester run");
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published Quester route retains its evidence");
+        assert_eq!(evidence.required_after().run, run);
+        assert_eq!(evidence.required_after().tick, requested_at);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the Quester route must use the captured Complete row"
+        );
+    }
+}
 mod ground_selected_identity_tests {
     use super::*;
     use script::isolate_fb::{decode_interact_batch, encode_interact_batch};
@@ -31518,82 +31596,5 @@ mod ground_selected_identity_tests {
         assert!(dispatch(&snapshot, &names, request(None, Some("Missing")))
             .menus
             .is_empty());
-    }
-
-}
-    #[test]
-    fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
-        let selected = selected_r289();
-        let quest = cook_quest(&selected);
-        let quests = selected.try_quests().expect("selected quest catalog");
-        let path = compiled_sheep_walk(&selected);
-        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
-        let rig = nav_rig_with(Some(world));
-        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
-        let snapshot = quester_snapshot(&selected, &quest);
-        let control = Arc::new(Mutex::new(None));
-        {
-            let mut slot = slot.lock().unwrap();
-            slot.stop();
-            slot.start_test_script(
-                Box::new(QuesterWalkHarness {
-                    control: Arc::clone(&control),
-                }),
-                Some(Arc::clone(&selected)),
-            )
-            .expect("start native Quester");
-            let run = slot.native_run().expect("native Quester run");
-            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
-                run,
-                Arc::clone(&path),
-                Arc::clone(&selected),
-                Arc::clone(&quests),
-                Arc::new(api::named_banks::NamedBankFacts::empty()),
-            ));
-        }
-
-        let mut driver = NavRec::default();
-        let requested_at = (1..=8).find(|tick| {
-            observe(
-                &rig,
-                &mut driver,
-                &snapshot,
-                *tick,
-                Some(nav::WorldState::from_snapshot(&snapshot)),
-            );
-            rig.navs
-                .lock()
-                .unwrap()
-                .get("alice")
-                .is_some_and(|bot| bot.native_walk.is_some())
-        });
-        let requested_at = requested_at.expect("native Quester must request a walk");
-        assert!(
-            wait_for_route_work(&rig.navs, "alice", |bot| {
-                !bot.route_work_pending() && bot.has_route()
-            }),
-            "native Quester route did not publish across the typed gate"
-        );
-
-        let destination = queued(&rig.navs).expect("Quester route destination");
-        assert!(
-            destination.x > 3220,
-            "the Quester route must reach the far side of the transport"
-        );
-        let slot = slot.lock().unwrap();
-        let run = slot.native_run().expect("native Quester run");
-        let navs = rig.navs.lock().unwrap();
-        let bot = navs.get("alice").expect("navigation bot");
-        let evidence = bot
-            .route_quest_evidence
-            .as_ref()
-            .expect("published Quester route retains its evidence");
-        assert_eq!(evidence.required_after().run, run);
-        assert_eq!(evidence.required_after().tick, requested_at);
-        assert_eq!(
-            evidence.test(&QuestGate::Complete(quest)),
-            Truth::True,
-            "the Quester route must use the captured Complete row"
-        );
     }
 }
