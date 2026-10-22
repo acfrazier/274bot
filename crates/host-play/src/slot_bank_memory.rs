@@ -567,6 +567,20 @@ mod tests {
     const CONTENT: &str = "test-content";
     const WAIT: Duration = Duration::from_secs(60);
 
+    /// Plain unsynced writes with no directory flushes, for the tests that
+    /// count hundreds of settlements; the file is still created 0600 so the
+    /// product's private-file reader accepts it under any umask.
+    fn cheap_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+        std::fs::create_dir_all(path.parent().expect("a hint has a directory"))?;
+        std::fs::write(path, bytes)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
     impl SlotBankMemory {
         fn read(&self) -> RwLockReadGuard<'_, BankMemory> {
             self.memory.read()
@@ -1070,7 +1084,7 @@ mod tests {
         assert!(!slot.read().dirty(), "the close saved");
         let raw = rows_on_disk(&path);
         assert!(raw.contains(&format!("\"rows\":[[{COINS},43]]")), "{raw}");
-        std::fs::write(&path, "sentinel").unwrap();
+        cheap_write(&path, b"sentinel").unwrap();
 
         for _ in 0..3 {
             slot.observe_frame(&snapshot);
@@ -1149,8 +1163,7 @@ mod tests {
         let state = TestState::new("bank-hints-rejected");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "{\"schema_version\":7}").unwrap();
+        cheap_write(&path, b"{\"schema_version\":7}").unwrap();
         slot.session_started();
         assert!(!slot.read().known());
     }
@@ -1686,10 +1699,7 @@ mod tests {
         let slot = state.slot(Arc::default());
         // Hundreds of writes follow; what this checks is not durability, so
         // they are plain unsynced writes with no directory flushes.
-        state.service.set_write_hook(Arc::new(|path, bytes| {
-            std::fs::create_dir_all(path.parent().expect("a hint has a directory"))?;
-            std::fs::write(path, bytes)
-        }));
+        state.service.set_write_hook(Arc::new(cheap_write));
         state.service.set_sync_hook(Arc::new(|_| Ok(())));
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);

@@ -111,7 +111,8 @@ mod tests {
     use crate::native::ledger::TickBudget;
     use crate::native::{ActionContext, RetainedMemory};
     use crate::quester::compile::{
-        compile_uncached_for_test, decode_cook, PredicateContext, RUNE_MYSTERIES_JSON, SHEEP_JSON,
+        compile_uncached_for_test, decode_cook, path_bytes, PredicateContext, RUNE_MYSTERIES_JSON,
+        SHEEP_JSON,
     };
     use crate::quester::families::tests::with_tick_bank;
     use crate::quester::path::{PathDocument, PredicateDocument};
@@ -228,6 +229,7 @@ mod tests {
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
         };
@@ -626,6 +628,64 @@ mod tests {
                 }
             }),
         );
+    }
+
+    #[test]
+    fn monk_friends_cave_side_boundary_selects_blanket_instead_of_rewalking_ladder() {
+        let _home = crate::IsolatedEnv::enter("monk-friends-select");
+        let data = selected();
+        crate::quester::compile::prepare_for_test({
+            let data = Arc::clone(&data);
+            move |worker| data.prepare_gathering(worker)
+        })
+        .expect("prepare 289 gathering catalog");
+        let quests = quests(&data);
+        let document: PathDocument =
+            serde_json::from_slice(path_bytes("drunkmonk").expect("released Path")).unwrap();
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 2561,
+                z: 9621,
+                level: 0,
+            },
+        ));
+        let bank = known_empty_bank();
+
+        assert_eq!(
+            choice_for_stage(&compiled, "drunkmonk:10", &snapshot, &quests, &[], &bank,),
+            chosen("take-childs-blanket"),
+            "the cave-side boundary must skip the ring-stone walk and ladder"
+        );
+    }
+
+    #[test]
+    fn gertrude_yard_cursor_does_not_reselect_earlier_walks() {
+        let data = selected();
+        let quests = quests(&data);
+        let document: PathDocument =
+            serde_json::from_slice(path_bytes("fluffs").expect("released Path")).unwrap();
+        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut snapshot = inventory_snapshot(&data, &[]);
+        snapshot.seed_local_player(crate::quester::families::tests::local_player(
+            api::WorldTile {
+                x: 3304,
+                z: 3509,
+                level: 0,
+            },
+        ));
+        let bank = known_empty_bank();
+        let choice = Probe {
+            path: &compiled,
+            selected: &data,
+            quests: &quests,
+            progress: &[],
+            bank: &bank,
+        }
+        .choice("fluffs:4", 5, &snapshot);
+
+        assert_eq!(choice, chosen("walk-nw-corner-in-1"));
     }
 
     #[test]

@@ -1,13 +1,22 @@
 use super::*;
 
-/// Distinct game ticks a sent walk may sit without tile progress or actor
-/// movement before reissuing the same aim. A map flag alone is not progress:
-/// the server can retain it while a delayed action or queued modal blocks
-/// movement. Matches the canonical WalkExecutor stallTicks default of 5;
-/// each reissue stays inside the original hop budget.
+/// Distinct game ticks a sent walk may sit without tile progress, while it
+/// is not live ([`walk_is_live`]), before reissuing the same aim. A map flag
+/// alone is not progress: the server can retain it while a delayed action or
+/// queued modal blocks movement. Matches the canonical WalkExecutor
+/// stallTicks default of 5; each reissue stays inside the original hop budget.
 pub(super) const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
 /// Frozen `DEFAULT_PATH_STALL_TICKS` (`pathFollowPolicy.ts:6`).
 const END_BLOCKED_STALL_TICKS: u32 = 5;
+
+/// The client is still walking an accepted click: its actor has queued
+/// route steps and the map flag of that click is still set.
+pub(super) fn walk_is_live(snapshot: &GameSnapshot) -> bool {
+    snapshot.map_flag().is_some()
+        && snapshot
+            .local_player()
+            .is_some_and(|p| p.player.actor.moving)
+}
 
 pub(super) fn report_walk(
     options: &mut TravelOptions<'_>,
@@ -186,22 +195,28 @@ impl FollowRun {
         }
     }
 
-    /// True after enough *distinct* game ticks without movement at the
-    /// latest observed position. Progress away from `sent_tile` still
+    /// True after enough *distinct* game ticks at the latest observed
+    /// tile while the walk is not live. Progress away from `sent_tile` still
     /// qualifies once the player stops; that tile is only for Dropped/Expired.
+    ///
+    /// A walk is live while the client actor is `moving` *and* the map flag
+    /// is still set: the client keeps the flag until the player reaches it,
+    /// and the engine clears it with `UnsetMapFlag` when it drops the click
+    /// (`MoveClickHandler.ts` `if (player.delayed)`). `moving` alone is not
+    /// a live walk: the client drains its route queue in its own animation
+    /// cycles, which can lag the server by several tiles, so after a dropped
+    /// click (right after the Al Kharid toll gate's `p_teleport` and
+    /// `p_delay(0)`, `border_gate.rs2`) it stays true for tens of ticks with
+    /// no flag. The observed tile alone is not a stop either: a slow client
+    /// can show one tile for many ticks while the server walks the player,
+    /// and a re-send from that stale tile made a live walk back-track.
     pub(super) fn should_recover_stalled_walk(
         &self,
         hop: &WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) -> bool {
-        if hop.sent_tile.is_none() {
-            return false;
-        }
-        if snapshot
-            .local_player()
-            .is_some_and(|p| p.player.actor.moving)
-        {
+        if hop.sent_tile.is_none() || walk_is_live(snapshot) {
             return false;
         }
         let idle = if hop.stall_idle_at != Some(here) {
@@ -217,18 +232,15 @@ impl FollowRun {
     }
 
     /// Advance or clear the stalled-walk idle counter. Only distinct
-    /// snapshot ticks count; actor movement or an actual tile change resets
-    /// the window. Partial-hop progress can recover once movement stops.
+    /// snapshot ticks count; a live walk or a tile change resets the window.
+    /// Partial-hop progress can recover once movement stops.
     pub(super) fn note_walk_stall_idle(
         &self,
         hop: &mut WalkHop,
         snapshot: &GameSnapshot,
         here: WorldTile,
     ) {
-        let moving = snapshot
-            .local_player()
-            .is_some_and(|p| p.player.actor.moving);
-        if hop.sent_tile.is_none() || moving {
+        if hop.sent_tile.is_none() || walk_is_live(snapshot) {
             hop.stall_idle_ticks = 0;
             hop.stall_idle_last_tick = None;
             hop.stall_idle_at = None;

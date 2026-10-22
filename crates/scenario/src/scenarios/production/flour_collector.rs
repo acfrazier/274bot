@@ -8,15 +8,15 @@ const POT_FLOUR_ID: i32 = 1933;
 const FLOUR_SEED_POTS: i32 = 30;
 const FLOUR_PACK_POTS: i32 = 28;
 const FLOUR_RESTOCK_POTS: i32 = FLOUR_SEED_POTS - FLOUR_PACK_POTS;
-/// Per-leg watch budget in runner dirty-snapshot increments (one per game tick
-/// that moved the snapshot). A leg that walks the Seers bank to the Sinclair
-/// flour barrel (about 90 tiles, `FlourCollector.ts` `MURDER_LOC`) plus up to 28
-/// barrel fills needs about 90 ticks of walking at one tile per tick; 400 leaves
-/// room for the fill loop and the return walk.
+/// Per-leg cap in observed game ticks (one per `PLAYER_INFO`). A leg that
+/// walks the Seers bank to the Sinclair flour barrel (about 90 tiles,
+/// `FlourCollector.ts` `MURDER_LOC`) plus up to 28 barrel fills needs about
+/// 90 game ticks of walking at one tile per game tick; 400 leaves room for
+/// the fill loop and return walk.
 const FLOUR_LEG_WATCH_TICKS: u32 = 400;
 /// Whole-scenario cap: upstream's default run length (`minutes: 8`). It covers
 /// three walks of about 90 tiles (bank to barrel, barrel to bank, bank to
-/// barrel) at the 600ms tick, plus 30 barrel fills.
+/// barrel) at 600ms per game tick, plus 30 barrel fills.
 pub(crate) const FLOUR_COLLECTOR_DEADLINE: Duration = Duration::from_secs(480);
 
 fn flour_watch(name: &'static str, arm: Proof) -> Step {

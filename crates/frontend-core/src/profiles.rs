@@ -399,8 +399,16 @@ impl Drop for ProfileWriter {
     }
 }
 
-/// The uid for a new profile: one past the vault's highest, from the 274M
-/// base. Shared by every path that creates a profile.
-pub fn fresh_uid(vault: &Vault) -> i32 {
-    vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
+/// The first profile uid (the 274M base).
+pub(crate) const FIRST_UID: i32 = 274_000_001;
+
+/// One past the vault's highest uid, from [`FIRST_UID`]. A new profile
+/// takes [`crate::OperatorSession::fresh_uid`], which is also above every
+/// uid the saved Load order has held.
+pub(crate) fn next_vault_uid(vault: &Vault) -> i32 {
+    vault
+        .profiles()
+        .map(|p| p.uid.saturating_add(1))
+        .max()
+        .unwrap_or(FIRST_UID)
 }

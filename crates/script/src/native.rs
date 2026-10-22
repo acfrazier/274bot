@@ -112,6 +112,66 @@ pub struct WalkPermissions {
     pub allow_danger_zones: bool,
 }
 
+/// The host's danger decision for a candidate's actual walk access tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkDanger<'a> {
+    Allowed,
+    Denied { zone: &'a str },
+    Unavailable,
+}
+
+/// A tick-borrowed query over the host's effective native walk permissions.
+/// Implementations resolve settings lazily and retain no state between ticks.
+pub trait WalkDangerQuery {
+    fn check(
+        &self,
+        target: WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+    ) -> WalkDanger<'_>;
+
+    /// Restrict only the chosen target's access goals after eligibility checks.
+    /// `None` preserves the existing approach, including its preferred tier.
+    /// Implementations must not allocate goals when no access tile is denied.
+    fn safe_access_goals(
+        &self,
+        target: WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+        existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError>;
+}
+
+/// Test fixtures with no host danger policy explicitly allow every access tile.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct AllowWalkDanger;
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl WalkDangerQuery for AllowWalkDanger {
+    fn check(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+    ) -> WalkDanger<'_> {
+        WalkDanger::Allowed
+    }
+
+    fn safe_access_goals(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+        _existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+        Ok(None)
+    }
+}
+
 impl WalkPermissions {
     fn from_bag(card: CompiledId, bag: &SettingsBag) -> Self {
         let (teleports, wilderness, danger_zones) = if card == CompiledId("Gatherer") {
@@ -159,6 +219,12 @@ impl PreparedConfig {
             walk_permissions,
             value: Some(Box::new(value)),
         })
+    }
+
+    /// Prepare settings for the fixed card installed by `SlotScript::start_test_script`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test_script(revision: u64, bag: Arc<SettingsBag>) -> Arc<Self> {
+        Self::new(CompiledId("test"), 1, revision, bag, ())
     }
 
     pub fn card(&self) -> CompiledId {
@@ -381,6 +447,14 @@ pub trait Script: Send {
     fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
         RandomClaim::Host
     }
+    /// A safe wait on new world evidence rather than elapsed time. Return true
+    /// only when a fresh observation could enable work and this script has no
+    /// foreground action in flight. The slot additionally validates readiness,
+    /// session, hold and action ownership before suspending gameplay-idle
+    /// recovery. Scheduler and missing-packet watchdogs remain active.
+    fn waits_for_evidence(&self) -> bool {
+        false
+    }
     fn recovery_anchor(&self) -> Option<WorldTile> {
         None
     }
@@ -398,6 +472,8 @@ pub struct NativeTick<'a> {
     pub service_authority: Option<ServiceAuthority<'a>>,
     /// Borrow of the owner's admitted seat, not a second request scheduler.
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
+    /// Read-only danger admission for target selection, borrowed from the host.
+    pub walk_danger: Option<&'a dyn WalkDangerQuery>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
@@ -436,6 +512,13 @@ impl<'frame> NativeTick<'frame> {
             Some(state) => state.operator_loadouts(),
             None => Ok(crate::local_state::OperatorLoadouts::absent()),
         }
+    }
+    /// Report one confirmed gameplay change for the current run and session.
+    /// The slot consumes it once through the progress watchdog. This sends no
+    /// interaction and spends no event budget; call only after observing a
+    /// successful outcome, never for a click or an expected result.
+    pub fn note_progress(&mut self) {
+        self.cx.note_progress();
     }
 }
 
@@ -532,6 +615,7 @@ pub struct ActionContext<'a> {
     pub(crate) active_now: Duration,
     pub(crate) wall_now: Instant,
     pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
+    pub(crate) pending_note_progress: Option<&'a mut Option<RunKey>>,
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
     pub(crate) observed_walk_outcome_seq: u64,
@@ -562,8 +646,111 @@ impl Default for WalkAllow {
     }
 }
 
+/// Bounded exact alternatives for one native Area walk. A reachable preferred
+/// goal wins over every fallback goal, even when a fallback route is shorter.
+#[derive(Debug, Clone)]
+pub struct WalkGoals {
+    goals: Arc<Vec<WorldTile>>,
+    preferred_len: usize,
+}
+
+/// A candidate request is rejected, never silently shortened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WalkGoalsError {
+    #[error("candidate goal set is empty")]
+    Empty,
+    #[error("{count} unique candidate goals exceed the limit of {limit}")]
+    TooMany { count: usize, limit: usize },
+    #[error("candidate goals require exact Area arrival without a location")]
+    IncompatibleArrival,
+}
+
+impl WalkGoals {
+    /// The generated 274/289 movement rectangles need at most 810 goals;
+    /// stationary NPCs need 961. This leaves 63 goals of headroom.
+    pub const MAX: usize = 1024;
+
+    /// All goals belong to the preferred tier.
+    pub fn new(mut goals: Vec<WorldTile>) -> Result<Self, WalkGoalsError> {
+        goals.sort_unstable_by_key(|tile| (tile.level, tile.x, tile.z));
+        goals.dedup();
+        let preferred_len = goals.len();
+        Self::from_parts(goals, preferred_len)
+    }
+
+    /// Preserve the supplied preferred goals before trying the remaining goals.
+    /// The cap applies to the unique union, not to either tier separately.
+    pub fn with_preferred(
+        mut goals: Vec<WorldTile>,
+        preferred: &[WorldTile],
+    ) -> Result<Self, WalkGoalsError> {
+        goals.sort_unstable_by_key(|tile| (tile.level, tile.x, tile.z));
+        goals.dedup();
+        for &tile in preferred {
+            let key = (tile.level, tile.x, tile.z);
+            if let Err(index) =
+                goals.binary_search_by_key(&key, |tile| (tile.level, tile.x, tile.z))
+            {
+                goals.insert(index, tile);
+            }
+        }
+        let mut preferred_len = 0;
+        for &tile in preferred {
+            if let Some(index) = goals[preferred_len..].iter().position(|goal| *goal == tile) {
+                goals[preferred_len..=preferred_len + index].rotate_right(1);
+                preferred_len += 1;
+            }
+        }
+        Self::from_parts(goals, preferred_len)
+    }
+
+    fn from_parts(goals: Vec<WorldTile>, preferred_len: usize) -> Result<Self, WalkGoalsError> {
+        if goals.is_empty() {
+            return Err(WalkGoalsError::Empty);
+        }
+        if goals.len() > Self::MAX {
+            return Err(WalkGoalsError::TooMany {
+                count: goals.len(),
+                limit: Self::MAX,
+            });
+        }
+        // Retain the producer's allocation instead of copying its tiles into
+        // an Arc slice. A thin Arc plus the tier boundary stays two words.
+        Ok(Self {
+            goals: Arc::new(goals),
+            preferred_len,
+        })
+    }
+
+    pub fn as_slice(&self) -> &[WorldTile] {
+        self.goals.as_slice()
+    }
+
+    pub fn preferred(&self) -> &[WorldTile] {
+        &self.goals[..self.preferred_len]
+    }
+
+    pub fn fallback(&self) -> &[WorldTile] {
+        &self.goals[self.preferred_len..]
+    }
+
+    /// Shared Vec header, Arc counters and the retained tile capacity.
+    pub fn retained_bytes(&self) -> Option<usize> {
+        std::mem::size_of::<Vec<WorldTile>>()
+            .checked_add(2 * std::mem::size_of::<usize>())?
+            .checked_add(
+                self.goals
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<WorldTile>())?,
+            )
+    }
+}
+
 pub struct WalkRequest {
     pub target: WorldTile,
+    /// Exact alternatives for a native Area walk with radius zero and no loc.
+    /// `None` preserves the existing single-target route and arrival behavior.
+    pub candidate_goals: Option<WalkGoals>,
     /// Explicit identity for a walk whose destination is a loc origin.
     /// `None` deliberately keeps the destination tile-based.
     pub loc_id: Option<i32>,
@@ -664,6 +851,8 @@ pub struct WalkStall {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkEnd {
     Arrived,
+    /// The host route planner found no route satisfying the request.
+    NoPath,
     UserInput,
     RouteEnded,
     /// A Traveller hop reached its finite budget without its aim being reached.
@@ -680,6 +869,9 @@ pub enum WalkEnd {
 pub struct WalkReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
+    /// Chosen destination for a successful exact Area walk (radius zero,
+    /// without a loc), with or without candidates. Other arrivals report None.
+    pub goal: Option<WorldTile>,
     pub end: WalkEnd,
     pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
@@ -722,6 +914,11 @@ impl WalkReceipt {
             WalkEnd::UserInput => Err(ActionError::UserInput),
             WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
             WalkEnd::Cancelled => Err(ActionError::Cancelled),
+            WalkEnd::NoPath => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
+                static REASON: LazyLock<Arc<str>> =
+                    LazyLock::new(|| Arc::from("walk has no route"));
+                Arc::clone(&REASON)
+            }))),
             WalkEnd::RouteEnded => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                 static REASON: LazyLock<Arc<str>> =
                     LazyLock::new(|| Arc::from("walk route ended before arrival"));
@@ -793,6 +990,14 @@ impl<'a> ActionContext<'a> {
     pub fn action_id(&self) -> u64 {
         self.action_id
     }
+    pub(crate) fn note_progress(&mut self) {
+        if !self.eligible {
+            return;
+        }
+        if let Some(pending) = self.pending_note_progress.as_deref_mut() {
+            *pending = Some(self.evidence.run);
+        }
+    }
 }
 
 /// Non-Clone guard. Dropping it revokes host work before local cleanup.
@@ -841,6 +1046,10 @@ pub enum ActionError {
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
     NeedsEvidence(Arc<[QuestGate]>),
+    /// Typed capacity or duplicate refusal from exact ground-item Take.
+    GroundTake(api::ground_take::GroundRefusal),
+    /// Invalid bounded candidate-goal request, rejected before host admission.
+    WalkGoals(WalkGoalsError),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
@@ -939,6 +1148,69 @@ mod walk_permission_tests {
     }
 
     #[test]
+    fn candidate_goal_limit_refuses_instead_of_truncating() {
+        let tile = WorldTile {
+            x: 1,
+            z: 2,
+            level: 0,
+        };
+        assert!(matches!(
+            WalkGoals::new(Vec::new()),
+            Err(WalkGoalsError::Empty)
+        ));
+        let tiles = |count| {
+            (0..count)
+                .map(|x| WorldTile {
+                    x: x as i32,
+                    ..tile
+                })
+                .collect()
+        };
+        let maximum = WalkGoals::new(tiles(WalkGoals::MAX)).unwrap();
+        assert_eq!(maximum.as_slice().len(), WalkGoals::MAX);
+        assert_eq!(maximum.preferred(), maximum.as_slice());
+        assert!(maximum.fallback().is_empty());
+        assert!(matches!(
+            WalkGoals::new(tiles(WalkGoals::MAX + 1)),
+            Err(WalkGoalsError::TooMany { count, limit })
+                if count == WalkGoals::MAX + 1 && limit == WalkGoals::MAX
+        ));
+    }
+
+    #[test]
+    fn candidate_tiers_share_one_unique_bound_without_inline_growth() {
+        let tile = |x| WorldTile { x, z: 0, level: 0 };
+        let goals = WalkGoals::with_preferred(
+            vec![tile(1), tile(2), tile(2), tile(3)],
+            &[tile(3), tile(3), tile(4)],
+        )
+        .unwrap();
+        assert_eq!(goals.preferred(), &[tile(3), tile(4)]);
+        assert_eq!(goals.fallback(), &[tile(1), tile(2)]);
+        assert_eq!(goals.as_slice().len(), 4);
+        assert_eq!(
+            std::mem::size_of::<WalkGoals>(),
+            2 * std::mem::size_of::<usize>()
+        );
+        let maximum = (0..WalkGoals::MAX).map(|x| tile(x as i32)).collect();
+        assert!(matches!(
+            WalkGoals::with_preferred(maximum, &[tile(WalkGoals::MAX as i32)]),
+            Err(WalkGoalsError::TooMany { count, limit })
+                if count == WalkGoals::MAX + 1 && limit == WalkGoals::MAX
+        ));
+        let deduplicated = WalkGoals::new(vec![tile(1); WalkGoals::MAX + 1]).unwrap();
+        assert_eq!(deduplicated.as_slice(), &[tile(1)]);
+        assert_eq!(
+            WalkGoalsError::TooMany {
+                count: 1025,
+                limit: 1024
+            }
+            .to_string(),
+            "1025 unique candidate goals exceed the limit of 1024"
+        );
+    }
+
+    #[test]
     fn refusal_variants_preserve_distinct_typed_kinds() {
         let refusals = [
             WalkRefusal::NoRouteWithinBounds {
@@ -964,6 +1236,7 @@ mod walk_permission_tests {
     #[test]
     fn aborted_walk_maps_to_blocked_with_the_escape_detail() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {
@@ -992,6 +1265,7 @@ mod walk_permission_tests {
     #[test]
     fn typed_refusal_supplies_a_reason_when_host_detail_is_absent() {
         let receipt = WalkReceipt {
+            goal: None,
             request_id: 7,
             evidence: EvidenceStamp {
                 run: RunKey {
@@ -1087,6 +1361,7 @@ mod defer_budget_tests {
             ActionError::Failed(Arc::from("failed")),
             ActionError::BankDeposit(crate::bank::ops::DepositFailure::FullStack),
             ActionError::Blocked(Arc::from("blocked")),
+            ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity),
             ActionError::NeedsEvidence(Arc::<[QuestGate]>::from([])),
         ];
         for error in errors {

@@ -69,6 +69,7 @@ impl Runtime {
             active_now: Duration::from_millis(tick * 600),
             wall_now: self.wall,
             ledger: &mut self.ledger,
+            pending_note_progress: None,
             budget: &mut self.budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
@@ -564,6 +565,7 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
         .expect("combat walk request was issued")
         .get();
     harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id,
         evidence: EvidenceStamp {
             run: RunKey {
@@ -1218,6 +1220,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
     let snapshot = SnapshotView::new(Some(&scene.snapshot), evidence);
     let request = crate::native::WalkRequest {
         target: scene.local.player.actor.tile,
+        candidate_goals: None,
         loc_id: None,
         radius: 1,
         arrival: nav::contract::ArrivalKind::Reach,
@@ -1858,6 +1861,7 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
         Some(HostEffect::Walk(_))
     ));
     harness.runtime.ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+        goal: None,
         request_id: harness.machine.pending_walk.unwrap().get(),
         evidence: EvidenceStamp {
             run: RunKey {
@@ -3856,7 +3860,8 @@ fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
                 if let Some(effect) = harness.drain(None).into_single() {
                     assert!(matches!(
                         effect,
-                        HostEffect::Interaction(InteractReq::Obj { .. })
+                        HostEffect::Interaction(InteractReq::Obj { id: Some(id), .. })
+                            if id == ammo.def.id
                     ));
                     pickups += 1;
                 }

@@ -95,6 +95,14 @@ fn dispatch<'s>(
         Some(56) => entity_actions(scope, args.get(1)),
         Some(57) => ground_item_interact(scope, args.get(1), args.get(2), args.get(3)),
         Some(58) => production_query(scope, args.get(1), args.get(2), args.get(3)),
+        Some(59) => input_take_obj(
+            scope,
+            args.get(1),
+            args.get(2),
+            args.get(3),
+            args.get(4),
+            args.get(5),
+        ),
         _ => Err(cb::not_impl(scope, "entity binding")),
     }
 }
@@ -1950,8 +1958,8 @@ fn ground_item_interact<'s>(
     }
     let row = entity_instance_snap(scope, instance)?;
     let x = cb::get(scope, row, "x")?;
-    let row = entity_instance_snap(scope, instance)?;
     let z = cb::get(scope, row, "z")?;
+    let id = cb::get(scope, row, "id")?;
     let row = entity_instance_snap(scope, instance)?;
     let level = cb::get(scope, row, "level")?;
     let level = if level.is_null_or_undefined() {
@@ -1977,6 +1985,89 @@ fn ground_item_interact<'s>(
             ("level", level),
             ("name", name),
             ("action", verb),
+            ("id", id),
+        ],
+    )?;
+    queue_interaction(scope, queue, request)?;
+    Ok(boolean(scope, true))
+}
+
+fn input_take_obj<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    lx: v8::Local<'s, v8::Value>,
+    lz: v8::Local<'s, v8::Value>,
+    id: v8::Local<'s, v8::Value>,
+    op: v8::Local<'s, v8::Value>,
+    queue: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    if !lx.is_number() || !lz.is_number() {
+        return Ok(boolean(scope, false));
+    }
+    let (Some(lx), Some(lz), Some(id), Some(op)) = (
+        lx.number_value(scope),
+        lz.number_value(scope),
+        id.number_value(scope),
+        op.number_value(scope),
+    ) else {
+        return Ok(boolean(scope, false));
+    };
+    if ![lx, lz, id, op]
+        .into_iter()
+        .all(|value| value.is_finite() && value.fract() == 0.0)
+        || op <= 0.0
+    {
+        return Ok(boolean(scope, false));
+    }
+    let (Some(lx), Some(lz), Some(id), Some(slot)) = (
+        i32::try_from(lx as i64).ok(),
+        i32::try_from(lz as i64).ok(),
+        i32::try_from(id as i64).ok(),
+        usize::try_from(op as i64).ok(),
+    ) else {
+        return Ok(boolean(scope, false));
+    };
+    let Some(state) = entity_pages::state(scope) else {
+        return Ok(boolean(scope, false));
+    };
+    let current_level = crate::observed::with(|scene| scene.latest().here().map(|tile| tile.level));
+    let selected = current_level.and_then(|level| {
+        let pages = state.borrow();
+        pages.generation.ground.as_deref().and_then(|rows| {
+            let row = rows
+                .iter()
+                .find(|row| row.id == id && row.x == lx && row.z == lz && row.level == level)?;
+            let action = row.actions.get(slot - 1)?;
+            if action.is_empty() || action.eq_ignore_ascii_case("hidden") {
+                return None;
+            }
+            let name = match row.name.as_deref() {
+                Some(name) => cb::string(scope, name),
+                None => null(scope),
+            };
+            Some((
+                cb::num(scope, f64::from(row.id)),
+                cb::num(scope, f64::from(row.x)),
+                cb::num(scope, f64::from(row.z)),
+                cb::num(scope, f64::from(row.level)),
+                name,
+                cb::string(scope, action),
+            ))
+        })
+    });
+    let Some((id, x, z, level, name, action)) = selected else {
+        return Ok(boolean(scope, false));
+    };
+    let op = cb::string(scope, "obj");
+    let request = cb::object(
+        scope,
+        &[
+            ("op", op),
+            ("x", x),
+            ("z", z),
+            ("level", level),
+            ("name", name),
+            ("action", action),
+            ("id", id),
         ],
     )?;
     queue_interaction(scope, queue, request)?;
@@ -2109,6 +2200,175 @@ globalThis.checkNativeQuery = () => {
     fn post_entities(runtime: &mut Runtime, snapshot: &crate::isolate_fb::Snapshot<'_>) {
         crate::observed::apply(snapshot);
         super::super::snapshot::materialize_snapshot(runtime, snapshot, false).unwrap();
+    }
+
+    /// A cold native post with `count` NPC rows (25-field shape) and `count`
+    /// loc rows (23-field shape). No JavaScript query runs at any point.
+    fn entity_growth_post_bytes(tick: u64, count: usize) -> Vec<u8> {
+        use crate::isolate_fb::generated::rs_2b_0t::isolate::{
+            SceneEntity, SceneEntityArgs, Snapshot, SnapshotArgs,
+        };
+        let mut builder = flatbuffers::FlatBufferBuilder::new();
+        let name = builder.create_string("Goblin");
+        let action = builder.create_string("Attack");
+        let actions = builder.create_vector(&[action]);
+        let npcs: Vec<_> = (0..count)
+            .map(|index| {
+                SceneEntity::create(
+                    &mut builder,
+                    &SceneEntityArgs {
+                        index: index as i32,
+                        id: 123,
+                        name: Some(name),
+                        x: 3200,
+                        z: 3200,
+                        level: 0,
+                        distance: 1,
+                        actions: Some(actions),
+                        size: 1,
+                        nx: 3200,
+                        nz: 3200,
+                        ..SceneEntityArgs::default()
+                    },
+                )
+            })
+            .collect();
+        let npcs = builder.create_vector(&npcs);
+        let locs: Vec<_> = (0..count)
+            .map(|index| {
+                SceneEntity::create(
+                    &mut builder,
+                    &SceneEntityArgs {
+                        index: index as i32,
+                        id: 456,
+                        name: Some(name),
+                        x: 3300,
+                        z: 3300,
+                        level: 0,
+                        distance: 1,
+                        actions: Some(actions),
+                        ..SceneEntityArgs::default()
+                    },
+                )
+            })
+            .collect();
+        let locs = builder.create_vector(&locs);
+        let snapshot = Snapshot::create(
+            &mut builder,
+            &SnapshotArgs {
+                tick,
+                ingame: true,
+                self_slot: 1,
+                npcs: Some(npcs),
+                locs: Some(locs),
+                ..SnapshotArgs::default()
+            },
+        );
+        builder.finish(snapshot, None);
+        builder.finished_data().to_vec()
+    }
+
+    /// Collected V8 used heap, not Rust allocator counters: the property
+    /// backing stores this test guards are invisible to `allocation_counter`.
+    fn collected_used_heap(runtime: &mut Runtime) -> usize {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        isolate.get_heap_statistics().used_heap_size()
+    }
+
+    #[test]
+    fn cold_ground_interaction_requests_bound_collected_v8_heap_growth() {
+        const RETAINED_REQUESTS: usize = 2_048;
+        // The recorded 273,976-byte growth gets 276,024 bytes of headroom.
+        // This 550,000-byte limit allows about 2x the measured growth.
+        const MAX_GROWTH: usize = 550_000;
+        let mut runtime = setup();
+        runtime
+            .eval::<()>(
+                r#"
+globalThis.__ground_requests = [];
+globalThis.__ground_queue = request => { globalThis.__ground_requests.push(request); };
+globalThis.__make_ground_requests = count => {
+    const row = {
+        id: 1053, x: 2737, z: 3440, level: 0,
+        name: 'Coins', actions: ['Take'],
+    };
+    const entity = { snap: row };
+    for (let index = 0; index < count; index++) {
+        if (!__rs2b0t_entities_v8(57, entity, 'Take', __ground_queue)) {
+            throw new Error('ground interaction did not queue');
+        }
+    }
+};
+"#,
+            )
+            .unwrap();
+        let baseline = collected_used_heap(&mut runtime);
+        runtime
+            .eval::<()>(format!("__make_ground_requests({RETAINED_REQUESTS});").as_str())
+            .unwrap();
+        let after_requests = collected_used_heap(&mut runtime);
+        let growth = after_requests.saturating_sub(baseline);
+        println!(
+            "Cold ground requests collected V8 used heap: retained={RETAINED_REQUESTS} \
+             baseline={baseline} after={after_requests} growth={growth} limit={MAX_GROWTH}"
+        );
+        assert!(
+            growth <= MAX_GROWTH,
+            "{RETAINED_REQUESTS} retained cold ground requests grew the collected V8 \
+             used heap by {growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, \
+             after {after_requests})"
+        );
+    }
+
+    #[test]
+    fn cold_native_entity_rows_bound_collected_v8_heap_growth() {
+        // 512 bytes x 8,064 extra rows + 65,536: 901,152 bytes above the
+        // measured fast reference's 3,293,152-byte growth, and well below
+        // the dictionary path's 14,451,728.
+        const MAX_GROWTH: usize = 4_194_304;
+        let mut runtime = setup();
+        super::super::line_of_sight::install(&mut runtime).unwrap();
+        runtime
+            .eval::<()>("globalThis.__rs2b0t_host = {};")
+            .unwrap();
+        crate::observed::on_reset();
+
+        let small_bytes = entity_growth_post_bytes(1, 64);
+        let small = crate::isolate_fb::Snapshot::from_bytes(&small_bytes).unwrap();
+        post_entities(&mut runtime, &small);
+        let baseline = collected_used_heap(&mut runtime);
+
+        let large_bytes = entity_growth_post_bytes(2, 4_096);
+        let large = crate::isolate_fb::Snapshot::from_bytes(&large_bytes).unwrap();
+        post_entities(&mut runtime, &large);
+        let after_large = collected_used_heap(&mut runtime);
+        let growth = after_large.saturating_sub(baseline);
+
+        // Replace the large generation again so an uncollected previous
+        // generation cannot be charged as retained live row storage.
+        let replacement_bytes = entity_growth_post_bytes(3, 4_096);
+        let replacement = crate::isolate_fb::Snapshot::from_bytes(&replacement_bytes).unwrap();
+        post_entities(&mut runtime, &replacement);
+        let after_replacement = collected_used_heap(&mut runtime);
+        let repeated_growth = after_replacement.saturating_sub(baseline);
+
+        println!(
+            "Cold entity row collected V8 used heap: baseline={baseline} \
+             large={after_large} growth={growth} replacement={after_replacement} \
+             repeated-growth={repeated_growth}"
+        );
+        assert!(
+            growth <= MAX_GROWTH,
+            "cold entity rows grew the collected V8 used heap by {growth} bytes; \
+             limit {MAX_GROWTH} (baseline {baseline}, large {after_large})"
+        );
+        assert!(
+            repeated_growth <= MAX_GROWTH,
+            "repeated cold entity rows grew the collected V8 used heap by \
+             {repeated_growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, \
+             replacement {after_replacement})"
+        );
     }
 
     #[test]

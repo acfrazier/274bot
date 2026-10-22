@@ -658,6 +658,70 @@ fn find_skips_relative_transport_when_takeoff_landing_overflows() {
     );
 }
 
+/// A straight wall door is crossed from its near side only
+/// (`ReachStrategy.ts` `reachWall1` `WALL_STRAIGHT`; the crossing is the
+/// step through the wall). A forward crossing starts on the loc tile, a
+/// reverse (`to == at`) on the tile across the wall; the other tiles within
+/// one of the loc no longer admit it.
+#[test]
+fn wall_door_is_admissible_only_from_its_near_side() {
+    let collision = walled_5x5();
+    // Loc on (2,2) with its wall on the west edge.
+    let mut graph = door(tile(2, 2, 0), tile(1, 2, 0), 1);
+    graph.edges[0].dir = Some(crate::transport::DoorDir::W);
+    let mut reverse = graph.edges[0].clone();
+    reverse.to = tile(2, 2, 0);
+    reverse.dir = Some(crate::transport::DoorDir::E);
+    graph.edges.push(reverse);
+    for x in 1..=3 {
+        for z in 1..=3 {
+            let from = tile(x, z, 0);
+            assert_eq!(
+                graph.admissible_from(&collision, 0, from),
+                from == tile(2, 2, 0),
+                "forward crossing from {from:?}"
+            );
+            assert_eq!(
+                graph.admissible_from(&collision, 1, from),
+                from == tile(1, 2, 0),
+                "reverse crossing from {from:?}"
+            );
+        }
+    }
+}
+
+/// Live Varrock (loc 1530 at (3241,3382)): a route reached the loc's
+/// neighbour (3241,3381), which a wall separates from both sides of the door,
+/// and "crossed" from there; the walk then detoured around the building past
+/// its hop budget. A tile walled off from the near side cannot take the door.
+#[test]
+fn walled_off_neighbour_of_a_wall_door_cannot_cross_it() {
+    // Wall between columns 1 and 2 on every row; the west side is split
+    // between rows 1 and 2, so (1,1) never reaches the near side (1,2).
+    let mut extras = Vec::new();
+    for z in 0..5 {
+        extras.push((1, z, CollisionFlag::W_E as u32));
+        extras.push((2, z, CollisionFlag::W_W as u32));
+    }
+    for x in 0..2 {
+        extras.push((x, 1, CollisionFlag::W_N as u32));
+        extras.push((x, 2, CollisionFlag::W_S as u32));
+    }
+    let collision = bake(5, 5, &extras);
+    // Reverse crossing east onto the loc tile (2,2) from (1,2).
+    let mut graph = door(tile(2, 2, 0), tile(2, 2, 0), 1);
+    graph.edges[0].dir = Some(crate::transport::DoorDir::E);
+    assert_eq!(
+        find(&collision, &graph, tile(1, 1, 0), tile(3, 2, 0)).err(),
+        Some(RouteError::NoPath)
+    );
+    let route = find(&collision, &graph, tile(1, 4, 0), tile(3, 2, 0)).expect("near side crosses");
+    let Leg::Walk { tiles } = &route.legs[0] else {
+        panic!("walk to the near side first");
+    };
+    assert_eq!(tiles.last(), Some(&tile(1, 2, 0)));
+}
+
 #[test]
 fn exact_takeoff_is_the_only_indexed_transport_stand() {
     let collision = bake(10, 10, &[]);
@@ -5965,9 +6029,11 @@ fn real_289_refusals_report_best_relaxed_route_zone_witness() {
             &fresh,
         )
         .unwrap();
+        // The Draynor door (loc 1536 at (3128,3246)) is crossed from its
+        // loc tile, one step more than the old crossing from beside it.
         assert_eq!(
             (route.ticks, zone_route_cell_count(&route), route.legs.len()),
-            (62.0, 125, 3)
+            (62.5, 126, 3)
         );
     }
 }
@@ -6044,9 +6110,12 @@ fn real_289_grouped_goals_merge_their_own_endpoint_completion_costs() {
         tile(3123, 3245, 0),
         tile(3253, 3402, 0),
     ];
+    // Varrock East (3253,3402) is a longer walk than before: the old cheapest
+    // route crossed the Varrock house door (loc 1530 at (3241,3382)) from
+    // (3241,3381), a tile its walls cut off from the door.
     for (combat, partitions, ticks, first_target) in [
-        (3, 2, [87.5, 70.5, 109.5], 0),
-        (126, 1, [84.5, 67.5, 107.5], 0),
+        (3, 2, [87.5, 70.5, 119.0], 0),
+        (126, 1, [84.5, 67.5, 109.0], 0),
     ] {
         let state = zones_rich_289_state(Some(combat));
         let opts = FindOptions::default();
@@ -6532,25 +6601,27 @@ fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
 }
 
 #[test]
-#[ignore = "loads the two reviewed real nav packs"]
+#[ignore = "loads WORLD_NAV_PACK (289) and NAV_REVIEWED_274_PACK"]
 fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
-    for (variable, fallback, expected_carry, expected_worn) in [
+    let packs = [
         (
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+            std::env::var_os("WORLD_NAV_PACK")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .expect("set WORLD_NAV_PACK to the reviewed 289 navpack"),
             251,
             3_603,
         ),
         (
-            "T5W_MEMBERSHIP_NAVPACK_274",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-274-v17.navpack",
+            std::env::var_os("NAV_REVIEWED_274_PACK")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .expect("set NAV_REVIEWED_274_PACK to the reviewed 274 navpack"),
             182,
             3_483,
         ),
-    ] {
-        let path = std::env::var_os(variable)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(fallback));
+    ];
+    for (path, expected_carry, expected_worn) in packs {
         let world = crate::world::NavWorld::load_pack(&path)
             .expect("load the reviewed v17 pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
@@ -6558,8 +6629,7 @@ fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
         assert_eq!(
             (envelope.carry_rows, envelope.worn_rows),
             (expected_carry, expected_worn),
-            "{}",
-            path.display()
+            "{path:?}"
         );
     }
 }

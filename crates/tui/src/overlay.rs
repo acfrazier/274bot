@@ -14,11 +14,13 @@ use ratatui::Frame;
 use nav::tile::Tile;
 
 use crate::app::{wasd_target, AppAction, TuiApp};
-use crate::commands::{members_text, Command};
+use crate::commands::Command;
+use crate::fleet_card::CardPicker;
 use crate::help::{filter_rows, help_rows, render_help, HelpState};
 use crate::layout::{contains, Screen};
 use crate::palette::{palette_commands, render_palette, PaletteState};
 use crate::profile_import::{ImportAction, ImportView};
+use crate::world_picker::WorldPicker;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Modal {
@@ -34,6 +36,11 @@ pub enum Modal {
     Manual,
     /// Import rs2b0t's profile export: path, preview, report.
     ProfileImport(ImportView),
+    /// Pick the card the fleet actions use (Enter picks, Esc keeps).
+    FleetCard(CardPicker),
+    /// Pick the world a bot (or the marked bots) moves to (Enter picks, Esc
+    /// cancels). Picking asks core for a plan; it moves nothing itself.
+    WorldPicker(WorldPicker),
 }
 
 impl Modal {
@@ -47,6 +54,8 @@ impl Modal {
             Modal::Message { .. } => "Message",
             Modal::Manual => "Manual walk",
             Modal::ProfileImport(_) => "rs2b0t import",
+            Modal::FleetCard(_) => "Fleet card",
+            Modal::WorldPicker(_) => "World picker",
         }
     }
 
@@ -59,6 +68,8 @@ impl Modal {
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
             Modal::ProfileImport(view) => view.hints(),
+            Modal::FleetCard(_) => "Up/Down · Enter pick · Esc keep the card",
+            Modal::WorldPicker(_) => "Up/Down · Enter pick · Esc cancel",
         }
     }
 }
@@ -79,16 +90,13 @@ pub enum ConfirmKind {
     /// Offered when running script work would be interrupted or a queued
     /// Start would be cancelled.
     MemoryRelog(String),
-    /// A fleet-wide command over the membership frozen when it opened.
-    Bulk {
-        command: Command,
-        members: Vec<String>,
-        /// Whether the frozen scope came from marked rows rather than the whole fleet.
-        marked: bool,
+    /// A fleet action core froze (`PlanFleetAction`) that asks first:
+    /// `prompt` is core's own text, shown as it is. Confirm runs the plan,
+    /// Cancel drops it.
+    FleetPlan {
+        action: frontend_core::FleetAction,
+        prompt: String,
     },
-    /// Copy the focused bot's settings to the marked bots: the scope the
-    /// core froze (its prompt names targets, skips and the unmarked count).
-    ApplyMarked(String),
     /// A settings write saved successfully but its running script needs a restart.
     RestartSettings {
         op: frontend_core::OperationId,
@@ -138,17 +146,6 @@ impl ContextItem {
     }
 }
 
-/// The Bulk confirmation's member names: core's bounded list
-/// ([`frontend_core::PROMPT_NAMES_SHOWN`] names, then "+N more"),
-/// shared with the restart prompt so the cap cannot drift between
-/// surfaces. An empty scope reads "(none)".
-fn scope_names(members: &[String]) -> String {
-    if members.is_empty() {
-        return "(none)".into();
-    }
-    frontend_core::bounded_names(members)
-}
-
 /// Rows `line` occupies when word-wrapped at `width` cells, mirroring
 /// the confirmation [`Paragraph`]'s `Wrap { trim: false }`: words move
 /// whole to the next row, a word longer than a row starts on a fresh
@@ -187,13 +184,12 @@ fn wrapped_rows(line: &str, width: usize) -> usize {
 }
 
 impl Confirm {
-    fn title(&self, app: &TuiApp) -> &'static str {
+    fn title(&self) -> &'static str {
         match &self.kind {
             ConfirmKind::Remove(_) => "Remove from fleet",
             ConfirmKind::Quit => "Quit tui-play",
             ConfirmKind::MemoryRelog(_) => "Relog now",
-            ConfirmKind::Bulk { command, .. } => command.label(app),
-            ConfirmKind::ApplyMarked(_) => Command::ScriptApplyMarked.label(app),
+            ConfirmKind::FleetPlan { action, .. } => action.verb(),
             ConfirmKind::RestartSettings { .. } => "Restart script settings",
         }
     }
@@ -221,87 +217,11 @@ impl Confirm {
                     ),
                 ]
             }
-            ConfirmKind::ApplyMarked(prompt) => vec![
-                prompt.clone(),
-                "Nothing is written until you confirm.".into(),
-            ],
             ConfirmKind::RestartSettings { summary, .. } => vec![
                 summary.clone(),
                 "The current script keeps running if you choose Later.".into(),
             ],
-            ConfirmKind::Bulk {
-                command,
-                members,
-                marked,
-            } => {
-                let count = members.len();
-                let n = members_text(count);
-                let names = scope_names(members);
-                let scope = if *marked {
-                    format!("{count} marked {}", if count == 1 { "bot" } else { "bots" })
-                } else {
-                    format!("all {n}")
-                };
-                match command {
-                    Command::LoadLoginAll if *marked => vec![
-                        format!("Log in {scope} (unloaded ones are loaded first):"),
-                        names,
-                        "Bots already logging in or logged in are skipped.".into(),
-                    ],
-                    Command::LoadLoginAll => vec![
-                        "Load every vault profile that is not in the fleet,".into(),
-                        "then log every member in (a logged-out member logs back in).".into(),
-                        format!("Members now ({count}): {names}"),
-                    ],
-                    Command::LogoutAll if *marked => vec![
-                        format!("Log out {scope}:"),
-                        names,
-                        "Bots that are not logged in are skipped.".into(),
-                    ],
-                    Command::LogoutAll => vec![
-                        format!("Log out all {n}: {names}"),
-                        "They stay loaded, parked until Log in.".into(),
-                    ],
-                    Command::ScriptStartAll => match app.script_sel.as_ref().filter(|_| *marked) {
-                        Some(sel) => vec![
-                            format!("Start {} on {scope}:", sel.label()),
-                            names,
-                            "Members that cannot start it are skipped with a reason.".into(),
-                        ],
-                        None => vec![
-                            format!("Start {scope} on their last successful script:"),
-                            names,
-                            "Members with no saved assignment are skipped.".into(),
-                        ],
-                    },
-                    Command::ScriptStopAll => vec![
-                        format!("Stop the scripts of {scope}:"),
-                        names,
-                        "Queued replacement Starts are cancelled too.".into(),
-                    ],
-                    Command::ScriptAssignMarked => match app.script_sel.as_ref() {
-                        Some(sel) => vec![
-                            format!("Assign {} to {scope}:", sel.label()),
-                            names,
-                            "Nothing starts; running bots are skipped with a reason.".into(),
-                        ],
-                        None => vec!["Browse to pick a script first.".into()],
-                    },
-                    Command::ScriptRestartMarked => match app.script_sel.as_ref() {
-                        Some(sel) => {
-                            let scope = frontend_core::RestartScope::from_rows(
-                                members.iter().map(String::as_str),
-                                &app.fleet,
-                            );
-                            let mut lines = vec![format!("Assign {} and start it:", sel.label())];
-                            lines.extend(scope.prompt_lines());
-                            lines
-                        }
-                        None => vec!["Browse to pick a script first.".into()],
-                    },
-                    _ => vec![format!("{} over {scope}: {names}", command.label(app))],
-                }
-            }
+            ConfirmKind::FleetPlan { prompt, .. } => vec![prompt.clone()],
         };
         if let Some(note) = self.note {
             lines.push(note.into());
@@ -314,8 +234,7 @@ impl Confirm {
             ConfirmKind::Remove(_) => "[Remove y]",
             ConfirmKind::Quit => "[Quit y]",
             ConfirmKind::MemoryRelog(_) => "[Relog y]",
-            ConfirmKind::Bulk { .. } => "[Run y]",
-            ConfirmKind::ApplyMarked(_) => "[Apply y]",
+            ConfirmKind::FleetPlan { .. } => "[Run y]",
             ConfirmKind::RestartSettings { .. } => "[Restart y]",
         }
     }
@@ -361,13 +280,48 @@ impl TuiApp {
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     let action = match confirm.kind {
-                        ConfirmKind::ApplyMarked(_) => AppAction::ScriptSyncCancel,
                         ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
+                        ConfirmKind::FleetPlan { .. } => AppAction::CancelFleetPlan,
                         _ => AppAction::None,
                     };
                     (None, action)
                 }
                 _ => (Some(Modal::Confirm(confirm)), AppAction::None),
+            },
+            Modal::FleetCard(mut picker) => match key.code {
+                KeyCode::Enter => match picker.highlighted() {
+                    Some(card) => (None, AppAction::PickFleetCard(card)),
+                    None => (Some(Modal::FleetCard(picker)), AppAction::None),
+                },
+                KeyCode::Esc => (None, AppAction::None),
+                other => {
+                    match other {
+                        KeyCode::Up | KeyCode::Char('k') => picker.step(-1),
+                        KeyCode::Down | KeyCode::Char('j') => picker.step(1),
+                        KeyCode::PageUp => picker.step(-10),
+                        KeyCode::PageDown => picker.step(10),
+                        KeyCode::Home => picker.jump(false),
+                        KeyCode::End => picker.jump(true),
+                        _ => {}
+                    }
+                    (Some(Modal::FleetCard(picker)), AppAction::None)
+                }
+            },
+            Modal::WorldPicker(mut picker) => match key.code {
+                KeyCode::Enter => (None, picker.pick(picker.cursor())),
+                KeyCode::Esc => (None, AppAction::None),
+                other => {
+                    match other {
+                        KeyCode::Up | KeyCode::Char('k') => picker.step(-1),
+                        KeyCode::Down | KeyCode::Char('j') => picker.step(1),
+                        KeyCode::PageUp => picker.step(-10),
+                        KeyCode::PageDown => picker.step(10),
+                        KeyCode::Home => picker.jump(false),
+                        KeyCode::End => picker.jump(true),
+                        _ => {}
+                    }
+                    (Some(Modal::WorldPicker(picker)), AppAction::None)
+                }
             },
             Modal::Context(menu) => self.context_key(menu, key),
             Modal::Message { scroll } => match key.code {
@@ -477,47 +431,8 @@ impl TuiApp {
                 self.quit = true;
                 (None, AppAction::Quit)
             }
-            ConfirmKind::ApplyMarked(_) => (None, AppAction::ScriptSyncApply),
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::Bulk {
-                command,
-                members,
-                marked,
-            } => {
-                let current_members = if marked {
-                    self.marked_names()
-                } else {
-                    self.names.clone()
-                };
-                if members != current_members {
-                    // Never retarget silently: show the new scope instead.
-                    let refreshed = Confirm {
-                        kind: ConfirmKind::Bulk {
-                            command,
-                            members: current_members,
-                            marked,
-                        },
-                        note: Some(if marked {
-                            "The marked selection changed: check the new scope and confirm again."
-                        } else {
-                            "The fleet changed: check the new scope and confirm again."
-                        }),
-                    };
-                    return (Some(Modal::Confirm(refreshed)), AppAction::None);
-                }
-                let action = match command {
-                    Command::LoadLoginAll if marked => AppAction::LoginMarked,
-                    Command::LoadLoginAll => AppAction::SpawnAll,
-                    Command::LogoutAll if marked => AppAction::LogoutMarked,
-                    Command::LogoutAll => AppAction::LogoutAll,
-                    Command::ScriptStartAll => AppAction::ScriptStartAll,
-                    Command::ScriptStopAll => AppAction::ScriptStopAll,
-                    Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
-                    Command::ScriptRestartMarked => AppAction::ScriptRestartMarked,
-                    _ => AppAction::None,
-                };
-                (None, action)
-            }
+            ConfirmKind::FleetPlan { .. } => (None, AppAction::RunFleetPlan),
         }
     }
 
@@ -543,13 +458,9 @@ impl TuiApp {
         match item {
             ContextItem::Select(name) => self.select_bot(&name),
             ContextItem::Mark(name) => self
-                .names
-                .iter()
-                .position(|n| *n == name)
-                .and_then(|index| {
-                    self.table
-                        .toggled_mark(&self.names, &self.profile_ids, index)
-                })
+                .fleet_model
+                .index_of_name(&name)
+                .and_then(|index| crate::fleet::toggled_mark(&self.fleet_model, index))
                 .map_or(AppAction::None, |(name, on)| AppAction::SetMark(name, on)),
             ContextItem::Open(name, screen) => {
                 let select = self.select_bot(&name);
@@ -608,14 +519,29 @@ impl TuiApp {
             Modal::Confirm(confirm) => match item {
                 Some(0) => self.run_confirm(confirm),
                 Some(_) => {
-                    let action = if matches!(&confirm.kind, ConfirmKind::RestartSettings { .. }) {
-                        AppAction::ScriptRestartLater
-                    } else {
-                        AppAction::None
+                    let action = match &confirm.kind {
+                        ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
+                        ConfirmKind::FleetPlan { .. } => AppAction::CancelFleetPlan,
+                        _ => AppAction::None,
                     };
                     (None, action)
                 }
                 None => (Some(Modal::Confirm(confirm)), AppAction::None),
+            },
+            Modal::FleetCard(picker) => match item {
+                Some(index) => match picker.card_at(index) {
+                    Some(card) => (None, AppAction::PickFleetCard(card)),
+                    None => (Some(Modal::FleetCard(picker)), AppAction::None),
+                },
+                None if inside => (Some(Modal::FleetCard(picker)), AppAction::None),
+                // A click outside leaves the card as it was, like Esc.
+                None => (None, AppAction::None),
+            },
+            Modal::WorldPicker(picker) => match item {
+                Some(index) => (None, picker.pick(index)),
+                None if inside => (Some(Modal::WorldPicker(picker)), AppAction::None),
+                // A click outside leaves everything as it was, like Esc.
+                None => (None, AppAction::None),
             },
             Modal::Help(state) if inside => (Some(Modal::Help(state)), AppAction::None),
             Modal::Help(_) | Modal::Message { .. } => (None, AppAction::None),
@@ -648,6 +574,8 @@ impl TuiApp {
                 *scroll = scroll.saturating_add_signed(delta as i16 * 3);
             }
             Some(Modal::ProfileImport(view)) => view.scroll_by(delta),
+            Some(Modal::FleetCard(picker)) => picker.step(delta as isize),
+            Some(Modal::WorldPicker(picker)) => picker.step(delta as isize),
             _ => {}
         }
     }
@@ -672,6 +600,14 @@ impl TuiApp {
             }
             Modal::Confirm(confirm) => self.draw_confirm(confirm, area, buf),
             Modal::Context(menu) => self.draw_context(menu, area, buf),
+            Modal::FleetCard(picker) => {
+                let (rect, hits) = picker.render(area, buf);
+                self.regions.modal = rect;
+                self.regions.modal_items = hits;
+            }
+            Modal::WorldPicker(picker) => {
+                self.regions.modal = picker.render(area, buf, &mut self.regions.modal_items);
+            }
             Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
             Modal::Manual => self.draw_manual(area, buf),
             Modal::ProfileImport(view) => self.regions.modal = view.render(area, buf),
@@ -696,7 +632,7 @@ impl TuiApp {
             .wrap(Wrap { trim: false });
         let popup = centered(area, width, height);
         Clear.render(popup, buf);
-        let title = format!(" {} ", confirm.title(self));
+        let title = format!(" {} ", confirm.title());
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(popup);
         block.render(popup, buf);
@@ -887,24 +823,5 @@ mod tests {
                 "width {width}: {line:?}"
             );
         }
-    }
-
-    /// The Bulk confirmation's names are core's bounded list (the
-    /// same cap the restart prompt uses), with "(none)" for an empty
-    /// scope: there is no second six-name cap in this surface.
-    #[test]
-    fn scope_names_uses_the_core_bounded_names_cap() {
-        assert_eq!(scope_names(&[]), "(none)");
-        let few: Vec<String> = ["alice", "bob"].iter().map(|n| n.to_string()).collect();
-        assert_eq!(scope_names(&few), frontend_core::bounded_names(&few));
-        let many: Vec<String> = (0..frontend_core::PROMPT_NAMES_SHOWN + 2)
-            .map(|i| format!("bot{i}"))
-            .collect();
-        assert_eq!(scope_names(&many), frontend_core::bounded_names(&many));
-        assert!(
-            scope_names(&many).ends_with(" +2 more"),
-            "{}",
-            scope_names(&many)
-        );
     }
 }

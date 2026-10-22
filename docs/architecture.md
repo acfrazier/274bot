@@ -4,7 +4,7 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.0 is Beta 1. Revision 289 is the production revision: the product is
+0.2.4 is Beta 1. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
@@ -511,7 +511,7 @@ the operator's consent and adopts the tiles already verified).
 | --- | --- | --- |
 | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | `load` feature gates the isolate |
 | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
-| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Quester` and (with `load`) `Sherlock` |
+| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Grinch`, `Quester` and (with `load`) `Sherlock` |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
@@ -522,6 +522,7 @@ the operator's consent and adopts the tiles already verified).
 | `slot/bank.rs`, `bank/seat_open.rs`, `bank/seat_transfer.rs` | native bank seat, opening and transfer continuations | shared `bank/ops.rs` and `bank/npc.rs` kernels; hooks use seat prompts, not a second isolate behavior |
 | `slot/pending.rs` | bank settlement records | host-owned pending accessors |
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
+| `acquire/` | shared acquisition planning, typed block evidence and one bank-trip runner | `plan.rs` pure per-need decisions; `run.rs` native bank, walk and wear execution; authored Quester sequences retain their existing order and refusal text |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
 | `gatherer/` | Gatherer card and runner | woodcutting, mining and fishing from live observation: `select.rs` target choice, `gather.rs`, `drop.rs` power drops, `supply.rs`, `recover.rs` death recovery, `area.rs`, `widen.rs`, `settings.rs`, `status.rs`, `oneop.rs` |
 | `combat/` | shared observed-state combat machine | melee, ranged and magic on one planner (`machine.rs`, `style/`); `policy.rs`, `prayer.rs`, `guard.rs` WalkGuard, `threats.rs`, `schedule.rs`, `select.rs`, `tables.rs`, `request.rs` |
@@ -737,7 +738,10 @@ retained by a consumer.
 | --- | --- | --- |
 | `lib.rs` | crate facade | re-exports the session vocabulary |
 | `session.rs`, `session/native_settings.rs` | operator lifecycle over `Play` | vault (staged view), play, selection, slot IO, Load/Log in/Log out/Remove, poll (also refreshes the projections and runs the meter), script Start/Stop settlement, profile write settlement; native settings preparation as a persistence prerequisite |
-| `fleet.rs` | fleet membership | ordered members, logout latch, focus neighbour |
+| `fleet.rs` | fleet membership and the fleet model | ordered members, logout latch, focus neighbour; `FleetModel`: one row per profile identity in the saved Load order (`profile_order.rs`), loaded or not, each with an explicit loaded flag, the marks (mark operations over the shown rows and status predicates: `MarkOp`, `MarkPredicate`, the tri-state `ShownMarks`), the filter and order, the fleet card (`FleetCard`: each bot's own, the focused bot's, or a pinned card, with a label rebuilt only when the card, focus or heading changes), the shown rows and their counts, rebuilt only when the core's rows or the vault's profiles moved. Each front end holds one and lends it through `Models::with_fleet`; the panel's Fleet window, rail and Grid and the TUI fleet pane read it |
+| `fleet_plan.rs`, `session/fleet_plan.rs` | fleet decisions | `PlanFleetAction` freezes a fleet action (`FleetAction`) into a `FleetPlan`: one staged profile (`stage_plan_target`, a world bubble or the TUI cursor), else the marked identities (hidden ones too) or, with no marks, the loaded shown rows; the resolved card; the bots it would interrupt; the skipped rows with reasons; one prompt text; and whether it asks first (no-marks scope, an interruption, a settings copy or a world switch). One plan waits; a newer one replaces it and says so. The plan's own command with `Targets::Plan` runs over the frozen identities and card (never the live marks or Browse pick); `CancelFleetPlan` drops it and releases a copy's prepared scope. `FleetResult` follows the run's command record (failures, skips, done, pending) and logs one line when it settles |
+| `session/world_switch.rs` | Switch world | the owner of each `SwitchWorld` member: the world save first (the profile's world field), then, only once it is durable, the existing `SwitchWorld` intent, whose turnover relogs the bot through the login queue; the member settles from the relog (a new session in game on the requested world), fails with what happened and is cancelled by a later Log in, Log out or Remove; the choices are the bound server's public worlds, read once at play start (none on a one-world server). One small record per switching bot, only while its switch runs. A switch plan (`FleetAction::SwitchWorld`, one staged bot or the marks) always asks first |
+| `profile_order.rs` | saved Load order | the saved order in the shared preferences (`profile_order`), stored as one small member per profile keyed by its vault uid with a sort key (`"<uid>": <key>`, about 25 bytes per profile; a value holds at most 4,096 bytes, so the preferences service holds a large order one member per row, and one save replaces every changed or removed member in one file replacement, all or none): seeded in vault (alphabetical) order without a write, reconciled on each vault change (append new; a deleted profile's member stays stored, unordered, while its deletion is not durable, so a failed deletion gets its place back, and is removed by the next save once durable; a rename keeps the identity and so the place, whether it commits or fails); `OperatorSession::fresh_uid` allocates above every uid the vault and the order have held, so a new profile never takes a deleted one's place; a move changes only the moved profiles' keys (gaps; renumbered when spent, when a key would leave `±2^52`, or when a stored key is outside it); `ReorderOp` moves profiles by identity before or after a target in the full order, or puts the marked ones on top in their order. The session orders members, Load all and marked targets by it and writes it through the preferences service (`ReorderProfiles`: pending until durable, one audit line, the last durable order back on a failure) |
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
@@ -756,7 +760,7 @@ retained by a consumer.
 | `scripts/start_admit.rs`, `scripts/start_tally.rs` | paced Start-all admission and its running report | the login FIFO's shape applied to script Starts, so a bulk Start cannot dispatch every isolate at once |
 | `scripts/marked.rs` | what marked commands need from the coordinator | resolve a card to its assignment; queue a restart behind a stop |
 | `scripts/reload.rs` | reload and catalog-refresh transaction | worker validation, warning with exact runs and generations, confirm/cancel, fenced replacement |
-| `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging) |
+| `scripts/sync.rs` | Apply to all (bulk parameter sync) | frozen same-card scope, per-profile writes, generation-fenced live push, separate persistence/live counts; confirmation holds new Starts, and accepted native copies retain that hold through preparation and the writer's durable completion (JS copies release after staging). A native copy keeps at most 48 saves and deliveries in flight and queues the rest, written as room frees; the hold lasts until the last queued save is accepted, and Cancel reports the still-queued bots skipped |
 | `quester_paths.rs` | durable Quester Path configuration | asynchronous folder reload |
 
 The walk-map decode corpus fixture compares every manifest-listed producer tile
@@ -792,7 +796,9 @@ has released it.
 | `walk_map.rs`, `walk_map/overlay.rs`, `walk_map/labels.rs`, `walk_map/fixtures.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay (768×512 / 1.5 MiB cap, never per-tile quads), bounded shared-worker decode demand, label ranking, small PNG/POI fixtures |
 | `nav_paint_cache.rs` | nav-paint cache | per-frame reuse of path paint |
 | `grid.rs` | MultiBox grid layout | cell geometry |
-| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | identity-keyed marks, action bar over marked rows, toggleable status columns; the panel adapter over the shared marked-bot commands |
+| `fleet_toolbar.rs`, `fleet_toolbar_tests.rs` | fleet toolbar | the one toolbar draw function for the rail's top (sticky over the scrolling tiles), the strip's `fleet` section (while the rail is hidden: Grid, MultiBox off) and the Fleet window: the fleet card combo, the tri-state shown-marks box and Marks menu (with Move marked to top), filter and sort, the nine buttons labelled with their scope (labels rebuilt only when the model's generation moves; equal columns, pairs or one per row by width, never cut), the core plan's prompt with Confirm/Cancel and its one result line; a fold header (`fleet_toolbar_open`) keeps the summary, plan and result. Walk opens WalkTo in Group mode, Switch world the world picker; the rest plan through `fleet_actions.rs` |
+| `fleet.rs`, `fleet_actions.rs`, `fleet_columns.rs` | Fleet window | the wide table over the shared fleet model (every profile, loaded or not) under the fleet toolbar: a name click focuses a loaded bot, its checkbox only marks it; toggleable status columns. `fleet_actions.rs` submits `PlanFleetAction`, then the plan's command with `Targets::Plan`; the Scripts window's copy entry uses the same flow and draws the plan row only while no toolbar is on screen. The rail and the Grid draw the same model's shown loaded rows (`app.rs`) |
+| `world_picker.rs` | world picker | the one popup every Switch world entry opens (a rail or Grid world marker, the Fleet World/login cell, the toolbar's Switch world button); lists the core's cached public worlds with the bot's own ticked, labels built when it opens; a pick plans `FleetAction::SwitchWorld` through the toolbars' plan row |
 | `rail.rs` | sidecar rail chrome | geometry and the status-dot colour of a row's light |
 | `chrome.rs` | app chrome | menus and banners |
 | `overlay.rs` | queue-card overlay | each image's own queue card from its fleet row |
@@ -813,6 +819,7 @@ has released it.
 | `wall.rs` | wall UI state | chooser, grid, render-all warning (membership is `frontend_core::Fleet`) |
 | `srgb_present.rs` | present-path test helper | test-only |
 | `manual_click_live_tests.rs`, `test_support.rs` | live regressions and fixtures | grouped, not owners |
+| `test_alloc.rs` | test allocator | the panel test binary's allocator: counts allocation calls per thread for the warm-frame checks; test-only |
 
 ### tui
 
@@ -826,8 +833,10 @@ has released it.
 | `shell.rs` | shell drawing | header (fleet counts, compact meter), fleet and detail panes, log drawer, footer naming the keyboard scope |
 | `input.rs` | key and mouse routing | one model: popup/overlay, then text field, then global chords, then the focused pane; mouse hit-tests the last draw |
 | `commands.rs` | operator command vocabulary | labels, target scope, availability and reason, per-pane shortcut tables shared by keys, buttons, palette and help |
-| `fleet.rs` | fleet table | cursor, row selection, filter, visible-window rows over the core's fleet rows |
-| `overlay.rs` | app overlays | help, palette, confirmations with frozen targets, context menus, message viewer, manual walk |
+| `fleet.rs` | fleet table | cursor, scroll and filter edit over the core fleet model's shown rows (marks, filter and order are the model's); the cached header line (card, sort, marked count) with the cells of its card and sort parts, which a click opens or cycles |
+| `fleet_card.rs` | fleet card picker | Own, Focused, then the Browse cards by category; Enter pins, Esc keeps the card |
+| `world_picker.rs` | world picker | `W` on the cursor row or the palette's Switch world of marked…; the core's cached public worlds with the row's own ticked; Enter plans `FleetAction::SwitchWorld`, whose prompt shows in the plan overlay |
+| `overlay.rs` | app overlays | help, palette, the fleet plan's confirmation (the core prompt verbatim), context menus, message viewer, manual walk |
 | `palette.rs` | command palette | filtered commands with scope, key and unavailable reason |
 | `help.rs` | help overlay | focused pane's keys first, searchable |
 | `log_pane.rs` | log view | Logs tab and log drawer over the shared `frontend_core::log` |
@@ -864,14 +873,14 @@ The crate's `tests/` hold the engine-backed live cells (`nav_*`, `scenario_walk`
 
 ## Native script machines
 
-The 0.2.0 headline scripts are compiled into the host. Quester and Gatherer
-drive host verbs directly, with no isolate; they hold per-slot state in
-bounded structs and read the snapshot Rust already holds.
+The native cards are compiled into the host and use no V8 isolate. They drive
+host verbs directly, hold per-slot state in bounded structs, and read the
+snapshot Rust already holds.
 
 | Machine | Card | What it does |
 | --- | --- | --- |
 | Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](quester-paths.md). |
-| Gatherer (`script/src/gatherer/`) | `Gatherer` | Woodcutting, mining and fishing from live observation: held-tool loop, disposal including power-drop batching, bank trips and provisioning, over methods from the selected content facts. |
+| Grinch (`script/src/grinch.rs`) | `Grinch` | Collects selected visible base ground-item IDs inside a same-plane anchor square, deposits selected IDs only, then returns to the exact anchor. |
 | Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
 | Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |
 

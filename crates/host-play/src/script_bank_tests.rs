@@ -1244,9 +1244,10 @@ mod bank_pick_capture {
     }
 
     #[test]
-    #[ignore = "requires the immutable real 289 navpack and BOT_BANK_PICK_CAPTURE_OUT"]
+    #[ignore = "requires NAV_PACK for the immutable real 289 navpack and BOT_BANK_PICK_CAPTURE_OUT"]
     fn captures_real_content_bank_pick_outcomes() {
         let pack = std::env::var_os("NAV_PACK")
+            .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from(
                 "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
@@ -1382,13 +1383,14 @@ mod bank_pick_capture {
     }
 
     #[test]
-    #[ignore = "requires the immutable real 289 navpack"]
+    #[ignore = "requires NAV_PACK for the immutable real 289 navpack"]
     fn qualifies_real_content_bank_pick_whole_job_memory() {
         use api::identity::Deadline;
         use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
         use std::num::NonZeroU32;
 
         let pack = std::env::var_os("NAV_PACK")
+            .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from(
                 "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
@@ -2696,4 +2698,156 @@ mod bank_pick_capture {
         invalidation_does_not_wait_for_work_service(PickInvalidation::RouteReplacement);
         invalidation_does_not_wait_for_work_service(PickInvalidation::OwnerDrop);
     }
+}
+
+#[test]
+#[ignore = "event-driven runtime endpoint (0.2.6): native answers must wake only their consumer and publish its next prompt without another game tick"]
+fn bank_callback_answers_progress_on_unchanged_host_frames_without_game_ticks() {
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+
+    let source = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__matches = [];
+        await Bank.depositAllMatching((name) => {
+            globalThis.__matches.push(name);
+            return false;
+        });
+        globalThis.__done = true;
+    }
+}
+"#;
+    let scripts: crate::ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = crate::script_slot_or_insert(&scripts, "test");
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_with_settings_and_game_data(
+            source.into(),
+            script::LoadShape::CompatClass,
+            None,
+            vec![],
+            &[],
+            Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
+            Arc::new(NamedBankFacts::from_banks(vec![])),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match slot.poll_start() {
+                script::slot::StartPoll::Settled(script::slot::StartOutcome::Ready) => break,
+                script::slot::StartPoll::Pending => {
+                    assert!(Instant::now() < deadline, "Load start stalled");
+                    std::thread::yield_now();
+                }
+                other => panic!("Load start failed: {other:?}"),
+            }
+        }
+    }
+    let side: Vec<_> = (0..5)
+        .map(|index| ItemView {
+            def: api::ItemDefView {
+                id: 100 + index,
+                name: Some(format!("Kept item {index}")),
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::BankSide,
+            action_family: ItemActionFamily::Component,
+            slot: index,
+            count: 1,
+            actions: vec![Some("Deposit-1".into()), Some("Deposit-All".into())],
+            component_id: 701,
+        })
+        .collect();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tick(1);
+    snapshot.seed_tile(tile(3091, 3958));
+    snapshot.seed_inventory(
+        side.iter()
+            .cloned()
+            .map(|mut item| {
+                item.container = ItemContainer::Inventory;
+                item.action_family = ItemActionFamily::Held;
+                item.actions.clear();
+                item.component_id = -1;
+                item
+            })
+            .collect(),
+        28,
+    );
+    snapshot.seed_bank_observation(600, 1, Some(vec![]), side);
+    snapshot.seed_side_modal(700);
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs(vec![]);
+    let observe = |tick, tick_edge| {
+        crate::script_runtime::script_observe::script_observe(
+            &mut HeldDriver,
+            "test",
+            true,
+            tick_edge,
+            tick,
+            Some((3091, 3958, 0)),
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            &scripts,
+            &cheats,
+            &navs,
+            &None,
+            false,
+            false,
+        )
+    };
+    let probe = |expression| slot.lock().unwrap().probe(expression).unwrap();
+    for _ in 0..4 {
+        assert!(
+            !observe(0, false),
+            "no callback answer can wake before a tick"
+        );
+    }
+    let tick = (1..=4)
+        .find(|tick| {
+            observe(*tick, true);
+            for _ in 0..8 {
+                observe(*tick, false);
+                if probe("globalThis.__matches?.length ?? 0") == serde_json::json!(1) {
+                    return true;
+                }
+            }
+            false
+        })
+        .expect("the real host starts the first bank predicate");
+
+    for _ in 0..32 {
+        observe(tick, false);
+        if probe("globalThis.__done === true") == serde_json::json!(true) {
+            break;
+        }
+    }
+    assert_eq!(
+        probe("globalThis.__matches"),
+        serde_json::json!([
+            "Kept item 0",
+            "Kept item 1",
+            "Kept item 2",
+            "Kept item 3",
+            "Kept item 4"
+        ]),
+        "ready bank answers must progress without a new snapshot or game tick"
+    );
+    assert_eq!(probe("globalThis.__done === true"), serde_json::json!(true));
+    assert!(
+        !observe(tick, false),
+        "a completed bank has no callback wake"
+    );
+    slot.lock().unwrap().stop();
 }

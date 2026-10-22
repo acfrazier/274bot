@@ -7,7 +7,7 @@ use api::snapshot::{
     LocalPlayerView, PlayerView, SceneView, SideTabView, StatView, WorldStateView, WorldTile,
 };
 use api::ItemDefView;
-use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
+use script::native::{AllowWalkDanger, HostEffect, InteractionReceipt, NativePhase, SettingsBag};
 use script::shim::InteractReq;
 use script::slot::{StartOutcome, StartPoll};
 use script::{CompiledTick, ScriptCtx, SlotScript};
@@ -690,6 +690,7 @@ fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hol
         obj_names: None,
         compiled: CompiledTick {
             hold,
+            walk_danger: Some(&AllowWalkDanger),
             ..CompiledTick::default()
         },
     });
@@ -1108,7 +1109,10 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: CompiledTick::default(),
+        compiled: CompiledTick {
+            walk_danger: Some(&AllowWalkDanger),
+            ..CompiledTick::default()
+        },
     });
 }
 
@@ -2125,6 +2129,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &authority,
         WalkReceipt {
+            goal: None,
             request_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
@@ -2340,6 +2345,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &old_authority,
         WalkReceipt {
+            goal: None,
             request_id: old_request,
             evidence: EvidenceStamp {
                 run: old_authority.run(),
@@ -2375,6 +2381,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
     slot.complete_native_walk(
         &fresh_authority,
         WalkReceipt {
+            goal: None,
             request_id: fresh_request,
             evidence: EvidenceStamp {
                 run: fresh_authority.run(),
@@ -2403,6 +2410,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
         slot.complete_native_walk(
             &authority,
             WalkReceipt {
+                goal: None,
                 request_id,
                 evidence: EvidenceStamp {
                     run: authority.run(),
@@ -2542,6 +2550,7 @@ fn complete_lifecycle_walk(
     slot.complete_native_walk(
         authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id,
             evidence: EvidenceStamp {
                 run: authority.run(),
@@ -3451,6 +3460,7 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
     slot.complete_native_walk(
         &authority,
         script::native::WalkReceipt {
+            goal: None,
             request_id: request,
             evidence: EvidenceStamp {
                 run: authority.run(),

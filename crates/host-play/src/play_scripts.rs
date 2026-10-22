@@ -100,11 +100,9 @@ pub(crate) enum StartRequest<'a> {
 fn validate_script_loadout_setting(
     rows: &[api::loadout::Loadout],
     bag: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> Result<(), String> {
+) -> Result<(), script::loadouts_store::LoadoutResolutionError> {
     let wanted = bag.and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
-    script::loadouts_store::resolve_script_loadout_setting(rows, wanted)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    script::loadouts_store::resolve_script_loadout_setting(rows, wanted).map(|_| ())
 }
 
 impl ScriptStartHandle {
@@ -194,7 +192,7 @@ impl ScriptStartHandle {
         request: impl FnOnce() -> StartRequest<'a>,
         before_start: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), script::StartLoadError> {
-        use script::StartLoadError::{Refused, Waiting};
+        use script::StartLoadError::{NoLoadouts, Refused, Waiting};
         let hold = self
             .hold
             .lock()
@@ -228,7 +226,16 @@ impl ScriptStartHandle {
                 // read is logged and the card's own lease reports it.
                 let refreshed = self.operator_loadouts(name);
                 let validated = if bag.contains_key("loadout") {
-                    refreshed.and_then(|rows| validate_script_loadout_setting(&rows, Some(&bag)))
+                    refreshed.map_err(Refused).and_then(|rows| {
+                        validate_script_loadout_setting(&rows, Some(&bag)).map_err(|error| {
+                            match error {
+                                error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
+                                    ..
+                                } => NoLoadouts(error.to_string()),
+                                other => Refused(other.to_string()),
+                            }
+                        })
+                    })
                 } else {
                     if let Err(error) = &refreshed {
                         host_log!(
@@ -241,7 +248,7 @@ impl ScriptStartHandle {
                     Ok(())
                 };
                 if let Err(error) = validated {
-                    Err(Refused(error))
+                    Err(error)
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
                 } else if let Some(selected) = self.game_data.clone() {
@@ -370,6 +377,19 @@ impl ScriptStartHandle {
         })
     }
 
+    /// Observe one slot's generation and native run under the same slot lock.
+    /// Live pumps use this pair at the actual PLAYER_INFO callback; separate
+    /// generation and run reads could straddle a runtime replacement.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_native_runtime(
+        &self,
+        name: &str,
+    ) -> Option<(u64, Option<api::selected::RunKey>)> {
+        let slot = script_slot(&self.scripts, name)?;
+        let slot = slot.lock().ok()?;
+        Some((slot.runtime_generation(), slot.native_run()))
+    }
+
     /// `name`'s latest recorded paint frame (the frame its status row
     /// publishes), for the live pump's File-card receipt watches.
     pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
@@ -387,6 +407,17 @@ impl Play {
     }
 }
 impl Play {
+    /// Install a read-only harness observer before spawning slots. It runs once
+    /// after native execution and same-frame walk completion for each received
+    /// PLAYER_INFO edge. Its storage and call are absent from product builds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_post_native_player_info_observer(
+        &mut self,
+        observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
+    ) {
+        self.post_native_player_info = Some(Arc::new(observer));
+    }
+
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's
     /// per-uid NavBot). WalkTo's [`WalkArm`] map is a different latch.
     pub fn script_nav_paint(&self) -> ScriptNavPaint {
@@ -933,6 +964,23 @@ impl Play {
     pub fn script_runtime_generation(&self, name: &str) -> Option<u64> {
         script_slot(&self.scripts, name)
             .and_then(|slot| slot.lock().ok().map(|slot| slot.runtime_generation()))
+    }
+
+    /// `name`'s script run, read under one slot lock: the slot's lifetime
+    /// incarnation, the run generation (it moves at every Start and Stop,
+    /// never at Pause) and the lifecycle state. `None` without a slot or
+    /// when a retiring worker poisoned the slot lock. A paint control is
+    /// bound to the first two.
+    pub fn script_run_key(&self, name: &str) -> Option<(u64, u64, script::RunState)> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock().ok().map(|slot| {
+                (
+                    slot.control_key().0,
+                    slot.runtime_generation(),
+                    slot.state(),
+                )
+            })
+        })
     }
 
     pub fn script_source_identity(&self, name: &str) -> Option<String> {

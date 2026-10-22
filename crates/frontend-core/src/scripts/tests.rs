@@ -635,16 +635,204 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 fn browse_card_list_includes_compiled_cards() {
     let f = fixture("compiled-card-list", &["alice"]);
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    let sherlock = cards
+    if script::compiled_id("Sherlock").is_some() {
+        let sherlock = cards
+            .iter()
+            .find(|card| card.name() == "Sherlock")
+            .expect("compiled Sherlock is available to Browse when registered");
+        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+        assert_eq!(sherlock.category(), "Treasure Trails");
+        assert_eq!(
+            sherlock.selection(),
+            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        );
+    } else {
+        assert!(
+            cards.iter().all(|card| card.name() != "Sherlock"),
+            "Browse omits Sherlock when the load feature omits its registration"
+        );
+    }
+    let grinch = cards
         .iter()
-        .find(|card| card.name() == "Sherlock")
-        .expect("load builds expose Sherlock to Browse");
-    assert_eq!(sherlock.kind(), CardRuntime::Compiled);
-    assert_eq!(sherlock.category(), "Treasure Trails");
+        .find(|card| card.name() == "Grinch")
+        .expect("Grinch is available in Browse without a running instance");
+    assert_eq!(grinch.kind(), CardRuntime::Compiled);
+    assert_eq!(grinch.category(), "Gathering");
+    assert_eq!(grinch.source(), super::CardSource::Builtin);
     assert_eq!(
-        sherlock.selection(),
-        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        grinch.compiled_id(),
+        Some(CompiledCardId::from_script(script::CompiledId("Grinch")))
     );
+    assert_eq!(
+        grinch.selection(),
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Grinch")))
+    );
+}
+
+fn prepare_grinch(
+    f: &Fixture,
+    bag: Map<String, Value>,
+) -> Result<std::sync::Arc<script::native::PreparedConfig>, script::native::StartError> {
+    let id = script::CompiledId("Grinch");
+    let worker = f
+        .core
+        .play()
+        .unwrap()
+        .script_prepare_config(id, 1, std::sync::Arc::new(bag))
+        .expect("Grinch settings preparation is admitted");
+    let identity = worker.identity();
+    worker
+        .join()
+        .expect("Grinch settings worker does not panic")?
+        .commit(identity)
+}
+
+#[test]
+fn grinch_defaults_and_radius_use_the_real_compiled_schema_and_preparer() {
+    let f = native_fixture("grinch-defaults", &["alice"]);
+    let id = script::CompiledId("Grinch");
+    let compiled_id = CompiledCardId::from_script(id);
+    let super::SchemaView::Ready { version, fields } =
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), compiled_id)
+    else {
+        panic!("registered Grinch schema must be available");
+    };
+    assert_eq!(version, 1);
+
+    let editor_bag = f
+        .scripts
+        .compiled_edit_bag(&f.core, Some("alice"), compiled_id)
+        .unwrap();
+    let expected_ids = [
+        "1961", "981", "1989", "1959", "1053", "1055", "1057", "1050", "962", "1038", "1040",
+        "1042", "1044", "1046", "1048", "1419", "1037", "4079",
+    ];
+    let selected: Vec<_> = editor_bag["items"]
+        .as_array()
+        .expect("items editor value is a JSON array")
+        .iter()
+        .map(|value| value.as_str().expect("item IDs are decimal strings"))
+        .collect();
+    assert_eq!(selected, expected_ids);
+    assert_eq!(editor_bag["radius"].as_u64(), Some(12));
+    assert_eq!(editor_bag["bank"], "Nearest");
+    for permission in ["allow_wilderness", "allow_danger_zones", "allow_teleports"] {
+        assert_eq!(editor_bag[permission], false, "{permission} defaults off");
+    }
+
+    let items = fields.get("items").expect("items editor field");
+    let labels = items.option_labels();
+    for (id, colour) in [("1053", "green"), ("1055", "blue"), ("1057", "red")] {
+        assert!(
+            labels
+                .iter()
+                .any(|label| { label.contains(id) && label.to_ascii_lowercase().contains(colour) }),
+            "mask option label names {colour} and ID {id}: {labels:?}"
+        );
+    }
+    for id in expected_ids {
+        assert!(
+            labels.iter().any(|label| label.contains(id)),
+            "item option label contains ID {id}: {labels:?}"
+        );
+    }
+    let bank = fields.get("bank").expect("bank editor field");
+    assert_eq!(bank.options_from(), Some("named-banks"));
+    let radius = fields.get("radius").expect("radius editor field");
+    let (min, max, _) = radius.bounds();
+    assert_eq!((min, max), (Some("1"), Some("16")));
+
+    let prepared = prepare_grinch(&f, editor_bag.clone()).expect("default settings prepare");
+    let config = prepared
+        .get::<std::sync::Arc<script::grinch::Prepared>>()
+        .expect("Grinch preparer returns typed settings");
+    assert_eq!(
+        config.ids.as_ref(),
+        &expected_ids.map(|id| id.parse::<i32>().unwrap())
+    );
+    assert_eq!(config.radius, 12);
+    assert_eq!(
+        config.bank, None,
+        "Nearest is represented by no explicit bank"
+    );
+
+    for radius in [1, 16] {
+        let mut values = editor_bag.clone();
+        values.insert("radius".into(), json!(radius));
+        let prepared = prepare_grinch(&f, values).expect("inclusive radius bound prepares");
+        let config = prepared
+            .get::<std::sync::Arc<script::grinch::Prepared>>()
+            .expect("Grinch preparer returns typed settings");
+        assert_eq!(config.radius, radius);
+    }
+    for radius in [0, 17] {
+        let mut values = editor_bag.clone();
+        values.insert("radius".into(), json!(radius));
+        assert!(
+            prepare_grinch(&f, values).is_err(),
+            "radius {radius} is outside the accepted 1..=16 range"
+        );
+    }
+}
+
+#[test]
+fn grinch_mask_ids_survive_the_shared_panel_tui_settings_editor_path() {
+    let mut f = native_fixture("grinch-mask-settings", &["alice"]);
+    let id = script::CompiledId("Grinch");
+    let compiled_id = CompiledCardId::from_script(id);
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            &script::ScriptSel::Compiled(id),
+            None,
+            super::StartKind::Start,
+            false,
+        )
+        .unwrap();
+    f.settle();
+    f.wait_state("alice", ScriptRunState::Running);
+
+    let mut values = f
+        .scripts
+        .compiled_edit_bag(&f.core, Some("alice"), compiled_id)
+        .unwrap();
+    let masks = vec![json!("1053"), json!("1055"), json!("1057")];
+    values.insert("items".into(), Value::Array(masks.clone()));
+
+    let operation = f
+        .scripts
+        .set_compiled_overrides(&mut f.core, "alice", compiled_id, values)
+        .unwrap();
+    f.core.flush_writes();
+    assert_eq!(
+        f.core.operation(operation).unwrap().outcome("alice"),
+        Some(&Outcome::Completed),
+        "the shared native settings editor write prepares and persists"
+    );
+    let writes = f.core.take_settings_writes();
+    assert!(matches!(
+        writes.as_slice(),
+        [write]
+            if write.op() == operation
+                && write.result().delivery() == Some(&super::LiveDelivery::RestartRequired)
+    ));
+    let saved = f
+        .saved_bag("alice", &script::compiled_identity_key(id))
+        .expect("Grinch settings saved in the profile vault");
+    let (_, saved_values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
+    assert_eq!(saved_values["items"], Value::Array(masks));
+    let reloaded = f
+        .scripts
+        .compiled_bag(&f.core, "alice", compiled_id)
+        .unwrap();
+    assert_eq!(reloaded["items"], saved_values["items"]);
+    let prepared = prepare_grinch(&f, reloaded).expect("reloaded editor settings prepare");
+    let config = prepared
+        .get::<std::sync::Arc<script::grinch::Prepared>>()
+        .expect("Grinch preparer returns typed settings");
+    assert_eq!(config.ids.as_ref(), &[1053, 1055, 1057]);
 }
 
 #[test]
@@ -995,7 +1183,7 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
     loop {
         match fire_pending_catalog_start(&mut pending, true, false, arming) {
             StartScriptPump::CompiledRunning => break,
-            StartScriptPump::CompiledFailed(error) => panic!("{error}"),
+            StartScriptPump::Failed(error) => panic!("{error}"),
             _ => assert!(
                 Instant::now() < guard,
                 "compiled scenario did not settle: hang guard expired"

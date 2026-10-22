@@ -1,0 +1,60 @@
+From 1261028c2de6a6762373927d4c083ee1fd334884 Mon Sep 17 00:00:00 2001
+From: 274bot <274bot@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 13:01:37 -0400
+Subject: [PATCH] Bind every listener to loopback (274bot nightly patch)
+
+---
+ src/server/tcp/TcpServer.ts | 2 +-
+ src/setup.ts                | 2 +-
+ src/web.ts                  | 4 ++--
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/server/tcp/TcpServer.ts b/src/server/tcp/TcpServer.ts
+index 47c1bad5..881954c8 100644
+--- a/src/server/tcp/TcpServer.ts
++++ b/src/server/tcp/TcpServer.ts
+@@ -66,6 +66,6 @@ export default class TcpServer {
+             });
+         });
+ 
+-        this.tcp.listen(Environment.node.port, '0.0.0.0', () => {});
++        this.tcp.listen(Environment.node.port, '127.0.0.1', () => {});
+     }
+ }
+diff --git a/src/setup.ts b/src/setup.ts
+index d4197f4f..7461b299 100644
+--- a/src/setup.ts
++++ b/src/setup.ts
+@@ -241,7 +241,7 @@ async function startManagementWeb(): Promise<void> {
+     });
+ 
+     await new Promise<void>(resolve => {
+-        server.listen(Environment.web.managementPort, '0.0.0.0', () => resolve());
++        server.listen(Environment.web.managementPort, '127.0.0.1', () => resolve());
+     });
+ }
+ 
+diff --git a/src/web.ts b/src/web.ts
+index e0284167..b495727c 100644
+--- a/src/web.ts
++++ b/src/web.ts
+@@ -385,7 +385,7 @@ export async function startWeb(): Promise<void> {
+     });
+ 
+     await new Promise<void>(resolve => {
+-        server.listen(Environment.web.port, '0.0.0.0', () => resolve());
++        server.listen(Environment.web.port, '127.0.0.1', () => resolve());
+     });
+ }
+ 
+@@ -402,6 +402,6 @@ export async function startManagementWeb(): Promise<void> {
+     });
+ 
+     await new Promise<void>(resolve => {
+-        server.listen(Environment.web.managementPort, '0.0.0.0', () => resolve());
++        server.listen(Environment.web.managementPort, '127.0.0.1', () => resolve());
+     });
+ }
+-- 
+2.54.0 (Apple Git-157)
+

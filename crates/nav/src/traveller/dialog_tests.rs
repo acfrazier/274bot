@@ -347,6 +347,25 @@ fn door_dialog_shantay_disclaimer_selects_enter_regardless_of_order() {
 }
 
 #[test]
+fn door_dialog_wilderness_lever_warning_selects_brave_without_the_permanent_varp() {
+    assert_eq!(
+        door_choice(
+            ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
+            &[
+                "Yes I'm brave.",
+                "Eep! The wilderness... No thank you.",
+                "Yes please, don't show this message again.",
+            ],
+        ),
+        Some(1)
+    );
+    assert_eq!(
+        door_choice(ARDOUGNE_WILDERNESS_LEVER_LOC_ID, &["Hello.", "Goodbye."]),
+        None
+    );
+}
+
+#[test]
 fn door_dialog_unknown_or_duplicate_page_fails_closed() {
     assert_eq!(
         door_choice(AL_KHARID_TOLL_LEFT_LOC_ID, &["Hello.", "Goodbye."]),

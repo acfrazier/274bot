@@ -41,9 +41,12 @@ pub fn ardy_cakes_fight_baseline_ready(baseline: &Observation) -> bool {
         && noted_stall_food(baseline) == 0
 }
 
-/// Guard pickpocket Fight cell: same empty-pack thieving prep plus combat kit.
+/// Guard pickpocket Fight cell: prepared cake and combat kit, no seeded coins.
 pub fn ardy_thiever_fight_baseline_ready(baseline: &Observation) -> bool {
-    ardy_thiever_baseline_ready(baseline, 40)
+    near(baseline.tile, ARDY_THIEVER_STAND, 8)
+        && baseline.level("thieving") >= 99
+        && baseline.item_id(catalog_item_id("coins")) == 0
+        && baseline.item_id(catalog_item_id("cake")) == 8
         && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
         && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
         && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
@@ -231,13 +234,10 @@ impl ArdyThieverCycle {
     }
 }
 
-/// `guardResponse=Fight` on ArdyThiever: a FightBack Guard kill plus the Flee
-/// bank-cycle shape. The kill and the Flee-kite check count from Start, not
-/// from the first coins: on 289 only a caught stall steal draws a Guard (a
-/// failed pickpocket stuns but never starts combat), and ArdyThiever steals
-/// from the stall only while its food is at `restockAtFood`, so the catch
-/// comes from the opening restock. The deposit still needs both the coins
-/// and the kill. The Flee kite tile fails this branch.
+/// `guardResponse=Fight` on ArdyThiever: a FightBack Guard kill plus the
+/// pickpocket bank cycle. The fixture attacks a real Guard before Start.
+/// The kill and the Flee-kite check count from Start, not from the first
+/// coins. The deposit needs both the coins and the kill.
 ///
 /// Coins count only as a pickpocket: a coin gain with a Thieving XP rise in
 /// the same or the previous observation (the pickpocket script adds the

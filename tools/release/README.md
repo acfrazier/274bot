@@ -6,7 +6,7 @@
 platforms:
 
 ```sh
-TAG=0.2.3   # after `[workspace.package] version` is `0.2.3`; a numeric patch tag may begin with that version
+TAG=0.2.4   # after `[workspace.package] version` is `0.2.4`; a numeric patch tag may begin with that version
 COMMIT="$(git rev-parse HEAD)"
 python3 tools/release/release.py build --commit "$COMMIT" --platform all --dry-run
 python3 tools/release/release.py finalize --commit "$COMMIT" --platform all \
@@ -208,6 +208,62 @@ for a defect class neither builder has shown. Navigation is reported
 byte-identical only after all six files from all three platform archives
 compare equal; a partial per-platform verification explicitly reports that navigation was not compared.
 Verification does not publish anything.
+
+### Python version
+
+The known-issues ledger is TOML and is read with `tomllib`, which exists
+only on Python 3.11 and newer. `tools/known-issues/known_issues.py` needs
+3.11+ for every command, and `release.py preflight` (run on the
+orchestrator host) needs 3.11+ because it loads that tool. On an older
+interpreter both exit with a one-line error naming the running interpreter
+instead of a traceback. Run those commands with an interpreter that meets
+the floor. On macOS that is the Homebrew `python3`
+(`/opt/homebrew/bin/python3`, 3.11 or newer); Apple's `/usr/bin/python3`
+is 3.9 and fails the check.
+
+The `build`, `finalize`, `verify`, and `clean` steps run with the worker's
+own `python3` (`python` on Windows) and need only what `release.py` already
+needs (3.9 today), including on a macOS worker over SSH where `python3` is
+Apple's 3.9.
+
+### Known-issues ledger
+
+`docs/known-issues.toml` is the single source of truth for the
+`### Known issues` and `### Not in this release` blocks in `CHANGELOG.md`.
+Edit the ledger, never the CHANGELOG blocks. Item lifecycle: add the item
+with `first` (the first affected release), and `listed` (the first release
+whose notes list it) when it was found after `first` had shipped. The commit
+that fixes it sets `fixed` to the release carrying the fix; never delete an
+item. An item is open at release X when `listed` (default `first`) is not
+newer than X and `fixed` (when set) is newer than X, so a fix recorded for
+0.2.5 leaves the published 0.2.4 section untouched and its check passing.
+`fixed` must name a known release or the next one and must be later than
+`first`; `listed` must name a known release or the next one, not be earlier
+than `first`, and be earlier than `fixed`. Unknown fields are rejected, so a
+typo cannot silently keep an item open.
+
+The `## Unreleased` section stages no ledger blocks during development.
+When a release section is cut, render the blocks for the next release,
+paste them over the old ones, then check:
+
+```sh
+python3 tools/known-issues/known_issues.py render --release 0.2.5
+python3 tools/known-issues/known_issues.py check --release 0.2.5
+python3 tools/known-issues/known_issues.py carried --release 0.2.5
+```
+
+`check` fails when the CHANGELOG blocks differ from the render. `carried`
+lists every item open at the release with its carry count and flags
+`needs ruling` when the release reaches the item's target or the item has
+been carried through two or more releases; it informs the release approval
+and never blocks it. There is no `check --unreleased`: it used to fail
+whenever the blocks were not staged yet, which is the normal state all
+through development. `preflight` runs the same check against a commit's own
+tree before packaging:
+
+```sh
+python3 tools/release/release.py preflight --commit "$COMMIT" --tag 0.2.5
+```
 
 ### Retry and cleanup
 

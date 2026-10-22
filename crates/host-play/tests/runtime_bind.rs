@@ -543,7 +543,26 @@ fn stepped_fixture(name: &str) -> (TempRoot, Vec<Vec<u8>>, PathBuf) {
 }
 
 /// Another preparation of the same namespace holds the lock for `held`.
-fn hold_lock(path: &Path, held: std::time::Duration) -> thread::JoinHandle<()> {
+/// `releasing_at` records the instant just before the holder unlocks, so a
+/// test can tell the steps that started while the lock was held from the
+/// work that runs after it.
+struct LockHold {
+    releasing_at: Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+    thread: thread::JoinHandle<()>,
+}
+
+impl LockHold {
+    /// `None` while the lock is still held.
+    fn releasing_at(&self) -> Option<std::time::Instant> {
+        *self.releasing_at.lock().unwrap()
+    }
+
+    fn join(self) {
+        self.thread.join().unwrap();
+    }
+}
+
+fn hold_lock(path: &Path, held: std::time::Duration) -> LockHold {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -552,20 +571,40 @@ fn hold_lock(path: &Path, held: std::time::Duration) -> thread::JoinHandle<()> {
         .open(path)
         .unwrap();
     file.lock().unwrap();
-    thread::spawn(move || {
+    let releasing_at = Arc::new(std::sync::Mutex::new(None));
+    let record = Arc::clone(&releasing_at);
+    let thread = thread::spawn(move || {
         thread::sleep(held);
+        // Recorded before the unlock: a step that starts after this instant
+        // is never mistaken for a step that waited on the lock.
+        *record.lock().unwrap() = Some(std::time::Instant::now());
         file.unlock().unwrap();
-    })
+    });
+    LockHold {
+        releasing_at,
+        thread,
+    }
 }
 
-/// While another preparation holds the cache lock, the stepped template
-/// preparation waits in short steps, never in one long one, and binds once
-/// the lock is free. The root is on tmpfs: the bound is the steps' own work,
-/// not the disk's fsync latency.
+/// While another preparation holds the cache lock, every step that waits on
+/// the lock returns by its own deadline, never after one long wait, and the
+/// preparation binds once the lock is free.
+///
+/// The explicit `step` deadline bounds the waits only: `step` does "the next
+/// bounded unit. Network and lock waits end at `until`" (see
+/// `TemplatePreparation::step` and `TEMPLATE_STEP_WAIT`). The bind and load
+/// steps that run after the lock is free do no waiting, so the contract gives
+/// them no deadline; they are excluded from the wait bound. The root is on
+/// tmpfs where the host has one: the bound is the steps' own work, not the
+/// disk's fsync latency.
 #[test]
 fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
     use host_play::progress::ProfileProgressObserver;
     use std::time::{Duration, Instant};
+    // A busy host can delay the wakeup of a step that only waited. This slack
+    // is much smaller than the hold below, so a step that blocks for the
+    // whole hold still fails.
+    const SCHEDULING_SLACK: Duration = Duration::from_millis(250);
     let (root, public, lock) = stepped_fixture("stepped-lock");
     let held = Duration::from_millis(1500);
     // The hold starts when the lock is taken, so the total is measured from
@@ -575,26 +614,59 @@ fn template_preparation_steps_stay_bounded_while_the_cache_lock_is_held() {
     let (port, server) = serve_packs(public, 0);
     let mut preparation = selection(&root, "274", port).begin_template_preparation();
     let observer = ProfileProgressObserver::default();
-    let (mut longest, mut steps) = (Duration::ZERO, 0);
+    let (mut steps, mut wait_steps) = (0u32, 0u32);
+    let (mut worst_wait, mut worst_wait_step) = (Duration::ZERO, 0u32);
+    let (mut longest, mut longest_step, mut longest_waited) = (Duration::ZERO, 0u32, false);
+    let mut late: Option<(u32, Duration)> = None;
     let template = loop {
         let step_started = Instant::now();
         let step = preparation.step(step_started + host_play::TEMPLATE_STEP_WAIT, &observer);
-        longest = longest.max(step_started.elapsed());
+        let took = step_started.elapsed();
         steps += 1;
+        // A step that started before the holder began to release the lock can
+        // only have waited on it (or on the network, bounded by the same
+        // deadline). Steps that start afterwards do the real work.
+        let waited = match release.releasing_at() {
+            None => true,
+            Some(releasing) => step_started < releasing,
+        };
+        if waited {
+            wait_steps += 1;
+            if took > worst_wait {
+                worst_wait = took;
+                worst_wait_step = steps;
+            }
+            let deadline = host_play::TEMPLATE_STEP_WAIT + SCHEDULING_SLACK;
+            if took > deadline && late.is_none() {
+                late = Some((steps, took));
+            }
+        }
+        if took > longest {
+            longest = took;
+            longest_step = steps;
+            longest_waited = waited;
+        }
         if let host_play::TemplateStep::Complete(result) = step {
             break result.unwrap();
         }
     };
     let elapsed = started.elapsed();
-    release.join().unwrap();
+    release.join();
     server.join().unwrap();
-    eprintln!("stepped lock wait: {steps} steps, longest {longest:?}, total {elapsed:?}");
-    assert!(elapsed >= held, "the lock was honoured: {elapsed:?}");
-    assert!(steps > 50, "{steps} steps");
-    assert!(
-        longest < Duration::from_millis(250),
-        "longest step {longest:?}"
+    eprintln!(
+        "stepped lock wait: {steps} steps, {wait_steps} waiting, worst waiting \
+         {worst_wait:?} at step {worst_wait_step}, longest {longest:?} at step \
+         {longest_step} (waited: {longest_waited}), total {elapsed:?}"
     );
+    assert!(elapsed >= held, "the lock was honoured: {elapsed:?}");
+    if let Some((step, took)) = late {
+        panic!(
+            "waiting step {step} took {took:?}, past its {:?} deadline plus \
+             {SCHEDULING_SLACK:?} scheduling slack",
+            host_play::TEMPLATE_STEP_WAIT
+        );
+    }
+    assert!(wait_steps > 50, "{wait_steps} steps waited on the lock");
     template.validate_for_play().unwrap();
 }
 
@@ -644,7 +716,7 @@ fn cancelled_template_preparation_ends_promptly_and_the_next_one_binds() {
         task.join(),
         Err(script::preparation::PreparationError::Cancelled(_))
     ));
-    release.join().unwrap();
+    release.join();
     let (port, server) = serve_packs(public, 0);
     let template = selection(&root, "274", port).prepare_template().unwrap();
     server.join().unwrap();

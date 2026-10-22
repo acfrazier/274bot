@@ -145,6 +145,7 @@ fn catherby_return_plan(
         gatherer.settings(),
         area,
         ReturnObservation {
+            walk_danger: Some(&crate::native::AllowWalkDanger),
             here,
             now: 1,
             skill_stat,
@@ -154,7 +155,7 @@ fn catherby_return_plan(
     ) else {
         panic!("the fixture has a return stand in each work-area quadrant");
     };
-    plan
+    plan.plan
 }
 
 fn catherby_partial_return_fixture() -> (Gatherer, GameSnapshot, TargetPlan, TargetPlan, WorldTile)
@@ -209,6 +210,7 @@ fn stalled_return_receipt(
     tries: u32,
 ) -> WalkReceipt {
     WalkReceipt {
+        goal: None,
         request_id: 7,
         evidence,
         end: WalkEnd::Stalled(Arc::new(crate::native::WalkStall {
@@ -851,6 +853,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                 .begin::<Walk>(
                     WalkRequest {
                         target: target.tile,
+                        candidate_goals: None,
                         loc_id: match target.entity {
                             EntityId::Loc(id) => Some(id),
                             _ => None,
@@ -929,6 +932,7 @@ fn assert_approached_tree_identity(depleted: bool) {
             SelectedTarget {
                 plan: approached.clone(),
                 class: PlacementClass::Unloaded,
+                observation_goals: None,
             },
             tick,
         );
@@ -1070,6 +1074,7 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
     with_tick(&snapshot, &mut ledger, 2, |tick| {
         gatherer.handle_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 7,
                 evidence: tick.cx.evidence(),
                 end: WalkEnd::RouteEnded,
@@ -1145,6 +1150,7 @@ fn unloaded_loc_approach_preserves_reach_and_loc_identity() {
             SelectedTarget {
                 plan: plan.clone(),
                 class: PlacementClass::Unloaded,
+                observation_goals: None,
             },
             tick,
         );
@@ -1168,6 +1174,11 @@ fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
     let mut plan = gatherer.target.clone().unwrap();
     plan.entity = EntityId::Npc(309);
     plan.npc_index = -1;
+    let chosen = WorldTile {
+        x: plan.tile.x + 1,
+        ..plan.tile
+    };
+    let goals = crate::native::WalkGoals::new(vec![plan.tile, chosen]).unwrap();
     gatherer.cancel_active();
     ledger.as_mut().unwrap().outbox.clear();
     with_tick(&snapshot, &mut ledger, 2, |tick| {
@@ -1175,6 +1186,7 @@ fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
             SelectedTarget {
                 plan,
                 class: PlacementClass::Unloaded,
+                observation_goals: Some(goals),
             },
             tick,
         );
@@ -1185,6 +1197,28 @@ fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
     };
     assert_eq!(request.arrival, ArrivalKind::Area);
     assert_eq!(request.loc_id, None);
+    assert_eq!(request.radius, 0);
+    assert_eq!(
+        request.candidate_goals.as_ref().unwrap().as_slice().len(),
+        2
+    );
+    with_tick(&snapshot, &mut ledger, 3, |tick| {
+        gatherer.handle_walk(
+            WalkReceipt {
+                goal: Some(chosen),
+                request_id: 7,
+                evidence: tick.cx.evidence(),
+                end: WalkEnd::Arrived,
+                blocked: None,
+                detail: None,
+                assessment: None,
+                refusal: None,
+                escape: None,
+            },
+            tick,
+        );
+    });
+    assert_eq!(gatherer.target.as_ref().unwrap().tile, chosen);
 }
 
 fn worn(id: i32) -> ItemView {
@@ -1244,6 +1278,7 @@ fn start_monkey_form_target(worn: Option<Vec<ItemView>>) -> Gatherer {
             SelectedTarget {
                 plan,
                 class: PlacementClass::Unloaded,
+                observation_goals: None,
             },
             tick,
         );
@@ -1388,6 +1423,7 @@ fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
     with_tick(&snapshot, &mut ledger, 721, |tick| {
         gatherer.handle_walk(
             WalkReceipt {
+                goal: None,
                 request_id: 8,
                 evidence: tick.cx.evidence(),
                 end: WalkEnd::Refused,

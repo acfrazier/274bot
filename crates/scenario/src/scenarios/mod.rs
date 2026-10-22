@@ -41,11 +41,12 @@ pub(crate) use guardian_events::{
     guardian_event_maze_scenario, guardian_event_mime_scenario, guardian_event_old_man_scenario,
     guardian_event_strange_box_scenario, guardian_event_strange_plant_scenario,
     guardian_event_swarm_scenario, guardian_skill_big_fish_scenario, guardian_skill_ent_scenario,
-    guardian_skill_gas_scenario, guardian_skill_lost_axe_scenario,
-    guardian_skill_lost_pickaxe_scenario, guardian_skill_river_troll_scenario,
-    guardian_skill_rock_golem_scenario, guardian_skill_shade_scenario,
-    guardian_skill_tree_spirit_scenario, guardian_skill_watchman_scenario,
-    guardian_skill_whirlpool_scenario, guardian_skill_zombie_scenario,
+    guardian_skill_gas_scenario, guardian_skill_lost_axe_same_kind_head_scenario,
+    guardian_skill_lost_axe_scenario, guardian_skill_lost_pickaxe_scenario,
+    guardian_skill_river_troll_scenario, guardian_skill_rock_golem_scenario,
+    guardian_skill_shade_scenario, guardian_skill_tree_spirit_scenario,
+    guardian_skill_watchman_scenario, guardian_skill_whirlpool_scenario,
+    guardian_skill_zombie_scenario,
 };
 
 pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};
@@ -64,8 +65,8 @@ pub(crate) use combat::{
     green_dragon_tele_scenario, hill_giant_bank_prepared_scenario, hill_giant_bank_scenario,
     hill_giant_loot_deposit_scenario, hill_giant_scenario, moss_giant_bank_scenario,
     moss_giant_bank_start_scenario, moss_giant_dart_scenario, moss_giant_prepared_scenario,
-    moss_giant_scenario, rock_crab_bank_scenario, rock_crab_bank_seeded_scenario,
-    rock_crab_range_scenario, rock_crab_scenario,
+    moss_giant_scenario, rock_crab_bank_seeded_scenario, rock_crab_range_scenario,
+    rock_crab_scenario,
 };
 pub(crate) use enter_lair::enter_lair_v2_scenario;
 pub(crate) use fight_field::fight_field_v2_scenario;

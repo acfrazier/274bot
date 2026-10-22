@@ -402,6 +402,8 @@ impl StepRun for Run {
             &self.settings,
             area,
             SelectionObservation {
+                snapshot: Some(snapshot),
+                walk_danger: cx.tick.walk_danger,
                 world: world.value,
                 locs: locs.value,
                 npcs: npcs.value,
@@ -422,6 +424,9 @@ impl StepRun for Run {
             },
             snapshot,
         );
+        if let crate::gatherer::select::Selection::Danger(failure) = selected.outcome {
+            return Poll::Ready(Err(ActionError::Unavailable(failure.to_string().into())));
+        }
         // This is an authored local resource step, not Gatherer's site/Auto
         // survey. Never widen the area or circle unloaded placements.
         let Some(target) = selected
@@ -430,7 +435,12 @@ impl StepRun for Run {
         else {
             return Poll::Pending;
         };
-        if let Some(request) = target.approach(snapshot, cx.required_after) {
+        if let Some(request) = target
+            .approach(snapshot, cx.required_after, cx.tick.walk_danger)
+            .map_err(|error| {
+                ActionError::Unavailable(format!("safe resource access goals: {error}").into())
+            })?
+        {
             self.walk = Some(std::task::ready!(crate::native::defer_budget(
                 cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
             ))?);
@@ -749,6 +759,99 @@ mod tests {
             banks: &banks,
             choices: &choices,
         })
+    }
+
+    struct MixedResourceAccess {
+        restricted: bool,
+    }
+
+    impl crate::native::WalkDangerQuery for MixedResourceAccess {
+        fn check(
+            &self,
+            _target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+        ) -> crate::native::WalkDanger<'_> {
+            crate::native::WalkDanger::Allowed
+        }
+
+        fn safe_access_goals(
+            &self,
+            target: WorldTile,
+            _loc_id: Option<i32>,
+            _radius: u16,
+            _arrival: nav::contract::ArrivalKind,
+            _existing: Option<&crate::native::WalkGoals>,
+        ) -> Result<Option<crate::native::WalkGoals>, crate::native::WalkGoalsError> {
+            self.restricted
+                .then(|| {
+                    crate::native::WalkGoals::new(vec![WorldTile {
+                        x: target.x + 1,
+                        ..target
+                    }])
+                })
+                .transpose()
+        }
+    }
+
+    fn assert_quest_mixed_resource_walk(restricted: bool) {
+        let plan = plan("mining.copper", 1);
+        let mut snapshot = snapshot(&plan, 1);
+        let loc = snapshot.locs()[0].clone();
+        let safe = WorldTile {
+            x: loc.tile.x + 1,
+            ..loc.tile
+        };
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: loc.tile.x - 4,
+            ..loc.tile
+        }));
+        static RESTRICTED: MixedResourceAccess = MixedResourceAccess { restricted: true };
+        static ALLOWED: MixedResourceAccess = MixedResourceAccess { restricted: false };
+        let query = if restricted { &RESTRICTED } else { &ALLOWED };
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.walk_danger = Some(query);
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.walk_danger = Some(query);
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let effect = &ledger.as_ref().unwrap().outbox.last().unwrap().effect;
+        let crate::native::HostEffect::Walk(request) = effect else {
+            panic!("finite gathering must approach the chosen resource");
+        };
+        assert_eq!(request.target, loc.tile);
+        if restricted {
+            assert_eq!(
+                request.candidate_goals.as_ref().unwrap().as_slice(),
+                &[safe]
+            );
+            assert_eq!(request.loc_id, None);
+            assert_eq!(request.radius, 0);
+            assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+        } else {
+            assert!(request.candidate_goals.is_none());
+            assert_eq!(request.loc_id, Some(loc.id));
+            assert_eq!(
+                request.radius,
+                crate::gatherer::select::RESOURCE_APPROACH_RADIUS
+            );
+            assert_eq!(request.arrival, nav::contract::ArrivalKind::Reach);
+        }
+    }
+
+    #[test]
+    fn quest_gather_denied_permissions_restrict_mixed_resource_stands() {
+        assert_quest_mixed_resource_walk(true);
+    }
+
+    #[test]
+    fn quest_gather_allowed_permissions_keep_resource_approach_unchanged() {
+        assert_quest_mixed_resource_walk(false);
     }
 
     #[test]

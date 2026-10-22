@@ -19,6 +19,9 @@
 //!   --ignored --nocapture --test-threads=1
 //! ```
 //!
+//! On macOS, supply the same local pack and engine paths, omit
+//! `CAPACITY_SMOKE_CPUS`, and run the test binary without `taskset`.
+//!
 //! `CAPACITY_SMOKE_BUSY=1` keeps every bot on the 20 ms frame path (as a
 //! running script does); by default the bots are idle in game (one wake per
 //! game tick). `CAPACITY_SMOKE_HOG_NICE` runs the hogs at that nice value

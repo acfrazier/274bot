@@ -42,6 +42,9 @@ pub struct CompiledTick<'a> {
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav::contract::CollisionView<'a>>,
+    /// Lazy, read-only danger admission for compiled target selection.
+    /// Missing navigation data is not permission to start a new walk.
+    pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
     /// The actual owner-held session gate. The host borrows it from
     /// `SlotArm.lifecycle` for a live compiled callback; bare contexts use
     /// `None`, and the isolate path does not read it.
@@ -192,15 +195,22 @@ impl ScriptCtx<'_> {
 
 /// Accept-everything driver used by in-crate unit tests. Integration
 /// tests (`tests/slot.rs`) copy the `Recorder` stub from `crates/api`
-/// instead, so they exercise the same trait the kernel sees.
-#[cfg(test)]
+/// instead, so they exercise the same trait the kernel sees. The module
+/// also carries `local_asset_path`, the one resolver for local-only test
+/// assets. Dependent crates' tests use that function through the dev-only
+/// `test-hooks` feature. The driver types stay in-crate.
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod test_support {
+    #[cfg(test)]
     use api::interact::Driver;
+    #[cfg(test)]
     use api::prot::Out;
 
+    #[cfg(test)]
     #[derive(Default)]
     pub struct OutSink;
 
+    #[cfg(test)]
     impl Out for OutSink {
         fn p1_enc(&mut self, _opcode: i32) {}
         fn p1(&mut self, _value: i32) {}
@@ -209,11 +219,13 @@ pub mod test_support {
         fn pjstr(&mut self, _s: &str) {}
     }
 
+    #[cfg(test)]
     #[derive(Default)]
     pub struct NullDriver {
         pub out: OutSink,
     }
 
+    #[cfg(test)]
     impl Driver for NullDriver {
         fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
         fn do_action(&mut self, _slot: i32) -> bool {
@@ -256,19 +268,27 @@ pub mod test_support {
     ///
     /// Covers the real nav pack (`NAV_PACK`), a decoded cache snapshot
     /// (`BOT_NAV_SNAPSHOT_ROOT`), and engine content (`ENGINE_DIR` and friends):
-    /// pass the env var, its local default, and a short asset label.
-    /// Returns the existing path. When the path is missing, prints
-    /// `skipped on hosted CI: needs <asset>` and returns `None` on hosted CI
-    /// (`GITHUB_ACTIONS=true`, caller returns early); elsewhere panics with
-    /// which env var or path to set so local runs and the nightly keep running.
+    /// pass the env var, its local default (or `""` to require the env var),
+    /// and a short asset label. Returns the existing path. When the path is
+    /// missing, prints `skipped on hosted CI: needs <asset>` and returns `None`
+    /// on hosted CI (`GITHUB_ACTIONS=true`); elsewhere it panics with which env
+    /// var or path to set so local runs and the nightly keep running.
     pub fn local_asset_path(
         env_var: &str,
         default_path: &str,
         asset: &str,
     ) -> Option<std::path::PathBuf> {
         let path = std::env::var_os(env_var)
+            .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(default_path));
+            .or_else(|| (!default_path.is_empty()).then(|| std::path::PathBuf::from(default_path)));
+        let Some(path) = path else {
+            if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
+                eprintln!("skipped on hosted CI: needs {asset} (set {env_var})");
+                return None;
+            }
+            panic!("missing {asset}: set {env_var} to a local {asset}");
+        };
         if path.exists() {
             return Some(path);
         }
@@ -300,7 +320,7 @@ mod tests {
         ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
-            cache_dir: "/tmp".into(),
+            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
             members: true,
             lowmem: false,
         }

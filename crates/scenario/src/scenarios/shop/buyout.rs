@@ -210,22 +210,25 @@ const SHOP_BUYOUT_FERNAHEI_PER_TRIP_GP: f64 = 500.0;
 const SHOP_BUYOUT_FERNAHEI_BUDGET_GP: f64 = 1500.0;
 /// Betty's frozen Falador West preset requires four travel legs before a
 /// resumed purchase: shop→bank→shop for the initial withdrawal, then
-/// shop→bank→shop for deposit and return. The 150-dirty first-purchase
+/// shop→bank→shop for deposit and return. The old 150-dirty first-purchase
 /// watch expired while the player was still progressing back with 500 coins.
 ///
-/// These are bounded trial estimates, not measured completion times.
-/// Dirty-snapshot increments are distinct from engine ticks and wall time.
-/// The failed trace had 102 engine ticks through initial withdrawal and
-/// 28 on the return. Its remaining 108-tile Chebyshev distance requires at
-/// least 54 ticks at two tiles/tick; later energy depletion and detours
-/// can increase that. It does not establish a 136-tick return lower bound.
+/// These are bounded trial estimates, not measured completion times. The old
+/// dirty-snapshot counts are distinct from server game ticks and wall time.
+/// The failed trace had 102 engine ticks through initial withdrawal and 28
+/// on the return. Its remaining 108-tile Chebyshev distance requires at least
+/// 54 game ticks at two tiles per game tick on a straight leg; later energy
+/// depletion and detours add time. It does not establish a 136-game-tick
+/// return lower bound.
 ///
-/// First purchase gets 320 dirties; later deposit/return get 280 each to
-/// allow for depleted energy. At the observed roughly 1.67 dirties/second,
-/// a 320-dirty first purchase is about 190s. Assuming later legs complete
-/// near 120 dirties each, plus setup/actions, gives roughly 365s; 420s is
-/// the wall trial bound. Those future durations remain unmeasured.
-/// Empty/close/further-purchase watches, other presets, runtime timeouts,
+/// Prior numeric budgets were 320 dirties for the first purchase and 280 for
+/// later deposit/return. Current waits keep those numeric caps as game ticks:
+/// 192s for 320, 168s for 280 at 600ms per game tick. The old 1.67 dirty/s
+/// trace made the first-purchase 320-dirty value about 190s. Assuming later
+/// legs finish near 120 old dirty increments each, plus setup/actions, gave
+/// a ~365s trial. The 420s deadline is a separate wall cap and may pre-empt
+/// the combined per-step game-tick limits. No live evidence supports raising
+/// it. Empty/close/further-purchase watches, other presets, runtime timeouts,
 /// and global guards retain their existing limits. Falador West is preserved.
 pub(crate) const SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS: u32 = 320;
 pub(crate) const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
@@ -236,8 +239,8 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// shop buyouts (initial shop→bank→shop withdrawal, post-buy shop→bank deposit,
 /// bank→shop return, resumed buy).
 ///
-/// **Units:** per-arm `budget_ticks` are runner dirty-snapshot increments
-/// (`SCRIPT_GOLD_WATCH_TICKS` docs); whole-cycle `deadline` is wall seconds.
+/// **Units:** per-arm `budget_ticks` are observed game ticks (one per
+/// `PLAYER_INFO`); whole-cycle `deadline` remains wall seconds.
 ///
 /// **Route (geometry, not measured completion):** Chebyshev Gerrant stand
 /// 3013,3224 ↔ Draynor approach 3092,3243 is 79 tiles → 40 engine ticks at
@@ -250,12 +253,12 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// - Deposit watch: shop→bank (leg 3) until product in bank — one travel leg.
 /// - Return watch: bank→shop keeper radius (leg 4) — one travel leg, often
 ///   depleted energy (same geometry as leg 2/3).
-/// - Empty/close/further-purchase arms stay ordinary 150-dirty gold watches.
+/// - Empty/close/further-purchase arms stay ordinary 150-game-tick watches.
 ///
 /// **Measured live7zpi0g_0 (180s wall, host 0a80e7535):** first purchase
 /// 160 feathers / 488gp, deposit, empty, close, 488gp withdraw under 150-dirty
 /// deposit arm; whole scenario deadline 180s exceeded on step 21 return at
-/// 3075,3264 run energy 6 (315 runner increments; capture
+/// 3075,3264 run energy 6 (315 old dirty-counter runner increments; capture
 /// `2026-09-18T11-53-30_shop_buyout_gerrant`). Establishes mid-return fail and
 /// deposit pass, not a first-purchase upper bound under hitch variance.
 ///
@@ -266,22 +269,23 @@ pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420)
 /// Proves 150 insufficient for the two-leg + withdraw + buy arm under scene
 /// reload/hitch variance — not a completed first-purchase duration.
 ///
-/// **First-purchase dirty 240:** observed arm exhausted 150 dirty while the
-/// whole runner reported 168 increments (including setup). The additional
-/// 90 arm increments are a bounded trial margin for remaining Trade/buy work
-/// and route variation; they are not a measured UI or hitch duration.
+/// **Current first-purchase game-tick cap: 240.** The earlier run failed with
+/// a 150-dirty arm count and 168 old runner increments including setup. Its
+/// extra 90 dirty counts were a bounded trial margin, not a measured duration.
+/// The current 240-game-tick limit allows 144s at 600ms per game tick.
 ///
-/// **Deposit dirty 150:** live7zpi0g measured pass for leg 3; one depleted
-/// leg is shorter than the first-purchase composite — no widening without a
-/// deposit-arm fail.
+/// **Deposit game-tick cap: 150.** The old live7zpi0g run passed leg 3 with
+/// its 150-dirty arm. Keep the unchanged numeric game-tick cap pending a
+/// deposit-arm failure.
 ///
-/// **Return dirty 240:** bounded trial above depleted leg-4 lower bound plus
-/// detour margin from live7zpi0g mid-return geometry (~62 Chebyshev tiles
-/// remaining at 180s wall); not Betty's 280.
+/// **Return game-tick cap: 240.** It preserves a bounded margin above
+/// depleted leg-4 geometry (~62 Chebyshev tiles remained at the 180s wall);
+/// it is not a measured completion time and is not Betty's 280-game-tick cap.
 ///
-/// **Whole-cycle wall 390s:** live7zpi0g 180s through mid-return plus ~210s
-/// trial remainder for depleted return and resumed buy; retained unless LIVE
-/// shows deadline fail with widened first-purchase dirty budget.
+/// **Whole-cycle wall 390s:** live7zpi0g used 180s through mid-return; the
+/// remaining ~210s is a trial margin for depleted return and resumed buy.
+/// The wall remains separate and can pre-empt per-step game-tick caps; keep it
+/// unless LIVE evidence shows the expected terminal predicate needs more time.
 pub(crate) const SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS: u32 = 240;
 pub(crate) const SHOP_BUYOUT_GERRANT_RETURN_WATCH_TICKS: u32 = 240;
 pub(crate) const SHOP_BUYOUT_GERRANT_DEADLINE: Duration = Duration::from_secs(390);
@@ -318,20 +322,54 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 
 /// Bob Lumbridge ↔ Draynor: Chebyshev stand 3231,3203 ↔ Draynor approach
 /// 3092,3243 is 139 tiles (estimate, not measured) — wider than Gerrant's 79.
-/// Reuses Betty's four-leg trial dirty budgets and 420s wall until LIVE
+/// Reuses Betty's four-leg trial game-tick budgets and 420s wall until LIVE
 /// measures Bob-specific variance.
 const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
 
-/// Nurmof livewfnjs8_0 reached the return Trade but hit the 420s deadline
-/// before a fresh purchase. Summed host windows put those Trade sends at
-/// 406.586/410.124/413.621s and termination at 415.941s (approximate process
-/// timing, not an atomic shop-open witness). Native open waits 3s per attempt.
-/// Allow one bounded 30s observation margin for the remaining open/buy work;
-/// this is a trial allowance, not proof that timing is the only defect.
-/// Keep every dirty budget and the fresh post-bank purchase proof unchanged.
+/// Nurmof Dwarven Mine ↔ Falador East travel budgets. Betty's 320/280/280
+/// game-tick caps cannot cover this route: each leg also crosses the mine
+/// ladder, and run energy ends long before the first purchase completes.
+///
+/// **Measured sm25wxbm3d_0 (Engine A, host e9b575be4, BOT_DEBUG nav trace):**
+/// Start at Nurmof stand 2997,9844 (engine tick 48); the shop→bank leg
+/// walks 260 tiles with zero stationary ticks, the ladder transport
+/// (loc 1755) at ticks 89-93, booth Use-quickly at tick 205 and the 500gp
+/// withdraw at tick 213, so Start→withdraw is 165 engine ticks. Pace is
+/// 2 tiles/tick until tick 222 (about 276 run tiles from Start) and
+/// 1 tile/tick after that; run energy is 8 at the failing receipt. The
+/// 320-dirty first-purchase watch expired at 3028,3444 with 500 coins
+/// held: about 10 surface tiles, the ladder down, 86 mine tiles and the
+/// Trade/buy still remained, so the bot progressed correctly and only
+/// the watch was too small.
+///
+/// **First purchase 560:** 165 measured ticks to the withdraw, plus the
+/// return leg (260 tiles: about 275 ticks once energy is gone, ladder
+/// and Trade/open/buy included) is about 440 engine ticks; at the 1.25
+/// dirties-per-engine-tick factor used by
+/// `gnome_magic_chop_watches_cover_the_roll_tail` that is 550 dirties.
+///
+/// **Deposit/return 360 each:** one 260-tile leg walked at 1 tile/tick
+/// plus about 25 ticks of bank or shop actions is 285 engine ticks,
+/// 356 dirties at the same factor.
+///
+/// **Wall 720s:** the whole cycle is about 1116 engine ticks (seed 46
+/// measured as total-minus-watch dirties, first purchase 440, deposit
+/// and return legs 285 each, about 60 for the remaining actions); at
+/// the canonical 600ms tick that is about 670s. The earlier
+/// livewfnjs8_0 run reached the return Trade but hit the then 420s
+/// deadline before a fresh purchase (Trade sends at 406.586/410.124/
+/// 413.621s, termination 415.941s; approximate process timing, not an
+/// atomic shop-open witness).
+pub(crate) const SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS: u32 = 560;
+pub(crate) const SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS: u32 = 360;
+pub(crate) const SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS: u32 = 360;
+pub(crate) const SHOP_BUYOUT_NURMOF_DEADLINE: Duration = Duration::from_secs(720);
+
 const SHOP_BUYOUT_NURMOF_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
-    deadline: Duration::from_secs(450),
-    ..SHOP_BUYOUT_BETTY_TIMING
+    first_purchase_ticks: SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS,
+    deposit_ticks: SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS,
+    return_ticks: SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS,
+    deadline: SHOP_BUYOUT_NURMOF_DEADLINE,
 };
 
 /// Lundail cellar shop 2535,4719 ↔ Gundai stand 2533,4714 is Chebyshev 5
@@ -929,9 +967,17 @@ fn shop_buyout_variant(
     )
 }
 
+/// Game ticks the opener waits for the banker's first chat after its
+/// Talk-to before it talks again. The engine walks the player to the NPC
+/// for the op (`opnpc1` interaction approach); the banker is within 12 tiles
+/// of the approach tile, so a player inside the same 12-tile box is at most
+/// 24 tiles away, 24 ticks at the 1 tile per tick walking pace.
+const NPC_BANK_TALK_APPROACH_TICKS: u32 = 24;
+
 #[derive(Default)]
 struct ShopBuyoutNpcOpenState {
     talked: bool,
+    talked_tick: u32,
     saw_chat: bool,
     continued: Option<(i32, i32, String)>,
     answered: Option<(i32, String)>,
@@ -1007,10 +1053,14 @@ pub(crate) fn shop_buyout_open_npc_bank(
                         SendResult::Refused { .. } => true,
                     };
                 }
-                if chat_open || (state.talked && !state.saw_chat) || state.answered.is_some() {
+                let waiting_for_chat = state.talked
+                    && !state.saw_chat
+                    && snapshot.tick().saturating_sub(state.talked_tick)
+                        <= NPC_BANK_TALK_APPROACH_TICKS;
+                if chat_open || waiting_for_chat || state.answered.is_some() {
                     return true;
                 }
-                if state.talked && state.saw_chat {
+                if state.talked {
                     *state = ShopBuyoutNpcOpenState::default();
                 }
                 let Some(npc) = snapshot.npcs().iter().find(|npc| {
@@ -1028,22 +1078,16 @@ pub(crate) fn shop_buyout_open_npc_bank(
                 }) else {
                     return true;
                 };
-                let Some((px, pz, level)) = snapshot.tile() else {
-                    return true;
-                };
-                if level != npc.tile.level
-                    || (px - npc.tile.x).abs().max((pz - npc.tile.z).abs()) > 1
-                {
-                    let mut ix = Interactions::new(snapshot, c);
-                    return matches!(
-                        ix.walk(npc.tile),
-                        SendResult::Sent { .. } | SendResult::Refused { .. }
-                    );
-                }
+                // Talk-to from where the player stands: the engine's op
+                // interaction walks to the NPC and follows it while it
+                // wanders. Walking onto the banker's last seen tile first
+                // chased Gundai around the Mage Arena cellar until the
+                // step budget ran out.
                 let mut ix = Interactions::new(snapshot, c);
                 match ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.to_string())) {
                     SendResult::Sent { .. } => {
                         state.talked = true;
+                        state.talked_tick = snapshot.tick();
                         true
                     }
                     SendResult::Refused {
@@ -1254,9 +1298,9 @@ fn shop_buyout_with_bank(
     steps.push(start_catalog_step());
     // Contract: unseeded product → fresh bank product → empty pack →
     // BankClosed → return named shop → new product. Coins secondary only.
-    // Travel-leg dirty budgets come from `timing` (Betty long West route);
-    // empty/close/further stay ordinary gold watches. See
-    // SHOP_BUYOUT_BETTY_* constant docs (dirty increments, not 150×600ms).
+    // Travel-leg game-tick budgets come from `timing` (Betty long West route);
+    // empty/close/further stay ordinary gold game-tick watches. See
+    // SHOP_BUYOUT_BETTY_* constant docs for the old dirty-counter estimates.
     for (step_name, arm) in [
         (
             "watch unseeded purchased product in pack after Start",

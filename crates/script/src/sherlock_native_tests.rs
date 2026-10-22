@@ -387,6 +387,7 @@ fn with_tick<R>(
     let mut actions = NativeActions { _private: () };
     let mut output = Output;
     let mut native = NativeTick {
+        walk_danger: None,
         state: None,
         service_authority: None,
         prompt_port: None,
@@ -401,6 +402,7 @@ fn with_tick<R>(
             active_now: Duration::from_millis(tick * 600),
             wall_now: Instant::now(),
             ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: !world.held,
         },
@@ -411,6 +413,7 @@ fn with_tick<R>(
             snapshot: Some(&world.snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                walk_danger: None,
                 selected: Some(&world.data),
                 reach: None,
                 reach_flood: None,
@@ -1261,6 +1264,7 @@ fn tick_sherlock_slot(slot: &mut crate::slot::SlotScript, world: &World, tick: u
         snapshot: Some(&world.snapshot),
         obj_names: None,
         compiled: crate::CompiledTick {
+            walk_danger: None,
             selected: Some(&world.data),
             reach: None,
             reach_flood: None,

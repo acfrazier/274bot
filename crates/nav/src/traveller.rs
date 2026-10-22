@@ -34,7 +34,8 @@ use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
 use crate::transport::{
     is_dialogue_door_loc, DoorDir, TransportEdge, TransportKind, AL_KHARID_TOLL_LEFT_LOC_ID,
-    AL_KHARID_TOLL_RIGHT_LOC_ID, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+    AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID, CELLAR_SHIFT,
+    SHANTAY_HENGE_LOC_ID,
 };
 
 mod dialog;
@@ -1286,11 +1287,12 @@ struct TransportHop {
     npc_index: Option<usize>,
     npc_recovery: NpcRecovery,
     /// The tick a door Open was sent: one crossing probe
-    /// ([`door_step_pending`]) on a later delivered tick. The troll spends
-    /// it on the next tick, except that it keeps it while the player stands
-    /// on `at` behind a closed leaf and a wall (a step there would cancel the
-    /// queued Open); the cheap hop keeps it until the player stands on `at`
-    /// with a wall-clear step to `to`.
+    /// ([`door_step_pending`]) on a later delivered tick. Only the troll
+    /// reads it (a door hop can send its Open before the troll rule marks
+    /// it, at creation or during the approach): it
+    /// spends it on the next tick, except that it keeps it while the player
+    /// stands on `at` behind a closed leaf and a wall (a step there would
+    /// cancel the queued Open).
     open_sent_tick: Option<u32>,
     /// Door recovery's re-Open pacing (see [`DoorRetry`]).
     door_retry: DoorRetry,

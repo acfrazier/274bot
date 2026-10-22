@@ -39,7 +39,6 @@ rs2	scripts/_test/scripts/cheats/cheat_clearinv.rs2
 rs2	scripts/_test/scripts/cheats/cheat_com.rs2
 rs2	scripts/_test/scripts/cheats/cheat_help.rs2
 rs2	scripts/_test/scripts/cheats/cheat_interactions.rs2
-rs2	scripts/_test/scripts/cheats/cheat_item.rs2
 rs2	scripts/_test/scripts/cheats/cheat_macro_event.rs2
 rs2	scripts/_test/scripts/cheats/cheat_magic.rs2
 rs2	scripts/_test/scripts/cheats/cheat_maxme.rs2

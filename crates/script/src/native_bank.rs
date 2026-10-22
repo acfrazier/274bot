@@ -330,6 +330,8 @@ pub struct BankCount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankReceipt {
     pub complete: bool,
+    /// Units whose deposit the bank machine confirmed in the observed rows.
+    pub deposited: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -719,22 +721,26 @@ impl NativeMachine for BankMachine {
                     }
                     let mut first_target = None;
                     if let Some(access) = stand.as_ref() {
-                        let open_first = access
-                            .bank
-                            .definition
-                            .and_then(|definition| definition.open_first);
-                        let opening_first = self.open_stage == 0 && open_first.is_some();
-                        let operation =
-                            (if opening_first { open_first } else { None }).or_else(|| {
-                                access
-                                    .bank
-                                    .definition
-                                    .and_then(|definition| definition.object)
-                            });
-                        if let Some(operation) = operation {
-                            let Some(candidate) =
-                                catalog_object_loc(cx, access.stand_tile, operation)
-                            else {
+                        let definition = access.bank.definition;
+                        let object = definition.and_then(|definition| definition.object);
+                        let open_first = definition.and_then(|definition| definition.open_first);
+                        if object.is_some() || open_first.is_some() {
+                            // Another player can leave the final bank target open.
+                            // Probe it before the opener, as ObjectOpen does.
+                            let target = object
+                                .and_then(|operation| {
+                                    catalog_object_loc(cx, access.stand_tile, operation)
+                                        .map(|candidate| (operation, candidate, false))
+                                })
+                                .or_else(|| {
+                                    open_first.filter(|_| self.open_stage == 0).and_then(
+                                        |operation| {
+                                            catalog_object_loc(cx, access.stand_tile, operation)
+                                                .map(|candidate| (operation, candidate, true))
+                                        },
+                                    )
+                                });
+                            let Some((operation, candidate, opening_first)) = target else {
                                 return Poll::Pending;
                             };
                             // A player-radius area and strict reachability
@@ -1649,7 +1655,7 @@ impl NativeMachine for BankMachine {
                         current.is_some_and(|now| now < before)
                     };
                     if moved {
-                        if let BankAction::DepositProducts { .. } = &self.request.action {
+                        if !withdrawing {
                             let after = current.unwrap_or(before);
                             self.deposited = self
                                 .deposited
@@ -2029,9 +2035,7 @@ impl BankMachine {
             before_slots.saturating_sub(pack_rows(pack))
         });
         if fell > 0 {
-            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
-                self.deposited = self.deposited.saturating_add(fell as u32);
-            }
+            self.deposited = self.deposited.saturating_add(fell as u32);
             self.capacity_freed = self.capacity_freed.saturating_add(freed);
             self.deposits = self.deposits.saturating_add(1);
         }
@@ -2194,12 +2198,10 @@ impl BankMachine {
                 "main-count-fell",
                 api::hostlog::Level::Debug,
             );
-            if matches!(self.request.action, BankAction::DepositProducts { .. }) {
-                let after = main_now.unwrap_or(before);
-                self.deposited = self
-                    .deposited
-                    .saturating_add(before.saturating_sub(after).max(0) as u32);
-            }
+            let after = main_now.unwrap_or(before);
+            self.deposited = self
+                .deposited
+                .saturating_add(before.saturating_sub(after).max(0) as u32);
             if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
                 let freed = before_slots.saturating_sub(pack_rows(pack));
                 self.capacity_freed = self.capacity_freed.saturating_add(freed);
@@ -2406,7 +2408,10 @@ impl BankMachine {
     }
 
     fn receipt(&self, complete: bool) -> BankReceipt {
-        BankReceipt { complete }
+        BankReceipt {
+            complete,
+            deposited: self.deposited,
+        }
     }
 }
 
@@ -2583,7 +2588,7 @@ impl NativeMachine for Deposit {
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         match self.core.poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(self.core.deposited)),
+            Poll::Ready(Ok(receipt)) => Poll::Ready(Ok(receipt.deposited)),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
         }
     }
@@ -3256,6 +3261,106 @@ mod tests {
     }
 
     #[test]
+    fn catalog_already_open_duel_chest_banks_without_an_opener() {
+        let bank = catalog_bank("Duel Arena");
+        let loc_tile = WorldTile {
+            x: bank.tile.x - 1,
+            z: bank.tile.z,
+            level: bank.tile.level,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            3194,
+            "Open chest",
+            "Bank",
+            loc_tile,
+            1,
+        )]);
+        let reach = object_reach_view(bank.tile, loc_tile);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 0,
+            name: Some(Arc::from("Open chest")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+            let handle = tick
+                .actions
+                .begin::<BankMachine>(open_request(access), &mut tick.cx)
+                .unwrap();
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            handle
+        });
+        assert_eq!(
+            ledger.as_ref().unwrap().outbox.len(),
+            1,
+            "an already-open chest must receive the Bank action"
+        );
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::Loc {
+                action,
+                id: Some(3194),
+                ..
+            }) if action == "Bank"
+        ));
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(receipt)) if receipt.complete));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
+    fn catalog_booth_opens_without_an_object_opener() {
+        let bank = catalog_bank("Catherby");
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(bank.tile));
+        snapshot.seed_locs(vec![bank_object_loc(
+            2213,
+            "Bank booth",
+            "Use-quickly",
+            bank.tile,
+            0,
+        )]);
+        let access = Arc::new(BankStandAccess {
+            bank,
+            stand_tile: bank.tile,
+            kind: AccessKind::Booth,
+            stand_op: 1,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut ledger = None;
+        let handle = start_bank(&snapshot, &mut ledger, open_request(access));
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+        });
+        assert!(matches!(
+            acknowledge(&mut ledger, 1),
+            HostEffect::Interaction(InteractReq::OpenStand {
+                kind,
+                name: Some(name),
+                stand_op: Some(1),
+                ..
+            }) if kind == "booth" && name == "Bank booth"
+        ));
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(receipt)) if receipt.complete));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    #[test]
     fn catalog_open_first_bank_resolves_live_loc_stages_near_stand() {
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
@@ -3311,17 +3416,21 @@ mod tests {
         with_tick_reach(&snapshot, &reach, &mut ledger, 3, |tick| {
             assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         });
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
         assert!(matches!(
-            ledger
-                .as_ref()
-                .and_then(|ledger| ledger.outbox.first())
-                .map(|action| &action.effect),
-            Some(HostEffect::Interaction(InteractReq::Loc {
+            acknowledge(&mut ledger, 3),
+            HostEffect::Interaction(InteractReq::Loc {
                 action,
                 id: Some(4002),
                 ..
-            })) if action.as_str() == "Bank"
+            }) if action == "Bank"
         ));
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), Vec::new());
+        let result = with_tick_reach(&snapshot, &reach, &mut ledger, 4, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(matches!(result, Poll::Ready(Ok(receipt)) if receipt.complete));
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
     #[test]
@@ -4523,7 +4632,7 @@ mod tests {
         );
         assert!(matches!(
             poll,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
@@ -4577,7 +4686,7 @@ mod tests {
         });
         assert!(matches!(
             settled,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -4715,7 +4824,7 @@ mod tests {
         };
         assert!(matches!(
             settled_at_boundary,
-            Poll::Ready(Ok(BankReceipt { complete: true }))
+            Poll::Ready(Ok(BankReceipt { complete: true, .. }))
         ));
     }
 
@@ -6095,7 +6204,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "{settled:?}"
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -6731,7 +6840,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "one row was already freed; the delta is delivered: {settled:?}"
         );
         assert!(
@@ -6846,7 +6955,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "the shrimp row and the anchovy row are the two slots: {settled:?}"
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -6929,7 +7038,7 @@ mod tests {
             tick.actions.poll(&handle, &mut tick.cx)
         });
         assert!(
-            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true }))),
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
             "the held target is already met: {settled:?}"
         );
         assert!(

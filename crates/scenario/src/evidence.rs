@@ -19,7 +19,9 @@ pub struct Evidence {
     pub outcome: &'static str,
     /// The proof / arm predicate that passed or failed.
     pub predicate: String,
-    /// Game ticks the run took (seed waits are not counted).
+    /// Observed game ticks the run took (one per `PLAYER_INFO`; seed
+    /// waits are not counted). Client cycles and dirty snapshots do
+    /// not count.
     pub ticks: u32,
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,6 +47,9 @@ pub struct Evidence {
     /// Random-event Guardian episode receipt, when the scenario observed one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub random_event: Option<serde_json::Value>,
+    /// Pre-Start ground-loot isolation guard, when the scenario used one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ground_guard: Option<GroundGuardEvidence>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -60,6 +65,24 @@ pub struct ProtectWindowEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kill_evidence: Option<&'static str>,
     pub prayer_off_tick: Option<u32>,
+}
+
+/// Content-timed fixture isolation, counted only by observed game ticks
+/// (one per `PLAYER_INFO`). Client cycles and dirty snapshots do not count.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundGuardEvidence {
+    pub start_tick: u32,
+    pub ticks_waited: u32,
+    pub budget_game_ticks: u32,
+    pub items_seen: Vec<GroundGuardItem>,
+}
+
+/// Maximum observed stack count for one exact ground-item identity and tile.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroundGuardItem {
+    pub id: i32,
+    pub count: i32,
+    pub tile: [i32; 3],
 }
 
 /// One inventory slot's row; `name` resolves through the runner's obj
@@ -142,6 +165,7 @@ impl Evidence {
             receipt: None,
             protect_window: None,
             random_event: None,
+            ground_guard: None,
             scene: snap.scene_state(),
         }
     }
@@ -255,7 +279,7 @@ mod tests {
             "walk",
             "FAIL",
             "arrived(3220,3212,0)".into(),
-            Some("step 1: arrived(3220,3216,0) not seen within 90 ticks".into()),
+            Some("step 1: arrived(3220,3216,0) not seen within 90 game ticks".into()),
             90,
             &snap,
             None,
@@ -266,7 +290,7 @@ mod tests {
         assert_eq!(v["outcome"], "FAIL");
         assert_eq!(
             v["message"],
-            "step 1: arrived(3220,3216,0) not seen within 90 ticks"
+            "step 1: arrived(3220,3216,0) not seen within 90 game ticks"
         );
         assert!(
             v["inv"][0].get("name").is_none(),

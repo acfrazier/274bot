@@ -3,6 +3,13 @@ use super::scenarios::{
 };
 use super::*;
 
+const WATERFALL_COMPLETION_ACK: Proof = Proof::FreshQuestCompletion {
+    chat_needle: "Congratulations! Quest complete!",
+    main_root_component_id: 297,
+    component_id: 301,
+    text: "You have completed the Waterfall Quest!",
+};
+
 #[test]
 fn budget_s_from_parses_rs2b0t_style_seconds() {
     assert_eq!(budget_s_from(None), None);
@@ -1148,9 +1155,9 @@ fn smithing_bot_deposit_watch_covers_full_first_trip_only() {
             .find(|step| step.name == "watch script-smithed product enter a fresh bank")
             .unwrap_or_else(|| panic!("{name} has product deposit watch"));
         assert_eq!(
-                deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
-                "{name}: deposit dirty-budget covers remaining forge (engine 5/bar + L1-4 + Make-10 + bank), not equated to engine ticks"
-            );
+            deposit.wait.budget_ticks, SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS,
+            "{name}: deposit game-tick budget retains the bounded forge/bank allowance"
+        );
         assert!(
             matches!(
                 deposit.wait.arm,
@@ -1195,7 +1202,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     let eggs = get("herblore_secondaries").expect("herblore_secondaries");
     assert_eq!(
         eggs.settings.deadline, HERBLORE_EGG_DEADLINE,
-        "eggs wall covers food-exhaust + dungeon bank + return; newt keeps 180s"
+        "420s retains the estimated egg cycle wall; the 600- and 240-game-tick waits can exceed it together"
     );
     let deposit = eggs
         .steps
@@ -1204,7 +1211,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         .expect("deposit watch");
     assert_eq!(
             deposit.wait.budget_ticks, HERBLORE_EGG_DEPOSIT_WATCH_TICKS,
-            "deposit dirty-budget is runner increments sized to 100-tick respawn + remaining food + dungeon, not equated to engine ticks"
+            "deposit game-tick budget allows for the 99-game-tick respawn, remaining food and dungeon route"
         );
     assert!(
         matches!(
@@ -1250,7 +1257,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         .expect("return");
     assert_eq!(
         ret.wait.budget_ticks, HERBLORE_EGG_RETURN_WATCH_TICKS,
-        "return dirty-budget covers reverse dungeon only"
+        "return game-tick budget covers the reverse dungeon route"
     );
     let further = eggs
         .steps
@@ -1261,10 +1268,26 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
         further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
         "further-egg arm is not loosened"
     );
-    let newt = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
-    assert_eq!(
-        newt.settings.deadline, SCRIPT_GOLD_DEADLINE,
-        "newt deadline stays 180s"
+}
+
+#[test]
+fn herblore_newt_deadline_covers_measured_route_with_headroom() {
+    // B2's completed HerbloreSecondaries cycle needed 412 game ticks.
+    // Use that measured cycle as a conservative budget for the newt branch.
+    let measured_cycle = Duration::from_millis(412 * 600);
+    let scenario = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("newt Start");
+    for step in &scenario.steps[start + 1..] {
+        assert_eq!(step.wait.budget_ticks, 150, "{}", step.name);
+    }
+    let runner = runner::ScenarioRunner::new(scenario);
+    assert!(
+        runner.deadline() >= measured_cycle + measured_cycle / 2,
+        "newt needs the measured cycle plus 50% headroom, not the short gold deadline"
     );
 }
 
@@ -1759,6 +1782,10 @@ fn maze_owned_is_registered_and_uses_one_authentic_macro_trigger() {
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("passive catalog Start");
     assert_eq!(scenario.settings.start_script, Some("TradeBot"));
+    assert!(
+        scenario.settings.nav.engine_speed_ms.is_none(),
+        "Maze must not send a world-wide ::speed cheat"
+    );
     assert!(
         start > 0,
         "mainland hop must stand on an unblocked courtyard tile before Start"
@@ -2381,7 +2408,11 @@ fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
 #[test]
 fn bank_cells_register_their_cards_injects_and_watch_chain() {
     for (name, card, deadline) in [
-        ("auto_fighter_bank", "AutoFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "auto_fighter_bank",
+            "AutoFighter",
+            SCRIPT_GOLD_DEADLINE + Duration::from_millis(202 * 600),
+        ),
         ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
@@ -2396,7 +2427,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             "ChaosDruidKiller",
             Duration::from_secs(300),
         ),
-        ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "ardy_fighter_bank",
+            "ArdyFighter",
+            ARDY_FIGHTER_BANK_DEADLINE,
+        ),
         (
             "ardy_fighter_bank_seeded",
             "ArdyFighter",
@@ -2650,45 +2685,14 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
 }
 
 #[test]
+fn chance_only_rock_crab_bank_is_retired_without_renaming_the_seeded_cell() {
+    assert!(get("rock_crab_bank").is_none());
+    let seeded = get("rock_crab_bank_seeded").expect("seeded bank proof stays runnable");
+    assert_eq!(seeded.name, "rock_crab_bank_seeded");
+}
+
+#[test]
 fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
-    let rock = get("rock_crab_bank").expect("rock_crab_bank registered");
-    assert_eq!(rock.settings.start_script, Some("RockCrab"));
-    assert_eq!(rock.settings.deadline, SCRIPT_GOLD_DEADLINE);
-    let inject = settings_inject_map(rock.settings.script_settings_inject).unwrap();
-    assert_eq!(
-        inject.get("bankStrategy"),
-        Some(&Value::String("Loot count".into()))
-    );
-    assert_eq!(inject.get("bankEveryItems"), Some(&Value::from(1.0)));
-    let start = rock
-        .steps
-        .iter()
-        .position(|step| matches!(step.kind, StepKind::StartScript))
-        .unwrap();
-    assert!(rock.steps[..start]
-        .iter()
-        .any(|step| step.name == "acknowledge dormant Rocks in the supported field before Start"));
-    assert!(rock.steps[..start].iter().any(|step| step.wait.arm
-        == Proof::EquipmentId {
-            id: COMBAT_SCIMITAR_ID
-        }));
-    for &id in &ROCK_CRAB_BANK_DEPOSIT {
-        assert!(
-            rock.steps[..start].iter().any(|step| {
-                matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
-            }),
-            "rock_crab_bank must confirm empty deposit-class id {id} before Start"
-        );
-    }
-    let watch = rock.steps[start + 1..]
-        .iter()
-        .map(|step| step.wait.arm)
-        .collect::<Vec<_>>();
-    assert!(watch.contains(&Proof::BankItemIdAny {
-        ids: &ROCK_CRAB_BANK_DEPOSIT,
-        count: 1,
-    }));
-    assert!(watch.contains(&Proof::BankClosed));
     let seeded = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded registered");
     assert_eq!(seeded.settings.start_script, Some("RockCrab"));
     assert_eq!(seeded.settings.deadline, Duration::from_secs(360));
@@ -2876,12 +2880,10 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
 
     let approach = get("fire_giant_approach").expect("fire_giant_approach registered");
     assert_eq!(approach.settings.start_script, Some("FireGiant"));
-    assert!(approach.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(approach
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = approach
         .steps
         .iter()
@@ -2960,6 +2962,111 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+    let bank_prepare = bank.steps[..start]
+        .iter()
+        .position(|step| step.name.starts_with("prepare melee stats"))
+        .expect("fire_giant_bank prepares combat stats");
+    let bank_drain = bank.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "drain setstat level-up dialogs before the hostile-field teleport"
+        })
+        .expect("fire_giant_bank drains setstat level-up dialogs");
+    let bank_tele = bank.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("fire_giant_bank hostile-field teleport");
+    assert!(
+        bank_prepare < bank_drain && bank_drain < bank_tele && bank_tele < start,
+        "combat preparation, dialog drain, hostile-field teleport, then Start"
+    );
+    assert!(matches!(
+        bank.steps[bank_drain].kind,
+        StepKind::DrainDialogs { choice: 1 }
+    ));
+    assert_eq!(bank.steps[bank_drain].wait.arm, Proof::NoActiveContinue);
+}
+
+#[test]
+fn fire_giant_bank_uses_tier40_rune_short_trip_without_seeding_earned_loot() {
+    let scenario = get("fire_giant_bank").expect("fire_giant_bank registered");
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("FireGiant starts after preparation");
+    let prepare = scenario.steps[..start]
+        .iter()
+        .find(|step| step.name.starts_with("prepare melee stats"))
+        .expect("combat preparation stays on the safe tile");
+    let StepKind::Perform { send } = &prepare.kind else {
+        panic!("combat preparation is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    for stat in ["attack", "strength", "hitpoints", "defence"] {
+        assert!(
+            emitted_has(&client, &format!("setstat {stat} {COMBAT_ATTACK_LEVEL}")),
+            "{stat} uses the existing tier-40 profile, not level 99"
+        );
+    }
+    for alias in [
+        "rune_scimitar",
+        "rune_chainbody",
+        "rune_platelegs",
+        "rune_full_helm",
+    ] {
+        assert!(emitted_has(&client, &format!("give {alias} 1")));
+    }
+    let tele = scenario.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "teleport into the hostile field only after preparation is acknowledged"
+        })
+        .expect("hostile teleport follows the equipped kit");
+    for id in [RUNE_SCIMITAR_ID, RUNE_CHAINBODY_ID, 1079, 1163] {
+        assert!(scenario.steps[..tele]
+            .iter()
+            .any(|step| step.wait.arm == Proof::EquipmentId { id }));
+    }
+    let food = scenario.steps[..tele]
+        .iter()
+        .find(|step| step.name == "stock prepared trip food after wearing the combat kit")
+        .expect("short-trip food is stocked after the kit is worn");
+    let StepKind::Perform { send } = &food.kind else {
+        panic!("food stock is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "give lobster 8"));
+    assert!(!emitted_has(&client, "give lobster 12"));
+    for arm in [
+        Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 8,
+        },
+        Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        },
+    ] {
+        assert!(scenario.steps[..start]
+            .iter()
+            .any(|step| step.wait.arm == arm));
+    }
+    assert!(scenario.steps[start + 1..].iter().any(|step| {
+        step.wait.arm
+            == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
+    }));
+    assert_eq!(scenario.settings.deadline, Duration::from_millis(746_100));
+    assert!(scenario.steps[start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks == 1500));
 }
 
 #[test]
@@ -2986,16 +3093,20 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
-        let (deadline_secs, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" => (600, 1500),
-            "green_dragon_bank_default_prepared" => (720, 1800),
-            "green_dragon_tele" => (480, 1200),
-            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => (600, 1500),
-            _ => (300, 750),
+        let (deadline, min_watch_ticks) = match name {
+            "green_dragon_bank_prepared" => (Duration::from_secs(600), 1500),
+            "green_dragon_bank_default_prepared" => (
+                GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+                1800,
+            ),
+            "green_dragon_tele" => (Duration::from_secs(480), 1200),
+            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => {
+                (Duration::from_secs(600), 1500)
+            }
+            _ => (Duration::from_secs(300), 750),
         };
         assert_eq!(
-            scenario.settings.deadline,
-            Duration::from_secs(deadline_secs),
+            scenario.settings.deadline, deadline,
             "{name}: named combat/travel qualification wall budget"
         );
         assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
@@ -3026,7 +3137,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
             scenario.steps[start + 1..]
                 .iter()
                 .all(|step| step.wait.budget_ticks >= min_watch_ticks),
-            "{name}: post-Start dirty budgets must not pre-empt the named wall"
+            "{name}: post-Start game-tick budgets must not pre-empt the named wall"
         );
     }
 
@@ -3453,12 +3564,9 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     );
 }
 
-/// The bank cells' pre-Start proofs only acknowledge the scoped weapon;
-/// the seed closure is what has to hand it over. A fixture that acked a
-/// weapon it never seeded failed the cell at the ack (rock_crab_bank,
-/// step 12). The loot-count RockCrab cell also draws nothing from the
-/// bank: its PeriodicBank trip deposits and returns, so no bank window is
-/// seeded there while the restocking cells keep theirs.
+/// The bank cells acknowledge the scoped weapon after the seed supplies it.
+/// RockCrab PeriodicBank deposits the seeded cargo and returns without
+/// withdrawing supplies. Only restocking cells need a bank food window.
 
 #[test]
 fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
@@ -3504,12 +3612,11 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
         ("ardy_fighter_bank_seeded", "adamant_scimitar"),
-        ("rock_crab_bank", "adamant_scimitar"),
         ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
-        ("fire_giant_bank", "adamant_scimitar"),
+        ("fire_giant_bank", "rune_scimitar"),
     ] {
         let written = seed(name);
         assert!(
@@ -3524,11 +3631,6 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
 
     // The loot-count RockCrab cell seeds no bank stock; the restocking
     // cells keep the window their BankRun withdraws from.
-    let rock = seed("rock_crab_bank");
-    assert!(
-        !rock.contains("givebank"),
-        "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
-    );
     let seeded = seed("rock_crab_bank_seeded");
     assert!(
         seeded.contains("give uncut_sapphire 1"),
@@ -3793,7 +3895,7 @@ fn hostile_fields_follow_safe_pretele_precondition_acknowledgements() {
         "green_dragon",
         "fire_giant",
         "ardy_fighter",
-        "rock_crab_bank",
+        "rock_crab_bank_seeded",
         "green_dragon_bank",
         "fire_giant_approach",
         "fire_giant_bank",
@@ -4819,7 +4921,7 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
     let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("searchRadius").and_then(Value::as_f64),
-        Some(8.0)
+        Some(10.0)
     );
 
     let flax = get("flax_picker").expect("flax_picker");
@@ -4873,6 +4975,554 @@ fn location_world_cases_register_exact_settings_and_witnesses() {
     ] {
         assert!(names().contains(&name));
     }
+}
+
+#[test]
+fn gnome_course_radius_starts_off_course_and_watches_the_log_before_the_lap() {
+    let plain = get("gnome_course").expect("gnome_course");
+    let radius = get("gnome_course_radius").expect("gnome_course_radius");
+    let start_index = |scenario: &Scenario| {
+        scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("the cell starts its card")
+    };
+    let (plain_start, radius_start) = (start_index(&plain), start_index(&radius));
+    let course_start_arm = Proof::ArrivedNear {
+        x: 2474,
+        z: 3436,
+        level: 0,
+        radius: 2,
+    };
+
+    // The plain cell keeps its steps: tele to the course start, Start, six lap
+    // watches, and no witness.
+    let plain_tele = &plain.steps[plain_start - 1];
+    assert_eq!(
+        plain_tele.name,
+        "tele to the gnome course start before Start"
+    );
+    assert_eq!(plain_tele.wait.arm, course_start_arm);
+    assert_eq!(plain_tele.wait.budget_ticks, 200);
+    assert_eq!(plain.steps.len(), plain_start + 1 + 6);
+    assert!(plain
+        .steps
+        .iter()
+        .all(|step| !matches!(step.kind, StepKind::Await { .. })));
+
+    // The radius cell: the same seed, tele off the course, Start, the witness,
+    // tele to the course start, then the same six lap watches.
+    assert_eq!(radius_start, plain_start);
+    assert_eq!(radius.steps.len(), plain.steps.len() + 2);
+    for index in 0..plain_start - 1 {
+        assert_eq!(
+            radius.steps[index].name, plain.steps[index].name,
+            "seed step {index}"
+        );
+    }
+    for (offset, plain_watch) in plain.steps[plain_start + 1..].iter().enumerate() {
+        let radius_watch = &radius.steps[radius_start + 3 + offset];
+        assert_eq!(radius_watch.name, plain_watch.name);
+        assert_eq!(radius_watch.wait.arm, plain_watch.wait.arm);
+        assert_eq!(
+            radius_watch.wait.budget_ticks,
+            plain_watch.wait.budget_ticks
+        );
+    }
+    assert_eq!(radius.proof, plain.proof);
+
+    let off_course = &radius.steps[radius_start - 1];
+    assert_eq!(
+        off_course.name,
+        "tele off the course, 11 tiles from the Log balance, before Start"
+    );
+    assert_eq!(
+        off_course.wait.arm,
+        Proof::Arrived {
+            x: 2474,
+            z: 3446,
+            level: 0
+        }
+    );
+    assert_eq!(off_course.wait.budget_ticks, 200);
+    let StepKind::Perform { send } = &off_course.kind else {
+        panic!("the off-course tele is a one-shot Perform");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "tele 0,38,53,42,54"));
+
+    // Right after Start: the witness. Like every first post-Start step it is a
+    // "watch" on the standing watch budget.
+    let witness = &radius.steps[radius_start + 1];
+    let StepKind::Await { evidence, .. } = &witness.kind else {
+        panic!("the step after Start is the witness");
+    };
+    assert_eq!(
+        *evidence,
+        "gnome_course_log_balance_left_alone_beyond_the_search_radius"
+    );
+    assert_eq!(
+        witness.name,
+        "watch the bot leave the Log balance alone beyond its search radius"
+    );
+    assert_eq!(witness.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+
+    let back = &radius.steps[radius_start + 2];
+    assert_eq!(
+        back.name,
+        "tele to the gnome course start after the witness"
+    );
+    assert_eq!(back.wait.arm, course_start_arm);
+    assert_eq!(back.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+    let StepKind::Perform { send } = &back.kind else {
+        panic!("the tele back is a one-shot Perform");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    assert!(emitted_has(&client, "tele 0,38,53,42,44"));
+}
+
+/// One loc as the client lists it: a single row at the loc's origin tile.
+fn gnome_loc(id: i32, name: &str, x: i32, z: i32, actions: &[&str]) -> api::snapshot::LocView {
+    api::snapshot::LocView {
+        typecode: 0,
+        info: 0,
+        id,
+        name: Some(name.into()),
+        description: None,
+        actions: actions
+            .iter()
+            .map(|action| Some((*action).into()))
+            .collect(),
+        tile: WorldTile { x, z, level: 0 },
+        distance: 0,
+        layer: api::snapshot::LocLayer::Ground,
+        shape: 10,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: true,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+/// Every level-0 loc named like a gnome course step near the course, at its
+/// origin tile: `content/maps/m38_53.jm2:5568-6111`, and the Log balance as
+/// raw plane 1 over a bridge tile (`:6606`, `:4339`).
+fn gnome_level0_course_locs() -> Vec<api::snapshot::LocView> {
+    let mut locs = vec![gnome_loc(2295, "Log balance", 2474, 3435, &["Walk-across"])];
+    for x in [2471, 2473, 2475] {
+        locs.push(gnome_loc(2285, "Obstacle net", x, 3425, &["Climb-over"]));
+    }
+    for x in [2483, 2485, 2487] {
+        locs.push(gnome_loc(2286, "Obstacle net", x, 3426, &["Climb-over"]));
+    }
+    for z in [3431, 3435] {
+        locs.push(gnome_loc(
+            154,
+            "Obstacle pipe",
+            2484,
+            z,
+            &["Squeeze-through"],
+        ));
+        locs.push(gnome_loc(
+            4058,
+            "Obstacle pipe",
+            2487,
+            z,
+            &["Squeeze-through"],
+        ));
+    }
+    locs
+}
+
+/// The snapshot of one observed game tick, in game, on a settled scene.
+fn gnome_radius_game_tick(
+    game_tick: u32,
+    tile: (i32, i32),
+    agility_xp: i32,
+    locs: Vec<api::snapshot::LocView>,
+) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tick(game_tick);
+    snapshot.seed_tile(WorldTile {
+        x: tile.0,
+        z: tile.1,
+        level: 0,
+    });
+    snapshot.seed_stats(vec![api::snapshot::StatView {
+        index: AGILITY_STAT,
+        name: "agility".into(),
+        effective: 1,
+        base: 1,
+        xp: agility_xp,
+        used: true,
+    }]);
+    snapshot.seed_locs(locs);
+    snapshot
+}
+
+/// The witness' `ready` closure of a fresh `gnome_course_radius` scenario.
+fn gnome_radius_ready() -> impl Fn(&GameSnapshot) -> bool {
+    let scenario = get("gnome_course_radius").expect("gnome_course_radius");
+    let step = scenario
+        .steps
+        .into_iter()
+        .find(|step| {
+            matches!(
+                &step.kind,
+                StepKind::Await { evidence, .. } if *evidence == GNOME_RADIUS_WITNESS_EVIDENCE
+            )
+        })
+        .expect("the radius cell carries its witness");
+    let StepKind::Await { ready, .. } = step.kind else {
+        unreachable!("the step was found by its Await kind");
+    };
+    ready
+}
+
+fn gnome_witness_tile() -> (i32, i32) {
+    let tile = GNOME_RADIUS_WITNESS_TILE;
+    (tile.x, tile.z)
+}
+
+/// The first game tick at which a fresh witness accepts when the bot stands on
+/// the witness tile and `locs` is listed on each game tick, over three windows.
+fn gnome_radius_first_accepted_game_tick(
+    locs: impl Fn() -> Vec<api::snapshot::LocView>,
+) -> Option<u32> {
+    let ready = gnome_radius_ready();
+    (1..=3 * GNOME_RADIUS_WITNESS_GAME_TICKS).find(|game_tick| {
+        ready(&gnome_radius_game_tick(
+            *game_tick,
+            gnome_witness_tile(),
+            0,
+            locs(),
+        ))
+    })
+}
+
+#[test]
+fn gnome_radius_witness_accepts_after_the_still_window_with_the_log_beyond_the_radius() {
+    let ready = gnome_radius_ready();
+    for game_tick in 1..GNOME_RADIUS_WITNESS_GAME_TICKS {
+        assert!(
+            !ready(&gnome_radius_game_tick(
+                game_tick,
+                gnome_witness_tile(),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "game tick {game_tick} is inside the window"
+        );
+    }
+    let last = gnome_radius_game_tick(
+        GNOME_RADIUS_WITNESS_GAME_TICKS,
+        gnome_witness_tile(),
+        0,
+        gnome_level0_course_locs(),
+    );
+    assert!(ready(&last));
+    assert!(
+        ready(&last),
+        "later frames of the same game tick keep the verdict"
+    );
+}
+
+#[test]
+fn gnome_radius_witness_counts_each_game_tick_once() {
+    let ready = gnome_radius_ready();
+    // The runner calls `ready` on every client frame; frames of the same game
+    // tick are one observation.
+    let first = gnome_radius_game_tick(1, gnome_witness_tile(), 0, gnome_level0_course_locs());
+    for _ in 0..200 {
+        assert!(!ready(&first));
+    }
+    for game_tick in 2..GNOME_RADIUS_WITNESS_GAME_TICKS {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            gnome_witness_tile(),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_game_tick(
+        GNOME_RADIUS_WITNESS_GAME_TICKS,
+        gnome_witness_tile(),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_never_accepts_once_the_bot_has_left_the_tile() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    for game_tick in 1..=4 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    // A bot that ignores the radius clicks the Log balance; its first step
+    // takes it off the tile.
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    assert!(!ready(&gnome_radius_game_tick(
+        5,
+        (x, z - 1),
+        0,
+        gnome_level0_course_locs()
+    )));
+    // Standing still elsewhere never counts, and walking back onto the tile
+    // does not clear the refusal.
+    for game_tick in 6..=5 + 3 * window {
+        assert!(
+            !ready(&gnome_radius_game_tick(
+                game_tick,
+                (x, z - 6),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "game tick {game_tick}, still elsewhere"
+        );
+    }
+    for game_tick in 6 + 3 * window..=5 + 6 * window {
+        assert!(
+            !ready(&gnome_radius_game_tick(
+                game_tick,
+                (x, z),
+                0,
+                gnome_level0_course_locs()
+            )),
+            "game tick {game_tick}, back on the tile"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_never_accepts_after_agility_xp_rises() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    for game_tick in 1..=4 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    for game_tick in 5..=4 + 3 * window {
+        assert!(
+            !ready(&gnome_radius_game_tick(
+                game_tick,
+                (x, z),
+                75,
+                gnome_level0_course_locs()
+            )),
+            "game tick {game_tick}, after the obstacle paid XP"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_waits_for_the_teleport_to_land() {
+    let (x, z) = gnome_witness_tile();
+    let ready = gnome_radius_ready();
+    // Observations a tile short of the witness tile come before the watch
+    // began: they are neither counted nor refused.
+    for game_tick in 1..=5 {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z + 1),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    for game_tick in 6..5 + window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_game_tick(
+        5 + window,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_needs_the_log_beyond_the_radius_on_consecutive_game_ticks() {
+    let (x, z) = gnome_witness_tile();
+    let window = GNOME_RADIUS_WITNESS_GAME_TICKS;
+    let ready = gnome_radius_ready();
+    let without_log = || {
+        let mut locs = gnome_level0_course_locs();
+        locs.retain(|loc| loc.id != 2295);
+        locs
+    };
+    // One game tick without the Log balance in the scene breaks the run.
+    for game_tick in 1..window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(!ready(&gnome_radius_game_tick(
+        window,
+        (x, z),
+        0,
+        without_log()
+    )));
+    for game_tick in window + 1..2 * window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    assert!(ready(&gnome_radius_game_tick(
+        2 * window,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+
+    // A scene that is not ready breaks it as well.
+    let ready = gnome_radius_ready();
+    for game_tick in 1..window {
+        assert!(!ready(&gnome_radius_game_tick(
+            game_tick,
+            (x, z),
+            0,
+            gnome_level0_course_locs()
+        )));
+    }
+    let mut loading = gnome_radius_game_tick(window, (x, z), 0, gnome_level0_course_locs());
+    loading.seed_ingame(1);
+    assert!(!ready(&loading));
+    assert!(!ready(&gnome_radius_game_tick(
+        window + 1,
+        (x, z),
+        0,
+        gnome_level0_course_locs()
+    )));
+}
+
+#[test]
+fn gnome_radius_witness_does_not_accept_without_the_log_or_with_a_course_loc_in_range() {
+    // The Log balance is not in the scene at all.
+    assert_eq!(
+        gnome_radius_first_accepted_game_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.retain(|loc| loc.id != 2295);
+            locs
+        }),
+        None
+    );
+    // The Log balance is inside the radius (6 tiles away).
+    assert_eq!(
+        gnome_radius_first_accepted_game_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.retain(|loc| loc.id != 2295);
+            locs.push(gnome_loc(2295, "Log balance", 2474, 3440, &["Walk-across"]));
+            locs
+        }),
+        None
+    );
+    // The Log balance is 11 away, but another obstacle the bot's search
+    // could take is inside the radius.
+    assert_eq!(
+        gnome_radius_first_accepted_game_tick(|| {
+            let mut locs = gnome_level0_course_locs();
+            locs.push(gnome_loc(2285, "Obstacle net", 2474, 3440, &["Climb-over"]));
+            locs
+        }),
+        None
+    );
+}
+
+#[test]
+fn gnome_radius_witness_ignores_locs_the_bots_own_search_ignores() {
+    let window = Some(GNOME_RADIUS_WITNESS_GAME_TICKS);
+    for (label, extra) in [
+        (
+            "a course-named loc without actions",
+            gnome_loc(3552, "Balancing rope", 2474, 3441, &[]),
+        ),
+        (
+            "a course-named loc whose only action is hidden",
+            gnome_loc(2285, "Obstacle net", 2474, 3441, &["hidden"]),
+        ),
+        (
+            "a loc with another name",
+            gnome_loc(1276, "Tree", 2474, 3441, &["Chop down"]),
+        ),
+        ("a course-named loc on another plane", {
+            let mut loc = gnome_loc(2313, "Tree branch", 2474, 3441, &["Climb"]);
+            loc.tile.level = 1;
+            loc
+        }),
+    ] {
+        assert_eq!(
+            gnome_radius_first_accepted_game_tick(|| {
+                let mut locs = gnome_level0_course_locs();
+                locs.push(extra.clone());
+                locs
+            }),
+            window,
+            "{label} is inside the radius but is no candidate for the bot"
+        );
+    }
+}
+
+#[test]
+fn gnome_radius_witness_tile_is_one_tile_beyond_the_radius_of_every_level0_course_loc() {
+    let radius = get("gnome_course_radius").expect("gnome_course_radius");
+    let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
+    let injected = inject
+        .get("searchRadius")
+        .and_then(Value::as_f64)
+        .expect("the radius cell injects searchRadius") as i32;
+    let tile = GNOME_RADIUS_WITNESS_TILE;
+    let distance =
+        |loc: &api::snapshot::LocView| (loc.tile.x - tile.x).abs().max((loc.tile.z - tile.z).abs());
+    let locs = gnome_level0_course_locs();
+    assert_eq!(
+        locs.iter().map(distance).min(),
+        Some(injected + 1),
+        "radius 10 sees no course loc from the witness tile and radius 11 sees one"
+    );
+    let log = locs
+        .iter()
+        .find(|loc| loc.id == 2295)
+        .map(distance)
+        .expect("the Log balance is listed");
+    // The default `searchRadius` is 20 (`AgilityBot.ts:34`).
+    assert!((injected + 1..=20).contains(&log));
+    // `TravelToCourse` only walks the bot back from more than 20 tiles away
+    // (`AgilityBot.ts:19-25`).
+    assert!((tile.x - 2474).abs().max((tile.z - 3436).abs()) <= 20);
 }
 
 #[test]
@@ -5015,7 +5665,23 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
     assert!(brim.steps[..start].iter().any(|step| step.name
-        == "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+        == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+    let seed_step = brim.steps[..start]
+        .iter()
+        .find(|step| {
+            step.name
+                == "seed Agility 75, 1000 Coins and ten Lobsters, then tele to the arena entrance"
+        })
+        .expect("Brimhaven seeds level 75");
+    let StepKind::Perform { send } = &seed_step.kind else {
+        panic!("Brimhaven seed is a one-shot Perform");
+    };
+    let mut seed_client = native_seed_client();
+    let mut seed_snapshot = GameSnapshot::new();
+    seed_snapshot.rebuild(&seed_client);
+    assert!(send(&mut seed_client, &seed_snapshot));
+    assert!(emitted_has(&seed_client, "advancestat agility 75"));
+    assert!(!emitted_has(&seed_client, "advancestat agility 84"));
     assert!(seed.contains(&Proof::ChatClosed));
     assert!(seed.contains(&Proof::ItemId {
         id: 995,
@@ -5045,11 +5711,12 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 count: 800,
             },
             Proof::Varp { id: 309, min: 2 },
-            Proof::ArrivedNear {
-                x: 2805,
-                z: 9590,
+            Proof::VisitedWithin {
+                min_x: 2752,
+                max_x: 2815,
+                min_z: 9536,
+                max_z: 9599,
                 level: 3,
-                radius: 2,
             },
             Proof::StatXpGain {
                 id: AGILITY_STAT,
@@ -6504,8 +7171,8 @@ fn alternate_camp_and_fight_option_cases_register() {
         inject.get("thieveTarget"),
         Some(&Value::String("Guard".into()))
     );
-    // One full opening stall session: the 289 Guard catch comes from it.
-    assert_eq!(inject.get("foodTarget"), Some(&Value::from(27.0)));
+    // Prepared food keeps the primary pickpocket cycle independent of a stall catch.
+    assert_eq!(inject.get("foodTarget"), Some(&Value::from(1.0)));
     assert_eq!(inject.get("restockAtFood"), Some(&Value::from(0.0)));
     assert_eq!(inject.get("bankAtLootSlots"), Some(&Value::from(1.0)));
     let start = thiever_fight
@@ -6519,7 +7186,7 @@ fn alternate_camp_and_fight_option_cases_register() {
         .collect::<Vec<_>>();
     assert!(seed.contains(&Proof::Stat {
         id: THIEVING_STAT,
-        min: 40,
+        min: 99,
     }));
     assert!(seed.contains(&Proof::Stat {
         id: 0,
@@ -6532,6 +7199,11 @@ fn alternate_camp_and_fight_option_cases_register() {
     assert!(seed.contains(&Proof::EquipmentId {
         id: COMBAT_SCIMITAR_ID,
     }));
+    assert!(seed.contains(&Proof::ItemId {
+        id: CAKE_ID,
+        count: 8,
+    }));
+    assert!(seed.contains(&Proof::NpcNameTargetingLocal { name: "Guard" }));
     let watch = thiever_fight.steps[start + 1..]
         .iter()
         .map(|step| step.wait.arm)
@@ -6650,9 +7322,54 @@ fn alternate_camp_and_fight_option_cases_register() {
     ] {
         assert!(names().contains(&name));
     }
-    // The opening stall session and Guard fight come before the gold chain.
+    // The prepared real Guard fight comes before the gold chain.
     assert!(names().contains(&"ardy_thiever_fight"));
     assert_eq!(thiever_fight.settings.deadline, ARDY_THIEVER_FIGHT_DEADLINE);
+}
+
+#[test]
+fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
+    use api::snapshot::GameSnapshot;
+    let scenario = get("ardy_thiever_fight").unwrap();
+    let mut client = native_seed_client();
+    let prepare = scenario
+        .steps
+        .iter()
+        .find(|step| step.name.starts_with("seed thieving, combat stats"))
+        .unwrap();
+    let StepKind::Perform { send } = &prepare.kind else {
+        panic!("the account preparation is a Perform");
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(send(&mut client, &snapshot));
+    assert!(emitted_has(&client, "setstat thieving 99"));
+    assert!(emitted_has(&client, "give cake 8"));
+    assert!(!emitted_has(&client, "spawn"));
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let attack = scenario.steps[..start]
+        .iter()
+        .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
+        .expect("a real Guard must target the player before Start");
+    let StepKind::Perform { send } = &attack.kind else {
+        panic!("the fixture sends one ordinary Attack");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(!send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
+    plant_named_banker(&mut client, "Guard", 21, 20);
+    std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
+        vec![Some("Attack".into()), None, None, None, None];
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert!(client.out.pos > 0, "the real Guard receives an NPC Attack");
 }
 
 #[test]
@@ -6994,14 +7711,13 @@ fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
 #[test]
 fn gnome_magic_chop_watches_cover_the_roll_tail() {
     // selected289 woodcut.rs2: Rune axe on a Magic tree is successchance
-    // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 engine ticks,
-    // first at +3. The first arm also carries the card's gear bank trip.
+    // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 game ticks,
+    // with the first roll 3 game ticks after the op. The first arm also
+    // carries the card's gear bank trip.
     let p = 17.0_f64 / 256.0;
-    let dirties_per_engine_tick = 1.25;
-    let gear_trip_ticks = 50.0;
-    let chop_ticks =
-        f64::from(MAGIC_TREE_CHOP_WATCH_TICKS) / dirties_per_engine_tick - gear_trip_ticks - 3.0;
-    let rolls = (chop_ticks / 4.0).floor() + 1.0;
+    let gear_trip_game_ticks = 50.0;
+    let chop_game_ticks = f64::from(MAGIC_TREE_CHOP_WATCH_GAME_TICKS) - gear_trip_game_ticks - 3.0;
+    let rolls = (chop_game_ticks / 4.0).floor() + 1.0;
     let miss = (1.0 - p).powf(rolls);
     assert!(
         miss <= 0.01,
@@ -7037,7 +7753,7 @@ fn gnome_magic_chop_watches_cover_the_roll_tail() {
         assert_eq!(further, watch.len() - 1, "{name}: further chop is last");
         for (i, step) in watch.iter().enumerate() {
             let expected = if i == 0 || i == further {
-                MAGIC_TREE_CHOP_WATCH_TICKS
+                MAGIC_TREE_CHOP_WATCH_GAME_TICKS
             } else {
                 SCRIPT_GOLD_WATCH_TICKS
             };
@@ -7635,7 +8351,7 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
 
     let buy = get("herblore_secondaries_newt").expect("herblore_secondaries_newt");
     assert_eq!(buy.settings.start_script, Some("HerbloreSecondaries"));
-    assert_eq!(buy.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(buy.settings.deadline, HERBLORE_NEWT_DEADLINE);
     let inject = settings_inject_map(buy.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("secondary"),
@@ -8103,12 +8819,10 @@ fn remaining_fighter_core_cases_register_melee_cycles() {
         Some(&Value::String("Barrel (free)".into()))
     );
     assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
-    assert!(giant.steps.iter().any(|step| matches!(
-        step.wait.arm,
-        Proof::QuestDone {
-            name: "Waterfall Quest"
-        }
-    )));
+    assert!(giant
+        .steps
+        .iter()
+        .any(|step| step.wait.arm == WATERFALL_COMPLETION_ACK));
     let start = giant
         .steps
         .iter()
@@ -8292,7 +9006,7 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
             scenario.steps[start + 1..]
                 .iter()
                 .all(|step| step.wait.budget_ticks >= 750),
-            "{name} post-Start dirty budgets must not pre-empt the 300s wall"
+            "{name} post-Start game-tick budgets must not pre-empt the 300s wall"
         );
         let before = &scenario.steps[..start];
         let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
@@ -8397,9 +9111,7 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
-    assert!(fire_arms.contains(&Proof::QuestDone {
-        name: "Waterfall Quest",
-    }));
+    assert!(fire_arms.contains(&WATERFALL_COMPLETION_ACK));
     for id in [GLARIALS_AMULET_ID, ROPE_ID] {
         assert!(fire_arms.contains(&Proof::ItemId { id, count: 1 }));
     }
@@ -8678,7 +9390,7 @@ fn ranged_and_consumable_options_prepare_the_exact_frozen_script_branches() {
                 scenario.steps[start + 1..]
                     .iter()
                     .all(|step| step.wait.budget_ticks >= 750),
-                "rock_crab_range post-Start dirty budgets must not pre-empt the 300s wall"
+                "rock_crab_range post-Start game-tick budgets must not pre-empt the 300s wall"
             );
         } else {
             assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
@@ -9283,7 +9995,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "flax_aio",
         "flax_aio_pick",
         "flax_aio_spin",
-        "herblore_secondaries_newt",
         "chaos_druid",
         "moss_giant",
         "hill_giant",
@@ -9519,24 +10230,23 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
     assert_eq!(
         s.steps.len(),
         5,
-        "quest + dialog janitor + tele + entry follow + exit follow"
+        "quest seed + journal relog + tele + entry follow + exit follow"
     );
-    // Step 1 sends `~completequests`; the wait is the first
-    // `p_choice` dialog it opens (never a dummy stat wait).
-    assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
-    assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
-    // Step 2 is the choice-answering janitor, waiting for the quest
-    // journal to paint Rune Mysteries green.
-    match &s.steps[1].kind {
-        StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
-        _ => panic!("nav_essence step 2 must be DrainDialogs"),
-    }
+    assert!(matches!(s.steps[0].kind, StepKind::Repeat { .. }));
+    assert!(matches!(
+        s.steps[0].wait.arm,
+        Proof::Chat {
+            needle: "get runemysteries: 6"
+        }
+    ));
+    assert!(matches!(s.steps[1].kind, StepKind::Relog));
     assert!(matches!(
         s.steps[1].wait.arm,
         Proof::QuestDone {
             name: "Rune Mysteries Quest"
         }
     ));
+    assert_eq!(s.steps[2].wait.arm.name(), "arrived(3254,3402,0)");
     // Step 4 arms the entry follow to the mine pad and waits for any
     // mine landing (the landing is randomised, never the pad).
     let (dest, arm) = match &s.steps[3].kind {
@@ -9600,28 +10310,25 @@ fn nav_elkoy_follows_into_the_village_through_the_maze_escort() {
     assert_eq!(
         s.steps.len(),
         4,
-        "quest-seed + dialog janitor + tele + escort follow"
+        "quest seed + journal relog + tele + escort follow"
     );
-    // Step 1 sends `~completequests`; the wait is the first `p_choice`
-    // dialog it opens (never a dummy stat wait).
-    assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
-    assert!(matches!(s.steps[0].wait.arm, Proof::ChatChoice));
-    // Step 2 is the choice-answering janitor, waiting for the journal
-    // to paint Tree Gnome Village green.
-    match &s.steps[1].kind {
-        StepKind::DrainDialogs { choice } => assert_eq!(*choice, 1),
-        _ => panic!("nav_elkoy step 2 must be DrainDialogs"),
-    }
+    assert!(matches!(s.steps[0].kind, StepKind::Repeat { .. }));
+    assert!(matches!(
+        s.steps[0].wait.arm,
+        Proof::Chat {
+            needle: "get treequest: 9"
+        }
+    ));
+    assert!(matches!(s.steps[1].kind, StepKind::Relog));
     assert!(matches!(
         s.steps[1].wait.arm,
         Proof::QuestDone {
             name: "Tree Gnome Village"
         }
     ));
-    // Step 3 cheat-teles onto the maze-side Elkoy's tile (the packed
-    // escort edge's `at`, one tile south of the entrance coord).
+    // Setup is beside the NPC, not on its authored home tile.
     match &s.steps[2].wait.arm {
-        Proof::Arrived { x, z, level } => assert_eq!((*x, *z, *level), (2504, 3191, 0)),
+        Proof::Arrived { x, z, level } => assert_eq!((*x, *z, *level), (2504, 3192, 0)),
         other => panic!("tele arm must be arrived, got {other:?}"),
     }
     // Step 4 follows into the village: the packed escort edge's `to`,
@@ -9671,21 +10378,17 @@ fn every_nav_scenario_uses_the_paint_preset() {
             !n.nsew_labels && !n.component_flood,
             "{name} must not force NSEW / flood"
         );
-        if matches!(name, "nav_door" | "nav_shantay" | "nav_mage_arena_bank") {
-            assert!(
-                n.engine_speed_ms.is_none(),
-                "{name} keeps Engine A at 600ms without sending ::speed"
-            );
-        } else {
-            assert_eq!(n.engine_speed_ms, Some(300), "{name} halves the tickrate");
-        }
+        assert!(
+            n.engine_speed_ms.is_none(),
+            "{name} must use the engine's default tick without sending ::speed"
+        );
     }
 }
 
 #[test]
 fn nav_shantay_walks_exactly_through_both_henge_branches() {
     let s = get("nav_shantay").expect("nav_shantay");
-    assert_eq!(s.steps.len(), 9);
+    assert_eq!(s.steps.len(), 11);
     for (index, expected) in [
         (
             1,
@@ -9718,11 +10421,22 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
+    // The default Danger routing admits the desert route only above the
+    // Ugthanki combat cap (84): the account's own melee stats are seeded
+    // to 99 before the tail.
+    assert!(matches!(
+        s.steps[4].wait.arm,
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 99
+        }
+    ));
+    assert!(matches!(s.steps[5].kind, StepKind::DrainDialogs { .. }));
     // Upstream tail (shantay-pass-route-test): the Varrock walk from the
     // desert start with 10 coins must latch the crossing-tile watcher and
     // end inside the Varrock radius, with the toll paid.
-    let StepKind::Walk { dest } = &s.steps[6].kind else {
-        panic!("tail step 6 must be the Varrock WalkTo");
+    let StepKind::Walk { dest } = &s.steps[8].kind else {
+        panic!("tail step 8 must be the Varrock WalkTo");
     };
     assert_eq!(
         *dest,
@@ -9733,7 +10447,7 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     );
     assert!(matches!(
-        s.steps[6].wait.arm,
+        s.steps[8].wait.arm,
         Proof::VisitedWithin {
             min_x: 3300,
             max_x: 3306,
@@ -9743,11 +10457,11 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         }
     ));
     assert!(matches!(
-        s.steps[5].wait.arm,
+        s.steps[7].wait.arm,
         Proof::ItemId { count: 10, .. }
     ));
     assert!(matches!(
-        s.steps[8].wait.arm,
+        s.steps[10].wait.arm,
         Proof::ItemIdAtMost { count: 0, .. }
     ));
 }
@@ -9934,8 +10648,8 @@ fn nav_paint_path_is_a_short_courtyard_walk_with_live_paint_layers() {
     assert!(s.settings.full_rate);
     assert_eq!(
         s.settings.nav,
-        nav_test_paints().with_tick_ms(300),
-        "nav tests use the paint preset and speed 300"
+        nav_test_paints(),
+        "nav tests use the paint preset and keep the default tick"
     );
     assert!(
         names().contains(&"nav_paint_path"),
@@ -10030,8 +10744,11 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
     assert!(s.settings.full_rate);
     assert_eq!(
         s.settings.nav,
-        nav_test_paints().with_tick_ms(300),
-        "seam run uses the paint preset and speed 300"
+        ScenarioNav {
+            allow_danger_zones: true,
+            ..nav_test_paints()
+        },
+        "seam run uses the paint preset and Danger routing Always"
     );
     assert_eq!(s.settings.deadline, Duration::from_secs(3600));
     assert_eq!(s.settings.sustains, nav_energy_sustains());
@@ -10420,7 +11137,7 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
             CHAOS_DRUID_FOOD as u32,
         ),
         (
-            "rock_crab_bank",
+            "rock_crab_bank_seeded",
             "RockCrab",
             "Scenario Rock Crab food",
             "Lobster",
@@ -10532,6 +11249,144 @@ fn synthetic_client() -> Client {
     client
 }
 
+#[test]
+fn repeat_sends_once_per_game_tick_and_resets_for_the_next_step() {
+    use client::io::ServerProt;
+
+    let repeat = |name, needle| Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(|client, _| {
+                client.send_cheat("setvar tutorial 1000");
+                client.send_cheat("getvar tutorial");
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Chat { needle },
+            budget_ticks: 200,
+        },
+    };
+    let scenario = Scenario {
+        name: "repeat_game_tick_pacing",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            repeat("first tutorial pair", "advance"),
+            repeat("second tutorial pair", "never"),
+        ],
+        proof: Proof::Chat { needle: "never" },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 2);
+    for _ in 0..16 {
+        client.chat_text[0] = "tutorial reply".into();
+        client.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut client);
+    }
+    for _ in 0..16 {
+        runner.tick(&mut client);
+    }
+    assert_eq!(
+        client.cheat_packets_sent(),
+        2,
+        "frontend polls and chat traffic must not repeat the tutorial pair"
+    );
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 4);
+
+    client.chat_text[0] = "advance".into();
+    client.bump_gens(ServerProt::MESSAGE_GAME);
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(
+        client.cheat_packets_sent(),
+        6,
+        "a new repeat step can send without another PLAYER_INFO"
+    );
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 6);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(client.cheat_packets_sent(), 8);
+}
+
+#[test]
+fn step_budget_counts_game_ticks_not_dirty_snapshots() {
+    use client::io::ServerProt;
+
+    let scenario = Scenario {
+        name: "budget_counts_game_ticks",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "wait for a chat line that never comes",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::Chat { needle: "never" },
+                budget_ticks: 3,
+            },
+        }],
+        proof: Proof::Chat { needle: "never" },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut client = native_seed_client();
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    assert_eq!(runner.total_ticks(), 1);
+
+    // A burst of chat-only dirty snapshots inside one game tick runs the
+    // proof checks but must not spend the game-tick budget.
+    for _ in 0..20 {
+        client.chat_text[0] = "noise".into();
+        client.bump_gens(ServerProt::MESSAGE_GAME);
+        runner.tick(&mut client);
+    }
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 1 },
+        "dirty snapshots inside one game tick must not use the budget"
+    );
+    assert_eq!(runner.total_ticks(), 1);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    assert_eq!(runner.total_ticks(), 2);
+
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.total_ticks(), 3);
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(msg.contains("not seen within 3 game ticks"), "msg: {msg}");
+        }
+        other => panic!("three observed game ticks must exhaust the budget, got {other:?}"),
+    }
+}
+
 /// Re-render `client`'s chat modal as `options` — the native
 /// `if_openchat(multiN)`: the same layer id and child component ids as
 /// every other chat dialog, with the new question's texts and the
@@ -10611,7 +11466,7 @@ fn zero_count_trip_food_is_not_emitted_and_positive_counts_still_are() {
     assert!(emitted_has(&client, "setstat thieving 5"));
 
     // The positive-count cells keep their seeded trip food.
-    let crab = get("rock_crab_bank").expect("rock_crab_bank is registered");
+    let crab = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded is registered");
     let mut client = native_seed_client();
     assert!(run_prepare_step(&crab, &mut client));
     assert!(
@@ -10667,8 +11522,8 @@ fn quest_prereq_machine_presses_the_native_individual_quest_path() {
 
 #[test]
 fn quest_prereq_machine_presses_each_native_dialog_once() {
-    // The runner re-sends a `Repeat` step every tick, so the machine sees
-    // the same dialog until the reply lands. `chat.rs2` re-registers the
+    // `Repeat` sends at most once per observed game tick, so the machine
+    // sees the same dialog until the reply lands. `chat.rs2` re-registers the
     // same components as resume buttons for the question that follows
     // (`if_addresumebutton(multi5:com_5)`) and the engine resumes with the
     // clicked component, so a second press into the replaced dialog is not
@@ -10810,10 +11665,11 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
     runner.set_scene_settle(Duration::ZERO);
 
     let mut phase = 0;
-    let (mut rewards_tick, mut close_tick, mut green_tick, mut reset_tick) =
+    let (mut rewards_game_tick, mut close_game_tick, mut green_game_tick, mut reset_game_tick) =
         (None, None, None, None);
     let mut step_at_rewards = None;
-    for tick in 0..400 {
+    for game_tick in 0..400 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
         let from = client.out.pos;
         runner.tick(&mut client);
         let sent = client.out.data()[from..client.out.pos].to_vec();
@@ -10825,10 +11681,10 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
             RunnerStatus::Running { step, .. } => Some(step),
             _ => None,
         };
-        if reset_tick.is_none() && step == Some(prepare_step) && sent_has("~clearinv") {
-            reset_tick = Some(tick);
+        if reset_game_tick.is_none() && step == Some(prepare_step) && sent_has("~clearinv") {
+            reset_game_tick = Some(game_tick);
         }
-        if reset_tick.is_some() && green_tick.is_some() {
+        if reset_game_tick.is_some() && green_game_tick.is_some() {
             break;
         }
         match phase {
@@ -10848,7 +11704,7 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
                 client.main_modal_id = QUEST_SCROLL;
                 client.bump_gens(ServerProt::IF_OPENMAIN);
                 client.bump_gens(ServerProt::MESSAGE_GAME);
-                rewards_tick = Some(tick);
+                rewards_game_tick = Some(game_tick);
                 step_at_rewards = step;
                 phase = 3;
             }
@@ -10863,8 +11719,8 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
                     },
                 );
                 client.bump_gens(ServerProt::IF_SETCOLOUR);
-                close_tick = Some(tick);
-                green_tick = Some(tick);
+                close_game_tick = Some(game_tick);
+                green_game_tick = Some(game_tick);
                 phase = 4;
             }
             _ => {}
@@ -10881,21 +11737,21 @@ fn quest_prereq_settles_the_completion_modal_before_the_reset_and_start() {
         Some(kickoff_step + 1),
         "reward traffic and the completion scroll arrive on the prerequisite step"
     );
-    let green_tick = green_tick.expect("the completion painted the row green");
-    let close_tick = close_tick.expect("the machine closed the completion's scroll");
-    let rewards_tick = rewards_tick.expect("the completion's scroll opened");
+    let green_game_tick = green_game_tick.expect("the completion painted the row green");
+    let close_game_tick = close_game_tick.expect("the machine closed the completion's scroll");
+    let rewards_game_tick = rewards_game_tick.expect("the completion's scroll opened");
     assert!(
-            close_tick > rewards_tick,
-            "the scroll the completion opened is closed on the next tick (opened {rewards_tick}, closed {close_tick})"
-        );
+        close_game_tick > rewards_game_tick,
+        "the scroll the completion opened is closed on the next game tick (opened {rewards_game_tick}, closed {close_game_tick})"
+    );
     assert_eq!(
-        green_tick, close_tick,
+        green_game_tick, close_game_tick,
         "the green follows the scroll's close, still on the prerequisite step"
     );
-    let reset_tick = reset_tick.expect("the acknowledged run resets stats and inventory");
+    let reset_game_tick = reset_game_tick.expect("the acknowledged run resets stats and inventory");
     assert!(
-        reset_tick > green_tick,
-        "the reset follows the journal acknowledgement (green {green_tick}, reset {reset_tick})"
+        reset_game_tick > green_game_tick,
+        "the reset follows the journal acknowledgement (green {green_game_tick}, reset {reset_game_tick})"
     );
 }
 
@@ -10916,11 +11772,14 @@ fn reference_close_bytes(main_modal: i32) -> Vec<u8> {
 
 #[test]
 fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
-    for (name, journal) in [
-        ("fire_giant", "Waterfall Quest"),
-        ("fire_giant_approach", "Waterfall Quest"),
-        ("fire_giant_bank", "Waterfall Quest"),
-        ("green_dragon_special", "Lost City"),
+    for (name, expected_ack) in [
+        ("fire_giant", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_approach", WATERFALL_COMPLETION_ACK),
+        ("fire_giant_bank", WATERFALL_COMPLETION_ACK),
+        (
+            "green_dragon_special",
+            Proof::QuestDone { name: "Lost City" },
+        ),
     ] {
         let scenario = get(name).expect("the combat fixture is registered");
         let index = |prefix: &str| {
@@ -10944,11 +11803,11 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         );
         assert!(
             matches!(scenario.steps[ack].kind, StepKind::Repeat { .. }),
-            "{name}: the dialog machine re-sends every tick"
+            "{name}: the dialog machine re-sends at most once per game tick"
         );
-        assert!(
-            matches!(scenario.steps[ack].wait.arm, Proof::QuestDone { name: row } if row == journal),
-            "{name}: the boundary is the required quest's journal acknowledgement"
+        assert_eq!(
+            scenario.steps[ack].wait.arm, expected_ack,
+            "{name}: the boundary uses its configured quest completion signal"
         );
         assert!(
             scenario.steps[ack].wait.budget_ticks > 0,
@@ -10960,18 +11819,50 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         );
         assert!(prepare < start, "{name}: the reset precedes Start");
         // The kickoff sends the native individual-quest command, never
-        // the complete-all debugproc whose queued completions leak.
+        // the complete-all debugproc whose queued completions leak. It
+        // re-sends every tick: `@debug_quests` exits silently while the
+        // player cannot be accessed right after the relog.
+        assert!(
+            matches!(scenario.steps[load].kind, StepKind::Repeat { .. }),
+            "{name}: the kickoff re-sends until the dialog opens"
+        );
         let mut client = native_seed_client();
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(&client);
         match &scenario.steps[load].kind {
-            StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
-            _ => panic!("{name}: the kickoff step is a Perform"),
+            StepKind::Repeat { send } => assert!(send(&mut client, &snapshot)),
+            _ => panic!("{name}: the kickoff step is a Repeat"),
         }
         assert!(emitted_has(&client, "~quest"), "{name}: native command");
         assert!(
             !emitted_has(&client, "~completequests"),
             "{name}: the complete-all debugproc is not used"
+        );
+    }
+}
+
+#[test]
+fn waterfall_cells_use_the_fresh_named_completion_scroll() {
+    for name in [
+        "fire_giant",
+        "fire_giant_prepared",
+        "fire_giant_approach",
+        "fire_giant_bank",
+        "fire_giant_bank_prepared",
+        "fire_giant_camelot_prepared",
+    ] {
+        let scenario = get(name).expect("the Waterfall FireGiant fixture is registered");
+        let acknowledgement = scenario
+            .steps
+            .iter()
+            .find(|step| {
+                step.name
+                    .starts_with("answer the quest-journal dialogs until the required quest")
+            })
+            .unwrap_or_else(|| panic!("{name}: no native quest acknowledgement step"));
+        assert_eq!(
+            acknowledgement.wait.arm, WATERFALL_COMPLETION_ACK,
+            "{name}: Waterfall requires fresh completion chat and named scroll"
         );
     }
 }
@@ -11002,9 +11893,10 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
     ]);
     let mut runner = ScenarioRunner::with_world(scenario, None);
     runner.set_scene_settle(Duration::ZERO);
-    for tick in 0..700 {
-        client.chat_text[0] = format!("Congratulations! Quest complete! {tick}");
+    for game_tick in 0..700 {
+        client.chat_text[0] = format!("Congratulations! Quest complete! {game_tick}");
         client.bump_gens(ServerProt::MESSAGE_GAME);
+        client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
         if matches!(runner.status(), RunnerStatus::Failed(_)) {
             break;
@@ -11026,6 +11918,118 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
             panic!("the run never failed the preparation step ({step}/{total})")
         }
         RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+    }
+}
+
+#[test]
+fn quest_kickoff_resends_until_a_choice_opens_and_never_into_an_open_choice() {
+    // A dropped first send (the player cannot be accessed yet) must not
+    // spend the cell: the kickoff sends again on the next tick. Once a
+    // choice is open the send stays quiet, because `@debug_quests`
+    // begins with `if_close` and would close that choice.
+    let scenario = get("fire_giant").expect("fire_giant is registered");
+    let load = scenario
+        .steps
+        .iter()
+        .position(|step| step.name.starts_with("open the native quest-journal"))
+        .expect("the fixture carries the native quest prerequisite");
+    let StepKind::Repeat { send } = &scenario.steps[load].kind else {
+        panic!("the kickoff step is a Repeat");
+    };
+    let count = |client: &Client| {
+        let bytes = &client.out.data()[..client.out.pos];
+        bytes
+            .windows("~quest".len())
+            .filter(|window| *window == b"~quest")
+            .count()
+    };
+    let mut client = native_seed_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(send(&mut client, &snapshot));
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 2, "no dialog yet: every tick re-sends");
+    let (mut client, snapshot) = chat_options_client(&[
+        "Complete All Quests.",
+        "Reset All Quests.",
+        "Select Individual Quest.",
+        "Cancel.",
+    ]);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(count(&client), 0, "an open choice is never re-sent into");
+}
+
+#[test]
+fn loadout_cards_post_the_fixture_row_their_start_selects() {
+    // Start refuses a card whose `loadout` setting cannot select a row
+    // (an empty saved loadout under a fresh HOME). Each of these cells
+    // posts the food it already seeds as a fixture loadout, and a pinned
+    // `loadout` inject names a posted row.
+    for (name, card, row_name, food, qty) in [
+        (
+            "auto_fighter_mage",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "auto_fighter_range",
+            "AutoFighter",
+            "Scenario AutoFighter food",
+            "Trout",
+            AUTO_FIGHTER_FOOD as u32,
+        ),
+        (
+            "wildy_agility",
+            "WildyAgility",
+            "Scenario Wildy Agility food",
+            "Lobster",
+            5,
+        ),
+        (
+            "brimhaven_agility",
+            "BrimhavenAgility",
+            "Scenario Brimhaven Agility food",
+            "Lobster",
+            10,
+        ),
+        (
+            "herblore_secondaries_newt",
+            "HerbloreSecondaries",
+            "Scenario Herblore food",
+            "Lobster",
+            HERBLORE_EGG_FOOD_CARRY as u32,
+        ),
+        (
+            "clue_duel_3554",
+            "ClueSolver",
+            "Scenario Clue food",
+            "Shark",
+            15,
+        ),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        assert_eq!(scenario.settings.start_script, Some(card), "{name}");
+        let rows = scenario
+            .settings
+            .fixture_loadouts
+            .unwrap_or_else(|| panic!("{name} posts fixture loadouts at Start"));
+        let row = rows
+            .iter()
+            .find(|row| row.name == row_name)
+            .unwrap_or_else(|| panic!("{name} posts the {row_name:?} row"));
+        assert_eq!(row.carry, &[(food, qty)], "{name}");
+        if let Some(inject) = scenario.settings.script_settings_inject {
+            let inject = settings_inject_map(Some(inject)).unwrap();
+            if let Some(pinned) = inject.get("loadout") {
+                assert_eq!(
+                    pinned,
+                    &Value::String(row_name.into()),
+                    "{name}: the pinned loadout is a posted row"
+                );
+            }
+        }
     }
 }
 
@@ -11478,7 +12482,7 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
         let expected_deadline = match name {
             "shop_buyout_betty" | "shop_buyout_bob" => SHOP_BUYOUT_BETTY_DEADLINE,
             "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
-            "shop_buyout_nurmof" => Duration::from_secs(450),
+            "shop_buyout_nurmof" => SHOP_BUYOUT_NURMOF_DEADLINE,
             _ => SCRIPT_GOLD_DEADLINE,
         };
         assert_eq!(
@@ -11721,8 +12725,8 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
 
 /// Betty-only long Falador West travel budgets: first purchase covers
 /// initial withdraw round-trip, deposit/return cover post-buy legs;
-/// empty/close/further and all other presets stay ordinary 150/180s.
-/// Predicates and proof order are unchanged (see chain test).
+/// empty/close/further and all other presets stay ordinary 150-game-tick/
+/// 180s limits. Predicates and proof order are unchanged (see chain test).
 #[test]
 fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
     let betty = get("shop_buyout_betty").expect("shop_buyout_betty");
@@ -11742,14 +12746,14 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS,
-        "first purchase allows a bounded trial beyond the observed 150-dirty failure"
+        "first purchase allows a bounded trial beyond the old 150-dirty failure"
     );
     assert_eq!(
         watch("watch purchased product enter a fresh bank")
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS,
-        "deposit dirty-budget covers post-buy shop→bank leg"
+        "deposit game-tick budget covers post-buy shop→bank leg"
     );
     assert_eq!(
         watch("watch the pack empty of product after deposit")
@@ -11770,7 +12774,7 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
             .wait
             .budget_ticks,
         SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS,
-        "return dirty-budget covers bank→shop leg only"
+        "return game-tick budget covers bank→shop leg only"
     );
     assert_eq!(
         watch("watch further purchased product after return")
@@ -11830,7 +12834,8 @@ fn shop_buyout_betty_timing_covers_four_bank_travel_legs() {
 }
 
 /// Gerrant Draynor route: live7zpi0g mid-return + livexjav5j first-purchase
-/// fails bound the four-leg dirty budgets and 390s wall (Betty unchanged).
+/// historical dirty-counter failures bound the four-leg game-tick budgets
+/// and 390s wall (Betty unchanged).
 #[test]
 fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
     let gerrant = get("shop_buyout_gerrant").expect("shop_buyout_gerrant");
@@ -11846,18 +12851,18 @@ fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
             .unwrap_or_else(|| panic!("gerrant has {name}"))
     };
     assert_eq!(
-            watch("watch unseeded purchased product in pack after Start")
-                .wait
-                .budget_ticks,
-            SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
-            "first purchase covers two Draynor legs + withdraw + buy beyond livexjav5j 150-dirty arm fail"
-        );
+        watch("watch unseeded purchased product in pack after Start")
+            .wait
+            .budget_ticks,
+        SHOP_BUYOUT_GERRANT_FIRST_PURCHASE_WATCH_TICKS,
+        "first purchase retains bounded margin beyond livexjav5j 150-dirty arm failure"
+    );
     assert_eq!(
         watch("watch purchased product enter a fresh bank")
             .wait
             .budget_ticks,
         SCRIPT_GOLD_WATCH_TICKS,
-        "deposit arm: live7zpi0g measured pass at 150 dirty"
+        "deposit arm: live7zpi0g passed with the old 150-dirty counter"
     );
     assert_eq!(
         watch("watch the pack empty of product after deposit")
@@ -11900,6 +12905,105 @@ fn shop_buyout_gerrant_timing_covers_four_bank_travel_legs() {
         WorldTile {
             x: 3092,
             z: 3243,
+            level: 0
+        }
+    );
+}
+
+/// Nurmof Dwarven Mine route: sm25wxbm3d_0 measured 260 walked tiles per
+/// leg and run-energy depletion about 276 run tiles after Start, so the
+/// first purchase needs about 440 game ticks (550 dirties at 1.25).
+/// Betty's 320/280/280 expired on the return surface leg with the
+/// withdraw complete and no stationary game-tick waits. Only the three travel
+/// arms and the wall deadline widen; proof order is unchanged.
+#[test]
+fn shop_buyout_nurmof_timing_covers_mine_bank_travel_legs() {
+    let nurmof = get("shop_buyout_nurmof").expect("shop_buyout_nurmof");
+    assert_eq!(
+        nurmof.settings.deadline,
+        Duration::from_secs(720),
+        "720s wall covers about 1116 game ticks at 600ms each"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_DEADLINE,
+        Duration::from_secs(720),
+        "named deadline matches the measured sizing"
+    );
+    let watch = |name: &str| {
+        nurmof
+            .steps
+            .iter()
+            .find(|step| step.name == name)
+            .unwrap_or_else(|| panic!("nurmof has {name}"))
+    };
+    assert_eq!(
+        watch("watch unseeded purchased product in pack after Start")
+            .wait
+            .budget_ticks,
+        560,
+        "first purchase covers both 260-tile legs, the ladder, withdraw and buy"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_FIRST_PURCHASE_WATCH_TICKS, 560,
+        "named first-purchase budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch purchased product enter a fresh bank")
+            .wait
+            .budget_ticks,
+        360,
+        "deposit covers one walked mine→bank leg"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_DEPOSIT_WATCH_TICKS, 360,
+        "named deposit budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch the pack empty of product after deposit")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "empty-pack arm is not loosened"
+    );
+    assert_eq!(
+        watch("watch the buyout bank close after deposit")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "close arm is not loosened"
+    );
+    assert_eq!(
+        watch("watch return to the named shop after banking")
+            .wait
+            .budget_ticks,
+        360,
+        "return covers one walked bank→mine leg"
+    );
+    assert_eq!(
+        SHOP_BUYOUT_NURMOF_RETURN_WATCH_TICKS, 360,
+        "named return budget matches the measured sizing"
+    );
+    assert_eq!(
+        watch("watch further purchased product after return")
+            .wait
+            .budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS,
+        "further-purchase arm is not loosened"
+    );
+    // Mine shop and Falador East bank geometry preserved.
+    assert_eq!(
+        NURMOF_STAND,
+        WorldTile {
+            x: 2997,
+            z: 9844,
+            level: 0
+        }
+    );
+    assert_eq!(
+        FALADOR_EAST_BANK,
+        WorldTile {
+            x: 3013,
+            z: 3355,
             level: 0
         }
     );
@@ -12180,6 +13284,46 @@ fn rebuild_npc_chat_snapshot(client: &mut Client) -> GameSnapshot {
     snapshot
 }
 
+/// LIVE `nav_mage_arena_bank` (FIX-024): the opener walked onto Gundai's
+/// last seen tile every poll and only talked when adjacent, so it chased
+/// the wandering banker around the cellar until the step budget ran out.
+/// A banker in view but not adjacent gets one Talk-to (the engine walks to
+/// it for the op) and no chase walks while the chat is pending.
+#[test]
+fn shop_buyout_npc_opener_talks_to_a_distant_banker_once_instead_of_chasing() {
+    let approach = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    let step = shop_buyout_open_npc_bank(
+        "open Gundai's bank",
+        Proof::BankOpen,
+        "Gundai",
+        approach,
+        "Talk-to",
+        "Cool, I'd like to access my bank account please.",
+    );
+    let StepKind::Repeat { send } = &step.kind else {
+        panic!("teller open must Repeat");
+    };
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    // Player at scene (20,20); Gundai six tiles east.
+    plant_named_banker(&mut client, "Gundai", 26, 21);
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot), "the Talk-to must send");
+    let after_talk = client.out.pos;
+    assert!(after_talk > 0, "the opener sends one packet");
+    for _ in 0..3 {
+        assert!(send(&mut client, &snapshot));
+    }
+    assert_eq!(
+        client.out.pos, after_talk,
+        "no chase walk while the engine approaches for the Talk-to"
+    );
+}
+
 /// LIVE livemoj7nw / livevpttcg: Repeat re-Talk-to while the first
 /// continue page is up (`chat_continue_component_id == -1` because the
 /// pause latch hid it, chat modal still 968, "I can't reach that!").
@@ -12412,6 +13556,7 @@ fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
         &mut client,
         &["Cool, I'd like to access my bank account please."],
     );
+    client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
     let after_choice = client.out.pos;
@@ -13241,7 +14386,10 @@ fn e2e_port_conversions_register_converted_gates() {
 
     let targets = get("auto_fighter_targets").expect("auto_fighter_targets");
     assert_eq!(targets.settings.start_script, Some("AutoFighter"));
-    assert_eq!(targets.settings.deadline, Duration::from_secs(420));
+    assert_eq!(
+        targets.settings.deadline, AUTO_FIGHTER_TARGETS_DEADLINE,
+        "the measured whole-cell cycle plus 50% headroom"
+    );
     let inject = settings_inject_map(targets.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("target"),
@@ -13478,4 +14626,119 @@ fn quester_queue_watches_every_selected_quest() {
         true,
     );
     assert!(watches.iter().all(|proof| proof.check(&snapshot, None)));
+}
+
+/// The 10/21 nightly ended these cells on their whole-cell wall deadline
+/// without a failed step witness, after the runner began charging wait
+/// budgets in observed game ticks. Each committed deadline is the largest
+/// completion time measured in live Engine A runs at the 289 engine's
+/// 600 ms game tick, plus the `b35d7382e` headroom rule: 50%, rounded up to
+/// a whole second (`FIX-NIGHTLY-DEADLINES-025`). The Thiever no-bank cell is
+/// deliberately absent: two of its three lifted runs failed its existing
+/// 750-game-tick XP watch, so its 420 s deadline is unchanged.
+#[test]
+fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
+    use crate::scenarios::combat::{
+        ARDY_FIGHTER_BANK_DEADLINE, AUTO_FIGHTER_TARGETS_DEADLINE,
+        GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+    };
+    use crate::scenarios::quester::RUNE_MYST_DEADLINE;
+
+    for (name, measured_ms, deadline) in [
+        ("ardy_fighter_bank", 365_610_u64, ARDY_FIGHTER_BANK_DEADLINE),
+        (
+            "auto_fighter_targets",
+            580_326,
+            AUTO_FIGHTER_TARGETS_DEADLINE,
+        ),
+        (
+            "green_dragon_bank_default_prepared",
+            1_610_792,
+            GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+        ),
+        ("quester_rune_mysteries", 1_017_780, RUNE_MYST_DEADLINE),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline, deadline,
+            "{name}: committed deadline is the measured completion plus headroom"
+        );
+        let measured = Duration::from_millis(measured_ms);
+        assert!(
+            deadline >= measured + measured / 2,
+            "{name}: deadline {deadline:?} must cover {measured:?} plus 50% headroom"
+        );
+    }
+
+    // Scope: the seeded sibling keeps the short gold deadline, the other
+    // quester cells keep the shared Cook deadline, and the Thiever no-bank
+    // cell keeps its existing deadline.
+    assert_eq!(
+        get("ardy_fighter_bank_seeded").unwrap().settings.deadline,
+        SCRIPT_GOLD_DEADLINE
+    );
+    assert_eq!(
+        get("quester_cook").unwrap().settings.deadline,
+        Duration::from_secs(900)
+    );
+    assert_eq!(
+        get("thiever_guard_no_bank").unwrap().settings.deadline,
+        Duration::from_secs(420)
+    );
+}
+
+/// The earned-kill bank cell waits for the card's own Strength selection
+/// across the Loot-count trips that a Guard catch or a public pile can send
+/// it on first, then gives the first Strength XP one fight window. The
+/// bank-Off sibling keeps its single style watch.
+#[test]
+fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
+    use crate::scenarios::combat::{
+        ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS, ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
+        ARDY_FIGHTER_STRENGTH_STYLE,
+    };
+    let scenario = get("ardy_fighter_bank").unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let style = &scenario.steps[start + 1];
+    assert!(
+        matches!(
+            style.kind,
+            StepKind::ObserveStyleAcrossLootTrips {
+                deposit_id: BONES_ID,
+                food,
+                progress_stat: 17,
+            } if [1891, 1893, 1895, 1897, 1899, 1901, 2309]
+                .iter()
+                .all(|id| food.contains(id))
+        ),
+        "the style watch restarts on deposited Bones and Thieving XP and knows every stall food"
+    );
+    assert_eq!(style.wait.arm, ARDY_FIGHTER_STRENGTH_STYLE);
+    assert_eq!(style.wait.arm, Proof::VarpExact { id: 43, value: 1 });
+    assert_eq!(
+        style.wait.budget_ticks,
+        ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS
+    );
+    let fight = &scenario.steps[start + 2];
+    assert_eq!(
+        fight.name,
+        "watch Strength XP from the selected melee style after Start"
+    );
+    assert_eq!(
+        fight.wait.arm,
+        Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    );
+    assert_eq!(fight.wait.budget_ticks, ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS);
+    let plain = get("ardy_fighter").unwrap();
+    assert!(!plain
+        .steps
+        .iter()
+        .any(|step| matches!(step.kind, StepKind::ObserveStyleAcrossLootTrips { .. })));
 }

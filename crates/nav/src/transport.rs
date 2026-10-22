@@ -329,7 +329,10 @@ impl TransportGraph {
                 from,
                 collision.walkable_word(from.x, from.z, from.level) as i32,
             ),
-            None => (from.x - edge.at.x).abs().max((from.z - edge.at.z).abs()) <= 1,
+            None => match wall_door_takeoff(edge, collision) {
+                Some(takeoff) => from == takeoff,
+                None => (from.x - edge.at.x).abs().max((from.z - edge.at.z).abs()) <= 1,
+            },
         }
     }
 
@@ -389,6 +392,43 @@ impl TransportGraph {
         // once at load/bake time instead of paying that cost for every tile.
         self.at.reserve(self.at.len());
     }
+}
+
+/// The one tile a straight wall-door crossing starts from. The engine opens a
+/// straight wall loc from its own tile, from the tile across the wall, or
+/// from a side neighbour of the loc tile that its walls do not cut off
+/// (`ReachStrategy.ts:79-80` and `reachWall1` `WALL_STRAIGHT`, lines
+/// 101-127); the crossing itself is then the one step through the wall, so it
+/// starts on the wall's near side. A forward crossing (`to == at + dir`)
+/// starts on the loc tile `at`; a reverse crossing lands on `at`
+/// (`to == at`) and starts on the tile across the wall, `at - dir`. From a
+/// side neighbour the player opens the door and still steps onto the near
+/// side before crossing, which the walk search reaches at the same cost.
+/// Admitting every tile within one of `at` let a route "cross" from a tile
+/// the wall separates from the door (the Varrock loc 1530 at (3241,3382)
+/// entered from (3241,3381)).
+///
+/// `None` keeps radius-one admission: non-door edges, directionless doors,
+/// relative landings, and a door whose loc tile is not standable (a closed
+/// diagonal door blocks its own tile and is opened from a cardinal
+/// neighbour, `transport/doors.rs` `diagonal_door_crossings`).
+#[inline(always)]
+fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option<WorldTile> {
+    if edge.kind != TransportKind::Door || edge.player_delta.is_some() {
+        return None;
+    }
+    let (dx, dz) = dir_delta(edge.dir?);
+    if edge.to == edge.at {
+        return Some(WorldTile {
+            x: edge.at.x - dx,
+            z: edge.at.z - dz,
+            level: edge.at.level,
+        });
+    }
+    let forward = edge.to.x == edge.at.x + dx
+        && edge.to.z == edge.at.z + dz
+        && edge.to.level == edge.at.level;
+    (forward && collision.standable(edge.at)).then_some(edge.at)
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
@@ -1105,14 +1145,21 @@ pub(crate) const AL_KHARID_TOLL_LEFT_LOC_ID: i32 = 2882;
 /// `border_gate_toll_right` in `pack/loc.pack`: the northern Al Kharid
 /// border gate (m51_50 (4,28) = (3268,3228)).
 pub(crate) const AL_KHARID_TOLL_RIGHT_LOC_ID: i32 = 2883;
+/// `wildinlever` in `pack/loc.pack`: the Ardougne lever (m40_51 (1,47) =
+/// (2561,3311)) that teleports into the Wilderness.
+pub(crate) const ARDOUGNE_WILDERNESS_LEVER_LOC_ID: i32 = 1814;
 
 /// Dialogue-driven Door hops: the Al Kharid border toll (`border_gate.rs2`
-/// `oploc1` → border-guard `p_choice3`) and the Shantay henge
-/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer).
+/// `oploc1` → border-guard `p_choice3`), the Shantay henge
+/// (`shantay_pass.rs2` `oploc1` pass handover / first-crossing disclaimer)
+/// and the Ardougne Wilderness lever (`wilderness_lever.rs2`
+/// `[oploc1,wildinlever]`: while `%warning_wilderness_teleport_lever` is
+/// false, a warning `~mesbox` and a `~p_choice3_header` come before the pull).
 pub(crate) fn is_dialogue_door_loc(loc_id: i32) -> bool {
     loc_id == SHANTAY_HENGE_LOC_ID
         || loc_id == AL_KHARID_TOLL_LEFT_LOC_ID
         || loc_id == AL_KHARID_TOLL_RIGHT_LOC_ID
+        || loc_id == ARDOUGNE_WILDERNESS_LEVER_LOC_ID
 }
 
 #[cfg(test)]

@@ -1286,6 +1286,7 @@ fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot(
     client.npc_count = (MAX_OBSERVED_SERVICES + 1) as i32;
     client.gens.npc = 1;
     client.gens.player = 1;
+    client.gens.player_info = 1;
     client.gens.scene = 1;
     client.gens.session = 1;
     let mut snapshot = GameSnapshot::new();

@@ -403,6 +403,7 @@ pub(super) fn frame_context<'a>(
         active_now: runtime.clock.now(now).as_duration(),
         wall_now: now,
         ledger: &mut runtime.ledger,
+        pending_note_progress: Some(&mut runtime.pending_note_progress),
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
         observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
@@ -499,6 +500,7 @@ impl CompiledRun {
                 state,
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
+                walk_danger: ctx.compiled.walk_danger,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
@@ -511,6 +513,7 @@ impl CompiledRun {
                         bank_memory: ctx.compiled.bank_memory,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
                         #[cfg(feature = "load")]
@@ -1450,6 +1453,8 @@ impl SlotScript {
     }
 
     pub(super) fn teardown_compiled(&mut self, reason: StopReason) {
+        self.evidence_wait_run = None;
+        self.native_runtime.clear_note_progress();
         if reason != StopReason::Completed {
             self.native_runtime.revoke();
         }
@@ -1480,10 +1485,12 @@ impl SlotScript {
             tick: self.ticks,
             reason: failure.message.to_string(),
         });
+        let terminal_status = self.publish_terminal_native_failure(failure);
         self.state = RunState::Error;
         self.want_run = false;
         self.teardown_compiled(StopReason::Error);
         self.watchdog.cancel_clear();
+        self.terminal_native_status = terminal_status;
     }
 
     /// Same run/session fence as other native controls. A successful request

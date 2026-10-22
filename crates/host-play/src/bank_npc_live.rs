@@ -2532,6 +2532,7 @@ impl Script for BankPickBurstScript {
                     };
                     let request = script::native::WalkRequest {
                         target,
+                        candidate_goals: None,
                         loc_id: None,
                         radius: 0,
                         arrival: nav::arrival::ArrivalKind::Reach,

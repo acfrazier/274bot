@@ -191,6 +191,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::guardian_skill_lost_axe_scenario,
     ),
     Entry::new(
+        "guardian_skill_lost_axe_same_kind_head",
+        scenarios::guardian_skill_lost_axe_same_kind_head_scenario,
+    ),
+    Entry::new(
         "guardian_skill_shade",
         scenarios::guardian_skill_shade_scenario,
     ),
@@ -408,7 +412,6 @@ const REGISTRY: &[Entry] = &[
         "ardy_fighter_bank_seeded",
         scenarios::ardy_fighter_bank_seeded_scenario,
     ),
-    Entry::new("rock_crab_bank", scenarios::rock_crab_bank_scenario),
     Entry::new(
         "rock_crab_bank_seeded",
         scenarios::rock_crab_bank_seeded_scenario,

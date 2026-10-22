@@ -95,7 +95,6 @@ pub enum CoreCase {
     HillGiantBankPrepared,
     ChaosDruidBank,
     ArdyFighterBank,
-    RockCrabBank,
     GreenDragonBank,
     GreenDragonBankPrepared,
     GreenDragonBankDefaultPrepared,
@@ -239,7 +238,6 @@ impl CoreCase {
             "hill_giant_bank_prepared" => Ok(Self::HillGiantBankPrepared),
             "chaos_druid_bank" => Ok(Self::ChaosDruidBank),
             "ardy_fighter_bank" => Ok(Self::ArdyFighterBank),
-            "rock_crab_bank" => Ok(Self::RockCrabBank),
             "green_dragon_bank" => Ok(Self::GreenDragonBank),
             "green_dragon_bank_prepared" => Ok(Self::GreenDragonBankPrepared),
             "green_dragon_bank_default_prepared" => Ok(Self::GreenDragonBankDefaultPrepared),
@@ -386,7 +384,6 @@ impl CoreCase {
             Self::HillGiantBankPrepared => "hill_giant_bank_prepared",
             Self::ChaosDruidBank => "chaos_druid_bank",
             Self::ArdyFighterBank => "ardy_fighter_bank",
-            Self::RockCrabBank => "rock_crab_bank",
             Self::GreenDragonBank => "green_dragon_bank",
             Self::GreenDragonBankPrepared => "green_dragon_bank_prepared",
             Self::GreenDragonBankDefaultPrepared => "green_dragon_bank_default_prepared",
@@ -495,7 +492,7 @@ impl CoreCase {
             | Self::AutoFighterMage
             | Self::AutoFighterRange
             | Self::AutoFighterBank => "AutoFighter",
-            Self::RockCrab | Self::RockCrabRange | Self::RockCrabBank => "RockCrab",
+            Self::RockCrab | Self::RockCrabRange => "RockCrab",
             Self::GreenDragon
             | Self::GreenDragonPrepared
             | Self::GreenDragonMagePrepared

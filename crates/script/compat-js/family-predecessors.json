@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "endpoint": "T2.1",
-  "frozen_revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "frozen_revision": "90a69240a4617155f280f098958c3cd7f044f234",
   "base_predecessors": [
     "F0",
     "T1.3",
@@ -1078,7 +1078,7 @@
         "members": 34,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 11,
+        "callbacks": 15,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 5

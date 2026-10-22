@@ -462,6 +462,9 @@ impl Default for TradeView {
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct ShopView {
     pub open: bool,
+    /// Server `IF_CLOSE` packets received in this session, including closes
+    /// received while the shop is already closed.
+    pub server_closes: u64,
     pub stock: Vec<ItemView>,
     /// The `shop_template_side:inv` (3823) rows: `Sell` acts here, never on
     /// the stock rows and never on the plain backpack container.

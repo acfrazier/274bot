@@ -273,6 +273,7 @@ impl CookFixture {
                     self.snapshot
                         .seed_bank_observation(-1, tick, None, Vec::new());
                     self.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+                        goal: None,
                         request_id: authority.request_id().get(),
                         evidence,
                         end: WalkEnd::Arrived,
@@ -355,7 +356,10 @@ impl CookFixture {
                             self.snapshot.seed_inventory(inventory, 28);
                             self.observe_bank(tick);
                         }
-                        InteractReq::Obj { name, action, .. } => {
+                        InteractReq::Obj {
+                            id, name, action, ..
+                        } => {
+                            assert_eq!(id, Some(1944));
                             assert_eq!(name.as_deref(), Some("Egg"));
                             assert_eq!(action, "Take");
                             let mut inventory = self.snapshot.inventory().to_vec();
