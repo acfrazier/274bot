@@ -129,6 +129,18 @@ enum StallCombatObservation {
     SecondSession { guard_ready: bool },
 }
 
+/// Pre-style trip evidence for [`StepKind::ObserveStyleAcrossLootTrips`].
+#[derive(Debug, Clone, Copy, Default)]
+struct LootTripObservation {
+    /// Most `deposit_id` seen in a fresh open bank during this step. The
+    /// cells that use the step start from an empty bank.
+    deposited: i32,
+    /// Completed trips: observed rises of `deposited`.
+    trips: u32,
+    /// Attack, Strength and Defence XP at the previous frame.
+    melee_xp: Option<[i32; 3]>,
+}
+
 const PROTECT_MAGIC_VARP: i32 = 95;
 const ZAMORAK_WIZARD: usize = 1007;
 
@@ -447,6 +459,8 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// Pre-style Loot-count trips for the current style watch.
+    loot_trips: Option<LootTripObservation>,
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
@@ -565,6 +579,7 @@ impl ScenarioRunner {
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            loot_trips: None,
             random_event: None,
             protect_window: None,
             death_chat_baseline: None,
@@ -1053,6 +1068,14 @@ impl ScenarioRunner {
                 (wait.arm, wait.budget_ticks)
             };
             self.observe_ground_guard(arm);
+            if let Err(message) = self.observe_loot_trips(arm) {
+                self.finish_fail(&format!(
+                    "step {} ({}): {message}",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
+            }
             let waited_game_ticks = if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
                 self.ground_guard
                     .as_ref()
@@ -1155,6 +1178,16 @@ impl ScenarioRunner {
                     .or_else(|| {
                         self.stall_combat
                             .map(|state| format!("{} [stall_combat={state:?}]", arm.name()))
+                    })
+                    .or_else(|| {
+                        self.loot_trips.map(|trips| {
+                            format!(
+                                "{} [pre-style trips={} deposited={}]",
+                                arm.name(),
+                                trips.trips,
+                                trips.deposited
+                            )
+                        })
                     })
                     .or_else(|| {
                         matches!(
@@ -1277,6 +1310,11 @@ impl ScenarioRunner {
             StepKind::ObserveStallCombat { .. }
         )
         .then_some(StallCombatObservation::FirstSession);
+        self.loot_trips = matches!(
+            self.current_step().kind,
+            StepKind::ObserveStyleAcrossLootTrips { .. }
+        )
+        .then(LootTripObservation::default);
         if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
             // The cells run on the 289 engine (`tools/engine-patches/289`);
             // missing content data leaves the evade range unknown, which the
@@ -1374,6 +1412,61 @@ impl ScenarioRunner {
                 self.fresh_xp_baseline,
             ),
         }
+    }
+
+    /// Restart the style watch's budget at each completed pre-style trip, and
+    /// fail when the card fights without its style while it holds food.
+    fn observe_loot_trips(&mut self, style: Proof) -> Result<(), String> {
+        let StepKind::ObserveStyleAcrossLootTrips { deposit_id, food } = self.current_step().kind
+        else {
+            return Ok(());
+        };
+        let style_holds = self.holds(style);
+        let food_held = self
+            .snapshot
+            .inv()
+            .iter()
+            .any(|(id, count)| *count > 0 && food.contains(id));
+        let melee_xp = match (self.stat_xp(0), self.stat_xp(2), self.stat_xp(1)) {
+            (Some(attack), Some(strength), Some(defence)) => Some([attack, strength, defence]),
+            _ => None,
+        };
+        let fresh_bank = self.snapshot.ingame()
+            && self.snapshot.scene_state() == 2
+            && self.snapshot.bank_component_id() >= 0
+            && self.snapshot.bank_loaded();
+        let banked: i32 = if fresh_bank {
+            self.snapshot
+                .bank()
+                .iter()
+                .filter(|row| row.def.id == deposit_id)
+                .map(|row| row.count)
+                .sum()
+        } else {
+            0
+        };
+        let Some(state) = self.loot_trips.as_mut() else {
+            return Ok(());
+        };
+        let rose = match (state.melee_xp, melee_xp) {
+            (Some(before), Some(now)) => before.iter().zip(now).any(|(old, new)| new > *old),
+            _ => false,
+        };
+        if melee_xp.is_some() {
+            state.melee_xp = melee_xp;
+        }
+        if rose && food_held && !style_holds {
+            return Err(format!(
+                "melee XP rose while stall food was held and {} did not hold",
+                style.name()
+            ));
+        }
+        if banked > state.deposited {
+            state.deposited = banked;
+            state.trips += 1;
+            self.game_ticks_waited = 0;
+        }
+        Ok(())
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
@@ -1774,6 +1867,7 @@ impl ScenarioRunner {
             | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. }
+            | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);

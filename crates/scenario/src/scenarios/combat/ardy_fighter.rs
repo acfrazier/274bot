@@ -3,19 +3,65 @@ const STEEL_ARROW_ID: i32 = 886;
 const BODY_TALISMAN_ID: i32 = 1446;
 pub(crate) const BLOOD_RUNE_ID: i32 = 565;
 const CHAOS_RUNE_ID: i32 = 562;
-/// ArdyFighter sets its combat style only when out of combat after the first
-/// cake restock, so the first Guard fight can come before it, and a Guard drop
-/// that lands first sends PeriodicBank (`bankEveryItems=1`) on a bank round
-/// trip before the style is set (live `ardyfighter-window-r1`). Frozen rs2b0t at
-/// `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5, Adamant
-/// scimitar, foodTarget 1, empty food) set Strength at 7.5 s and 45.3 s; strong
-/// accounts at 44.6 s and 76.6 s. Worst style time 76.6 s = 128 game ticks at
-/// 600 ms, + 30 game ticks for the first Strength hit, + 60 game ticks for one
-/// market↔East Ardougne booth round trip (~20 tiles each way at one tile per
-/// game tick, plus open and deposit) = 218 game ticks. The old 1.25 dirty
-/// snapshots per game tick estimate gave 273 old dirty increments; the
-/// retained numeric cap is now 320 game ticks (192s), not 320 dirties.
-const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 320;
+/// Style watch of the bank-Off `ardy_fighter` cell. ArdyFighter sets its
+/// combat style only when out of combat after the first cake restock, so the
+/// first Guard fight can come before it. Frozen rs2b0t at `00d39a17` on this
+/// fixture set Strength at 7.5 s and 45.3 s; strong accounts at 44.6 s and
+/// 76.6 s. Worst style time 76.6 s = 128 game ticks at 600 ms, + 30 game
+/// ticks for the first Strength hit, + 60 game ticks of margin = 218 game
+/// ticks; the retained cap is 320 game ticks (192s). `ardy_fighter_bank`
+/// does not use this bar: a catch there costs a whole bank trip (see
+/// `ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS`).
+const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
+/// One pre-style Loot-count trip session of `ardy_fighter_bank`, from the
+/// deposit that ends one trip to the deposit that ends the next (or to the
+/// selected style). A trip comes before the style whenever a Guard sees the
+/// steal (content `stealing.rs2` `stealing_check_for_guard`: a Guard within
+/// five tiles with line of sight attacks) or a public Bones pile lies in the
+/// loot radius, because `loot=Bones` with `bankEveryItems=1` makes either
+/// item a trip end and the card banks before it restocks or sets its style.
+/// Walking pace is one tile per game tick, since long runs end with run
+/// energy 1 to 3:
+/// - close the booth and walk back to the anchor: 1 + 42 (the 42-tile booth
+///   route of the live nav trace, `FIX-ARDY-STYLE-025/runs/base-d1`);
+/// - anchor to the stall stand (2668,3312): 7;
+/// - restock: three owner refusals and the stand swap (frozen
+///   `RESET_AFTER_REFUSALS` 3, each steal resolves within 5 game ticks) = 18,
+///   plus one emptied-stall respawn (`stealing.dbrow` `respawn_ticks` 8) = 26;
+/// - the caught fight: the Guard has 22 hitpoints (`ardougne_east.npc`), 18
+///   scimitar swings at attack rate 4 = 72, plus retaliation start and death
+///   = 77 (six live catches took 35 to 47 game ticks from steal to Bones);
+/// - take the Bones: 3;
+/// - walk the 42-tile route to the booth, open it and deposit: 47.
+pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 26 + 77 + 3 + 47;
+/// First Strength XP of `ardy_fighter_bank` after the card acknowledges the
+/// selected style. Fight picks the nearest unengaged Guard within the leash
+/// (12) of the anchor and the card stands within 7 of it: walk 19 + attack 1;
+/// one EatFood first: 3; five scimitar swings (1 + 4 x 4) = 17; one retarget
+/// when another player engages that Guard first: 19. The card sent its
+/// Attack within two game ticks of the style in all eight live selections
+/// of `FIX-ARDY-STYLE-025/runs`.
+pub(crate) const ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS: u32 = 20 + 3 + 17 + 20;
+/// Native Strength mode of the worn Adamant scimitar: `combat_hacksword:hack1`
+/// (`interface.pack` 2432) runs `~set_attackstyle(1)`
+/// (`player_attackstyles.rs2:38`) on `com_mode` (varp 43).
+pub(crate) const ARDY_FIGHTER_STRENGTH_STYLE: Proof = Proof::VarpExact { id: 43, value: 1 };
+/// Partial cakes left after a bite (`obj.pack` `partial_cake`, `cake_slice`,
+/// `partial_chocolate_cake`).
+const PARTIAL_CAKE_ID: i32 = 1893;
+const CAKE_SLICE_ID: i32 = 1895;
+const PARTIAL_CHOCOLATE_CAKE_ID: i32 = 1899;
+/// Every Baker's stall food the card counts as carried food (frozen
+/// `CAKE_ITEMS` substrings `cake`, `bread`, `chocolate slice`).
+const ARDY_FIGHTER_STALL_FOOD: &[i32] = &[
+    CAKE_ID,
+    PARTIAL_CAKE_ID,
+    CAKE_SLICE_ID,
+    CHOCOLATE_CAKE_ID,
+    PARTIAL_CHOCOLATE_CAKE_ID,
+    CHOCOLATE_SLICE_ID,
+    BREAD_ID,
+];
 /// Seeded bank trip arithmetic uses the frozen Fight's possible pre-bank
 /// combat hold: `90 s / 0.6 s = 150` game ticks, plus the measured
 /// market→East Ardougne approach (~23 tiles) and the existing 20-game-tick
@@ -111,7 +157,7 @@ pub(crate) fn ardy_fighter_scenario() -> Scenario {
         .iter_mut()
         .find(|step| step.name == "watch Strength XP from the selected melee style after Start")
         .expect("ardy fighter has a post-Start Strength watch");
-    style_watch.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+    style_watch.wait.budget_ticks = ARDY_FIGHTER_STYLE_WATCH_TICKS;
     scenario
 }
 /// ArdyFighter's `bankStrategy=Loot count` PeriodicBank after it has looted a
@@ -241,12 +287,26 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
             ),
         ],
     );
-    let style_watch = scenario
+    let style_xp = scenario
         .steps
-        .iter_mut()
-        .find(|step| step.name == "watch Strength XP from the selected melee style after Start")
+        .iter()
+        .position(|step| step.name == "watch Strength XP from the selected melee style after Start")
         .expect("ardy fighter bank has a post-Start Strength watch");
-    style_watch.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+    scenario.steps[style_xp].wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS;
+    scenario.steps.insert(
+        style_xp,
+        Step {
+            name: "watch the card select its Strength style across pre-style Loot-count trips",
+            kind: StepKind::ObserveStyleAcrossLootTrips {
+                deposit_id: BONES_ID,
+                food: ARDY_FIGHTER_STALL_FOOD,
+            },
+            wait: Wait {
+                arm: ARDY_FIGHTER_STRENGTH_STYLE,
+                budget_ticks: ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
+            },
+        },
+    );
     scenario.settings.deadline = ARDY_FIGHTER_BANK_DEADLINE;
     scenario
 }
