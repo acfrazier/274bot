@@ -61,6 +61,11 @@ for run in $runs; do
         log "$run: no DONE; left on malbec"
         continue
     fi
+    if ! printf '%s\n' "$remote_listing" | awk '$NF == "SHA256SUMS" { found=1 } END { exit !found }'; then
+        waiting=$((waiting + 1))
+        log "$run: no malbec SHA256SUMS; left on malbec"
+        continue
+    fi
     incoming="$DEST/.incoming-$run.$$"
     rm -rf "$incoming"
     mkdir "$incoming"
@@ -76,18 +81,22 @@ for run in $runs; do
         log "$run: DONE vanished before transfer; source left unchanged"
         continue
     fi
+    if [ ! -f "$incoming/SHA256SUMS" ]; then
+        rm -rf "$incoming"
+        log "$run: transferred source has no SHA256SUMS; refusing the mirror"
+        exit 1
+    fi
     links=$(find "$incoming" -type l -print)
     if [ -n "$links" ]; then
         rm -rf "$incoming"
         log "$run: unexpected symlinks in transfer; refusing the mirror"
         exit 1
     fi
-    (
-        cd "$incoming"
-        find . -type f ! -name SHA256SUMS -print | LC_ALL=C sort |
-            while IFS= read -r file; do shasum -a 256 "$file"; done >SHA256SUMS
-        shasum -a 256 -c SHA256SUMS >/dev/null
-    )
+    if ! (cd "$incoming" && shasum -a 256 -c SHA256SUMS >/dev/null); then
+        rm -rf "$incoming"
+        log "$run: malbec SHA256SUMS verification failed; refusing the mirror"
+        exit 1
+    fi
     if ! mv -n "$incoming" "$destination"; then
         rm -rf "$incoming"
         log "$run: destination move failed"
@@ -98,7 +107,7 @@ for run in $runs; do
         log "$run: destination appeared concurrently; preserved existing data"
         exit 1
     fi
-    log "$run: mirrored with verified SHA256SUMS"
+    log "$run: mirrored after malbec SHA256SUMS verification"
     copied=$((copied + 1))
 done
 log "done: $copied copied, $waiting unfinished, $preserved already present"

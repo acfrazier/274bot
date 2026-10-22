@@ -26,14 +26,17 @@ export PATH="$CARGO_HOME/bin:$PATH"
 RUNNER="$NIGHTLY_MAC_RUNNER/tools/nightly/run_nightly.py"
 STATUS="${NIGHTLY_MAC_STATUS:-$NIGHTLY_MAC_RUNS/.mac-nightly-running}"
 LOCK_DIR="$NIGHTLY_MAC_ROOT/.mac-nightly.lock"
+SOURCE_REPO="${NIGHTLY_MAC_SOURCE_REPO:-https://github.com/acfrazier/274bot}"
+PIN_REPO="$NIGHTLY_MAC_ROOT/dev-pin.git"
+PINNED_COMMIT=
 STARTED=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 mkdir -p "$NIGHTLY_MAC_ROOT" "$NIGHTLY_MAC_RUNS" "$(dirname "$STATUS")"
 
 write_status() {
     local job="$1" state="$2" temporary="$STATUS.tmp.$$"
-    printf 'pid=%s\njob=%s\nstate=%s\nstarted=%s\nupdated=%s\nquiet_lock=%s\n' \
+    printf 'pid=%s\njob=%s\nstate=%s\nstarted=%s\nupdated=%s\nquiet_lock=%s\ndev_commit=%s\n' \
         "$$" "$job" "$state" "$STARTED" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-        "$NIGHTLY_MAC_QUIET_LOCK" >"$temporary"
+        "$NIGHTLY_MAC_QUIET_LOCK" "$PINNED_COMMIT" >"$temporary"
     mv -f "$temporary" "$STATUS"
 }
 owned_lock=0
@@ -57,6 +60,16 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     exit 0
 fi
 owned_lock=1
+
+if [ ! -d "$PIN_REPO" ]; then
+    git init --bare -q "$PIN_REPO"
+fi
+GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never git -c credential.helper= -C "$PIN_REPO" \
+    fetch --no-tags "$SOURCE_REPO" +refs/heads/dev:refs/heads/dev
+PINNED_COMMIT=$(git -C "$PIN_REPO" rev-parse --verify 'refs/heads/dev^{commit}')
+export NIGHTLY_REPO="$PIN_REPO" NIGHTLY_PINNED_COMMIT="$PINNED_COMMIT"
+printf '%s\n' "nightly-mac: pinned dev at $PINNED_COMMIT"
+
 
 quiet_stopped=0
 run_job() {

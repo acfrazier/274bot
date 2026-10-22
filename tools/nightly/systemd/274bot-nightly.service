@@ -1,5 +1,5 @@
-# Nightly VM: one nightly live run (every branch in tools/nightly/branches.conf).
-# Install: /etc/systemd/system/274bot-nightly.service (see tools/nightly/README.md).
+# Shared malbec/zinfandel service. The revision-289 quest job runs only when
+# NIGHTLY_ENABLE_QUEST=1 is set in malbec's /etc/274bot-nightly.env.
 [Unit]
 Description=274bot nightly live-cell run
 Wants=network-online.target
@@ -15,7 +15,7 @@ Environment=PATH=/home/bot/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-/etc/274bot-nightly.env
 EnvironmentFile=-/srv/nightly/cache-manifest-274.env
 ExecStart=/usr/bin/env NIGHTLY_JOB=main /usr/bin/python3 /srv/nightly/runner/tools/nightly/run_nightly.py
-ExecStartPost=/usr/bin/env NIGHTLY_JOB=quest NIGHTLY_REVISION=289 NIGHTLY_ENGINE=local NIGHTLY_PROFILE=local-289q NIGHTLY_ENGINE_HOST=127.0.0.1 NIGHTLY_GAME_PORT=44694 NIGHTLY_HTTP_PORT=1180 NIGHTLY_ENGINE_LABEL="Engine Q" NIGHTLY_ENGINE_SCRIPT_REVISION=289q NIGHTLY_RUN_SUFFIX=-quest NIGHTLY_NAME_PREFIX=nq NIGHTLY_PANEL_NAME_PREFIX=nqp NIGHTLY_STEPS=tui NIGHTLY_PARALLEL=1 NIGHTLY_PANEL_PARALLEL=1 /usr/bin/python3 /srv/nightly/runner/tools/nightly/run_nightly.py
+ExecStartPost=/bin/sh /srv/nightly/runner/tools/nightly/systemd/run-quest-job.sh
 TimeoutStartSec=30h
 KillMode=mixed
 TimeoutStopSec=120
