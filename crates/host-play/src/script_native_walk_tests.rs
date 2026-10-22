@@ -376,12 +376,12 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
     for (why, expected, name) in [
         (
-            nav::traveller::HopFailure::Expired,
+            nav_executor::HopFailure::Expired,
             script::native::WalkStallReason::Expired,
             "Expired",
         ),
         (
-            nav::traveller::HopFailure::Dropped,
+            nav_executor::HopFailure::Dropped,
             script::native::WalkStallReason::Dropped,
             "Dropped",
         ),
@@ -389,7 +389,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
         let mut rig = open_rig(false);
         rig.observe(1);
         rig.wait_routed();
-        let failure = nav::traveller::TravelOutcome::Stalled {
+        let failure = nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 0,
                 z: 0,
@@ -454,10 +454,10 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
         let mut navs = rig.navs.lock().unwrap();
         super::apply_nav_follow_outcome(
             navs.get_mut("alice").unwrap(),
-            Some(nav::traveller::TravelOutcome::Stalled {
+            Some(nav_executor::TravelOutcome::Stalled {
                 at,
                 aiming,
-                why: nav::traveller::HopFailure::EndBlocked,
+                why: nav_executor::HopFailure::EndBlocked,
                 tries: 0,
             }),
             false,
@@ -479,7 +479,7 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
 
 #[test]
 fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
-    let failure = || nav::traveller::TravelOutcome::Stalled {
+    let failure = || nav_executor::TravelOutcome::Stalled {
         at: WorldTile {
             x: 0,
             z: 0,
@@ -490,7 +490,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
             z: 0,
             level: 0,
         },
-        why: nav::traveller::HopFailure::Dropped,
+        why: nav_executor::HopFailure::Dropped,
         tries: 3,
     };
 
@@ -2282,7 +2282,7 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
         // The follow's pre-send recheck refused the crossing.
         crate::script_runtime::apply_nav_follow_outcome(
             rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-            Some(nav::traveller::TravelOutcome::EvidenceUnproven {
+            Some(nav_executor::TravelOutcome::EvidenceUnproven {
                 at: WorldTile {
                     x: 0,
                     z: 0,
@@ -2333,7 +2333,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     rig.wait_routed();
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -4123,7 +4123,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     rig.wait_routed();
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -4201,7 +4201,7 @@ fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_c
     rig.wait_routed();
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -4289,7 +4289,7 @@ fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
     let bot = bots.get_mut("alice").unwrap();
     crate::script_runtime::apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -4333,7 +4333,7 @@ fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
     bot.requested_route = Some(native_requested(goal, 0, false));
     crate::script_runtime::apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: goal }),
+        Some(nav_executor::TravelOutcome::Arrived { at: goal }),
         false,
     );
     assert_eq!(bot.manual_takeover_watermark, watermark);

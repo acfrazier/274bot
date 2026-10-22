@@ -121,6 +121,14 @@ struct AliasSpec {
 
 type AliasMap = HashMap<(Vec<String>, String, Scope), BTreeSet<Vec<String>>>;
 
+#[derive(Clone, Copy)]
+struct Resolution<'a> {
+    package_name: &'a str,
+    top_modules: &'a BTreeSet<String>,
+    modules: &'a BTreeSet<Vec<String>>,
+    aliases: &'a AliasMap,
+}
+
 #[derive(Clone)]
 struct Reexport {
     owner: Vec<String>,
@@ -238,7 +246,7 @@ pub fn compute_deny_closure_sources(
             module_dir: PathBuf::new(),
             scope: Scope::Production,
         };
-        let tree = load_units(files, &[entry], package_name);
+        let tree = load_units(files, &[entry]);
         report.findings.extend(tree.findings);
         all_modules.extend(tree.modules);
         parsed.push((*package_name, tree.units));
@@ -260,10 +268,12 @@ pub fn compute_deny_closure_sources(
                 &unit.module_path,
                 &unit.file,
                 unit.scope,
-                package_name,
-                &top_modules,
-                &all_modules,
-                &aliases,
+                Resolution {
+                    package_name,
+                    top_modules: &top_modules,
+                    modules: &all_modules,
+                    aliases: &aliases,
+                },
                 &mut all_exports,
             );
         }
@@ -280,14 +290,19 @@ pub fn compute_deny_closure_sources(
             }
             let target_name = join_path(&reexport.target);
             if is_denied(&target_name, &report.denied) {
-                let key = format!("denied|{}|{}|{target_name}", reexport.file.display(), join_path(&reexport.owner));
+                let key = format!(
+                    "denied|{}|{}|{target_name}",
+                    reexport.file.display(),
+                    join_path(&reexport.owner)
+                );
                 if expanded.insert(key) {
                     report.findings.push(Finding {
                         kind: FindingKind::UnsupportedReexportGlob,
                         path: Some(format!("{target_name}::*")),
                         scope: Scope::Production,
                         file: reexport.file.clone(),
-                        detail: "public glob outside a denied namespace targets denied items".to_owned(),
+                        detail: "public glob outside a denied namespace targets denied items"
+                            .to_owned(),
                     });
                 }
                 continue;
@@ -298,7 +313,11 @@ pub fn compute_deny_closure_sources(
                     .first()
                     .is_some_and(|root| all_modules.contains(&vec![root.clone()]));
                 if is_local_target {
-                    let key = format!("unresolved|{}|{}|{target_name}", reexport.file.display(), join_path(&reexport.owner));
+                    let key = format!(
+                        "unresolved|{}|{}|{target_name}",
+                        reexport.file.display(),
+                        join_path(&reexport.owner)
+                    );
                     if expanded.insert(key) {
                         report.findings.push(Finding {
                             kind: FindingKind::UnsupportedReexportGlob,
@@ -363,7 +382,7 @@ fn scan_entries(
     denied_prefixes: &[&str],
     report_unattached: bool,
 ) -> ScanReport {
-    let tree = load_units(files, entries, package_name);
+    let tree = load_units(files, entries);
     let mut report = ScanReport::default();
     report.findings.extend(tree.findings);
     let mut paths = Vec::new();
@@ -433,7 +452,10 @@ fn cargo_roots(files: &SourceMap, package_name: &str) -> Vec<Entry> {
     add(PathBuf::from("src/lib.rs"), Scope::Production);
     let mut bins: Vec<_> = files
         .keys()
-        .filter(|path| path.parent() == Some(Path::new("src/bin")) && path.extension().is_some_and(|e| e == "rs"))
+        .filter(|path| {
+            path.parent() == Some(Path::new("src/bin"))
+                && path.extension().is_some_and(|e| e == "rs")
+        })
         .cloned()
         .collect();
     bins.sort();
@@ -442,7 +464,10 @@ fn cargo_roots(files: &SourceMap, package_name: &str) -> Vec<Entry> {
     }
     let mut examples: Vec<_> = files
         .keys()
-        .filter(|path| path.parent() == Some(Path::new("examples")) && path.extension().is_some_and(|e| e == "rs"))
+        .filter(|path| {
+            path.parent() == Some(Path::new("examples"))
+                && path.extension().is_some_and(|e| e == "rs")
+        })
         .cloned()
         .collect();
     examples.sort();
@@ -451,7 +476,9 @@ fn cargo_roots(files: &SourceMap, package_name: &str) -> Vec<Entry> {
     }
     let mut tests: Vec<_> = files
         .keys()
-        .filter(|path| path.parent() == Some(Path::new("tests")) && path.extension().is_some_and(|e| e == "rs"))
+        .filter(|path| {
+            path.parent() == Some(Path::new("tests")) && path.extension().is_some_and(|e| e == "rs")
+        })
         .cloned()
         .collect();
     tests.sort();
@@ -468,12 +495,7 @@ fn read_source_map(root: &Path) -> (SourceMap, Vec<Finding>) {
     (files, findings)
 }
 
-fn collect_rust_files(
-    root: &Path,
-    dir: &Path,
-    files: &mut SourceMap,
-    findings: &mut Vec<Finding>,
-) {
+fn collect_rust_files(root: &Path, dir: &Path, files: &mut SourceMap, findings: &mut Vec<Finding>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -535,7 +557,7 @@ fn collect_rust_files(
     }
 }
 
-fn load_units(files: &SourceMap, entries: &[Entry], package_name: &str) -> ModuleTree {
+fn load_units(files: &SourceMap, entries: &[Entry]) -> ModuleTree {
     let mut tree = ModuleTree {
         units: Vec::new(),
         findings: Vec::new(),
@@ -544,52 +566,37 @@ fn load_units(files: &SourceMap, entries: &[Entry], package_name: &str) -> Modul
     };
     let mut active = HashSet::new();
     for entry in entries {
-        load_unit(
-            files,
-            entry.clone(),
-            package_name,
-            &mut tree.units,
-            &mut tree.findings,
-            &mut tree.modules,
-            &mut tree.reached,
-            &mut active,
-        );
+        load_unit(files, entry.clone(), &mut tree, &mut active);
     }
     tree
 }
 
-#[allow(clippy::too_many_arguments)]
 fn load_unit(
     files: &SourceMap,
-    entry: Entry,
-    package_name: &str,
-    units: &mut Vec<Unit>,
-    findings: &mut Vec<Finding>,
-    modules: &mut BTreeSet<Vec<String>>,
-    reached: &mut HashSet<PathBuf>,
+    mut entry: Entry,
+    tree: &mut ModuleTree,
     active: &mut HashSet<(PathBuf, Vec<String>)>,
 ) {
-    let file = normalize_path(&entry.file);
-    let module_path = entry.module_path.clone();
-    modules.insert(module_path.clone());
-    reached.insert(file.clone());
-    let state = (file.clone(), module_path.clone());
+    entry.file = normalize_path(&entry.file);
+    tree.modules.insert(entry.module_path.clone());
+    tree.reached.insert(entry.file.clone());
+    let state = (entry.file.clone(), entry.module_path.clone());
     if !active.insert(state.clone()) {
-        findings.push(Finding {
+        tree.findings.push(Finding {
             kind: FindingKind::UnresolvedModule,
-            path: Some(join_path(&module_path)),
+            path: Some(join_path(&entry.module_path)),
             scope: entry.scope,
-            file,
+            file: entry.file,
             detail: "recursive module attachment".to_owned(),
         });
         return;
     }
-    let Some(source) = files.get(&file) else {
-        findings.push(Finding {
+    let Some(source) = files.get(&entry.file) else {
+        tree.findings.push(Finding {
             kind: FindingKind::UnresolvedModule,
-            path: Some(join_path(&module_path)),
+            path: Some(join_path(&entry.module_path)),
             scope: entry.scope,
-            file: file.clone(),
+            file: entry.file,
             detail: "attached module source file is absent".to_owned(),
         });
         active.remove(&state);
@@ -598,103 +605,67 @@ fn load_unit(
     let ast = match syn::parse_file(source) {
         Ok(ast) => ast,
         Err(error) => {
-            findings.push(Finding {
+            tree.findings.push(Finding {
                 kind: FindingKind::ParseError,
                 path: None,
                 scope: entry.scope,
-                file: file.clone(),
+                file: entry.file,
                 detail: error.to_string(),
             });
             active.remove(&state);
             return;
         }
     };
-    load_items(
-        files,
-        &ast.items,
-        &file,
-        &module_path,
-        &entry.module_dir,
-        entry.scope,
-        package_name,
-        units,
-        findings,
-        modules,
-        reached,
-        active,
-    );
-    units.push(Unit {
-        file,
+    load_items(files, &ast.items, &entry, tree, active);
+    tree.units.push(Unit {
+        file: entry.file,
         ast,
-        module_path,
+        module_path: entry.module_path,
         scope: entry.scope,
     });
     active.remove(&state);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn load_items(
     files: &SourceMap,
     items: &[Item],
-    current_file: &Path,
-    module_path: &[String],
-    module_dir: &Path,
-    inherited_scope: Scope,
-    package_name: &str,
-    units: &mut Vec<Unit>,
-    findings: &mut Vec<Finding>,
-    modules: &mut BTreeSet<Vec<String>>,
-    reached: &mut HashSet<PathBuf>,
+    parent: &Entry,
+    tree: &mut ModuleTree,
     active: &mut HashSet<(PathBuf, Vec<String>)>,
 ) {
     for item in items {
-        let attrs = item_attrs(item);
-        let scope = scope_after_attrs(attrs, inherited_scope);
+        let scope = scope_after_attrs(item_attrs(item), parent.scope);
         if let Item::Mod(module) = item {
-            let mut child_path = module_path.to_vec();
+            let mut child_path = parent.module_path.clone();
             child_path.push(module.ident.to_string());
-            modules.insert(child_path.clone());
+            tree.modules.insert(child_path.clone());
             if let Some((_, inline_items)) = &module.content {
-                let child_dir = module_dir.join(module.ident.to_string());
-                load_items(
-                    files,
-                    inline_items,
-                    current_file,
-                    &child_path,
-                    &child_dir,
+                let child = Entry {
+                    file: parent.file.clone(),
+                    module_path: child_path,
+                    module_dir: parent.module_dir.join(module.ident.to_string()),
                     scope,
-                    package_name,
-                    units,
-                    findings,
-                    modules,
-                    reached,
-                    active,
-                );
+                };
+                load_items(files, inline_items, &child, tree, active);
                 continue;
             }
-            match module_file(files, module, current_file, module_dir) {
-                Ok((file, child_dir)) => {
-                    load_unit(
-                        files,
-                        Entry {
-                            file,
-                            module_path: child_path,
-                            module_dir: child_dir,
-                            scope,
-                        },
-                        package_name,
-                        units,
-                        findings,
-                        modules,
-                        reached,
-                        active,
-                    );
-                }
-                Err(detail) => findings.push(Finding {
+            match module_file(files, module, &parent.file, &parent.module_dir) {
+                Ok((file, module_dir)) => load_unit(
+                    files,
+                    Entry {
+                        file,
+                        module_path: child_path,
+                        module_dir,
+                        scope,
+                    },
+                    tree,
+                    active,
+                ),
+                Err(detail) => tree.findings.push(Finding {
                     kind: FindingKind::UnresolvedModule,
                     path: Some(join_path(&child_path)),
                     scope,
-                    file: current_file.to_path_buf(),
+                    file: parent.file.clone(),
                     detail,
                 }),
             }
@@ -708,11 +679,19 @@ fn module_file(
     current_file: &Path,
     module_dir: &Path,
 ) -> Result<(PathBuf, PathBuf), String> {
-    if let Some(path_attr) = module.attrs.iter().find(|attr| attr.path().is_ident("path")) {
+    if let Some(path_attr) = module
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("path"))
+    {
         let Meta::NameValue(value) = &path_attr.meta else {
             return Err("#[path] must contain a string literal".to_owned());
         };
-        let Expr::Lit(ExprLit { lit: Lit::Str(path), .. }) = &value.value else {
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(path),
+            ..
+        }) = &value.value
+        else {
             return Err("#[path] must contain a string literal".to_owned());
         };
         let declaring_dir = current_file.parent().unwrap_or_else(|| Path::new(""));
@@ -725,7 +704,11 @@ fn module_file(
     match (files.contains_key(&flat), files.contains_key(&nested)) {
         (true, false) => Ok((flat.clone(), module_directory_for_file(&flat))),
         (false, true) => Ok((nested.clone(), module_directory_for_file(&nested))),
-        (true, true) => Err(format!("both {} and {} define this module", flat.display(), nested.display())),
+        (true, true) => Err(format!(
+            "both {} and {} define this module",
+            flat.display(),
+            nested.display()
+        )),
         (false, false) => Err(format!(
             "neither {} nor {} defines this module",
             flat.display(),
@@ -800,7 +783,6 @@ fn parse_meta_list(
     parser.parse2(tokens.clone()).ok()
 }
 
-
 fn top_level_modules(modules: &BTreeSet<Vec<String>>, package_name: &str) -> BTreeSet<String> {
     modules
         .iter()
@@ -836,7 +818,10 @@ fn is_denied(path: &str, denied: &BTreeSet<String>) -> bool {
 }
 
 fn is_at_or_under(path: &str, prefix: &str) -> bool {
-    path == prefix || path.strip_prefix(prefix).is_some_and(|suffix| suffix.starts_with("::"))
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with("::"))
 }
 
 fn is_proper_prefix(path: &str, full: &str) -> bool {
@@ -918,7 +903,7 @@ fn collect_alias_specs(
                             scope,
                         });
                     }
-            }
+                }
             }
             Item::ExternCrate(item_extern) => {
                 output.push(AliasSpec {
@@ -962,14 +947,20 @@ fn file_aliases(
                 &spec.target,
                 &spec.module_path,
                 spec.scope,
-                package_name,
-                top_modules,
-                modules,
-                &aliases,
+                Resolution {
+                    package_name,
+                    top_modules,
+                    modules,
+                    aliases: &aliases,
+                },
                 0,
             ) {
                 aliases
-                    .entry((spec.module_path.clone(), spec.local_name.clone(), spec.scope))
+                    .entry((
+                        spec.module_path.clone(),
+                        spec.local_name.clone(),
+                        spec.scope,
+                    ))
                     .or_default()
                     .insert(target);
             }
@@ -978,17 +969,19 @@ fn file_aliases(
     aliases
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_path(
     raw: &[String],
     module_path: &[String],
     scope: Scope,
-    package_name: &str,
-    top_modules: &BTreeSet<String>,
-    modules: &BTreeSet<Vec<String>>,
-    aliases: &AliasMap,
+    resolution: Resolution<'_>,
     depth: usize,
 ) -> Vec<Vec<String>> {
+    let Resolution {
+        package_name,
+        top_modules,
+        modules,
+        aliases,
+    } = resolution;
     if raw.is_empty() || depth > 16 {
         return Vec::new();
     }
@@ -1018,7 +1011,9 @@ fn resolve_path(
     let leading = &raw[0];
     let mut targets = BTreeSet::new();
     if scope == Scope::Test {
-        if let Some(production) = aliases.get(&(module_path.to_vec(), leading.clone(), Scope::Production)) {
+        if let Some(production) =
+            aliases.get(&(module_path.to_vec(), leading.clone(), Scope::Production))
+        {
             targets.extend(production.iter().cloned());
         }
     }
@@ -1034,10 +1029,7 @@ fn resolve_path(
                 &expanded,
                 module_path,
                 scope,
-                package_name,
-                top_modules,
-                modules,
-                aliases,
+                resolution,
                 depth + 1,
             ));
         }
@@ -1084,17 +1076,17 @@ struct PathCollector<'a> {
 }
 
 impl PathCollector<'_> {
+    fn resolution(&self) -> Resolution<'_> {
+        Resolution {
+            package_name: self.package_name,
+            top_modules: self.top_modules,
+            modules: self.modules,
+            aliases: self.aliases,
+        }
+    }
+
     fn record_path(&mut self, raw: &[String], kind: PathKind, scope: Scope) {
-        let paths = resolve_path(
-            raw,
-            &self.module_path,
-            scope,
-            self.package_name,
-            self.top_modules,
-            self.modules,
-            self.aliases,
-            0,
-        );
+        let paths = resolve_path(raw, &self.module_path, scope, self.resolution(), 0);
         for path in paths {
             let rendered = join_path(&path);
             self.paths.push(SourcePath {
@@ -1106,7 +1098,10 @@ impl PathCollector<'_> {
             if scope != Scope::Production {
                 continue;
             }
-            let denied = self.denied_prefixes.iter().any(|prefix| is_at_or_under(&rendered, prefix));
+            let denied = self
+                .denied_prefixes
+                .iter()
+                .any(|prefix| is_at_or_under(&rendered, prefix));
             if denied {
                 let finding_kind = match kind {
                     PathKind::Use => FindingKind::UsePath,
@@ -1127,16 +1122,7 @@ impl PathCollector<'_> {
     }
 
     fn record_glob(&mut self, raw: &[String], scope: Scope) {
-        let paths = resolve_path(
-            raw,
-            &self.module_path,
-            scope,
-            self.package_name,
-            self.top_modules,
-            self.modules,
-            self.aliases,
-            0,
-        );
+        let paths = resolve_path(raw, &self.module_path, scope, self.resolution(), 0);
         for path in paths {
             let rendered = join_path(&path);
             self.paths.push(SourcePath {
@@ -1148,9 +1134,17 @@ impl PathCollector<'_> {
             if scope != Scope::Production {
                 continue;
             }
-            let kind = if self.denied_prefixes.iter().any(|prefix| is_at_or_under(&rendered, prefix)) {
+            let kind = if self
+                .denied_prefixes
+                .iter()
+                .any(|prefix| is_at_or_under(&rendered, prefix))
+            {
                 Some(FindingKind::DeniedGlob)
-            } else if self.denied_prefixes.iter().any(|prefix| is_proper_prefix(&rendered, prefix)) {
+            } else if self
+                .denied_prefixes
+                .iter()
+                .any(|prefix| is_proper_prefix(&rendered, prefix))
+            {
                 Some(FindingKind::AncestorGlob)
             } else {
                 None
@@ -1182,16 +1176,30 @@ impl PathCollector<'_> {
     fn record_meta(&mut self, meta: &Meta, scope: Scope) {
         match meta {
             Meta::Path(path) => {
-                let raw = path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+                let raw = path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>();
                 self.record_path(&raw, PathKind::Attribute, scope);
             }
             Meta::NameValue(value) => {
-                let raw = value.path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+                let raw = value
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>();
                 self.record_path(&raw, PathKind::Attribute, scope);
                 self.visit_expr(&value.value);
             }
             Meta::List(list) => {
-                let raw = list.path.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+                let raw = list
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>();
                 self.record_path(&raw, PathKind::Attribute, scope);
                 if let Some(items) = parse_meta_list(&list.tokens) {
                     for nested in &items {
@@ -1205,12 +1213,9 @@ impl PathCollector<'_> {
     fn record_macro(&mut self, mac: &syn::Macro, scope: Scope) {
         let result = read_macro_tokens(
             &mac.tokens,
-            self.package_name,
             &self.module_path,
             scope,
-            self.top_modules,
-            self.modules,
-            self.aliases,
+            self.resolution(),
             self.relevant_roots,
         );
         for path in result.paths {
@@ -1259,15 +1264,21 @@ impl<'ast> Visit<'ast> for PathCollector<'_> {
     }
 
     fn visit_impl_item(&mut self, node: &'ast syn::ImplItem) {
-        self.with_attrs(impl_item_attrs(node), |this| syn::visit::visit_impl_item(this, node));
+        self.with_attrs(impl_item_attrs(node), |this| {
+            syn::visit::visit_impl_item(this, node)
+        });
     }
 
     fn visit_trait_item(&mut self, node: &'ast syn::TraitItem) {
-        self.with_attrs(trait_item_attrs(node), |this| syn::visit::visit_trait_item(this, node));
+        self.with_attrs(trait_item_attrs(node), |this| {
+            syn::visit::visit_trait_item(this, node)
+        });
     }
 
     fn visit_foreign_item(&mut self, node: &'ast syn::ForeignItem) {
-        self.with_attrs(foreign_item_attrs(node), |this| syn::visit::visit_foreign_item(this, node));
+        self.with_attrs(foreign_item_attrs(node), |this| {
+            syn::visit::visit_foreign_item(this, node)
+        });
     }
 
     fn visit_field(&mut self, node: &'ast syn::Field) {
@@ -1280,8 +1291,12 @@ impl<'ast> Visit<'ast> for PathCollector<'_> {
 
     fn visit_stmt(&mut self, node: &'ast syn::Stmt) {
         match node {
-            syn::Stmt::Local(local) => self.with_attrs(&local.attrs, |this| syn::visit::visit_stmt(this, node)),
-            syn::Stmt::Macro(mac) => self.with_attrs(&mac.attrs, |this| syn::visit::visit_stmt(this, node)),
+            syn::Stmt::Local(local) => {
+                self.with_attrs(&local.attrs, |this| syn::visit::visit_stmt(this, node))
+            }
+            syn::Stmt::Macro(mac) => {
+                self.with_attrs(&mac.attrs, |this| syn::visit::visit_stmt(this, node))
+            }
             _ => syn::visit::visit_stmt(self, node),
         }
     }
@@ -1303,14 +1318,19 @@ impl<'ast> Visit<'ast> for PathCollector<'_> {
                 path: None,
                 scope: self.scope,
                 file: self.file.to_path_buf(),
-                detail: "cfg_attr changes source scope in a form the scanner does not resolve".to_owned(),
+                detail: "cfg_attr changes source scope in a form the scanner does not resolve"
+                    .to_owned(),
             });
         }
         self.record_meta(&node.meta, self.scope);
     }
 
     fn visit_path(&mut self, node: &'ast syn::Path) {
-        let raw = node.segments.iter().map(|segment| segment.ident.to_string()).collect::<Vec<_>>();
+        let raw = node
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>();
         self.record_path(&raw, PathKind::Qualified, self.scope);
         syn::visit::visit_path(self, node);
     }
@@ -1371,18 +1391,15 @@ struct MacroRead {
     issues: Vec<MacroIssue>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn read_macro_tokens(
     tokens: &proc_macro2::TokenStream,
-    package_name: &str,
     module_path: &[String],
     scope: Scope,
-    top_modules: &BTreeSet<String>,
-    modules: &BTreeSet<Vec<String>>,
-    aliases: &AliasMap,
+    resolution: Resolution<'_>,
     relevant_roots: &[&str],
 ) -> MacroRead {
     use proc_macro2::{Delimiter, TokenTree};
+    let aliases = resolution.aliases;
 
     let mut result = MacroRead::default();
     let mut stack = vec![tokens.clone()];
@@ -1392,7 +1409,8 @@ fn read_macro_tokens(
         'scan: while i < trees.len() {
             if let TokenTree::Punct(punct) = &trees[i] {
                 if punct.as_char() == '$' {
-                    if matches!(trees.get(i + 1), Some(TokenTree::Ident(ident)) if ident == "crate") {
+                    if matches!(trees.get(i + 1), Some(TokenTree::Ident(ident)) if ident == "crate")
+                    {
                         result.issues.push(MacroIssue {
                             path: Some("$crate".to_owned()),
                             detail: "$crate cannot be resolved by the source scanner".to_owned(),
@@ -1451,40 +1469,49 @@ fn read_macro_tokens(
                                 if stream_has_dollar(&group.stream()) {
                                     result.issues.push(MacroIssue {
                                         path: Some(join_path(&raw)),
-                                        detail: "relevant crate root has an unresolved macro group".to_owned(),
+                                        detail: "relevant crate root has an unresolved macro group"
+                                            .to_owned(),
                                     });
                                 } else {
                                     match parse_grouped_use(&raw, group) {
                                         Ok(item_use) => {
                                             let mut leaves = Vec::new();
-                                            flatten_use_tree(&item_use.tree, &mut Vec::new(), &mut leaves);
+                                            flatten_use_tree(
+                                                &item_use.tree,
+                                                &mut Vec::new(),
+                                                &mut leaves,
+                                            );
                                             for leaf in leaves {
                                                 let resolved = resolve_path(
                                                     &leaf.path,
                                                     module_path,
                                                     scope,
-                                                    package_name,
-                                                    top_modules,
-                                                    modules,
-                                                    aliases,
+                                                    resolution,
                                                     0,
                                                 );
                                                 for path in resolved {
-                                                    if leaf.local_name.as_ref().is_some_and(|local| {
-                                                        path.len() == 1 && local != &path[0]
-                                                    }) {
+                                                    if leaf.local_name.as_ref().is_some_and(
+                                                        |local| {
+                                                            path.len() == 1 && local != &path[0]
+                                                        },
+                                                    ) {
                                                         result.issues.push(MacroIssue {
                                                             path: Some(join_path(&path)),
                                                             detail: "crate-root alias inside a macro is unsupported".to_owned(),
                                                         });
                                                     }
-                                                    result.paths.push(MacroPath { path, glob: leaf.glob });
+                                                    result.paths.push(MacroPath {
+                                                        path,
+                                                        glob: leaf.glob,
+                                                    });
                                                 }
                                             }
                                         }
                                         Err(error) => result.issues.push(MacroIssue {
                                             path: Some(join_path(&raw)),
-                                            detail: format!("grouped use cannot be resolved: {error}"),
+                                            detail: format!(
+                                                "grouped use cannot be resolved: {error}"
+                                            ),
                                         }),
                                     }
                                 }
@@ -1508,17 +1535,12 @@ fn read_macro_tokens(
                     }
                 }
                 if j > i + 1 && raw.len() > 1 {
-                    let resolved = resolve_path(
-                        &raw,
-                        module_path,
-                        scope,
-                        package_name,
-                        top_modules,
-                        modules,
-                        aliases,
-                        0,
+                    let resolved = resolve_path(&raw, module_path, scope, resolution, 0);
+                    result.paths.extend(
+                        resolved
+                            .into_iter()
+                            .map(|path| MacroPath { path, glob: false }),
                     );
-                    result.paths.extend(resolved.into_iter().map(|path| MacroPath { path, glob: false }));
                     i = j;
                 } else if i < trees.len() {
                     if let TokenTree::Group(group) = &trees[i] {
@@ -1559,7 +1581,10 @@ fn root_is_relevant(
     aliases: &AliasMap,
     relevant_roots: &[&str],
 ) -> bool {
-    if raw.first().is_some_and(|first| relevant_roots.contains(&first.as_str())) {
+    if raw
+        .first()
+        .is_some_and(|first| relevant_roots.contains(&first.as_str()))
+    {
         return true;
     }
     let Some(first) = raw.first() else {
@@ -1570,31 +1595,26 @@ fn root_is_relevant(
             .get(&(module_path.to_vec(), first.clone(), alias_scope))
             .is_some_and(|targets| {
                 targets.iter().any(|target| {
-                    target.first().is_some_and(|root| relevant_roots.contains(&root.as_str()))
+                    target
+                        .first()
+                        .is_some_and(|root| relevant_roots.contains(&root.as_str()))
                 })
             })
     };
     targets_match(scope) || (scope == Scope::Test && targets_match(Scope::Production))
 }
 
-fn parse_grouped_use(
-    prefix: &[String],
-    group: &proc_macro2::Group,
-) -> syn::Result<ItemUse> {
+fn parse_grouped_use(prefix: &[String], group: &proc_macro2::Group) -> syn::Result<ItemUse> {
     let source = format!("use {}::{{{}}};", join_path(prefix), group.stream());
     syn::parse_str(&source)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_reexports(
     items: &[Item],
     module_path: &[String],
     file: &Path,
     inherited_scope: Scope,
-    package_name: &str,
-    top_modules: &BTreeSet<String>,
-    modules: &BTreeSet<Vec<String>>,
-    aliases: &AliasMap,
+    resolution: Resolution<'_>,
     output: &mut Vec<Reexport>,
 ) {
     for item in items {
@@ -1607,16 +1627,7 @@ fn collect_reexports(
                 let mut leaves = Vec::new();
                 flatten_use_tree(&item_use.tree, &mut Vec::new(), &mut leaves);
                 for leaf in leaves {
-                    for target in resolve_path(
-                        &leaf.path,
-                        module_path,
-                        scope,
-                        package_name,
-                        top_modules,
-                        modules,
-                        aliases,
-                        0,
-                    ) {
+                    for target in resolve_path(&leaf.path, module_path, scope, resolution, 0) {
                         let name = leaf.local_name.clone().or_else(|| target.last().cloned());
                         if let Some(name) = name {
                             output.push(Reexport {
@@ -1634,17 +1645,7 @@ fn collect_reexports(
                 if let Some((_, nested)) = &module.content {
                     let mut child_path = module_path.to_vec();
                     child_path.push(module.ident.to_string());
-                    collect_reexports(
-                        nested,
-                        &child_path,
-                        file,
-                        scope,
-                        package_name,
-                        top_modules,
-                        modules,
-                        aliases,
-                        output,
-                    );
+                    collect_reexports(nested, &child_path, file, scope, resolution, output);
                 }
             }
             _ => {}
@@ -1652,14 +1653,23 @@ fn collect_reexports(
     }
 }
 
-
 fn export_key(export: &Reexport) -> String {
-    format!("{}|{}|{}", join_path(&export.owner), export.name, join_path(&export.target))
+    format!(
+        "{}|{}|{}",
+        join_path(&export.owner),
+        export.name,
+        join_path(&export.target)
+    )
 }
 
 fn sort_report(report: &mut ScanReport) {
     report.paths.sort_by(|left, right| {
-        (&left.file, left.scope, left.kind, &left.path).cmp(&(&right.file, right.scope, right.kind, &right.path))
+        (&left.file, left.scope, left.kind, &left.path).cmp(&(
+            &right.file,
+            right.scope,
+            right.kind,
+            &right.path,
+        ))
     });
     report.findings.sort();
 }

@@ -1,97 +1,10 @@
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
-use api::quest_progress::{EvidenceProvider, EvidenceStamp};
-use api::selected::{FactKey, InclusiveRange, QuestGate, RunKey, StageWindow, Truth};
+use api::selected::{FactKey, QuestGate, Truth};
 
-use super::{QuestEvidence, QuestFamilyId, QuestFamilyMismatch, QuestGateError, QuestGates};
+use super::{QuestEvidence, QuestFamilyMismatch, QuestGateError, QuestGates};
+use crate::test_support::{family, family_schema, range, stamp, tbwt_evidence, window, Resolved};
 use crate::transport::TransportGraph;
-
-/// A stand-in for the runner's pinned provider: the values fresh evidence
-/// still allows per `(quest, signal)` and journal completion per quest,
-/// observed at `stamp`. Windows are decided by the shared
-/// [`InclusiveRange::test`], as the catalog decides them.
-pub(crate) struct Resolved {
-    pub(crate) stamp: EvidenceStamp,
-    pub(crate) signals: Vec<(&'static str, &'static str, InclusiveRange)>,
-    pub(crate) complete: Vec<(&'static str, bool)>,
-}
-
-impl EvidenceProvider for Resolved {
-    fn test_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Truth {
-        if !self.stamp.meets(required_after) {
-            return Truth::Unknown;
-        }
-        match gate {
-            QuestGate::Complete(quest) => self
-                .complete
-                .iter()
-                .find(|(key, _)| *key == &*quest.0)
-                .map_or(Truth::Unknown, |&(_, done)| {
-                    if done {
-                        Truth::True
-                    } else {
-                        Truth::False
-                    }
-                }),
-            QuestGate::Window(window) => self
-                .signals
-                .iter()
-                .find(|(quest, signal, _)| {
-                    *quest == &*window.quest.0 && *signal == &*window.signal.0
-                })
-                .map_or(Truth::Unknown, |(_, _, possible)| {
-                    window.values.test(possible)
-                }),
-        }
-    }
-}
-
-pub(crate) fn family(byte: u8) -> QuestFamilyId {
-    family_schema(byte, 1)
-}
-
-pub(crate) fn family_schema(byte: u8, schema: u16) -> QuestFamilyId {
-    QuestFamilyId::new([byte; 32], NonZeroU16::new(schema).unwrap())
-}
-
-pub(crate) fn stamp(tick: u64) -> EvidenceStamp {
-    EvidenceStamp {
-        run: RunKey {
-            slot: 1,
-            run: 1,
-            session: 1,
-        },
-        tick,
-        sequence: 0,
-    }
-}
-
-pub(crate) fn range(min: Option<i32>, max: Option<i32>) -> InclusiveRange {
-    InclusiveRange { min, max }
-}
-
-pub(crate) fn window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) -> QuestGate {
-    QuestGate::Window(StageWindow {
-        quest: FactKey::new(quest),
-        signal: FactKey::new(signal),
-        values: range(min, max),
-    })
-}
-
-/// Evidence for family 1, observed at tick 10 against a floor of tick 5,
-/// leaving `possible` for one `tbwt`/`tbwt_main` signal.
-pub(crate) fn tbwt_evidence(possible: InclusiveRange) -> QuestEvidence {
-    QuestEvidence::new(
-        Arc::new(Resolved {
-            stamp: stamp(10),
-            signals: vec![("tbwt", "tbwt_main", possible)],
-            complete: vec![],
-        }),
-        family(1),
-        stamp(5),
-    )
-}
 
 fn gates(list: Vec<QuestGate>) -> QuestGates {
     QuestGates::new(family(1), list).expect("valid gates")

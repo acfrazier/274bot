@@ -19,10 +19,6 @@ use crate::bank_fetch::fetchable_state;
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::{BankAccess, BankStand};
-use crate::quest_gates::tests::{
-    family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
-    Resolved,
-};
 use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
     find, find_allow_teleports, find_bounded, find_first_missing_item_reqs_with_avoid,
@@ -32,6 +28,10 @@ use crate::router::{
     find_with_model, local_step_component, missing_item_reqs, step_ok, AvoidRect, CostModel,
     FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
+};
+use crate::test_support::{
+    family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
+    Resolved,
 };
 use crate::tile::Tile;
 use crate::transport::{

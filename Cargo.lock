@@ -2074,6 +2074,7 @@ dependencies = [
  "libc",
  "native-tls",
  "nav",
+ "nav-executor",
  "parking_lot",
  "png",
  "rand_core",
@@ -2701,10 +2702,21 @@ dependencies = [
  "client",
  "libc",
  "png",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nav-executor"
+version = "0.2.4"
+dependencies = [
+ "api",
+ "client",
+ "nav",
 ]
 
 [[package]]
@@ -4161,6 +4173,7 @@ dependencies = [
  "client",
  "image",
  "nav",
+ "nav-executor",
  "script",
  "serde",
  "serde_json",

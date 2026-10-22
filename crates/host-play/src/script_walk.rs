@@ -11,9 +11,9 @@ use nav::router::{
     find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
     RouteError,
 };
-use nav::traveller::TravelOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
+use nav_executor::TravelOptions;
 use parking_lot::RwLock;
 use script::combat::guard::GUARD_PRAYER_WINDOW_TICKS;
 use script::combat::schedule::elapsed;
@@ -752,17 +752,17 @@ fn settle_route_end(bot: &mut NavBot, blocked: bool) {
 /// Only genuinely pending follow work (None) keeps the caller timeout.
 pub(crate) fn apply_nav_follow_outcome(
     bot: &mut NavBot,
-    outcome: Option<nav::traveller::TravelOutcome>,
+    outcome: Option<nav_executor::TravelOutcome>,
     walking_stand: bool,
 ) {
     match outcome {
-        Some(nav::traveller::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
+        Some(nav_executor::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
         // Frozen `walkResilient` treats EndBlocked as a completed route for
         // compatibility. A native owner also receives the typed Traveller
         // outcome so it can reject arrival without losing the hop diagnosis.
         Some(
-            failure @ nav::traveller::TravelOutcome::Stalled {
-                why: nav::traveller::HopFailure::EndBlocked,
+            failure @ nav_executor::TravelOutcome::Stalled {
+                why: nav_executor::HopFailure::EndBlocked,
                 ..
             },
         ) if bot.bank_fetch.is_none() => {
@@ -1140,7 +1140,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             && bot.route_request_id == bot.walk_request_id
                             && bot.bank_fetch.is_none();
                         let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
-                            matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
+                            matches!(outcome, nav_executor::TravelOutcome::Arrived { .. })
                         });
                         if reached_endpoint {
                             api::host_log!(

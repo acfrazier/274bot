@@ -32,10 +32,10 @@ use nav::router::{
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
     SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
-use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav::WorldState;
+use nav_executor::Traveller;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
@@ -4114,7 +4114,7 @@ pub(crate) struct NavBot {
     pub(crate) walk_outcome_radius: i32,
     pub(crate) walk_outcome_allow_teleports: bool,
     /// The published route end is frozen `'blocked'`
-    /// ([`nav::traveller::HopFailure::EndBlocked`]).
+    /// ([`nav_executor::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
     pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
     /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
@@ -6463,7 +6463,7 @@ impl NavBot {
     /// host send refusal is `Refused`, an unworkable leg is `Blocked`, and a
     /// crossing whose quest evidence was unproven at send time names the
     /// gates to acquire, or blocks honestly when evidence disproves them.
-    pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav::traveller::TravelOutcome) {
+    pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav_executor::TravelOutcome) {
         if self.walk_request_id == 0
             || self.route_request_id != self.walk_request_id
             || self.walk_outcome_request_id != self.walk_request_id
@@ -6473,7 +6473,7 @@ impl NavBot {
         }
         use api::selected::Truth;
         let end = match outcome {
-            nav::traveller::TravelOutcome::Stalled {
+            nav_executor::TravelOutcome::Stalled {
                 at,
                 aiming,
                 why,
@@ -6483,32 +6483,32 @@ impl NavBot {
                     at: *at,
                     aiming: *aiming,
                     why: match why {
-                        nav::traveller::HopFailure::Expired => {
+                        nav_executor::HopFailure::Expired => {
                             script::native::WalkStallReason::Expired
                         }
-                        nav::traveller::HopFailure::Dropped => {
+                        nav_executor::HopFailure::Dropped => {
                             script::native::WalkStallReason::Dropped
                         }
-                        nav::traveller::HopFailure::EndBlocked => {
+                        nav_executor::HopFailure::EndBlocked => {
                             script::native::WalkStallReason::EndBlocked
                         }
                     },
                     tries: *tries,
                 },
             ))),
-            nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
-            nav::traveller::TravelOutcome::Blocked { .. }
-            | nav::traveller::TravelOutcome::EntranceRefused { .. } => {
+            nav_executor::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
+            nav_executor::TravelOutcome::Blocked { .. }
+            | nav_executor::TravelOutcome::EntranceRefused { .. } => {
                 Some(script::native::WalkEnd::Blocked)
             }
-            nav::traveller::TravelOutcome::EvidenceUnproven {
+            nav_executor::TravelOutcome::EvidenceUnproven {
                 verdict: Truth::Unknown,
                 unresolved,
                 ..
             } if !unresolved.is_empty() => Some(script::native::WalkEnd::NeedsEvidence(
                 Arc::clone(unresolved),
             )),
-            nav::traveller::TravelOutcome::EvidenceUnproven { .. } => {
+            nav_executor::TravelOutcome::EvidenceUnproven { .. } => {
                 Some(script::native::WalkEnd::Blocked)
             }
             _ => None,
@@ -6520,7 +6520,7 @@ impl NavBot {
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
             self.walk_outcome_detail = match outcome {
-                nav::traveller::TravelOutcome::Stalled { .. } => None,
+                nav_executor::TravelOutcome::Stalled { .. } => None,
                 _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
             };
         }

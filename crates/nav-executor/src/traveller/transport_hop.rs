@@ -198,9 +198,11 @@ pub(super) fn current_web_action<'a>(
     edges: Option<&'a [TransportEdge]>,
 ) -> Result<&'a TransportEdge, &'static str> {
     let edges = edges.ok_or("the packed transport edge list is unavailable")?;
-    let state = crate::world_state::WorldState::from_snapshot(snapshot);
-    crate::transport::select_web_action(edges.iter(), edge, |candidate| state.allows(candidate))
-        .ok_or("neither a worn slash blade nor a carried knife qualifies")
+    let state = nav::world_state::WorldState::from_snapshot(snapshot);
+    nav::executor_adapter::select_web_action(edges.iter(), edge, |candidate| {
+        state.allows(candidate)
+    })
+    .ok_or("neither a worn slash blade nor a carried knife qualifies")
 }
 
 pub(super) fn web_action_failure(
@@ -421,7 +423,7 @@ impl FollowRun {
                 // behavior.
                 hop.troll |= edge.kind == TransportKind::Door
                     && (edge.open_loc_id.is_some() || edge.dir.is_some())
-                    && !edge.is_slashable_web()
+                    && !is_slashable_web(edge)
                     && !drives_hop_dialogs(edge);
             }
         }
@@ -499,7 +501,7 @@ impl FollowRun {
         }
         if hop.approach.is_none() {
             let web_edge = match &hop.leg {
-                Leg::Transport { edge } if edge.is_slashable_web() => Some(edge.clone()),
+                Leg::Transport { edge } if is_slashable_web(edge) => Some(edge.clone()),
                 _ => None,
             };
             if let Some(edge) = web_edge.filter(|edge| {
@@ -587,7 +589,7 @@ impl FollowRun {
             let target = find_transport_target_instance(snapshot, &edge, hop.npc_index);
             return match target {
                 Some(target) => {
-                    let action = if edge.is_slashable_web() {
+                    let action = if is_slashable_web(&edge) {
                         match current_web_action(snapshot, &edge, options.edges) {
                             Ok(action) => action,
                             Err(reason) => {
@@ -604,7 +606,7 @@ impl FollowRun {
                         &edge
                     };
                     let chat_seq_at_send =
-                        (npc_backed(&edge) || edge.is_slashable_web()).then(|| chat_seq(snapshot));
+                        (npc_backed(&edge) || is_slashable_web(&edge)).then(|| chat_seq(snapshot));
                     let arrival_footprint = target.footprint();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(
@@ -625,7 +627,7 @@ impl FollowRun {
                             hop.approach = None;
                             if edge.kind == TransportKind::Door {
                                 hop.open_sent_tick = Some(snapshot.tick());
-                                if !edge.is_slashable_web() {
+                                if !is_slashable_web(&edge) {
                                     hop.tries = hop.tries.saturating_add(1);
                                     hop.door_retry.sent(snapshot.tick());
                                 }
@@ -681,7 +683,7 @@ impl FollowRun {
         // `edge` into the door closure: a completed essence entry hop
         // records the wizard the player entered through.
         let entry_wizard = is_essence_entry_edge(&edge).then_some(edge.loc_id);
-        if crate::debug_enabled() {
+        if api::hostlog::debug_enabled() {
             api::host_log!(
                 Category::NavTrace,
                 Level::Debug,
@@ -1169,7 +1171,7 @@ impl FollowRun {
             return None;
         }
         let tile = door_tile(edge);
-        if crate::debug_enabled() {
+        if api::hostlog::debug_enabled() {
             api::host_log!(
                 Category::NavTrace,
                 Level::Debug,
@@ -1292,7 +1294,7 @@ impl FollowRun {
         };
         self.loc_wait = 0;
         let mut ix = Interactions::new(snapshot, d);
-        if crate::debug_enabled() {
+        if api::hostlog::debug_enabled() {
             api::host_log!(
                 Category::NavTrace,
                 Level::Debug,

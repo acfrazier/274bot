@@ -338,8 +338,8 @@ fn allows_requires_every_req_kind() {
 /// opens it alongside every snapshot requirement the edge still has.
 #[test]
 fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
-    use crate::quest_gates::tests::{family, range, tbwt_evidence, window};
     use crate::quest_gates::QuestGates;
+    use crate::test_support::{family, range, tbwt_evidence, window};
 
     let mut e = gated_edge();
     e.quest_gates =
