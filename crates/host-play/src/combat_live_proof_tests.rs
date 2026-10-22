@@ -4953,6 +4953,42 @@ fn m0_timeout_invalid_reason(capture: &CombatCapture) -> Option<&'static str> {
         .then_some(M0_NOT_ELIGIBLE)
 }
 
+/// The terminal outcome and error of a cell that timed out: the runner's
+/// whole-run deadline or the cell's own deadline. An M0 cell that saw no
+/// eligible moment is INVALID with the named reason. Any other timeout is
+/// a FAIL.
+fn timeout_outcome(case: Case, capture: &CombatCapture) -> (&'static str, String) {
+    match case
+        .is_m0()
+        .then(|| m0_timeout_invalid_reason(capture))
+        .flatten()
+    {
+        Some(reason) => ("INVALID", reason.to_owned()),
+        None => (
+            "FAIL",
+            format!("{} live proof exceeded {:?}", case.key(), case.timeout()),
+        ),
+    }
+}
+
+/// The terminal outcome and error of an M0 cell whose runner failed with
+/// `error` before a takeover. The cause that the runner recorded decides,
+/// not the time at which the observer reads the status (review-r3-sol
+/// R3-F1). A step or proof failure is a FAIL with the runner's own error.
+/// Only the runner's whole-run deadline is a timeout ([`timeout_outcome`]).
+fn m0_runner_failure_outcome(
+    case: Case,
+    runner: &ScenarioRunner,
+    error: &str,
+    capture: &CombatCapture,
+) -> (&'static str, String) {
+    if runner.deadline_exceeded() {
+        timeout_outcome(case, capture)
+    } else {
+        ("FAIL", format!("ScenarioRunner failed: {error}"))
+    }
+}
+
 /// The active `farm-imps` step (`quester/runner.rs` status fields).
 fn m0_step_active(status: &Value) -> bool {
     status["phase"] == "Working"
@@ -7959,9 +7995,6 @@ fn run_case(case: Case) {
     };
 
     let scenario = scenario_for(case, stand, placement, Arc::clone(&capture));
-    // The runner starts its whole-run deadline when it is made; this instant
-    // is no later, so it tells a runner timeout from a step failure.
-    let runner_made = Instant::now();
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -8032,7 +8065,6 @@ fn run_case(case: Case) {
     let deadline = Instant::now() + case.timeout();
     let mut terminal_error = None;
     let mut abort_observation_end = None;
-    let mut runner_timed_out = false;
     loop {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
@@ -8174,15 +8206,26 @@ fn run_case(case: Case) {
                 terminal_error.get_or_insert_with(|| format!("ScenarioRunner failed: {error}"));
                 if case.is_m0() {
                     // The parked Quester ends the scenario step; the M0
-                    // receipt, not the Blocked status alone, decides. Without
-                    // a takeover, a step failure is a FAIL, and the runner's
-                    // deadline is the cell's timeout (classified below).
+                    // receipt, not the Blocked status alone, decides.
+                    // Without a takeover, the cause that the runner
+                    // recorded decides (`m0_runner_failure_outcome`).
                     if !m0.injected {
-                        if runner_made.elapsed() < state.runner.deadline() {
-                            writer.outcome = "FAIL".to_owned();
-                            break;
+                        let (outcome, reason) = m0_runner_failure_outcome(
+                            case,
+                            &state.runner,
+                            &error,
+                            &capture.lock().unwrap_or_else(|e| e.into_inner()),
+                        );
+                        if state.runner.deadline_exceeded() {
+                            writer.scenario_status =
+                                format!("TimedOut({:?})", state.runner.status());
                         }
-                        runner_timed_out = true;
+                        if outcome == "INVALID" {
+                            combat_proof::mark_invalid(&account, reason.clone());
+                        }
+                        terminal_error = Some(reason);
+                        writer.outcome = outcome.to_owned();
+                        break;
                     }
                 } else if case == Case::R2 && ranged_abort_horizon_end.is_some() {
                     // The blocked Quester ends the scenario step, not the
@@ -8201,25 +8244,15 @@ fn run_case(case: Case) {
             }
             _ => {}
         }
-        if runner_timed_out || Instant::now() >= deadline {
+        if Instant::now() >= deadline {
             writer.scenario_status = format!("TimedOut({:?})", state.runner.status());
-            terminal_error = Some(format!(
-                "{} live proof exceeded {:?}",
-                case.key(),
-                case.timeout()
-            ));
-            writer.outcome = "FAIL".to_owned();
-            let invalid = case
-                .is_m0()
-                .then(|| {
-                    m0_timeout_invalid_reason(&capture.lock().unwrap_or_else(|e| e.into_inner()))
-                })
-                .flatten();
-            if let Some(reason) = invalid {
-                combat_proof::mark_invalid(&account, reason);
-                terminal_error = Some(reason.to_owned());
-                writer.outcome = "INVALID".to_owned();
+            let (outcome, reason) =
+                timeout_outcome(case, &capture.lock().unwrap_or_else(|e| e.into_inner()));
+            if outcome == "INVALID" {
+                combat_proof::mark_invalid(&account, reason.clone());
             }
+            terminal_error = Some(reason);
+            writer.outcome = outcome.to_owned();
             break;
         }
         drop(state);
@@ -11920,5 +11953,118 @@ fn m0_timeout_without_an_eligible_moment_is_invalid_not_fail() {
         m0_timeout_invalid_reason(&CombatCapture::default()),
         None,
         "a timeout before any engaged moment is a FAIL"
+    );
+}
+
+/// A real `ScenarioRunner` that failed (review-r3-sol/deadline-probe.rs):
+/// one step whose arm `stat(16)>=999` never holds on a seeded test client.
+/// A one-tick budget gives a step failure in the first tick. A budget of
+/// 999 ticks with a zero deadline gives the runner's deadline failure in
+/// the first tick. Returns the runner, its error and the time from just
+/// before the runner was made to the read of its status.
+fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, String, Duration) {
+    use client::client::{Client, ClientConfig, ClientPlayer};
+    use client::io::ServerProt;
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.set_cheat_admission(client::CheatAdmission::Granted);
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(20, 20));
+    for prot in [
+        ServerProt::PLAYER_INFO,
+        ServerProt::REBUILD_NORMAL,
+        ServerProt::UPDATE_STAT,
+    ] {
+        c.bump_gens(prot);
+    }
+    let arm = Proof::Stat { id: 16, min: 999 };
+    let scenario = Scenario {
+        name: "m0-runner-failure",
+        seed: scenario::Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "missed evidence",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait { arm, budget_ticks },
+        }],
+        proof: arm,
+        companions: vec![],
+        settings: scenario::ScenarioSettings {
+            deadline,
+            ..Default::default()
+        },
+    };
+    let made = Instant::now();
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    let RunnerStatus::Failed(error) = runner.status() else {
+        panic!("the real runner must fail, got {:?}", runner.status());
+    };
+    (runner, error, made.elapsed())
+}
+
+/// Review-r3-sol R3-F1 (M0 round 5): the cause that the real
+/// `ScenarioRunner` recorded classifies an M0 runner failure before a
+/// takeover, not the time at which the observer reads the status. A step
+/// failure read after the deadline stays a FAIL with its own error. Only
+/// the runner's deadline with no eligible moment is INVALID.
+#[test]
+fn m0_runner_failure_follows_the_recorded_cause_not_the_read_time() {
+    let mut never_eligible = CombatCapture::default();
+    never_eligible.random_events.push(json!({
+        "kind": "M0NotEligible", "tick": 148, "last_tick": 816, "observations": 673,
+    }));
+    let step_error = "step 1 (missed evidence): stat(16)>=999 not seen within 1 game tick";
+
+    let (early, error, _) = m0_failed_runner(Duration::from_secs(600), 1);
+    assert_eq!(error, step_error);
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &early, &error, &never_eligible),
+        ("FAIL", format!("ScenarioRunner failed: {step_error}")),
+        "a step failure read before the deadline is a FAIL"
+    );
+
+    let (expired, error, read_after) = m0_failed_runner(Duration::ZERO, 1);
+    assert_eq!(error, step_error);
+    assert!(read_after > expired.deadline(), "read after the deadline");
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &expired, &error, &never_eligible),
+        ("FAIL", format!("ScenarioRunner failed: {step_error}")),
+        "a step failure read after the deadline is still a FAIL with its own error"
+    );
+
+    let (timed_out, error, _) = m0_failed_runner(Duration::ZERO, 999);
+    assert_eq!(error, "m0-runner-failure: deadline 0ns exceeded");
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &timed_out, &error, &never_eligible),
+        ("INVALID", M0_NOT_ELIGIBLE.to_owned()),
+        "the runner's deadline with no eligible moment is INVALID"
+    );
+
+    let mut took_over = m0_oracle_capture(true);
+    took_over
+        .random_events
+        .extend(never_eligible.random_events.iter().cloned());
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0ManualPaused, &timed_out, &error, &took_over),
+        (
+            "FAIL",
+            "M0-manual-paused live proof exceeded 600s".to_owned()
+        ),
+        "the runner's deadline after a takeover is a FAIL"
     );
 }
