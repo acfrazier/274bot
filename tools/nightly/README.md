@@ -81,8 +81,13 @@ Jobs run sequentially and share the runner's lock and build tree:
 Each cell gets an isolated `HOME` and evidence directory, `BOT_CPU=1` unless
 its name matches `NIGHTLY_GPU_CELLS`, and its job's distinct name prefix.
 The outer cap (`NIGHTLY_CELL_CAP_S`, default 3600 s) stops a process if it does
-not reach a terminal state. A paired proof refuses to start without the pair
-witness. The runner retries it with `--pair-core` and records the gate.
+not reach a terminal state. Two cells keep a 3600 s cap on each host:
+`jive_kbd` and `quester_queue`. Their proven walls pass the Windows host's
+1200 s cap (2026-10-21: `jive_kbd` 2543.0 s on Linux, `quester_queue`
+1987.9 s on Linux). `NIGHTLY_CELL_CAPS_S` (`cell=seconds,...`) overrides
+one cell's cap. The summary records each cap in `cell_caps_s`. A paired
+proof refuses to start without the pair witness. The runner retries it
+with `--pair-core` and records the gate.
 
 The runner writes `SHA256SUMS` from the completed run files before it writes
 `DONE`. A read-only malbec mirror checks each transferred file against that
@@ -136,7 +141,7 @@ Results:
 | `PASS` / `FAIL` | the scenario printed its JSON record with that outcome; `first_failure` is its `message`. A lane: `cargo` exited 0 / nonzero |
 | `TIMEOUT` | no record before the outer cap or the step deadline; the process tree was killed |
 | `ERROR` | the frontend exited without a record (startup error, panic); `first_failure` is the first error-looking stderr line |
-| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (for example Engine A/B/Q not reachable, not enough free disk space, or a MAC-QUIET lock stopped a live cell) |
+| `UNAVAILABLE` | the scenario printed a record with that outcome (for example an engine without a test patch), or the cell or lane could not run on this host tonight: `reason` says why (for example Engine A/B/Q not reachable, not enough free disk space, or a MAC-QUIET lock stopped a live cell) |
 | `SKIP` | listed in `skip.conf`; `reason` says why |
 | `NOT_RUN` | the build failed, a step deadline passed, the run was interrupted, or a non-cell lane stopped on a MAC-QUIET lock; `reason` says which |
 
@@ -522,8 +527,11 @@ administrator, once.
    `node_modules`, account database or player saves: the clients read its pack, config
    and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
-   when it is missing or stale), `fixtures\274bot-289-v17.navpack` (the script lanes'
-   `NAV_PACK`, the v17 reference pack named in `docs/api/nav.md`) and
+   when it is missing or stale), `fixtures\274bot-289-v17.navpack` with its sidecars
+   (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`; each test
+   lane's `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`, the v17 reference pack
+   named in `docs/api/nav.md`), `fixtures\inspect.fb` (the old inspection capture
+   `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
 4. Runner: a clone of this repository in `C:\274bot-nightly\runner` on the branch that
@@ -663,13 +671,17 @@ error in it. If the task is stopped during that step, the missed night has no su
    the old scheme) are removed at the end of the night.
 2. `lanes` (3 h): the Windows platform gate's set (`gate.ps1`) with the GPU on
    (`SKIP_GPU` unset): `build`, `build-vendor`, `clippy`, `clippy-vendor` (with
-   `-D warnings`), `test-workspace`, `test-vendor` (`ENGINE_DIR` = the engine copy),
-   `test-script-load` and `test-script-no-default` (`NAV_PACK` = the fixture),
-   `test-host-play-memory`, `test-host-play-memory-no-alloc`, `test-host-performance`,
-   `test-panel-memory` (every target, including the desktop-only `ime_frame`),
-   `test-panel-render-diagnostics`, `test-tui-memory`, and `cargo fmt --check` per
-   crate (a workspace-root fmt hits OS error 206 on Windows). Each lane gets its own
-   throwaway `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
+   `-D warnings`), `test-workspace`, `test-vendor`, `test-script-load`,
+   `test-script-no-default`, `test-host-play-memory`, `test-host-play-memory-no-alloc`,
+   `test-host-performance`, `test-panel-memory` (every target, including the
+   desktop-only `ime_frame`), `test-panel-render-diagnostics`, `test-tui-memory`, and
+   `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
+   Each test lane gets the Linux CI test inputs: the three nav pack names set to
+   the v17 fixture, `ENGINE_DIR` and `WORLD_ENGINE_DIR` set to the pristine engine
+   copy, `BOT_NAV_SNAPSHOT_ROOT` set to the decoded snapshot folder, and
+   `T5W_INSPECT_CAPTURE_BASELINE` set to the inspection fixture when the host holds
+   it. Each lane gets its own throwaway
+   `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
    decoded snapshot, and `BOT_NAV_BUILD=skip`, `CARGO_INCREMENTAL=0`,
    `CARGO_PROFILE_DEV_DEBUG=0`; the target directory is `target\<branch>-ci`.
 3. Build (1.5 h): `cargo build --locked --release -p tui --bin tui-play -p panel --bin panel-play`
@@ -687,8 +699,9 @@ error in it. If the task is stopped during that step, the missed night has no su
 In both cell steps every cell gets a throwaway `HOME`/`USERPROFILE`/`APPDATA`/
 `LOCALAPPDATA`/`TEMP`, and `BOT_CPU=1` unless its name matches `NIGHTLY_GPU_CELLS`
 (`^render_`: those draw with the GPU). The outer cap is 1200 s on this host
-(`NIGHTLY_CELL_CAP_S`). No step runs past the night's deadline either (8.5 h, so a
-23:00 start ends by 07:30, before Engine B's busy morning and well inside the task's
+(`NIGHTLY_CELL_CAP_S`). `jive_kbd` and `quester_queue` keep 3600 s.
+No step runs past the night's deadline either (8.5 h, so a 23:00 start ends by
+07:30, before Engine B's busy morning and well inside the task's
 11 h limit). A cell still running when its deadline passes is stopped as `TIMEOUT`,
 and cells not started by then are `NOT_RUN`.
 

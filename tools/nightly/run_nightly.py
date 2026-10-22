@@ -178,6 +178,46 @@ KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 # Every cell enforces its own scenario deadline inside the frontend; this outer
 # cap only stops a process that never reaches a terminal state.
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
+# Two cells need more than the Windows host's 1200 s outer cap. The proven
+# walls come from the 2026-10-21 night (summary.json in each run folder).
+# jive_kbd reached a verdict at 2543.0 s on Linux and 2529.6 s on Mac TUI.
+# Its scenario deadline is 2700 s. quester_queue passed at 1987.9 s on Linux
+# and at 1022.0 s on Windows TUI. A cap of 3600 s covers each proven wall.
+# It also keeps the runner default for the other platforms.
+CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 3600}
+
+
+def parse_cell_caps(text: str, defaults: dict) -> dict:
+    """Parse a `cell=seconds,cell=seconds` override over the default caps."""
+    caps = dict(defaults)
+    for entry in text.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, sep, seconds = entry.partition("=")
+        if not sep or not name.strip():
+            raise ValueError(f"cell cap must be cell=seconds, got {entry!r}")
+        try:
+            value = int(seconds)
+        except ValueError:
+            raise ValueError(f"cell cap for {name.strip()!r} is not a whole number: {seconds!r}") from None
+        if value <= 0:
+            raise ValueError(f"cell cap for {name.strip()!r} must be positive, got {value}")
+        caps[name.strip()] = value
+    return caps
+
+
+try:
+    CELL_CAPS_S = parse_cell_caps(os.environ.get("NIGHTLY_CELL_CAPS_S", ""), CELL_CAPS_DEFAULT_S)
+except ValueError as error:
+    raise SystemExit(f"NIGHTLY_CELL_CAPS_S: {error}") from error
+
+
+def cell_cap_s(cell: str) -> int:
+    """The outer cap for one cell: its own cap, else the night's cap."""
+    return CELL_CAPS_S.get(cell, CELL_CAP_S)
+
+
 EXE = ".exe" if IS_WINDOWS else ""
 # Runs of one commit on two platforms and jobs must not collide on the archive.
 RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", JOB_DEFAULTS["run_suffix"])
@@ -239,6 +279,13 @@ NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snaps
 NAV_FIXTURE = Path(os.environ.get(
     "NIGHTLY_NAV_FIXTURE",
     str(ROOT / "fixtures" / "274bot-289-v17.navpack"),
+))
+# The old inspection capture the host-play route-inspect test compares
+# against. The test's built-in default path exists only on merlot, so each
+# other host keeps a copy with its read-only fixtures.
+INSPECT_BASELINE = Path(os.environ.get(
+    "NIGHTLY_INSPECT_BASELINE",
+    str(ROOT / "fixtures" / "inspect.fb"),
 ))
 RUNS_ROOT_OVERRIDE = os.environ.get("NIGHTLY_RUNS_ROOT")
 def runs_root() -> Path:
@@ -1192,6 +1239,64 @@ def record_receipt(result: CellResult, receipt: dict) -> None:
         result.reason = (receipt.get("message") or receipt.get("predicate") or "")[:400]
 
 
+# A frontend with an UNAVAILABLE outcome still prints its plain FAIL line.
+# It also prints the outcome on its own line (`FAIL: UNAVAILABLE: ...`).
+# The JSON record is the authority. This line is the fallback when the
+# record does not parse, so the outcome stays UNAVAILABLE in each frontend.
+UNAVAILABLE_LINE = re.compile(r"^FAIL: (UNAVAILABLE: .+)$", re.M)
+
+
+def verdict_line(text: str, cell: str) -> re.Match | None:
+    """The plain PASS/FAIL verdict line for one cell.
+
+    The panel prints the live name with its `script_` prefix. The TUI
+    prints the bare cell name. Accept each form.
+    """
+    return re.search(rf"\b(PASS|FAIL): live (?:script_)?{re.escape(cell)}\b", text)
+
+
+def apply_cell_outcome(result: CellResult, cell: str, frontend: str, combined: str, stderr_text: str,
+                       out_text: str, timed_out: bool, cut_by_deadline: bool, cap_s: int) -> dict | None:
+    """Set one finished cell's result from its output. Return its receipt.
+
+    The parsed JSON record wins. Without it, a printed UNAVAILABLE line
+    wins over the plain FAIL verdict line. The other fallbacks keep the
+    runner's own states: TIMEOUT, NOT_RUN, the panel pair-gate
+    UNAVAILABLE, and ERROR when no witness printed at all.
+    """
+    receipt = find_receipt(combined, cell)
+    if receipt is not None:
+        record_receipt(result, receipt)
+        return receipt
+    unavailable = UNAVAILABLE_LINE.search(combined)
+    verdict = verdict_line(combined, cell)
+    if unavailable is not None:
+        result.result = "UNAVAILABLE"
+        result.reason = unavailable.group(1).strip()[:400]
+    elif verdict is not None:
+        # The verdict line printed but its JSON record did not parse.
+        result.result = verdict.group(1)
+        result.reason = "verdict line without a parsable JSON record"
+        if result.result == "FAIL":
+            result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
+    elif timed_out:
+        result.result = "TIMEOUT"
+        bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {cap_s}s reached"
+        result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
+                                f"last: {first_failure_line(stderr_text) or '-'}")[:400]
+    elif _stop.is_set():
+        result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
+    elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
+        result.result = "UNAVAILABLE"
+        result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
+                         "--pair-core")
+        result.first_failure = first_failure_line(stderr_text)
+    else:
+        result.result = "ERROR"
+        result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
+    return None
+
+
 def first_failure_line(text: str) -> str | None:
     for line in text.splitlines():
         line = line.strip()
@@ -1467,8 +1572,8 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         rmtree(scratch)
         home.mkdir(parents=True)
         tmp.mkdir(parents=True)
-        cap = min(CELL_CAP_S, max(1.0, deadline - time.monotonic()))
-        cut_by_deadline = cap < CELL_CAP_S
+        cap = min(cell_cap_s(cell), max(1.0, deadline - time.monotonic()))
+        cut_by_deadline = cap < cell_cap_s(cell)
         env = cell_env(home, tmp, cell_dir / "evidence", cell, prefix)
         if frontend == "tui":
             cmd = isolated_command(tui_cmd(binary, cell, gate))
@@ -1505,32 +1610,10 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     if quiet_stopped:
         result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
     else:
-        receipt = find_receipt(combined, cell)
-        verdict = re.search(rf"\b(PASS|FAIL): live {re.escape(cell)}\b", combined)
+        receipt = apply_cell_outcome(result, cell, frontend, combined, stderr_text, out_text,
+                                     timed_out, cut_by_deadline, cell_cap_s(cell))
         if receipt is not None:
-            record_receipt(result, receipt)
             wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
-        elif verdict is not None:
-            # The verdict line printed but its JSON record did not parse.
-            result.result = verdict.group(1)
-            result.reason = "verdict line without a parsable JSON record"
-            if result.result == "FAIL":
-                result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
-        elif timed_out:
-            result.result = "TIMEOUT"
-            bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {CELL_CAP_S}s reached"
-            result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
-                                    f"last: {first_failure_line(stderr_text) or '-'}")[:400]
-        elif _stop.is_set():
-            result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
-        elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
-            result.result = "UNAVAILABLE"
-            result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
-                             "--pair-core")
-            result.first_failure = first_failure_line(stderr_text)
-        else:
-            result.result = "ERROR"
-            result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
     rmtree(scratch)
     return write_cell(cell_dir, result)
 
@@ -1580,6 +1663,58 @@ def run_cells(frontend: str, binary: Path, cells: list[str], run_dir: Path, work
 # ---------------------------------------------------------------- CI lanes
 
 
+def lane_asset_env() -> dict:
+    """The local test inputs each test lane gets, as on Linux CI.
+
+    GitHub CI and the merge-check script set the three nav pack names to
+    the one v17 reference pack for every test lane. The engine content
+    comes from the pristine copy. It exists before the lanes step. The
+    per-step engine-run copy does not exist yet at that point. The
+    snapshot root and the inspection baseline join only when the host
+    holds them. A test then keeps its own loud failure on a host that
+    lacks the file, and it names the local path to supply.
+    """
+    pack = str(NAV_FIXTURE)
+    env = {
+        "NAV_PACK": pack,
+        "WORLD_NAV_PACK": pack,
+        "NAV_ARRIVAL_PACK": pack,
+        "ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
+        "WORLD_ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
+    }
+    if snapshot_ready():
+        env["BOT_NAV_SNAPSHOT_ROOT"] = str(NAV_SNAPSHOT)
+    if INSPECT_BASELINE.is_file():
+        env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
+    return env
+
+
+def seed_lane_home(home: Path, snapshot_root: Path | None = None, fallback_root: Path | None = None) -> int:
+    """Copy decoded cache snapshots into one lane HOME. Return the count.
+
+    The client tests read `$HOME/.274bot/unpack/<cache hash>`. The first
+    source is the nightly snapshot folder. The build step creates that
+    folder after the lanes step on a new host. The fallback then copies
+    the 16-hex folders from the runner user's own `unpack-289`, as the
+    Linux merge-check script seeds its test homes. Each copy is private.
+    """
+    if snapshot_root is None:
+        snapshot_root = NAV_SNAPSHOT
+    if fallback_root is None:
+        fallback_root = Path.home() / ".274bot" / "unpack-289"
+    unpack = home / ".274bot" / "unpack"
+    copied = 0
+    for snapshot in sorted(snapshot_root.glob("*/versionlist")):
+        shutil.copytree(snapshot.parent, unpack / snapshot.parent.name)
+        copied += 1
+    if copied == 0 and fallback_root.is_dir():
+        for snapshot in sorted(fallback_root.iterdir()):
+            if snapshot.is_dir() and re.fullmatch(r"[0-9a-f]{16}", snapshot.name):
+                shutil.copytree(snapshot, unpack / snapshot.name)
+                copied += 1
+    return copied
+
+
 def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     """The Windows platform gate's lane set (gate.ps1), run with the GPU on.
 
@@ -1588,32 +1723,30 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     `cargo fmt` runs per crate: a workspace-root fmt hits OS error 206 on Windows.
     """
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
-    nav = {"NAV_PACK": str(NAV_FIXTURE)}
-    engine = {"ENGINE_DIR": str(ENGINE_RUN / "engine")}
-    nav_engine = {**nav, **engine}
+    assets = lane_asset_env()
     lanes = [
         ("build", ["build", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES], {}),
         ("build-vendor", ["build", "--locked", *vendor, "--workspace"], {}),
         ("clippy", ["clippy", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES,
                     "--", "-D", "warnings"], {}),
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
-        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], nav_engine),
-        ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], engine),
+        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], assets),
+        ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], assets),
         ("test-script-load", ["test", "--locked", "-p", "script", "--features", "load", "--tests",
-                              "--no-fail-fast"], nav_engine),
+                              "--no-fail-fast"], assets),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
-                                    "--no-fail-fast"], nav_engine),
+                                    "--no-fail-fast"], assets),
         ("test-host-play-memory", ["test", "--locked", "-p", "host-play", "--features", "memory-profile",
-                                   "--no-fail-fast"], {}),
+                                   "--no-fail-fast"], assets),
         ("test-host-play-memory-no-alloc", ["test", "--locked", "-p", "host-play", "--features",
-                                            "memory-profile-no-alloc", "--lib", "--no-fail-fast"], {}),
+                                            "memory-profile-no-alloc", "--lib", "--no-fail-fast"], assets),
         ("test-host-performance", ["test", "--locked", "-p", "host", "--features", "performance-profile",
-                                   "--no-fail-fast"], {}),
+                                   "--no-fail-fast"], assets),
         ("test-panel-memory", ["test", "--locked", "-p", "panel", "--features", "memory-profile",
-                               "--no-fail-fast"], {}),
+                               "--no-fail-fast"], assets),
         ("test-panel-render-diagnostics", ["test", "--locked", "-p", "panel", "--features",
-                                           "render-diagnostics", "--lib", "--no-fail-fast"], {}),
-        ("test-tui-memory", ["test", "--locked", "-p", "tui", "--features", "memory-profile", "--no-fail-fast"], {}),
+                                           "render-diagnostics", "--lib", "--no-fail-fast"], assets),
+        ("test-tui-memory", ["test", "--locked", "-p", "tui", "--features", "memory-profile", "--no-fail-fast"], assets),
     ]
     if tree is not None:
         for manifest in sorted(tree.glob("crates/*/Cargo.toml")):
@@ -1626,7 +1759,8 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
 
 def lane_env(home: Path, tmp: Path, target: Path, extra: dict) -> dict:
     env = dict(os.environ)
-    for name in ("NAV_PACK", "ENGINE_DIR", "WORLD_ENGINE_DIR", "LIVE", "BOT_NAV_SNAPSHOT_ROOT", "SKIP_GPU",
+    for name in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK", "ENGINE_DIR", "WORLD_ENGINE_DIR", "LIVE",
+                 "BOT_NAV_SNAPSHOT_ROOT", "T5W_INSPECT_CAPTURE_BASELINE", "T5W_INSPECT_CAPTURE_OUT", "SKIP_GPU",
                  "BOT_CPU", "CARGO_TARGET_DIR", "QUESTER_TICK_MS", "ISOHOME_DIR"):
         env.pop(name, None)
     env.update(private_dirs(home, tmp))
@@ -1657,9 +1791,8 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
     rmtree(scratch)
     home, tmp = scratch / "home", scratch / "tmp"
     tmp.mkdir(parents=True)
-    # The decoded 289 snapshot the client tests unpack against, as a private copy.
-    for snapshot in NAV_SNAPSHOT.glob("*/versionlist"):
-        shutil.copytree(snapshot.parent, home / ".274bot" / "unpack" / snapshot.parent.name)
+    # The decoded snapshot the client tests unpack against, as a private copy.
+    seed_lane_home(home)
     home.mkdir(parents=True, exist_ok=True)
     cargo_log = lane_dir / "cargo.log"
     result.started = now_iso()
@@ -2031,7 +2164,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         cells_file=cells_file,
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
-        cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
+        cell_cap_s=CELL_CAP_S, cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
         interrupted=_stop.is_set() or _quiet_lock_reason is not None, quiet_lock=_quiet_lock_reason,
         steps=steps, session=session, unavailable=unavailable,
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,

@@ -714,15 +714,94 @@ class CatchUpTests(unittest.TestCase):
 
 
 class LaneEnvironmentTests(unittest.TestCase):
-    def test_content_test_lanes_receive_nav_and_engine_paths(self):
-        expected = {
-            "NAV_PACK": str(rn.NAV_FIXTURE),
-            "ENGINE_DIR": str(rn.ENGINE_RUN / "engine"),
-        }
-        lanes = {name: extra for name, _args, extra in rn.lane_list(None)}
-        for name in ("test-workspace", "test-script-load", "test-script-no-default"):
+    def asset_env(self, root: Path, *, snapshot: bool, baseline: bool) -> dict:
+        nav_snapshot = root / "nav-snapshot"
+        if snapshot:
+            snap_dir = nav_snapshot / "0123456789abcdef"
+            snap_dir.mkdir(parents=True)
+            (snap_dir / "versionlist").write_bytes(b"v")
+        baseline_path = root / "inspect.fb"
+        if baseline:
+            baseline_path.write_bytes(b"capture")
+        with mock.patch.object(rn, "NAV_SNAPSHOT", nav_snapshot), \
+                mock.patch.object(rn, "INSPECT_BASELINE", baseline_path):
+            return rn.lane_asset_env()
+
+    def test_every_test_lane_receives_the_asset_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            expected = self.asset_env(Path(tmp), snapshot=True, baseline=True)
+        pack = str(rn.NAV_FIXTURE)
+        self.assertEqual(expected["NAV_PACK"], pack)
+        self.assertEqual(expected["WORLD_NAV_PACK"], pack)
+        self.assertEqual(expected["NAV_ARRIVAL_PACK"], pack)
+        self.assertEqual(expected["ENGINE_DIR"], str(rn.ENGINE_PRISTINE / "engine"))
+        self.assertEqual(expected["WORLD_ENGINE_DIR"], str(rn.ENGINE_PRISTINE / "engine"))
+        self.assertIn("BOT_NAV_SNAPSHOT_ROOT", expected)
+        self.assertIn("T5W_INSPECT_CAPTURE_BASELINE", expected)
+        with mock.patch.object(rn, "lane_asset_env", return_value=dict(expected)):
+            lanes = {name: extra for name, _args, extra in rn.lane_list(None)}
+        for name, extra in lanes.items():
             with self.subTest(lane=name):
-                self.assertEqual(lanes[name], expected)
+                if name.startswith("test-"):
+                    self.assertEqual(extra, expected)
+                else:
+                    self.assertEqual(extra, {})
+
+    def test_missing_snapshot_and_baseline_stay_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
+        self.assertNotIn("BOT_NAV_SNAPSHOT_ROOT", env)
+        self.assertNotIn("T5W_INSPECT_CAPTURE_BASELINE", env)
+        self.assertEqual(env["NAV_PACK"], str(rn.NAV_FIXTURE))
+
+
+class SeedLaneHomeTests(unittest.TestCase):
+    def make_snapshot(self, root: Path, name: str) -> Path:
+        snap = root / name
+        snap.mkdir(parents=True)
+        (snap / "versionlist").write_bytes(b"v")
+        (snap / "config").write_bytes(b"c")
+        return snap
+
+    def test_seeds_from_the_nightly_snapshot_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_snapshot(root / "nav-snapshot", "0123456789abcdef")
+            home = root / "home"
+            copied = rn.seed_lane_home(home, root / "nav-snapshot", root / "no-fallback")
+            self.assertEqual(copied, 1)
+            seeded = home / ".274bot" / "unpack" / "0123456789abcdef" / "versionlist"
+            self.assertTrue(seeded.is_file())
+
+    def test_falls_back_to_the_runner_users_unpack_289(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_snapshot(root / "unpack-289", "37214163f1e6ceca")
+            (root / "unpack-289" / "not-a-snapshot").mkdir(parents=True)
+            home = root / "home"
+            copied = rn.seed_lane_home(home, root / "empty", root / "unpack-289")
+            self.assertEqual(copied, 1)
+            seeded = home / ".274bot" / "unpack" / "37214163f1e6ceca" / "config"
+            self.assertTrue(seeded.is_file())
+            self.assertFalse((home / ".274bot" / "unpack" / "not-a-snapshot").exists())
+
+
+class CellCapTests(unittest.TestCase):
+    def test_long_cells_keep_a_cap_above_their_proven_walls(self):
+        # 2026-10-21 summary.json walls: jive_kbd 2543.0 s (Linux verdict),
+        # quester_queue 1987.9 s (Linux pass).
+        self.assertGreater(rn.cell_cap_s("jive_kbd"), 2543)
+        self.assertGreater(rn.cell_cap_s("quester_queue"), 1988)
+        self.assertEqual(rn.cell_cap_s("walk"), rn.CELL_CAP_S)
+
+    def test_parse_cell_caps_overrides_and_refuses_bad_entries(self):
+        caps = rn.parse_cell_caps("jive_kbd=4000, other=900", {"jive_kbd": 3600})
+        self.assertEqual(caps, {"jive_kbd": 4000, "other": 900})
+        self.assertEqual(rn.parse_cell_caps("", {"a": 1}), {"a": 1})
+        for bad in ("jive_kbd", "jive_kbd=soon", "jive_kbd=0", "=10"):
+            with self.subTest(entry=bad):
+                with self.assertRaises(ValueError):
+                    rn.parse_cell_caps(bad, {})
 
 
 class ReceiptTests(unittest.TestCase):
@@ -765,6 +844,43 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(result.first_failure)
         self.assertEqual(result.ticks, 58)
         self.assertEqual(result.receipt, receipt)
+
+    def apply_outcome(self, frontend: str, stderr_text: str, *, timed_out: bool = False) -> rn.CellResult:
+        result = rn.CellResult(
+            cell="cell",
+            result="ERROR",
+            branch="dev",
+            commit="e9b575",
+            platform="windows",
+            frontend=frontend,
+        )
+        rn.apply_cell_outcome(result, "cell", frontend, stderr_text, stderr_text, "",
+                              timed_out, False, 1200)
+        return result
+
+    def test_unavailable_line_wins_over_the_fail_verdict_in_each_frontend(self):
+        # The lines each frontend prints for a missing engine patch, with
+        # the JSON record damaged so only the fallback can read them.
+        message = "UNAVAILABLE: engine patch tools/x.patch is not installed"
+        for frontend, live_name in (("tui", "cell"), ("panel", "script_cell")):
+            with self.subTest(frontend=frontend):
+                stderr_text = (f"FAIL: live {live_name} {{\"scenario\":\"cell\",\"outcome\":\"UNAVAILABLE\"\n"
+                               f"FAIL: {message}\n")
+                result = self.apply_outcome(frontend, stderr_text)
+                self.assertEqual(result.result, "UNAVAILABLE")
+                self.assertEqual(result.reason, message)
+                self.assertIsNone(result.first_failure)
+
+    def test_panel_verdict_line_keeps_its_fail_without_a_receipt(self):
+        result = self.apply_outcome("panel", "FAIL: live script_cell {damaged\n")
+        self.assertEqual(result.result, "FAIL")
+        self.assertEqual(result.reason, "verdict line without a parsable JSON record")
+        self.assertIn("FAIL: live script_cell", result.first_failure)
+
+    def test_timeout_names_the_cap_that_ran(self):
+        result = self.apply_outcome("tui", "289bot: still working\n", timed_out=True)
+        self.assertEqual(result.result, "TIMEOUT")
+        self.assertIn("runner cap 1200s reached", result.first_failure)
 
 
 class RevisionDefaultsTests(unittest.TestCase):
@@ -1199,8 +1315,8 @@ class NightlyMacEnvironmentTests(unittest.TestCase):
             python = root / "capture-python"
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
-                "\"$PATH\" \"$(command -v cargo)\" >> \"$MAC_CAPTURE\"\n",
+                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
+                "\"$PATH\" \"$(command -v cargo)\" \"$NIGHTLY_NAV_FIXTURE\" >> \"$MAC_CAPTURE\"\n",
                 encoding="utf-8",
             )
             python.chmod(0o755)
@@ -1241,6 +1357,7 @@ class NightlyMacEnvironmentTests(unittest.TestCase):
                 self.assertEqual(row[1], str(cargo_home))
                 self.assertTrue(row[2].startswith(f"{cargo_bin}{os.pathsep}"))
                 self.assertEqual(row[3], str(cargo))
+                self.assertEqual(row[4], str(values["NIGHTLY_MAC_ROOT"] / "fixtures" / "274bot-289-v17.navpack"))
 
     def test_launcher_pins_one_fetched_dev_commit_for_both_jobs(self):
         with tempfile.TemporaryDirectory() as tmp:
