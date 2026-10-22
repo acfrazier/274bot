@@ -221,6 +221,8 @@ pub enum InteractReq {
         id: Option<i32>,
     },
     /// Interact with a ground item at `(x, z, level)` using an action label.
+    /// A supplied `id` selects only that type at the exact tile and plane.
+    /// Without it, dispatch retains the name/tile lookup for external callers.
     #[serde(rename = "obj")]
     Obj {
         x: i32,
@@ -228,6 +230,8 @@ pub enum InteractReq {
         level: i32,
         name: Option<String>,
         action: String,
+        #[serde(default)]
+        id: Option<i32>,
     },
     /// Interact with a player by name using an action label.
     #[serde(rename = "player")]

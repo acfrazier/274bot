@@ -245,36 +245,40 @@ impl GatherRun {
         if cx.evidence().tick == self.last_emit_tick {
             return Ok(());
         }
-        let request = match self.args.target.entity {
-            EntityId::Loc(id) => InteractReq::Loc {
-                x: self.args.target.tile.x,
-                z: self.args.target.tile.z,
-                level: self.args.target.tile.level,
-                action: self.args.target.op.to_string(),
-                id: Some(id),
-            },
-            EntityId::Npc(_) if self.args.target.npc_index >= 0 => InteractReq::Npc {
-                name: self.args.target.alias.to_string(),
-                action: self.args.target.op.to_string(),
-                index: Some(self.args.target.npc_index),
-            },
-            EntityId::Npc(_) => {
-                return Err(ActionError::Unavailable(
-                    "gather NPC target has no observed instance index".into(),
-                ));
-            }
-            EntityId::Obj(_) => InteractReq::Obj {
-                x: self.args.target.tile.x,
-                z: self.args.target.tile.z,
-                level: self.args.target.tile.level,
-                name: Some(self.args.target.alias.to_string()),
-                action: self.args.target.op.to_string(),
-            },
-        };
+        let request = click_request(&self.args.target)?;
         self.request_id = Some(cx.emit(request)?);
         self.last_emit_tick = cx.evidence().tick;
         Ok(())
     }
+}
+fn click_request(target: &TargetPlan) -> Result<InteractReq, ActionError> {
+    Ok(match target.entity {
+        EntityId::Loc(id) => InteractReq::Loc {
+            x: target.tile.x,
+            z: target.tile.z,
+            level: target.tile.level,
+            action: target.op.to_string(),
+            id: Some(id),
+        },
+        EntityId::Npc(_) if target.npc_index >= 0 => InteractReq::Npc {
+            name: target.alias.to_string(),
+            action: target.op.to_string(),
+            index: Some(target.npc_index),
+        },
+        EntityId::Npc(_) => {
+            return Err(ActionError::Unavailable(
+                "gather NPC target has no observed instance index".into(),
+            ));
+        }
+        EntityId::Obj(id) => InteractReq::Obj {
+            x: target.tile.x,
+            z: target.tile.z,
+            level: target.tile.level,
+            id: Some(id),
+            name: Some(target.alias.to_string()),
+            action: target.op.to_string(),
+        },
+    })
 }
 
 fn product_count(rows: &[api::snapshot::ItemView], target: &TargetPlan) -> i32 {
@@ -477,6 +481,30 @@ mod tests {
         .join()
         .unwrap()
         .unwrap()
+    }
+    #[test]
+    fn ground_click_request_keeps_each_selected_id_and_exact_tile() {
+        let tile = WorldTile {
+            x: 3201,
+            z: 3202,
+            level: 1,
+        };
+        for id in [1053, 1055, 1057] {
+            let mut plan = target(EntityId::Obj(id), -1, tile);
+            plan.alias = "Halloween mask".into();
+            plan.op = "Take".into();
+            assert_eq!(
+                click_request(&plan),
+                Ok(InteractReq::Obj {
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level,
+                    id: Some(id),
+                    name: Some("Halloween mask".into()),
+                    action: "Take".into(),
+                }),
+            );
+        }
     }
 
     fn supply_snapshot(level: i32, items: &[i32]) -> api::snapshot::GameSnapshot {

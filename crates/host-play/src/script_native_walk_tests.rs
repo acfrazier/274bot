@@ -4207,6 +4207,9 @@ fn s2b_admission_per_bot_layouts() {
     // identities/cancellation, compact route leases, and the shared script
     // seat's bounded delivery/hold queues. See FIX-025/mac-layout/report.md
     // for the field/commit measurements. Exact pins have zero growth headroom.
+    // Grinch's shared native progress and evidence-wait run fences add two
+    // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
+    // Neither fence retains a scene or allocates a per-bot heap payload.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
@@ -4223,7 +4226,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3704, 4544, 512, 264)
+        (3704, 4608, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -4238,7 +4241,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3704, 4424, 512, 264)
+        (3704, 4488, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

@@ -18,6 +18,7 @@ mod family_asset;
 pub mod game_data;
 pub mod gather_methods;
 pub mod gather_tools;
+pub mod ground_take;
 pub mod hostlog;
 pub mod identity;
 pub mod interact;

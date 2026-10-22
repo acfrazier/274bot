@@ -87,6 +87,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/ground_take.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/hostlog.rs",
       "owner": "T1"
     },
@@ -1347,6 +1351,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/grinch_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/loadout_provision_live.rs",
       "owner": "T1"
     },
@@ -1476,6 +1484,14 @@
     },
     {
       "path": "crates/host-play/tests/session_profile.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_driver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_oracle.rs",
       "owner": "T1"
     },
     {
@@ -3331,6 +3347,18 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/grinch.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/grinch_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/ground_take.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/host_js.rs",
       "owner": "T1"
     },
@@ -3852,6 +3880,10 @@
     },
     {
       "path": "crates/script/src/quester/families/extension_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/ground_tests.rs",
       "owner": "T2"
     },
     {
@@ -4899,6 +4931,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/ground_selected_identity.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/herb_data.rs",
       "owner": "T2"
     },
@@ -4948,6 +4984,10 @@
     },
     {
       "path": "crates/script/tests/input_action_at.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/input_ground_identity.rs",
       "owner": "T2"
     },
     {
@@ -5720,6 +5760,10 @@
     },
     {
       "path": "tools/harness/check_server_root_selection.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/harness/grinch_live.py",
       "owner": "T1"
     },
     {
