@@ -1635,6 +1635,66 @@
       "owner": "T4"
     },
     {
+      "path": "crates/nav-executor/src/lib.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/planner_surface_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/dialog.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/dialog_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/door_expire_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/entrance_exclusion_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/legacy_grid.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/n1_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/npc_hop.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/npc_hop_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/snapshot.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/transport_hop.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/walk.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/build.rs",
       "owner": "T5"
     },
@@ -1736,6 +1796,14 @@
     },
     {
       "path": "crates/nav/src/essence_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/executor_adapter.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/executor_adapter_tests.rs",
       "owner": "T5"
     },
     {
@@ -1907,6 +1975,14 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/src/test_support.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/test_support/source_scan.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/src/tile.rs",
       "owner": "T5"
     },
@@ -2052,58 +2128,6 @@
     },
     {
       "path": "crates/nav/src/transport_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/dialog.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/dialog_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/door_expire_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/entrance_exclusion_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/legacy_grid.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/n1_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/npc_hop.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/npc_hop_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/snapshot.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/transport_hop.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller/walk.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav/src/traveller_tests.rs",
       "owner": "T5"
     },
     {

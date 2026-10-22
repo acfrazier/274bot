@@ -11,8 +11,8 @@ use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use nav::router::{FindOptions, Route};
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
+use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 
 use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
 use crate::proof::Proof;

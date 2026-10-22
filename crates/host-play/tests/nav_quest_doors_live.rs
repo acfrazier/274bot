@@ -14,9 +14,9 @@ use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav::router::{find_with, FindOptions, Leg, Route, RouteError};
 use nav::transport::{TransportEdge, TransportKind};
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use serde::Serialize;
 use serde_json::{json, Value};
 

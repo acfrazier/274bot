@@ -10,7 +10,7 @@ use client::client::Client;
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use nav::router::{find_with, FindOptions, Leg};
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use serde_json::json;
 
 const ORIGIN: WorldTile = WorldTile {

@@ -48,7 +48,6 @@ use nav::router::{
 };
 use nav::tile::Tile;
 use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::zones::ZoneExempt;
 use nav::WorldState;
@@ -4123,16 +4122,9 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     let arms = host_play::WalkArms::default();
     arms.lock().unwrap().insert(
         "alice".into(),
-        Arc::new(Mutex::new(host_play::WalkArm {
-            traveller: {
-                let mut t = Traveller::new();
-                t.set_essence(nav::essence::essence_session_for_wizard(553));
-                t
-            },
-            route: None,
-            bank_fetch: None,
-            ..Default::default()
-        })),
+        Arc::new(Mutex::new(host_play::WalkArm::with_latched_essence(
+            nav::essence::essence_session_for_wizard(553),
+        ))),
     );
     s.core.set_walk_arms(arms);
     let world = picker_mine_world();

@@ -319,12 +319,12 @@ impl fmt::Display for WalkOutcome<'_> {
 }
 
 /// Emit the one terminal receipt for an armed operator WalkTo. The caller
-/// supplies the exact [`nav::traveller::TravelOutcome`] before clearing the
+/// supplies the exact [`nav_executor::TravelOutcome`] before clearing the
 /// route; the original route supplies the failing leg's transport identity.
 pub(crate) fn emit_walk_terminal(
     slot: Option<&str>,
     destination: WorldTile,
-    outcome: &nav::traveller::TravelOutcome,
+    outcome: &nav_executor::TravelOutcome,
     leg: Option<usize>,
     route: &Route,
     legacy_zones_unavailable: bool,
@@ -386,7 +386,7 @@ pub(crate) fn emit_walk_cancelled(
 }
 
 /// Close an operator WalkTo whose host-side prerequisite phase failed before
-/// the traveller could produce a [`nav::traveller::TravelOutcome`].
+/// the traveller could produce a [`nav_executor::TravelOutcome`].
 pub(crate) fn emit_walk_aborted(
     slot: Option<&str>,
     destination: WorldTile,
@@ -442,8 +442,8 @@ fn emit_walk_rejected(
     );
 }
 
-fn terminal_at(outcome: &nav::traveller::TravelOutcome) -> WorldTile {
-    use nav::traveller::TravelOutcome;
+fn terminal_at(outcome: &nav_executor::TravelOutcome) -> WorldTile {
+    use nav_executor::TravelOutcome;
     match outcome {
         TravelOutcome::Arrived { at }
         | TravelOutcome::Stalled { at, .. }
@@ -465,10 +465,10 @@ impl fmt::Display for WorldWalkTile {
     }
 }
 
-struct TerminalStatus<'a>(&'a nav::traveller::TravelOutcome);
+struct TerminalStatus<'a>(&'a nav_executor::TravelOutcome);
 impl fmt::Display for TerminalStatus<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if matches!(self.0, nav::traveller::TravelOutcome::Arrived { .. }) {
+        if matches!(self.0, nav_executor::TravelOutcome::Arrived { .. }) {
             f.write_str("arrived")
         } else {
             f.write_str("aborted")
@@ -476,10 +476,10 @@ impl fmt::Display for TerminalStatus<'_> {
     }
 }
 
-struct TerminalReason<'a>(&'a nav::traveller::TravelOutcome);
+struct TerminalReason<'a>(&'a nav_executor::TravelOutcome);
 impl fmt::Display for TerminalReason<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use nav::traveller::TravelOutcome;
+        use nav_executor::TravelOutcome;
         match self.0 {
             TravelOutcome::Arrived { .. } => f.write_str("-"),
             TravelOutcome::Stalled { why, .. } => write!(f, "Stalled({why:?})"),

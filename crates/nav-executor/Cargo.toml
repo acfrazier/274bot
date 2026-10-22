@@ -1,0 +1,13 @@
+[package]
+name = "nav-executor"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+api = { path = "../api" }
+nav = { path = "../nav" }
+client = { workspace = true }
+
+[dev-dependencies]
+nav = { path = "../nav", features = ["test-support"] }

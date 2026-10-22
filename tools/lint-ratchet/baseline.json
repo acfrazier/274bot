@@ -106,13 +106,23 @@
       },
       "clippy::too_many_arguments": {
         "non_test": 48,
-        "test": 4
+        "test": 3
       },
       "clippy::type_complexity": {
-        "non_test": 3,
+        "non_test": 2,
         "test": 0
       },
       "unused_imports": {
+        "non_test": 1,
+        "test": 0
+      }
+    },
+    "nav-executor": {
+      "clippy::too_many_arguments": {
+        "non_test": 0,
+        "test": 1
+      },
+      "clippy::type_complexity": {
         "non_test": 1,
         "test": 0
       }

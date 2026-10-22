@@ -78,7 +78,7 @@ _Avoid_: their `src/bot/api` bodies, `abi.ts`, cloning the reference tree
 A rewrite does the operator-facing job on this host's verbs. A port transplants the catalog's method (control flow, routers, quest `defs/`). Gatherer, Quester and Sherlock are shipped rewrites. Remaining whales (GatheringBot and the rest) and quest-def cards (ArravSupplier, Barcrawl, RoguesPurse) stay dim. A coordinate table in Rust is not a port.
 
 **World-port**:
-Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Traveller is nav), ToolAcquire JS, MarketMaker ledger, webwalk A*.
+Their runtime we will not become: quest `defs/`, GatheringBot, WalkExecutor (Traveller is `nav-executor`), ToolAcquire JS, MarketMaker ledger, webwalk A*.
 _Avoid_: calling a coordinate table a world-port; calling `lightFire` (tinderbox use-on logs) a world-port
 
 **Unloadable**:
