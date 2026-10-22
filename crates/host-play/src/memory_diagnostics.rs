@@ -746,10 +746,7 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
     gatherer_verdict_at_boundary(fleet, false)
 }
 
-fn gatherer_verdict_at_boundary(
-    fleet: &GathererFleet,
-    observation_ended: bool,
-) -> GathererVerdict {
+fn gatherer_verdict_at_boundary(fleet: &GathererFleet, observation_ended: bool) -> GathererVerdict {
     if let Some(error) = &fleet.anchor_error {
         return GathererVerdict::Fail(error.clone());
     }
@@ -892,9 +889,10 @@ fn gatherer_verdict_at_boundary(
     }
     if restarting
         && !(observation_ended
-            && fleet.names.iter().all(|name| {
-                fleet.bots[name].planned_restart == Some(GathererRestart::Stopped)
-            }))
+            && fleet
+                .names
+                .iter()
+                .all(|name| fleet.bots[name].planned_restart == Some(GathererRestart::Stopped)))
     {
         return GathererVerdict::Pending;
     }
@@ -1492,7 +1490,10 @@ mod tests {
             let mut fleet = r2_fleet();
             fleet.names.truncate(n);
             fleet.bots.retain(|name, _| fleet.names.contains(name));
-            assert!(matches!(gatherer_verdict(&fleet), GathererVerdict::Pass { .. }));
+            assert!(matches!(
+                gatherer_verdict(&fleet),
+                GathererVerdict::Pass { .. }
+            ));
             fleet.bots.get_mut(&fleet.names[0]).unwrap().planned_stop();
             assert_eq!(
                 failure(&fleet),
@@ -1510,19 +1511,34 @@ mod tests {
         }
         assert_eq!(gatherer_summary(&fleet, false).1["verdict"], "pending");
         let (verdict, summary) = gatherer_summary(&fleet, true);
-        assert_eq!(verdict, GathererVerdict::Pass { fleet_xp_delta: 675 });
+        assert_eq!(
+            verdict,
+            GathererVerdict::Pass {
+                fleet_xp_delta: 675
+            }
+        );
         assert_eq!(summary["verdict"], "pass");
         assert_eq!(summary["fleet_xp_delta"], 675);
         assert_eq!(summary["lifecycle_state"], "planned_stop");
-        assert!(summary["bots"].as_array().unwrap().iter().all(|bot| bot["run_state"] == "Idle"));
+        assert!(summary["bots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|bot| bot["run_state"] == "Idle"));
 
         let name = &fleet.names[0];
         fleet.bots.get_mut(name).unwrap().missing_position_samples = 1;
-        assert!(matches!(gatherer_summary(&fleet, true).0, GathererVerdict::Fail(_)));
+        assert!(matches!(
+            gatherer_summary(&fleet, true).0,
+            GathererVerdict::Fail(_)
+        ));
         let bot = fleet.bots.get_mut(name).unwrap();
         bot.missing_position_samples = 0;
         bot.observe_run_state(RunState::Starting);
-        assert!(matches!(gatherer_summary(&fleet, true).0, GathererVerdict::Fail(_)));
+        assert!(matches!(
+            gatherer_summary(&fleet, true).0,
+            GathererVerdict::Fail(_)
+        ));
         let bot = fleet.bots.get_mut(name).unwrap();
         bot.planned_start();
         assert_eq!(gatherer_summary(&fleet, true).0, GathererVerdict::Pending);
@@ -1585,7 +1601,12 @@ mod tests {
         bot.missing_position_samples = 0;
         bot.planned_restart = None;
         let (verdict, summary) = gatherer_summary(&fleet, false);
-        assert_eq!(verdict, GathererVerdict::Pass { fleet_xp_delta: 675 });
+        assert_eq!(
+            verdict,
+            GathererVerdict::Pass {
+                fleet_xp_delta: 675
+            }
+        );
         assert_eq!(
             summary["bots"][0]["first_missing_position"],
             json!({
