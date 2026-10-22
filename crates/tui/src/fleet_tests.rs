@@ -159,6 +159,7 @@ fn rows_show_selection_cursor_and_selected_bot_as_plain_text() {
             selected: Some(id("alice")),
             keys: true,
             class: SizeClass::Compact,
+            header_parts: &mut Vec::new(),
         },
         40,
         9,
@@ -204,6 +205,7 @@ fn an_unloaded_vault_profile_is_listed_after_the_loaded_rows_dim_and_markable() 
             selected: Some(id("alice")),
             keys: false,
             class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
         },
         60,
         7,
@@ -255,6 +257,7 @@ fn the_count_line_says_how_many_marks_the_filter_hides() {
             selected: None,
             keys: false,
             class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
         },
         60,
         8,
@@ -280,6 +283,7 @@ fn the_selected_marker_only_goes_to_a_loaded_row() {
             selected: Some(id("bob")),
             keys: false,
             class: SizeClass::Compact,
+            header_parts: &mut Vec::new(),
         },
         40,
         6,
@@ -299,6 +303,7 @@ fn an_empty_universe_says_there_is_nothing_to_act_on() {
             selected: None,
             keys: false,
             class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
         },
         50,
         6,
@@ -319,6 +324,7 @@ fn header_rows(model: &FleetModel, state: &mut FleetState, width: u16) -> Vec<St
             selected: None,
             keys: false,
             class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
         },
         width,
         8,
@@ -365,6 +371,10 @@ fn the_header_is_rebuilt_only_when_an_input_changed() {
     state.header.lines[0] = "CACHED".into();
     let rows = header_rows(&model, &mut state, 80);
     assert!(rows[0].starts_with("CACHED"), "{rows:?}");
+    // The recorded cells are cached with the text.
+    state.header.segments[0].width = 3;
+    let cells = header_cells(&model, &mut state, 80);
+    assert_eq!(cells[0].0.width, 3, "{cells:?}");
     // A different width rebuilds it too.
     let rows = header_rows(&model, &mut state, 60);
     assert!(rows[0].starts_with("card: "), "{rows:?}");
@@ -395,6 +405,7 @@ fn a_long_card_label_wraps_by_word_and_a_long_word_is_cut() {
         ],
         32,
         &mut lines,
+        &mut Vec::new(),
     );
     assert_eq!(
         lines,
@@ -412,6 +423,7 @@ fn a_long_card_label_wraps_by_word_and_a_long_word_is_cut() {
         ],
         16,
         &mut lines,
+        &mut Vec::new(),
     );
     assert_eq!(
         lines,
@@ -447,10 +459,143 @@ fn a_long_fleet_scrolls_to_keep_the_cursor_visible() {
             selected: None,
             keys: true,
             class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
         },
         40,
         12,
     );
     assert!(hits.first > 0 && hits.first <= 60 && 60 < hits.first + usize::from(hits.rows.height));
     assert!(rows.iter().any(|r| r.contains("> bot060")), "{rows:?}");
+}
+
+/// The cells the header parts were recorded in, for a draw at `width`.
+fn header_cells(model: &FleetModel, state: &mut FleetState, width: u16) -> Vec<(Rect, HeaderPart)> {
+    let mut parts = Vec::new();
+    render(
+        FleetTable {
+            model,
+            restart_badges: &HashSet::new(),
+            state,
+            selected: None,
+            keys: false,
+            class: SizeClass::Standard,
+            header_parts: &mut parts,
+        },
+        width,
+        8,
+    );
+    parts
+}
+
+/// The card and sort parts are recorded where they are drawn; the marked
+/// count is not clickable. A narrow pane records each part on its own row.
+#[test]
+fn the_header_records_the_cells_of_the_card_and_sort_parts() {
+    let mut model = model_of(vec![ready("alice", 2)]);
+    let mut state = FleetState::default();
+    // "card: Each bot's own card" is 25 cells; the separator is 3.
+    assert_eq!(
+        header_cells(&model, &mut state, 80),
+        [
+            (Rect::new(0, 0, 25, 1), HeaderPart::Card),
+            (Rect::new(28, 0, 16, 1), HeaderPart::Sort),
+        ]
+    );
+    model.set_order_for_test(frontend_core::FleetOrder::Name);
+    assert_eq!(
+        header_cells(&model, &mut state, 34),
+        [
+            (Rect::new(0, 0, 25, 1), HeaderPart::Card),
+            (Rect::new(0, 1, 10, 1), HeaderPart::Sort),
+        ],
+        "sort: Name moved to the second row"
+    );
+}
+
+/// A part that wraps has one cell run per row, and a cut word records the
+/// cells it fills.
+#[test]
+fn a_wrapped_part_records_one_cell_run_per_row() {
+    let mut lines = Vec::new();
+    let mut segments = Vec::new();
+    wrap_header(
+        [
+            "card: Focused bot's card: Alcher (pending)".into(),
+            "sort: Load order".into(),
+            "0 marked".into(),
+        ],
+        32,
+        &mut lines,
+        &mut segments,
+    );
+    let cells: Vec<_> = segments
+        .iter()
+        .map(|s| (s.part, s.line, s.x, s.width))
+        .collect();
+    assert_eq!(
+        cells,
+        [
+            (HeaderPart::Card, 0, 0, 32),
+            (HeaderPart::Card, 1, 0, 9),
+            (HeaderPart::Sort, 1, 12, 16),
+        ]
+    );
+    wrap_header(
+        [
+            "card: /a/very/long/path/with/no/spaces.ts".into(),
+            "sort: Name".into(),
+            "1 marked".into(),
+        ],
+        16,
+        &mut lines,
+        &mut segments,
+    );
+    let cells: Vec<_> = segments
+        .iter()
+        .map(|s| (s.part, s.line, s.x, s.width))
+        .collect();
+    assert_eq!(
+        cells,
+        [
+            (HeaderPart::Card, 0, 0, 5),
+            (HeaderPart::Card, 1, 0, 16),
+            (HeaderPart::Card, 2, 0, 16),
+            (HeaderPart::Card, 3, 0, 3),
+            (HeaderPart::Sort, 3, 6, 10),
+        ]
+    );
+}
+
+/// Header rows the pane has no room for have no clickable cells.
+#[test]
+fn a_header_row_that_is_not_drawn_records_no_cells() {
+    let model = model_of(vec![ready("alice", 2)]);
+    let mut state = FleetState::default();
+    let mut parts = Vec::new();
+    let area = Rect::new(0, 0, 34, 1);
+    let mut buf = Buffer::empty(area);
+    FleetTable {
+        model: &model,
+        restart_badges: &HashSet::new(),
+        state: &mut state,
+        selected: None,
+        keys: false,
+        class: SizeClass::Standard,
+        header_parts: &mut parts,
+    }
+    .render(area, &mut buf, 0);
+    assert_eq!(
+        parts,
+        [(Rect::new(0, 0, 25, 1), HeaderPart::Card)],
+        "the sort part would sit on the second row, which is not drawn"
+    );
+}
+
+/// The order after each choice wraps at the end of the choices.
+#[test]
+fn the_next_order_follows_the_choices_and_wraps() {
+    use frontend_core::FleetOrder::{LoadOrder, Name, Status};
+    assert_eq!(next_order(LoadOrder), Name);
+    assert_eq!(next_order(Name), Status);
+    assert_eq!(next_order(Status), LoadOrder);
 }

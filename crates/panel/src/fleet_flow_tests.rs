@@ -15,6 +15,7 @@ use frontend_core::{
 use std::time::{Duration, Instant};
 
 use super::{ActionRecord, FleetLayout};
+use crate::fleet_toolbar::ToolbarAction;
 use crate::session::Session;
 use crate::test_support::TestDir;
 
@@ -159,6 +160,10 @@ impl Rig {
     }
 
     fn action(&self, action: FleetAction) -> ActionRecord {
+        self.button(ToolbarAction::Plan(action))
+    }
+
+    fn button(&self, action: ToolbarAction) -> ActionRecord {
         self.layout
             .actions
             .iter()
@@ -356,11 +361,11 @@ impl Rig {
         assert_eq!(self.session.world_picker.target(), Some(name));
     }
 
-    /// Open the world picker from the Marks menu's Switch world… entry.
+    /// Open the world picker from the toolbar's Switch world button.
     fn open_picker_of_marks(&mut self) {
-        self.click(self.layout.marks_button);
-        self.settle();
-        self.click(self.menu_item("Switch world…"));
+        let button = self.button(ToolbarAction::SwitchWorld);
+        assert!(!button.disabled, "Switch world is disabled: {button:?}");
+        self.click(button.rect);
         self.settle();
         assert!(self.session.world_picker.is_open());
         assert_eq!(self.session.world_picker.target(), None);
@@ -802,12 +807,72 @@ fn a_steady_frame_with_a_plan_waiting_keeps_its_labels_and_submits_nothing() {
     );
 }
 
+/// The Profile cell of `name` in `layout` (the shown rows' order).
+fn name_rect(session: &Session, layout: &FleetLayout, name: &str) -> [f32; 4] {
+    let at = session
+        .fleet_model
+        .shown_rows()
+        .position(|(_, row)| row.name() == name)
+        .unwrap_or_else(|| panic!("{name} is not shown"));
+    layout.names[at]
+}
+
+/// A click on a loaded bot's name focuses it, in Load order (the name is
+/// also the drag handle) and in a view sort; its Mark box only marks it,
+/// and a profile that is not loaded focuses nothing. Before, a name click
+/// did nothing.
+#[test]
+fn a_name_click_focuses_the_bot_and_its_mark_box_only_marks_it() {
+    let mut rig = Rig::with_play(
+        "fleet-name-focus",
+        &["alice", "bob", "carol"],
+        &["alice", "bob"],
+    );
+    let focused = |rig: &Rig| rig.session.focused_name();
+    assert_eq!(focused(&rig).as_deref(), Some("alice"));
+
+    let mark = rig
+        .layout
+        .mark_boxes
+        .iter()
+        .find(|(name, _)| name == "bob")
+        .expect("bob's Mark box")
+        .1;
+    rig.click(mark);
+    assert_eq!(rig.marked_names(), ["bob"]);
+    assert_eq!(
+        focused(&rig).as_deref(),
+        Some("alice"),
+        "a mark never focuses"
+    );
+
+    rig.click(name_rect(&rig.session, &rig.layout, "bob"));
+    assert_eq!(
+        focused(&rig).as_deref(),
+        Some("bob"),
+        "Load order name click"
+    );
+    assert_eq!(rig.marked_names(), ["bob"], "a focus never marks");
+
+    rig.click(name_rect(&rig.session, &rig.layout, "carol"));
+    assert_eq!(focused(&rig).as_deref(), Some("bob"), "carol is not loaded");
+
+    rig.session
+        .fleet_model
+        .set_order_for_test(frontend_core::FleetOrder::Name);
+    rig.settle();
+    rig.click(name_rect(&rig.session, &rig.layout, "alice"));
+    assert_eq!(focused(&rig).as_deref(), Some("alice"), "Name sort click");
+    assert_eq!(rig.marked_names(), ["bob"]);
+}
+
 const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 /// The Scripts window's Apply to same-card members entry raises the fleet
-/// plan's confirmation, and that confirmation is drawn once: by the Fleet
-/// window while it is open, by the Scripts section while it is closed. The
-/// old entry drew its own prepared-sync row beside the Fleet window's.
+/// plan's confirmation, and the Scripts section draws it only while no
+/// fleet toolbar is on screen: not beside the Fleet window's (or the rail's,
+/// or the strip's), and alone when every toolbar is gone. The old entry
+/// drew its own prepared-sync row beside the Fleet window's.
 #[test]
 fn the_copy_confirmation_is_drawn_once() {
     let mut rig = Rig::with_play("fleet-copy-once", &["alice", "bob"], &["alice", "bob"]);
@@ -830,9 +895,16 @@ fn the_copy_confirmation_is_drawn_once() {
     for _ in 0..3 {
         assert_eq!(rig.frame_with_scripts_section(), 1, "Fleet window open");
     }
+    // The Fleet window closes; the strip's fleet section (the rail is not
+    // shown) still carries the toolbar, which this rig does not draw.
     rig.session.fleet_open = false;
+    assert!(rig.session.fleet_toolbar_shown());
     for _ in 0..3 {
-        assert_eq!(rig.frame_with_scripts_section(), 1, "Fleet window closed");
+        assert_eq!(rig.frame_with_scripts_section(), 0, "the strip's toolbar");
+    }
+    crate::ui_state::set_panel_section_visible(&mut rig.session.ui, "fleet", false);
+    for _ in 0..3 {
+        assert_eq!(rig.frame_with_scripts_section(), 1, "no toolbar on screen");
     }
 }
 
@@ -982,17 +1054,30 @@ fn picking_another_world_plans_that_bot_and_runs_only_on_confirm() {
     assert_eq!(line, result.text());
 }
 
-/// A pick from the rail or the Grid plans while the Fleet window is closed:
-/// the window opens so the plan row shows, and nothing else changes.
+/// A pick from the rail or the Grid plans; its plan row shows in every
+/// fleet toolbar. The Fleet window opens to show it only when no toolbar is
+/// on screen (here: the strip's fleet section turned off).
 #[test]
-fn a_pick_opens_the_fleet_window_to_show_the_confirmation() {
+fn a_pick_opens_the_fleet_window_only_when_no_toolbar_shows_the_confirmation() {
     let mut rig = Rig::with_worlds("fleet-world-opens", &["alice"], &[("alice", 2)]);
     // The rail's click path: the session opens the picker for the bot.
     rig.session.fleet_open = false;
     assert!(rig.session.open_world_picker(Some("alice")));
     rig.settle();
     assert_eq!(rig.picker(), [(1, false), (2, true), (3, false)]);
-    assert!(!rig.session.fleet_open);
+    rig.click(rig.picker_row(1));
+    assert!(rig.session.core.fleet_plan().is_some());
+    assert!(
+        !rig.session.fleet_open,
+        "the strip's toolbar shows the plan"
+    );
+    rig.session.cancel_fleet_plan();
+    rig.settle();
+
+    crate::ui_state::set_panel_section_visible(&mut rig.session.ui, "fleet", false);
+    assert!(!rig.session.fleet_toolbar_shown());
+    assert!(rig.session.open_world_picker(Some("alice")));
+    rig.settle();
     rig.click(rig.picker_row(1));
     assert!(rig.session.fleet_open, "the Fleet window opened");
     assert!(rig.session.core.fleet_plan().is_some());
@@ -1007,13 +1092,12 @@ fn a_pick_opens_the_fleet_window_to_show_the_confirmation() {
     );
 }
 
-/// The Marks menu's Switch world… opens the same picker for the marked
+/// The toolbar's Switch world button opens the same picker for the marked
 /// bots (every loaded bot shown when none is marked): no world is ticked,
 /// a pick plans one command over the marks, hidden ones too, and names the
-/// bots already on that world as skipped. Before, the window had no world
-/// action.
+/// bots already on that world as skipped.
 #[test]
-fn the_marks_menu_switch_world_plans_over_the_marks() {
+fn the_toolbar_switch_world_plans_over_the_marks() {
     let mut rig = Rig::with_worlds(
         "fleet-world-marked",
         &["alice", "bob", "carol", "dave"],
@@ -1023,6 +1107,10 @@ fn the_marks_menu_switch_world_plans_over_the_marks() {
     rig.session.fleet_model.set_filter_for_test("alice");
     rig.settle();
     assert_eq!(rig.layout.marks_text, "3 marked, 2 not shown");
+    assert_eq!(
+        rig.button(ToolbarAction::SwitchWorld).label,
+        "Switch world 3###fleet-action-7"
+    );
 
     rig.open_picker_of_marks();
     assert_eq!(rig.picker(), [(1, false), (2, false), (3, false)]);
@@ -1062,8 +1150,8 @@ fn the_marks_menu_switch_world_plans_over_the_marks() {
     assert_eq!(rig.saved_world("dave"), None, "not marked");
 }
 
-/// With nothing marked the Marks menu's entry covers the loaded bots the
-/// filter shows, and the plan asks first.
+/// With nothing marked the toolbar's Switch world covers the loaded bots
+/// the filter shows, and the plan asks first.
 #[test]
 fn with_nothing_marked_switch_world_covers_the_loaded_shown_bots() {
     let mut rig = Rig::with_worlds(
@@ -1087,9 +1175,9 @@ fn with_nothing_marked_switch_world_covers_the_loaded_shown_bots() {
 }
 
 /// A server with one world offers no switching anywhere in the window: no
-/// World / login cell is clickable (the column is plain text), and the Marks
-/// menu's entry is disabled, so a click on it opens nothing and plans
-/// nothing.
+/// World / login cell is clickable (the column is plain text), and the
+/// toolbar's Switch world button is disabled with the reason, so a click on
+/// it opens nothing and plans nothing.
 #[test]
 fn a_server_with_one_world_offers_no_picker() {
     let mut rig = Rig::with_play("fleet-world-local", &["alice", "bob"], &["alice", "bob"]);
@@ -1105,9 +1193,10 @@ fn a_server_with_one_world_offers_no_picker() {
     );
     let commands = rig.commands();
 
-    rig.click(rig.layout.marks_button);
-    rig.settle();
-    rig.click(rig.menu_item("Switch world…"));
+    let button = rig.button(ToolbarAction::SwitchWorld);
+    assert!(button.disabled);
+    assert_eq!(button.tooltip, crate::fleet_toolbar::NO_WORLDS);
+    rig.click(button.rect);
     rig.settle();
     assert!(!rig.session.world_picker.is_open());
     assert!(rig.layout.world_picker.is_empty());

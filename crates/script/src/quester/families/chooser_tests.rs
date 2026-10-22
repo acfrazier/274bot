@@ -163,6 +163,7 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
             HostEffect::Interaction(InteractReq::Obj {
                 x: 3222,
                 z: 3305,
+                id: Some(1944),
                 ..
             })
         ),

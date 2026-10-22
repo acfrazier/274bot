@@ -773,7 +773,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:167",
+    "runtime": "crates/script/src/shim/input.js:154",
     "async": false
   },
   {
@@ -783,7 +783,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:170",
+    "runtime": "crates/script/src/shim/input.js:157",
     "async": false
   },
   {
@@ -793,7 +793,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:173",
+    "runtime": "crates/script/src/shim/input.js:160",
     "async": false
   },
   {
@@ -803,7 +803,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:176",
+    "runtime": "crates/script/src/shim/input.js:163",
     "async": false
   },
   {
@@ -813,7 +813,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:179",
+    "runtime": "crates/script/src/shim/input.js:166",
     "async": false
   },
   {
@@ -823,7 +823,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:182",
+    "runtime": "crates/script/src/shim/input.js:169",
     "async": false
   },
   {
@@ -833,7 +833,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:185",
+    "runtime": "crates/script/src/shim/input.js:172",
     "async": false
   },
   {
@@ -843,7 +843,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:188",
+    "runtime": "crates/script/src/shim/input.js:175",
     "async": false
   },
   {

@@ -64,6 +64,7 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
             x: i32_field(step, "x")?,
             z: i32_field(step, "z")?,
             level: i32_field(step, "level")?,
+            id: Some(i32_field(step, "id")?),
             name: Some(text_field(step, "name")?.to_string()),
             action: text_field(step, "action")?.to_string(),
         }),

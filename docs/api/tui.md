@@ -70,10 +70,10 @@ label in its border. Everything is plain text as well as colour.
 
 | Pane | What it shows |
 | --- | --- |
-| Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Logout buttons. The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
+| Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Logout buttons. A click on the header's `card: …` part opens the card picker and a click on its `sort: …` part shows the next sort (the same as `c` and `s`). The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world), the status pane's script, phase and reason rows (the same rows as the panel's Status card) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
-| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
+| Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Grinch, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back), with its buttons as `[N] label` rows. A script that uses the standard paint-controls helper shows working **Pause** (reads **Resume** while paused) and **Stop** rows; they act on the bot whose paint is shown and are dimmed when the run cannot take them ([script.md](script.md)). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
@@ -98,7 +98,7 @@ is global, and moving the fleet cursor never changes the selected bot.
 
 | Pane | Keys |
 | --- | --- |
-| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `m` Load + log in and `U` Log out (a fleet plan: marked rows, else the loaded shown bots); `W` opens the world picker for the cursor row's profile (palette: **Switch world of marked…** for the marked rows); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `s` shows the next fleet order (Load order, Name, Status, then Load order again; palette: **Cycle fleet sort**), and the cursor stays on its profile; `m` Load + log in and `U` Log out (a fleet plan over the marked rows, else over the loaded shown rows, and it asks first when nothing is marked); `W` opens the world picker for the cursor row's profile (palette: **Switch world of marked…** for the marked rows); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
 | rs2b0t import (palette **Import rs2b0t profiles…**) | type the path of rs2b0t's `rs2b0t-profiles.json`, `Enter` previews; in the preview `o` switches Skip/Overwrite for existing profiles, `u` (when the file has accounts the 289 client cannot log in with) imports those too or leaves them out, `Enter`/`y` imports, `Esc` goes back; in the report `d` asks to delete the export file (`y` deletes, `n` keeps; offered only once every chosen account is confirmed saved), `Esc` closes. See [vault.md](vault.md#importing-profiles-from-rs2b0t) |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
@@ -193,8 +193,16 @@ settings. Stopped, logged-out, reassigned or different-script bots are
 skipped and named in the status line. **Later** leaves their current scripts
 running and suppresses the prompt until settings change again.
 
+Grinch's saved Parameters apply only after a new Start. That Start validates
+the settings and captures a new same-plane anchor. Its `radius` bounds an
+inclusive 1–16 tile square around that anchor, and the live-zone filter
+rejects stale rows. See [Grinch ground-item collection](script.md#grinch-ground-item-collection)
+for all 18 default IDs, selected-only banking, exact-anchor return and status.
+
 With the Map's group send (`g`), `Enter` walks every marked bot to the tile
-from its own position. Each of these prints one report with every marked bot
+from its own position. Pressing `g` while no bot that can walk is marked
+marks the loaded bots the fleet filter shows that can walk; a bot the filter
+hides is not added. Each of these prints one report with every marked bot
 counted once, failures first (`Walk marked: walking 3, skipped 2: gwalk2:
 running a script, gwalk3: not logged in`); zone refusals include the danger
 zone names for each affected bot. On legacy grid packs `z` cannot enable
@@ -205,7 +213,9 @@ closes or opens; it is not persisted. While Danger routing is Always, the per-wa
 
 **Mouse** (optional; every workflow works from the keyboard): left click
 focuses the pane, selects a fleet row (its checkbox column ticks the row
-instead), presses a button or tab, answers a dialogue option or selects a
+instead), opens the card picker from the fleet header's `card: …` part or
+shows the next sort from its `sort: …` part (the marked count does nothing),
+presses a button or tab, answers a dialogue option or selects a
 map tile (walking it is a second action); right click opens a context menu
 for the row or pane and never acts as a left click; the wheel scrolls the
 list, log or map under the pointer. The palette's **Mouse capture off**

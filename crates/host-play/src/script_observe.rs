@@ -163,6 +163,21 @@ fn watchdog_restart_line(pending: Option<&str>) -> String {
     }
 }
 
+fn trace_watchdog_action(slot: &SlotScript, name: &str, tick: u64, action: script::WatchdogAction) {
+    if action == script::WatchdogAction::None || !api::hostlog::debug_enabled() {
+        return;
+    }
+    host_log!(
+        Category::Watchdog,
+        Level::Debug,
+        slot = name,
+        "watchdog-action run={:?} tick={} action={:?}",
+        slot.native_run(),
+        tick,
+        action
+    );
+}
+
 /// Restart a script the watchdog gave up on and log the outcome.
 fn watchdog_restart(slot: &mut SlotScript, name: &str, now: Instant) {
     let pending = watchdog_pending_event(slot);
@@ -1041,6 +1056,7 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             let running = slot.state() == script::RunState::Running;
             let action = slot.feed_watchdog(now, here, xp, frozen, running, &lifecycle);
+            trace_watchdog_action(&slot, name, tick, action);
             match action {
                 script::WatchdogAction::Restart { .. } => {
                     interact.clear();
@@ -2170,6 +2186,102 @@ mod watchdog_restart_tests {
         assert_eq!(
             super::watchdog_restart_line(Some("started")),
             "restarted the script"
+        );
+    }
+
+    #[test]
+    fn watchdog_action_trace_is_debug_only_and_none_is_silent() {
+        const CHILD: &str = "GRINCH_WATCHDOG_ACTION_LOG_TEST";
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "script_runtime::script_observe::watchdog_restart_tests::watchdog_action_trace_is_debug_only_and_none_is_silent",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("BOT_DEBUG")
+                .output()
+                .expect("run isolated diagnostic sink test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed; 0 failed;"),
+                "diagnostic child failed: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        struct Capture(std::sync::Mutex<Vec<String>>);
+        impl api::hostlog::Sink for Capture {
+            fn record(&self, record: &api::hostlog::Record<'_>) {
+                assert_eq!(record.source, api::hostlog::Source::Watchdog);
+                assert_eq!(record.level, api::hostlog::Level::Debug);
+                self.0.lock().unwrap().push(record.message.to_owned());
+            }
+        }
+        static CAPTURE: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+        assert!(api::hostlog::install_sink(&CAPTURE));
+        let slot = script::SlotScript::new();
+        let action = script::WatchdogAction::ArmWalk {
+            x: 1,
+            z: 2,
+            level: 0,
+        };
+        let interaction_formats = std::cell::Cell::new(0);
+        let interaction_traces = || {
+            api::host_log!(
+                api::hostlog::Category::InteractTrace,
+                api::hostlog::Level::Debug,
+                "native-packet account=grinch-trace run={:?} tick=7 request={} opcode=110",
+                slot.native_run(),
+                {
+                    interaction_formats.set(interaction_formats.get() + 1);
+                    1
+                },
+            );
+            api::host_log!(
+                api::hostlog::Category::InteractTrace,
+                api::hostlog::Level::Debug,
+                "native-packets account=grinch-trace run={:?} tick=7 request={} count=1 decoded=true accepted=true",
+                slot.native_run(),
+                {
+                    interaction_formats.set(interaction_formats.get() + 1);
+                    1
+                },
+            );
+        };
+
+        api::hostlog::set_debug(true);
+        let none = allocation_counter::measure(|| {
+            super::trace_watchdog_action(
+                &slot,
+                "grinch-watchdog-trace",
+                7,
+                script::WatchdogAction::None,
+            );
+        });
+        assert_eq!(none.count_total, 0, "{none:?}");
+        assert!(CAPTURE.0.lock().unwrap().is_empty());
+
+        api::hostlog::set_debug(false);
+        assert!(!api::hostlog::debug_enabled());
+        let disabled = allocation_counter::measure(|| {
+            super::trace_watchdog_action(&slot, "grinch-watchdog-trace", 7, action);
+            interaction_traces();
+        });
+        assert_eq!(disabled.count_total, 0, "{disabled:?}");
+        assert!(CAPTURE.0.lock().unwrap().is_empty());
+        assert_eq!(interaction_formats.get(), 0);
+
+        api::hostlog::set_debug(true);
+        interaction_traces();
+        assert_eq!(interaction_formats.get(), 2);
+        assert!(CAPTURE.0.lock().unwrap().is_empty());
+        super::trace_watchdog_action(&slot, "grinch-watchdog-trace", 7, action);
+        assert_eq!(
+            *CAPTURE.0.lock().unwrap(),
+            ["watchdog-action run=None tick=7 action=ArmWalk { x: 1, z: 2, level: 0 }"]
         );
     }
 }

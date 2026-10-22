@@ -492,7 +492,7 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
         let mut session = Session::new();
         session.route_through_zones = true;
         if marked {
-            session.open_walkto_for_marked();
+            session.open_walkto_for_fleet();
         } else {
             session.walkto_open = true;
         }

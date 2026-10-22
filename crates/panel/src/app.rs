@@ -1735,6 +1735,8 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
                     "script" => script_section(ui, session),
                     "debug" => debug_section(ui, session),
                     "log" => log_section(ui, session, log_last),
+                    // The rail carries the toolbar while it is shown.
+                    "fleet" if !session.rail_shown() => fleet_section(ui, session),
                     _ => {}
                 }
             }
@@ -4001,8 +4003,8 @@ fn script_parameter_rows(
 /// Apply to same-card members: copy the focused profile's parameters for
 /// its card to the bots the fleet buttons cover, through the fleet plan
 /// flow. Its confirmation (naming the frozen scope) and its result are the
-/// fleet plan row and result line, drawn by the Fleet window; while that
-/// window is closed they are drawn here, for this action only.
+/// fleet plan row and result line, drawn by every fleet toolbar; while no
+/// toolbar is on screen they are drawn here, for this action only.
 fn apply_to_all_section(ui: &Ui, session: &mut Session) {
     ui.separator();
     if ui.button("Apply to same-card members…") {
@@ -4012,21 +4014,21 @@ fn apply_to_all_section(ui: &Ui, session: &mut Session) {
         "copy these parameters to the marked bots (every loaded bot shown when none is marked) \
          assigned this card; a confirmation names them first, and bots on another card are skipped",
     );
-    if !session.fleet_open {
+    if !session.fleet_toolbar_shown() {
         let is_copy = |action| action == frontend_core::FleetAction::CopySettings;
         if session
             .core
             .fleet_plan()
             .is_some_and(|plan| is_copy(plan.action()))
         {
-            crate::fleet::plan_row(ui, session);
+            crate::fleet_toolbar::plan_row(ui, session);
         }
         if session
             .core
             .fleet_result()
             .is_some_and(|result| is_copy(result.action()))
         {
-            crate::fleet::result_line(ui, session);
+            crate::fleet_toolbar::result_line(ui, session);
         }
     }
 }
@@ -4397,6 +4399,17 @@ fn resource_section(ui: &Ui, session: &mut Session) {
         return;
     }
     draw_resource_rows(ui, session.core.resources(), true);
+}
+
+/// fleet: the fleet toolbar while the rail is hidden (Grid, or MultiBox
+/// off). Its header folds the toolbar to its summary, plan and result with
+/// the same saved choice as the rail's, and drags to reorder like the other
+/// headings.
+fn fleet_section(ui: &Ui, session: &mut Session) {
+    let open = crate::fleet_toolbar::header(ui, session, "fleet");
+    ui.set_item_tooltip("fold the fleet toolbar; drag to reorder");
+    heading_dnd(ui, session, "fleet");
+    crate::fleet_toolbar::body(ui, session, crate::fleet_toolbar::Site::Strip, open);
 }
 
 /// log: the shared structured log (see [`crate::log_pane`]).
@@ -4818,11 +4831,18 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
     ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
 
-/// Sidecar rail window: only while MultiBox is on and Grid is off. Bulk
-/// Login all / Logout all, the only-render-selected checkbox (unchecking
-/// needs the render-all confirm), one tile per wall member (cap only while
-/// only-render-selected, else cap + 1 fps body or renderer-off
-/// placeholder), `+ add bot`, and the 1 Hz resource card.
+/// The smallest height of the rail's tiles region at scale 1. While the
+/// open toolbar leaves less, the rail window scrolls as a whole; folding the
+/// toolbar gives the tiles the rest.
+const RAIL_TILES_MIN_H: f32 = 120.0;
+
+/// Sidecar rail window: only while MultiBox is on and Grid is off. The fleet
+/// toolbar under its fold header ([`crate::fleet_toolbar`]) stays at the
+/// top; below it one region scrolls on its own: the only-render-selected
+/// checkbox (unchecking needs the render-all confirm), one tile per shown
+/// wall member (cap only while only-render-selected, else cap + 1 fps body
+/// or renderer-off placeholder), the folded "Not loaded" group, Profiles…
+/// and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let mut open = true;
     ui.window(format!(
@@ -4832,14 +4852,60 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     .opened(&mut open)
     .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
     .build(|| {
-        rail_bulk_row(ui, state);
-        rail_tiles(ui, gpu, state);
-        add_bot_button(ui, state);
-        resource_card(ui, state.session.core.resources());
+        rail_toolbar(ui, &mut state.session);
+        ui.separator();
+        let height = ui.content_region_avail()[1].max(scale_px(ui, RAIL_TILES_MIN_H));
+        ui.child_window("##rail-tiles")
+            .size([0.0, height])
+            .build(ui, || {
+                render_gate(ui, &mut state.session);
+                rail_tiles(ui, gpu, state);
+                add_bot_button(ui, state);
+                resource_card(ui, state.session.core.resources());
+                #[cfg(test)]
+                {
+                    let (pos, size) = (ui.window_pos(), ui.window_size());
+                    TEST_RAIL_TILES.set(Some(RailTilesRecord {
+                        scroll_y: ui.scroll_y(),
+                        scroll_max_y: ui.scroll_max_y(),
+                        rect: [pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]],
+                    }));
+                }
+            });
     });
     if !open {
         state.session.set_multibox(false);
     }
+}
+
+/// The rail's fleet toolbar: the "Fleet" fold header and the toolbar (or,
+/// folded, its summary, plan and result).
+fn rail_toolbar(ui: &Ui, session: &mut Session) {
+    let open = crate::fleet_toolbar::header(ui, session, "Fleet###fleet-toolbar");
+    crate::fleet_toolbar::body(ui, session, crate::fleet_toolbar::Site::Rail, open);
+}
+
+/// Draw the rail's toolbar for a test, in the current window.
+#[cfg(test)]
+pub(crate) fn draw_test_rail_toolbar(ui: &Ui, session: &mut Session) {
+    rail_toolbar(ui, session);
+}
+
+/// Draw the right-hand strip for a test at `pos` and `size` (its own size is
+/// the dock node's in the product).
+#[cfg(test)]
+pub(crate) fn draw_test_panel_window(
+    ui: &Ui,
+    session: &mut Session,
+    pos: [f32; 2],
+    size: [f32; 2],
+) {
+    // Fix the window's place and size first: the same window, empty.
+    ui.window(format!("{}###{PANEL_WINDOW}", session.app_title()))
+        .position(pos, Condition::Always)
+        .size(size, Condition::Always)
+        .build(|| {});
+    panel_window(ui, session, None);
 }
 
 /// Apply an "only render focused" checkbox change: re-checking on is
@@ -4876,36 +4942,15 @@ fn only_render_selected_clicked(session: &mut Session, checked: bool) {
     }
 }
 
-/// Sticky bulk row: Login all / Logout all, then the only-render-selected
-/// checkbox. Unchecking does not write `false` until the render-all
-/// warning is accepted; re-checking on is immediate (slot threads apply
-/// `set_draw` from it every frame).
-fn rail_bulk_row(ui: &Ui, state: &mut PanelState) {
-    let avail = ui.content_region_avail()[0];
-    let (w, stack) = scaled_button_row_layout(ui, avail, 2);
-    if ui.button_with_size("Login all", [w, 0.0]) {
-        state.session.login_all();
-    }
-    if !stack {
-        ui.same_line();
-    }
-    if ui.button_with_size("Logout all", [w, 0.0]) {
-        state.session.logout_all();
-    }
-    let (w, stack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], 2);
-    if ui.button_with_size("Start all", [w, 0.0]) {
-        state.session.script_start_all();
-    }
-    if !stack {
-        ui.same_line();
-    }
-    if ui.button_with_size("Stop all", [w, 0.0]) {
-        state.session.script_stop_all();
-    }
-    let current = state.session.focus.lock().unwrap().only_render_selected;
+/// The render gate at the top of the rail's tiles region: the
+/// only-render-selected checkbox. Unchecking does not write `false` until
+/// the render-all warning is accepted; re-checking on is immediate (slot
+/// threads apply `set_draw` from it every frame).
+fn render_gate(ui: &Ui, session: &mut Session) {
+    let current = session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
     if ui.checkbox("only render focused", &mut only) {
-        only_render_selected_clicked(&mut state.session, only);
+        only_render_selected_clicked(session, only);
     }
 }
 
@@ -5134,12 +5179,6 @@ fn background_ack_window(ui: &Ui, session: &mut Session) {
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     state.sync_fleet();
-    let filter = state.session.fleet_model.filter().text();
-    if !filter.is_empty() {
-        ui.text_disabled("Fleet filter:");
-        ui.same_line();
-        ui.text_wrapped(filter);
-    }
     // The tiles read the model's rows while their clicks need the session:
     // lend the rows out for the frame (no allocation) and apply the one
     // clicked action once they are back.
@@ -5241,7 +5280,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             if ui.checkbox("##not-loaded-mark", &mut marked) {
                 clicked = Some(TileClick::Mark(index, marked));
             }
-            ui.set_item_tooltip("mark to log in from the Fleet window");
+            ui.set_item_tooltip("mark, then Log in from the fleet toolbar, to load and log in");
             ui.same_line();
             ui.text_disabled(row.name());
         }
@@ -5397,6 +5436,19 @@ fn rail_cap(
 std::thread_local! {
     static TEST_RAIL_ITEM_BOUNDS: std::cell::RefCell<Vec<[f32; 4]>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The rail's scrolling tiles region as the last frame drew it.
+    static TEST_RAIL_TILES: std::cell::Cell<Option<RailTilesRecord>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The rail's scrolling tiles region as a test sees it.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct RailTilesRecord {
+    scroll_y: f32,
+    scroll_max_y: f32,
+    /// `[min_x, min_y, max_x, max_y]`.
+    rect: [f32; 4],
 }
 
 #[cfg(test)]
