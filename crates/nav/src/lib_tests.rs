@@ -462,7 +462,8 @@ fn reexport_item_extern_crate_self_alias_fails_closed() {
         PathBuf::from("lib.rs"),
         "pub mod io { pub mod client_prot {} } pub extern crate self as me;".to_owned(),
     )]);
-    let closure = compute_deny_closure_sources(&[("client", &client)], &["client::io::client_prot"]);
+    let closure =
+        compute_deny_closure_sources(&[("client", &client)], &["client::io::client_prot"]);
     assert_reexported_seed_is_denied(
         &closure,
         "client::me::io::client_prot",
@@ -526,6 +527,53 @@ fn reexport_item_unsupported_public_trait_alias_fails_closed() {
     assert_eq!(finding.file, PathBuf::from("lib.rs"));
     assert_eq!(finding.scope, Scope::Production);
     assert!(finding.detail.contains("trait alias"));
+}
+
+#[test]
+fn reexport_item_opaque_public_macro_fails_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub macro wire() { pub extern crate client as c; }".to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+    assert_eq!(closure.findings.len(), 1, "{:#?}", closure.findings);
+    assert_eq!(closure.findings[0].kind, FindingKind::UnsupportedReexport);
+    assert_eq!(closure.findings[0].path.as_deref(), Some("api"));
+    assert!(closure.findings[0].detail.contains("unclassified"));
+}
+
+#[test]
+fn reexport_item_respects_public_visibility_and_production_scope() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
+    use std::path::PathBuf;
+
+    let client = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod io { pub mod client_prot {} }".to_owned(),
+    )]);
+    let api = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "extern crate client as private;
+         pub(crate) extern crate client as restricted;
+         #[cfg(test)] pub extern crate client as test_only;
+         trait Private = client::io::client_prot::Out;
+         pub(crate) trait Restricted = client::io::client_prot::Out;
+         #[cfg(test)] pub trait TestOnly = client::io::client_prot::Out;
+         #[cfg(test)] mod tests { pub macro wire() {} }"
+            .to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(
+        &[("api", &api), ("client", &client)],
+        &["client::io::client_prot"],
+    );
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_eq!(
+        closure.denied,
+        std::collections::BTreeSet::from(["client::io::client_prot".to_owned()])
+    );
 }
 
 #[test]
