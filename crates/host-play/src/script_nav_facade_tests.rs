@@ -7,7 +7,9 @@
 //! lives here. The facade side never calls the producer and the producer
 //! side never calls the facade.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
@@ -16,7 +18,10 @@ use nav::contract::{ArrivalSpec, NavLease, PackDigest};
 use nav::transport::TransportGraph;
 use nav::world::NavWorld;
 
-use super::approach_tiles;
+use super::{
+    approach_tiles, arrival_filter_needed, capture_loc_geometry, route_arrival_filter_future,
+    RouteTargetCursor, ScriptRouteRequest,
+};
 
 fn tile(x: i32, z: i32, level: i32) -> WorldTile {
     WorldTile { x, z, level }
@@ -258,4 +263,460 @@ fn approach_tiles_reach_candidates_match_the_facade_on_the_real_pack() {
             .all(|t| t.level == 0),
         "candidates stay on the destination's plane"
     );
+}
+
+fn router_goal_tiles(
+    world: &Arc<NavWorld>,
+    snapshot: Option<&api::snapshot::GameSnapshot>,
+    from: WorldTile,
+    to: WorldTile,
+    loc_id: Option<i32>,
+    radius: i32,
+    arrival: nav::arrival::ArrivalKind,
+) -> Vec<WorldTile> {
+    let live_geometry = if radius > 0 {
+        snapshot.and_then(|snapshot| {
+            loc_id.and_then(|loc_id| capture_loc_geometry(snapshot, to, radius, loc_id))
+        })
+    } else {
+        None
+    };
+    let request = ScriptRouteRequest {
+        generation: 1,
+        request_id: 1,
+        world: Arc::clone(world),
+        from,
+        to,
+        candidate_goals: None,
+        radius,
+        loc_id,
+        arrival,
+        opts: super::FindOptions::default(),
+        state: None,
+        admission: crate::admission::Admission::manual(
+            super::FindOptions::default(),
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        ),
+        bank_origin: super::Origin::Unknown,
+        bank: Vec::new(),
+        live_geometry,
+        exclusions: None,
+        compat_tile_intent: false,
+        completion: super::RouteCompletion::default(),
+    };
+    let mut cursor = RouteTargetCursor::new(&request).expect("bounded route targets");
+    while !cursor.advance(&request) {}
+    cursor.start_sort();
+    while cursor.sort.is_some() && !cursor.advance(&request) {}
+    let mut targets = cursor.targets;
+    if arrival_filter_needed(&request) {
+        let collision = &world.collision;
+        let bounds = api::query::ArrivalCollisionBounds::new(
+            collision.origin.x,
+            collision.origin.z,
+            collision.width,
+            collision.height,
+        )
+        .expect("packed collision bounds");
+        targets = block_on(route_arrival_filter_future(
+            Arc::clone(world),
+            targets,
+            to,
+            radius,
+            bounds,
+            crate::admission::route_yield_unit,
+        ));
+    }
+    targets.sort_unstable_by_key(|tile| (tile.x, tile.z, tile.level));
+    targets
+}
+
+fn block_on<F: Future>(future: F) -> F::Output {
+    let mut future = Box::pin(future);
+    let mut context = Context::from_waker(Waker::noop());
+    loop {
+        match Future::poll(future.as_mut(), &mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => {}
+        }
+    }
+}
+
+fn selection_goal_tiles(
+    world: &NavWorld,
+    snapshot: Option<&api::snapshot::GameSnapshot>,
+    to: WorldTile,
+    loc_id: Option<i32>,
+    radius: i32,
+    arrival: nav::arrival::ArrivalKind,
+) -> Vec<WorldTile> {
+    crate::walk_permissions::selection_access_tiles(
+        world,
+        snapshot,
+        to,
+        loc_id,
+        u16::try_from(radius).expect("selection radius fits its input"),
+        arrival,
+    )
+    .collect()
+}
+
+/// Fixture loc metadata uses known 2x2 geometry; scene collision words come
+/// from the selected NAV_PACK.
+fn tree_snapshot(
+    world: &NavWorld,
+    target: WorldTile,
+    loc_id: i32,
+    modeled: bool,
+    force_approach: i32,
+    blocked: Option<WorldTile>,
+) -> api::snapshot::GameSnapshot {
+    const WIDTH: i32 = 10;
+    const HEIGHT: i32 = 10;
+    let base_x = target.x - 4;
+    let base_z = target.z - 4;
+    let mut collision_flags = Vec::with_capacity((WIDTH * HEIGHT) as usize);
+    for local_x in 0..WIDTH {
+        for local_z in 0..HEIGHT {
+            collision_flags.push(
+                i32::try_from(world.collision.walkable_word(
+                    base_x + local_x,
+                    base_z + local_z,
+                    target.level,
+                ))
+                .unwrap_or(CollisionFlag::SQ_BLOCKED),
+            );
+        }
+    }
+    if let Some(blocked) = blocked {
+        assert_eq!(blocked.level, target.level);
+        let local_x = blocked.x - base_x;
+        let local_z = blocked.z - base_z;
+        assert!((0..WIDTH).contains(&local_x));
+        assert!((0..HEIGHT).contains(&local_z));
+        collision_flags[(local_x * HEIGHT + local_z) as usize] = CollisionFlag::SQ_BLOCKED;
+    }
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.seed_scene(api::snapshot::SceneView {
+        available: true,
+        base_x,
+        base_z,
+        level: target.level,
+        width: WIDTH,
+        height: HEIGHT,
+        collision_flags,
+    });
+    if modeled {
+        snapshot.seed_locs(vec![api::snapshot::LocView {
+            typecode: 10,
+            info: 0,
+            id: loc_id,
+            name: Some("Tree".into()),
+            description: None,
+            actions: vec![Some("Chop down".into())],
+            tile: target,
+            distance: 0,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 2,
+            length: 2,
+            footprint_width: 2,
+            footprint_length: 2,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach,
+        }]);
+    }
+    snapshot
+}
+
+#[test]
+fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
+    let world = asymmetric_world();
+    let target = tile(3203, 3202, 0);
+    let cut_off = tile(3201, 3202, 0);
+    let route = router_goal_tiles(
+        &world,
+        None,
+        target,
+        target,
+        Some(1278),
+        2,
+        nav::arrival::ArrivalKind::Reach,
+    );
+    assert!(route.contains(&cut_off));
+    let selector = selection_goal_tiles(
+        &world,
+        None,
+        target,
+        Some(1278),
+        2,
+        nav::arrival::ArrivalKind::Reach,
+    );
+    assert_eq!(
+        route, selector,
+        "an off-scene explicit loc uses the router's standable-radius goals"
+    );
+
+    // This is the old-code divergence control: the tile is standable and in
+    // the radius square, but the intervening solid wall makes plain Reach
+    // false. The old selector filtered it while the router retained it.
+    let probe = api::query::CollisionArrivalProbe::new(|tile| {
+        super::arrival_collision_flags(&world.collision, tile)
+    });
+    assert!(!api::query::is_arrived(cut_off, target, 2, || &probe));
+
+    let reach = router_goal_tiles(
+        &world,
+        None,
+        target,
+        target,
+        None,
+        2,
+        nav::arrival::ArrivalKind::Reach,
+    );
+    assert!(!reach.contains(&cut_off));
+    assert_eq!(
+        reach,
+        selection_goal_tiles(
+            &world,
+            None,
+            target,
+            None,
+            2,
+            nav::arrival::ArrivalKind::Reach,
+        )
+    );
+
+    // A radius beyond the candidate clamp still uses the route's raw arrival
+    // radius for packed reach budgets while its candidate window stays 104.
+    assert_eq!(
+        router_goal_tiles(
+            &world,
+            None,
+            target,
+            target,
+            None,
+            105,
+            nav::arrival::ArrivalKind::Reach,
+        ),
+        selection_goal_tiles(
+            &world,
+            None,
+            target,
+            None,
+            105,
+            nav::arrival::ArrivalKind::Reach,
+        )
+    );
+
+    let blocked_target = tile(3202, 3202, 0);
+    assert_eq!(
+        router_goal_tiles(
+            &world,
+            None,
+            target,
+            blocked_target,
+            None,
+            0,
+            nav::arrival::ArrivalKind::Reach,
+        ),
+        vec![blocked_target]
+    );
+    assert_eq!(
+        selection_goal_tiles(
+            &world,
+            None,
+            blocked_target,
+            None,
+            0,
+            nav::arrival::ArrivalKind::Reach,
+        ),
+        vec![blocked_target],
+        "exact radius zero preserves the requested tile"
+    );
+
+    let approach_target = tile(3204, 3202, 0);
+    let forced = tree_snapshot(&world, approach_target, 1278, true, 0x8, None);
+    let forced_route = router_goal_tiles(
+        &world,
+        Some(&forced),
+        approach_target,
+        approach_target,
+        Some(1278),
+        2,
+        nav::arrival::ArrivalKind::Reach,
+    );
+    assert!(
+        !forced_route.contains(&tile(
+            approach_target.x - 1,
+            approach_target.z,
+            approach_target.level,
+        )),
+        "the forced-west mask rejects that approach"
+    );
+    assert_eq!(
+        forced_route,
+        selection_goal_tiles(
+            &world,
+            Some(&forced),
+            approach_target,
+            Some(1278),
+            2,
+            nav::arrival::ArrivalKind::Reach,
+        )
+    );
+
+    let blocked_approach = tile(
+        approach_target.x - 1,
+        approach_target.z,
+        approach_target.level,
+    );
+    let colliding = tree_snapshot(
+        &world,
+        approach_target,
+        1278,
+        true,
+        0,
+        Some(blocked_approach),
+    );
+    let collision_route = router_goal_tiles(
+        &world,
+        Some(&colliding),
+        approach_target,
+        approach_target,
+        Some(1278),
+        2,
+        nav::arrival::ArrivalKind::Reach,
+    );
+    assert!(!collision_route.contains(&blocked_approach));
+    assert_eq!(
+        collision_route,
+        selection_goal_tiles(
+            &world,
+            Some(&colliding),
+            approach_target,
+            Some(1278),
+            2,
+            nav::arrival::ArrivalKind::Reach,
+        )
+    );
+}
+
+#[test]
+fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
+    let Some(path) = script::ctx::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real 289 nav pack for router/selector parity",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&path).expect("real nav pack"));
+    let trees = [
+        (tile(3113, 3235, 0), 1278), // Draynor normal tree.
+        (tile(3111, 3226, 0), 1276), // Nearby Draynor tree.
+        (tile(3225, 3232, 0), 1278), // Normal tree in m50_50.
+    ];
+    let in_bounds = |coordinate: i32, origin: i32, extent: usize| {
+        coordinate
+            .checked_sub(origin)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .is_some_and(|offset| offset < extent)
+    };
+    for (target, loc_id) in trees {
+        assert!(
+            (0..=3).contains(&target.level)
+                && in_bounds(target.x, world.collision.origin.x, world.collision.width)
+                && in_bounds(target.z, world.collision.origin.z, world.collision.height),
+            "real tree anchor {target:?} must be covered by the NAV_PACK"
+        );
+        for radius in [0, 1, 2, 4] {
+            let modeled = tree_snapshot(&world, target, loc_id, true, 0, None);
+            assert!(
+                capture_loc_geometry(&modeled, target, 1, loc_id).is_some(),
+                "catalog tree {target:?} id={loc_id} must be modeled in-scene"
+            );
+            for arrival in [
+                nav::arrival::ArrivalKind::Reach,
+                nav::arrival::ArrivalKind::Area,
+            ] {
+                let router = router_goal_tiles(
+                    &world,
+                    Some(&modeled),
+                    target,
+                    target,
+                    Some(loc_id),
+                    radius,
+                    arrival,
+                );
+                let selector = selection_goal_tiles(
+                    &world,
+                    Some(&modeled),
+                    target,
+                    Some(loc_id),
+                    radius,
+                    arrival,
+                );
+                assert_eq!(
+                    router, selector,
+                    "modeled tree {target:?} id={loc_id} r={radius} arrival={arrival:?}"
+                );
+            }
+        }
+
+        let unmodeled = tree_snapshot(&world, target, loc_id, false, 0, None);
+        for radius in [1, 2, 4] {
+            for arrival in [
+                nav::arrival::ArrivalKind::Reach,
+                nav::arrival::ArrivalKind::Area,
+            ] {
+                for snapshot in [None, Some(&unmodeled)] {
+                    let router = router_goal_tiles(
+                        &world,
+                        snapshot,
+                        target,
+                        target,
+                        Some(loc_id),
+                        radius,
+                        arrival,
+                    );
+                    let selector = selection_goal_tiles(
+                        &world,
+                        snapshot,
+                        target,
+                        Some(loc_id),
+                        radius,
+                        arrival,
+                    );
+                    assert_eq!(
+                        router, selector,
+                        "fallback tree {target:?} id={loc_id} r={radius} arrival={arrival:?}"
+                    );
+                }
+                let router = router_goal_tiles(
+                    &world,
+                    Some(&unmodeled),
+                    target,
+                    target,
+                    None,
+                    radius,
+                    arrival,
+                );
+                let selector =
+                    selection_goal_tiles(&world, Some(&unmodeled), target, None, radius, arrival);
+                assert_eq!(
+                    router, selector,
+                    "plain tree tile {target:?} r={radius} arrival={arrival:?}"
+                );
+            }
+        }
+    }
 }

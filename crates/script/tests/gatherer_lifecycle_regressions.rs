@@ -7,7 +7,7 @@ use api::snapshot::{
     LocalPlayerView, PlayerView, SceneView, SideTabView, StatView, WorldStateView, WorldTile,
 };
 use api::ItemDefView;
-use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
+use script::native::{AllowWalkDanger, HostEffect, InteractionReceipt, NativePhase, SettingsBag};
 use script::shim::InteractReq;
 use script::slot::{StartOutcome, StartPoll};
 use script::{CompiledTick, ScriptCtx, SlotScript};
@@ -690,6 +690,7 @@ fn tick_with_hold(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64, hol
         obj_names: None,
         compiled: CompiledTick {
             hold,
+            walk_danger: Some(&AllowWalkDanger),
             ..CompiledTick::default()
         },
     });
@@ -1108,7 +1109,10 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
         inv: None,
         snapshot: Some(snapshot),
         obj_names: None,
-        compiled: CompiledTick::default(),
+        compiled: CompiledTick {
+            walk_danger: Some(&AllowWalkDanger),
+            ..CompiledTick::default()
+        },
     });
 }
 

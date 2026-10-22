@@ -145,6 +145,7 @@ fn catherby_return_plan(
         gatherer.settings(),
         area,
         ReturnObservation {
+            walk_danger: Some(&crate::native::AllowWalkDanger),
             here,
             now: 1,
             skill_stat,

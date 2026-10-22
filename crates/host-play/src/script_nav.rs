@@ -825,19 +825,7 @@ fn arrival_collision_flags(
     collision: &nav::collision::WorldCollision,
     tile: WorldTile,
 ) -> Option<i32> {
-    if !(0..=3).contains(&tile.level) {
-        return None;
-    }
-    let x = i64::from(tile.x) - i64::from(collision.origin.x);
-    let z = i64::from(tile.z) - i64::from(collision.origin.z);
-    if x < 0
-        || z < 0
-        || usize::try_from(x).ok()? >= collision.width
-        || usize::try_from(z).ok()? >= collision.height
-    {
-        return None;
-    }
-    i32::try_from(collision.walkable_word(tile.x, tile.z, tile.level)).ok()
+    crate::walk_permissions::packed_arrival_flags(collision, tile)
 }
 
 async fn route_arrival_filter_future(
@@ -5300,19 +5288,12 @@ impl ScriptWalkArm {
     }
 }
 
-/// Captured loc footprint input. It contains only scalar geometry and the
-/// scene-clipped flags the footprint scan can read; no snapshot borrow or
-/// prebuilt stand vector crosses WorkAdmission admission.
+/// Captured loc footprint input. The same scalar geometry/window are scanned
+/// by selection without copying this scene-clipped collision-flag array.
 #[derive(Debug)]
 pub(crate) struct LocGeometryCapture {
-    approach: Option<api::query::loc_approach::LocApproach>,
-    radius: i32,
-    base_x: i32,
-    base_z: i32,
-    level: i32,
-    start_x: i32,
-    start_z: i32,
-    height: usize,
+    geometry: crate::walk_permissions::LocAccessGeometry,
+    window: crate::walk_permissions::LocAccessWindow,
     flags: Vec<i32>,
 }
 
@@ -5325,115 +5306,35 @@ fn capture_loc_geometry(
     radius: i32,
     loc_id: i32,
 ) -> Option<LocGeometryCapture> {
-    let scene = snapshot.scene();
-    if !api::query::SceneQuery::new(scene, None).contains(to) {
-        return None;
-    }
-    let loc = snapshot
-        .locs()
-        .iter()
-        .find(|loc| loc.tile == to && loc.id == loc_id)?;
-    api::query::loc_approach::distance_from(loc, to)?;
-    let approach = api::query::loc_approach::LocApproach::from_loc_def(
-        loc.width,
-        loc.length,
-        loc.angle,
-        loc.force_approach,
-    );
-    let (start_x, start_z, width, height) = if let Some(approach) = approach {
-        let dst_x = loc.tile.x.checked_sub(scene.base_x)?;
-        let dst_z = loc.tile.z.checked_sub(scene.base_z)?;
-        let width = i32::from(approach.width);
-        let height = i32::from(approach.length);
-        let start_x = dst_x.checked_sub(1)?.max(0);
-        let start_z = dst_z.checked_sub(1)?.max(0);
-        let end_x = dst_x.checked_add(width)?.min(scene.width.checked_sub(1)?);
-        let end_z = dst_z.checked_add(height)?.min(scene.height.checked_sub(1)?);
-        if start_x > end_x || start_z > end_z {
-            (start_x, start_z, 0, 0)
-        } else {
-            (
-                start_x,
-                start_z,
-                usize::try_from(end_x.checked_sub(start_x)?.checked_add(1)?).ok()?,
-                usize::try_from(end_z.checked_sub(start_z)?.checked_add(1)?).ok()?,
-            )
-        }
-    } else {
-        // `distance_from` already established a modeled positive footprint.
-        // `from_loc_def` can only fail when one raw dimension cannot fit in
-        // the packed LocApproach representation; the legacy stand test then
-        // rejects every tile as well.
-        (0, 0, 0, 0)
-    };
-    let count = width.checked_mul(height)?;
+    let (geometry, window, scene) =
+        crate::walk_permissions::route_loc_access_geometry(snapshot, to, loc_id, radius)?;
     let mut flags = Vec::new();
-    flags.try_reserve_exact(count).ok()?;
-    let collision_index = |lx: i32, lz: i32| {
-        usize::try_from(lx)
-            .ok()?
-            .checked_mul(usize::try_from(scene.height).ok()?)?
-            .checked_add(usize::try_from(lz).ok()?)
-    };
-    for lx in start_x..start_x.checked_add(i32::try_from(width).ok()?)? {
-        for lz in start_z..start_z.checked_add(i32::try_from(height).ok()?)? {
-            let flags_at = collision_index(lx, lz)
-                .and_then(|index| scene.collision_flags.get(index).copied())
-                .unwrap_or(client::dash3d::CollisionFlag::SQ_BLOCKED);
-            flags.push(flags_at);
-        }
+    flags.try_reserve_exact(window.len()).ok()?;
+    for index in 0..window.len() {
+        let flags_at = window
+            .collision_index(index, scene.height)
+            .and_then(|index| scene.collision_flags.get(index).copied())
+            .unwrap_or(client::dash3d::CollisionFlag::SQ_BLOCKED);
+        flags.push(flags_at);
     }
     Some(LocGeometryCapture {
-        approach,
-        radius: radius.clamp(0, 104),
-        base_x: scene.base_x,
-        base_z: scene.base_z,
-        level: scene.level,
-        start_x,
-        start_z,
-        height,
+        geometry,
+        window,
         flags,
     })
 }
+
 impl LocGeometryCapture {
-    fn candidate_at(&self, to: WorldTile, index: usize) -> Option<WorldTile> {
-        let approach = self.approach?;
-        if self.height == 0 {
-            return None;
-        }
-        let lx = self
-            .start_x
-            .checked_add(i32::try_from(index / self.height).ok()?)?;
-        let lz = self
-            .start_z
-            .checked_add(i32::try_from(index % self.height).ok()?)?;
-        let x = self.base_x.checked_add(lx)?;
-        let z = self.base_z.checked_add(lz)?;
+    fn candidate_at(&self, index: usize) -> Option<WorldTile> {
+        let tile = self.window.tile_at(index)?;
         let flags = *self.flags.get(index)?;
-        if flags & client::dash3d::CollisionFlag::SQ_BLOCKED != 0 {
-            return None;
-        }
-        let tile = WorldTile {
-            x,
-            z,
-            level: self.level,
-        };
-        if !approach.can_operate(to, tile, flags) {
-            return None;
-        }
-        let max_x =
-            to.x.checked_add(i32::from(approach.width).checked_sub(1)?)?;
-        let max_z =
-            to.z.checked_add(i32::from(approach.length).checked_sub(1)?)?;
-        let nearest_x = x.clamp(to.x, max_x);
-        let nearest_z = z.clamp(to.z, max_z);
-        (x.abs_diff(nearest_x).max(z.abs_diff(nearest_z)) <= self.radius as u32).then_some(tile)
+        self.geometry.candidate_at(tile, flags)
     }
 
     #[cfg(test)]
-    fn candidates(&self, to: WorldTile) -> Vec<WorldTile> {
+    fn candidates(&self) -> Vec<WorldTile> {
         (0..self.flags.len())
-            .filter_map(|index| self.candidate_at(to, index))
+            .filter_map(|index| self.candidate_at(index))
             .collect()
     }
 }
@@ -5442,7 +5343,7 @@ impl LocGeometryCapture {
 struct RouteTargetCursor {
     mode: RouteTargetMode,
     index: usize,
-    side: usize,
+    radius: Option<crate::walk_permissions::RouteRadiusGeometry>,
     targets: Vec<WorldTile>,
     sort: Option<RouteTargetSort>,
 }
@@ -5458,33 +5359,34 @@ enum RouteTargetMode {
 impl RouteTargetCursor {
     fn shape(
         request: &ScriptRouteRequest,
-    ) -> Result<(RouteTargetMode, usize, usize), RouteJobError> {
+    ) -> Result<
+        (
+            RouteTargetMode,
+            usize,
+            Option<crate::walk_permissions::RouteRadiusGeometry>,
+        ),
+        RouteJobError,
+    > {
         if let Some(goals) = &request.candidate_goals {
-            return Ok((RouteTargetMode::Candidates, goals.as_slice().len(), 0));
+            return Ok((RouteTargetMode::Candidates, goals.as_slice().len(), None));
         }
         if request.radius <= 0 {
-            return Ok((RouteTargetMode::Exact, 1, 0));
+            return Ok((RouteTargetMode::Exact, 1, None));
         }
         if let Some(geometry) = request.live_geometry.as_ref() {
-            return Ok((RouteTargetMode::Geometry, geometry.flags.len(), 0));
+            return Ok((RouteTargetMode::Geometry, geometry.flags.len(), None));
         }
-        let radius =
-            usize::try_from(request.radius.clamp(0, 104)).map_err(|_| RouteJobError::Budget)?;
-        let side = radius
-            .checked_mul(2)
-            .and_then(|side| side.checked_add(1))
+        let radius = crate::walk_permissions::RouteRadiusGeometry::new(request.to, request.radius)
             .ok_or(RouteJobError::Budget)?;
-        let capacity = side
-            .checked_mul(side)
-            .and_then(|capacity| {
-                capacity.checked_add(usize::from(
-                    request.compat_tile_intent
-                        && request.loc_id.is_none()
-                        && request.arrival != ArrivalKind::Area,
-                ))
-            })
+        let capacity = radius
+            .len()
+            .checked_add(usize::from(
+                request.compat_tile_intent
+                    && request.loc_id.is_none()
+                    && request.arrival != ArrivalKind::Area,
+            ))
             .ok_or(RouteJobError::Budget)?;
-        Ok((RouteTargetMode::Radius, capacity, side))
+        Ok((RouteTargetMode::Radius, capacity, Some(radius)))
     }
 
     fn capacity(request: &ScriptRouteRequest) -> Result<usize, RouteJobError> {
@@ -5492,7 +5394,7 @@ impl RouteTargetCursor {
     }
 
     fn new(request: &ScriptRouteRequest) -> Result<Self, RouteJobError> {
-        let (mode, capacity, side) = Self::shape(request)?;
+        let (mode, capacity, radius) = Self::shape(request)?;
         let mut targets = Vec::new();
         targets
             .try_reserve_exact(capacity)
@@ -5500,7 +5402,7 @@ impl RouteTargetCursor {
         Ok(Self {
             mode,
             index: 0,
-            side,
+            radius,
             targets,
             sort: None,
         })
@@ -5542,35 +5444,23 @@ impl RouteTargetCursor {
                 let Some(geometry) = request.live_geometry.as_ref() else {
                     return true;
                 };
-                if let Some(tile) = geometry.candidate_at(request.to, self.index) {
+                if let Some(tile) = geometry.candidate_at(self.index) {
                     self.targets.push(tile);
                 }
                 self.index += 1;
                 self.index >= geometry.flags.len()
             }
             RouteTargetMode::Radius => {
-                let radius = request.radius.clamp(0, 104);
-                let total = self.side.saturating_mul(self.side);
-                if self.index >= total {
+                let Some(radius) = self.radius else {
+                    return true;
+                };
+                if self.index >= radius.len() {
                     return true;
                 }
-                let dx = i32::try_from(self.index / self.side).unwrap_or(i32::MAX) - radius;
-                let dz = i32::try_from(self.index % self.side).unwrap_or(i32::MAX) - radius;
-                let Some(x) = request.to.x.checked_add(dx) else {
-                    self.index += 1;
-                    return false;
-                };
-                let Some(z) = request.to.z.checked_add(dz) else {
-                    self.index += 1;
-                    return false;
-                };
-                let tile = WorldTile {
-                    x,
-                    z,
-                    level: request.to.level,
-                };
-                if request.world.collision.standable(tile) {
-                    self.targets.push(tile);
+                if let Some(tile) = radius.candidate_at(self.index) {
+                    if request.world.collision.standable(tile) {
+                        self.targets.push(tile);
+                    }
                 }
                 self.index += 1;
                 false
@@ -5849,7 +5739,7 @@ impl ScriptRouteRequest {
         } else if self.radius <= 0 {
             vec![self.to]
         } else if let Some(geometry) = self.live_geometry.as_ref() {
-            geometry.candidates(self.to)
+            geometry.candidates()
         } else {
             let mut targets = approach_tiles(
                 &self.world,
