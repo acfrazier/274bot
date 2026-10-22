@@ -878,7 +878,8 @@ mod packets {
             );
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
-            client.stream = Some(ClientStream::connect("127.0.0.1", address.port()).unwrap());
+            client.stream =
+                Some(ClientStream::connect_tcp_for_test("127.0.0.1", address.port()).unwrap());
             client.random_in = None;
             client.ptype = -1;
             let (server, _) = listener.accept().unwrap();

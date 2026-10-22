@@ -431,6 +431,7 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     )
     .unwrap();
     let generation = session.profile_generation();
+    session.core.start_network_composition().unwrap();
     let preparation = session.profile_preparation().unwrap();
     let template = preparation.run_blocking().unwrap();
 
@@ -500,6 +501,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     )
     .unwrap();
     let generation = session.profile_generation();
+    session.core.start_network_composition().unwrap();
     let preparation = session.profile_preparation().unwrap();
     let template = preparation.run_blocking().unwrap();
     assert_eq!(
@@ -543,6 +545,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     )
     .unwrap();
     let generation = session.profile_generation();
+    session.core.start_network_composition().unwrap();
     let preparation = session.profile_preparation().unwrap();
     let template = preparation.run_blocking().unwrap();
     assert_eq!(

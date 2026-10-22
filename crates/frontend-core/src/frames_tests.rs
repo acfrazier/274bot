@@ -153,6 +153,9 @@ fn response_15_reconnect(c: &mut Client) {
         stream.read_exact(&mut login).unwrap();
         stream.write_all(&[15]).unwrap();
     });
+    c.stream =
+        Some(client::io::ClientStream::connect_tcp_for_test("127.0.0.1", c.config.port).unwrap());
+    c.baton = true;
     c.login("snapshot", "test", true).unwrap();
     server.join().unwrap();
 }

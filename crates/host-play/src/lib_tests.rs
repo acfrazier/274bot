@@ -9457,8 +9457,10 @@ fn same_name_side_rows_client(rows: [(i32, i32); 2]) -> (Client, GameSnapshot) {
     let mut c = bank_client_289();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     std::mem::forget(listener);
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");

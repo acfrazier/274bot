@@ -25,7 +25,7 @@ zeroize = "=1.9.0"
 libc = "0.2"
 
 [dev-dependencies]
-client = { workspace = true }
+client = { workspace = true, features = ["test-support"] }
 # Integration tests use the fixture seams behind this crate's test-support.
 frontend-core = { path = ".", features = ["test-support"] }
 # The capacity smoke forces the macOS/Windows measure and reads receipts.

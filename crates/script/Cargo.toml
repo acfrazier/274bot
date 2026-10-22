@@ -59,7 +59,7 @@ seat-model = { path = "../../tools/seat-model" }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
 # never touches `client` (the bank hint's login identity comes through
 # `api::bank_memory::login_identity`).
-client = { workspace = true }
+client = { workspace = true, features = ["test-support"] }
 # Integration tests use isolate seams without exposing them in normal builds.
 script = { path = ".", default-features = false, features = ["test-hooks", "path-schema"] }
 

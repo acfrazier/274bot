@@ -632,7 +632,8 @@ fn run_cell() -> Result<(), String> {
                 state.frame(client, hold);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let obj_names = play.obj_names();
     {
         let mut state = state.lock().unwrap();

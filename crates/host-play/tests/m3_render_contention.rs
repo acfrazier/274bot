@@ -763,7 +763,7 @@ fn live_reattach(
         .zip(&paints_off)
         .map(|(h, &paints)| h.mailbox.generation() - paints)
         .collect();
-    let worlds_detached = census.run("detached", heads.len());
+    let worlds_detached = census.run(play, "detached", heads.len());
     assert!(
         worlds_detached
             .iter()
@@ -787,7 +787,7 @@ fn live_reattach(
     }
     let repainted_after_s = reattach_from.elapsed().as_secs_f64();
     thread::sleep(Duration::from_secs(1));
-    let worlds_reattached = census.run("reattached", heads.len());
+    let worlds_reattached = census.run(play, "reattached", heads.len());
 
     let mut rows = Vec::new();
     for ((head, (first, status)), &detached) in heads.iter().zip(&before).zip(&detached) {

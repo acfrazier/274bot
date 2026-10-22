@@ -6908,6 +6908,11 @@ fn init_panel_running(
     permit: InstancePermit,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
     let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
+    state
+        .session
+        .core
+        .start_network_composition()
+        .map_err(|error| window::PanelError::ServerProfile(error.to_string()))?;
     state.session.set_memory_override(args.memory_override);
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);

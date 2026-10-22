@@ -9414,7 +9414,11 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         client.stream = Some(
-            client::io::ClientStream::connect(&address.ip().to_string(), address.port()).unwrap(),
+            client::io::ClientStream::connect_tcp_for_test(
+                &address.ip().to_string(),
+                address.port(),
+            )
+            .unwrap(),
         );
         let (_peer, _) = listener.accept().unwrap();
         let mut player = client::dash3d::ClientPlayer::at(5, 5);

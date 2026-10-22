@@ -3686,11 +3686,18 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             frontend_core::launch::ProfileEnv::capture(),
         )
         .map_err(|error| error.to_string())?;
-    launcher
+    let mut session = TuiSession::with_launcher(launcher, permit);
+    session
+        .core
+        .start_network_composition()
+        .map_err(|error| error.to_string())?;
+    session
+        .launcher
         .bind_with(None)
         .map_err(|error| error.to_string())?;
     if let Some(number) = args.world {
-        let mut worlds = launcher
+        let mut worlds = session
+            .launcher
             .bound()
             .and_then(|profile| profile.public_world_numbers())
             .ok_or("--world requires the rs2b2t profile")?;
@@ -3700,7 +3707,6 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    let mut session = TuiSession::with_launcher(launcher, permit);
     // The saved session-file preference: open this process's file at start.
     frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;

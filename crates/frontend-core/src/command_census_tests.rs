@@ -579,28 +579,12 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("pure choice of the focus after Load all / MultiBox adoption"),
     ),
     ("session.rs::MemoryNotice::status_text", Excluded(FORMAT)),
-    ("session.rs::OperatorSession::start", Row(C::UnlockVault)),
     (
         "session.rs::OperatorSession::start_network_composition",
         Excluded(STARTUP),
     ),
     (
         "session.rs::OperatorSession::adopt_network_composition",
-        Excluded(STARTUP),
-    ),
-    (
-        "session.rs::OperatorSession::set_pause_script_on_manual_walk_abort",
-        Row(C::SetNavPreference(
-            NavPreference::PauseScriptOnManualWalkAbort,
-            true,
-        )),
-    ),
-    (
-        "session.rs::OperatorSession::set_walk_globals",
-        Row(C::SetDangerLevel(DangerLevel::Never)),
-    ),
-    (
-        "session.rs::OperatorSession::set_walk_globals_store",
         Excluded(STARTUP),
     ),
     (

@@ -73,6 +73,10 @@ name = "seat_live"
 required-features = ["live-harness", "test-support", "live-probe"]
 
 [[test]]
+name = "wss_product_startup"
+required-features = ["test-support"]
+
+[[test]]
 name = "t14_soak_live"
 required-features = ["live-harness", "test-support"]
 
