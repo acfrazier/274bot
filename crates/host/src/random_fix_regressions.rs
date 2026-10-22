@@ -498,3 +498,37 @@ fn guardian_evade_stunned_ticks_do_not_consume_the_stalled_budget() {
         );
     }
 }
+
+#[test]
+fn guardian_evade_player_chat_stun_text_does_not_stop_the_stalled_count() {
+    // Only the server game message proves a blocked walk. The content
+    // sends both stun texts with `mes`. The client stores that message
+    // as chat type 0 with no sender. Another player can type the same
+    // text in public chat (type 2) or send it in a private message
+    // (type 3). Those lines must not stop the stalled count. The
+    // normal 9-tick bound (flee distance 7 + 2) still applies.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -1, 0);
+    plant_npc_typed_with_op(&mut c, 0, 431, "Watchman", 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    for tick_no in 1..=9 {
+        // Alternate public chat and private messages from another player.
+        let type_ = if tick_no % 2 == 1 { 2 } else { 3 };
+        c.add_chat(type_, "You're stunned!", "Mallory");
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(
+            status.hold,
+            tick_no < 9,
+            "player chat must not stop the stalled count at tick {tick_no}"
+        );
+    }
+}
