@@ -107,7 +107,7 @@ Beta's **tested** path is the **local** engine on revision **289**. Revision 274
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router, and pollable `Traveller::follow` driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see above) — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see above) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -190,7 +190,7 @@ Application builds bake, stage and bundle the navigation world themselves: a
 default build targets revision **289**, bakes (or reuses) the pack with the
 shared baker, and stages pack + flags next to the built binary
 (`target/<profile>/nav/289/`) — exactly where the running app looks. WalkTo /
-`Traveller::follow` work with no manual step:
+`Traveller::follow` (`nav-executor` over the `nav` world) work with no manual step:
 
 ```bash
 cargo build --release -p panel --bin panel-play   # stages nav/289, reusing it when unchanged
