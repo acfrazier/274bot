@@ -4079,11 +4079,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         use crate::quester::families::tests::with_tick;
