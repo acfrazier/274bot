@@ -19,7 +19,7 @@ use crate::app::{AppAction, TuiApp};
 use crate::commands::{
     script_key_command, Command, Group, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
-use crate::fleet::{toggled_mark, FilterEdit, MARK_COLUMNS};
+use crate::fleet::{toggled_mark, FilterEdit, HeaderPart, MARK_COLUMNS};
 use crate::help::HelpState;
 use crate::layout::{contains, Pane, Screen, SizeClass, Tab};
 use crate::log_pane::{LogKey, LogPaneState};
@@ -202,8 +202,8 @@ impl TuiApp {
         }
         match self.key_scope() {
             "Fleet filter" => "type: name, wN, state · Up/Down move · Enter keep · Esc clear",
-            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · m load all · U logout all · W world",
-            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · m load all · U logout all · W world",
+            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world",
+            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world",
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
@@ -337,6 +337,9 @@ impl TuiApp {
             }
             Command::PickFleetCard => {
                 self.open_modal(Modal::FleetCard(crate::fleet_card::CardPicker::open(self)));
+            }
+            Command::CycleFleetSort => {
+                return AppAction::SetFleetSort(crate::fleet::next_order(self.fleet_model.order()));
             }
             Command::PickWorld => {
                 let Some(name) = self.cursor_profile() else {
@@ -767,6 +770,12 @@ impl TuiApp {
         }
         if contains(self.regions.message, col, row) && self.error.is_some() {
             return self.run_command(Command::ShowMessage);
+        }
+        if let Some(part) = self.regions.header_part_at(col, row) {
+            return self.run_command(match part {
+                HeaderPart::Card => Command::PickFleetCard,
+                HeaderPart::Sort => Command::CycleFleetSort,
+            });
         }
         if contains(self.regions.fleet_rows, col, row) {
             return self.fleet_click(col, row);

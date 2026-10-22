@@ -57,6 +57,10 @@ const FLEET_NAV: &[(&str, &str)] = &[
         "filter: name, wN or world:N, state (ready, queued, error…)",
     ),
     (
+        "m U",
+        "log in / log out the marked rows, else the loaded shown rows; asks first when nothing is marked",
+    ),
+    (
         "Alt-Up Alt-Down",
         "move the cursor's profile up / down the saved Load order (Load order only)",
     ),
@@ -136,6 +140,10 @@ const MOUSE: &[(&str, &str)] = &[
     (
         "left click",
         "focus a pane, select a row or bot, press a button or tab",
+    ),
+    (
+        "click fleet header",
+        "card: opens the card picker (c); sort: shows the next order (s)",
     ),
     (
         "right click",

@@ -219,6 +219,7 @@ fn with_tick_output_reach<R>(
             active_now: Duration::from_millis(tick * 600),
             wall_now: Instant::now(),
             ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
         },
@@ -591,6 +592,7 @@ fn reach_takes_the_observed_stack_not_the_anchor() {
         InteractReq::Obj {
             x: 3229,
             z: 3302,
+            id: Some(1944),
             ..
         }
     ));

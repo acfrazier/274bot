@@ -44,6 +44,15 @@ pub struct WorkArea {
 }
 
 impl WorkArea {
+    /// Capture an exact Start square without Gatherer settings.
+    pub const fn at_start(anchor: WorldTile, radius: u16) -> Self {
+        Self {
+            mode: AreaMode::Start,
+            anchor,
+            radius,
+        }
+    }
+
     /// Resolve an area from settings and the retained Start anchor. A Start
     /// area has no stable anchor until the first ready local-player frame.
     pub fn resolve(

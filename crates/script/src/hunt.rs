@@ -878,6 +878,7 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
             x: int(effect, "x"),
             z: int(effect, "z"),
             level: int(effect, "level"),
+            id: opt_int(effect, "id"),
             name: effect
                 .get("name")
                 .and_then(Value::as_str)
@@ -915,4 +916,60 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
         "close" => InteractReq::Close,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hunt_key::{KeyGround, KeyObservation};
+
+    #[test]
+    fn key_take_effect_conversion_keeps_the_selected_ground_id() {
+        crate::hunt_key::on_reset();
+        crate::hunt_key::set_observation(KeyObservation {
+            here: Some(Tile {
+                x: 2900,
+                z: 9690,
+                level: 0,
+            }),
+            ingame: true,
+            hold: false,
+            ours: false,
+            inv: vec![],
+            ground: vec![KeyGround {
+                id: 1591,
+                name: "Jail key".into(),
+                tile: Tile {
+                    x: 2901,
+                    z: 9690,
+                    level: 0,
+                },
+            }],
+            npcs: vec![],
+            locs: vec![],
+        });
+        let token = crate::hunt_key::dispatch(&json!({ "op": "begin" }))["token"]
+            .as_u64()
+            .unwrap();
+        let effect = crate::hunt_key::dispatch(&json!({
+            "op": "next",
+            "token": token,
+            "key": "taverley-blue",
+            "keyItem": { "id": 1590 },
+            "boxes": [{ "minX": 40, "maxX": 60, "minZ": 40, "maxZ": 60, "level": 0 }],
+        }));
+        assert_eq!(effect["kind"], "obj", "{effect}");
+        assert_eq!(
+            game_op("obj", &effect),
+            Some(InteractReq::Obj {
+                x: 2901,
+                z: 9690,
+                level: 0,
+                id: Some(1591),
+                name: Some("Jail key".into()),
+                action: "Take".into(),
+            }),
+        );
+        crate::hunt_key::on_reset();
+    }
 }

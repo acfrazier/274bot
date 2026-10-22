@@ -28,6 +28,9 @@ pub enum Command {
     FilterFleet,
     /// Choose the card the fleet actions use (opens the card picker).
     PickFleetCard,
+    /// Show the next fleet order (`SetFleetSort`): Load order, Name, Status,
+    /// then Load order again.
+    CycleFleetSort,
     /// Choose the world the fleet row under the cursor moves to (opens the
     /// world picker over that profile).
     PickWorld,
@@ -104,10 +107,11 @@ impl Group {
     }
 }
 
-/// Fleet pane shortcuts: the card picker, the shown-row marks and the
-/// fleet actions that live on the pane.
+/// Fleet pane shortcuts: the card picker, the sort, the shown-row marks and
+/// the fleet actions that live on the pane.
 pub const FLEET_KEYS: &[(char, Command)] = &[
     ('c', Command::PickFleetCard),
+    ('s', Command::CycleFleetSort),
     ('a', Command::MarkAllShown),
     ('A', Command::UnmarkShown),
     ('m', Command::Fleet(FleetAction::Login)),
@@ -201,6 +205,7 @@ impl Command {
         Command::SelectPrevBot,
         Command::FilterFleet,
         Command::PickFleetCard,
+        Command::CycleFleetSort,
         Command::MarkAllShown,
         Command::UnmarkShown,
         Command::InvertShown,
@@ -269,6 +274,7 @@ impl Command {
             | Command::SelectPrevBot
             | Command::FilterFleet
             | Command::PickFleetCard
+            | Command::CycleFleetSort
             | Command::PickWorld
             | Command::PickWorldMarked
             | Command::MarkAllShown
@@ -333,6 +339,7 @@ impl Command {
             Command::ShowMessage => "Show full message",
             Command::FilterFleet => "Filter fleet",
             Command::PickFleetCard => "Pick fleet card…",
+            Command::CycleFleetSort => "Cycle fleet sort",
             Command::PickWorld => "Switch world of cursor row…",
             Command::PickWorldMarked => "Switch world of marked…",
             Command::MarkAllShown => "Mark shown rows",
@@ -439,6 +446,7 @@ impl Command {
             }
             Command::Fleet(_) => fleet_scope(),
             Command::PickFleetCard => "fleet card".into(),
+            Command::CycleFleetSort => "fleet order".into(),
             Command::PickWorld => match app.cursor_profile() {
                 Some(name) => format!("BOT {name}"),
                 None => "no row under the cursor".to_string(),

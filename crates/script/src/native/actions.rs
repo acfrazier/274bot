@@ -928,6 +928,7 @@ mod tests {
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
         };
@@ -1288,6 +1289,7 @@ mod tests {
             active_now,
             wall_now: Instant::now(),
             ledger,
+            pending_note_progress: None,
             budget: &mut budget,
             eligible: true,
         };
@@ -1494,6 +1496,7 @@ mod tests {
                 level: 0,
                 name: Some("Ground item".into()),
                 action: "Take".into(),
+                id: Some(1053),
             },
         ];
         for request in requests {

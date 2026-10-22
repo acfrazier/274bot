@@ -3737,7 +3737,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
     let alice = s.fleet_identity("alice");
     s.fleet_model.set_mark_for_test(alice, true);
 
-    s.open_walkto_for_marked();
+    s.open_walkto_for_fleet();
 
     assert!(s.walkto_open);
     assert_eq!(s.walk_send.mode, super::WalkSendMode::Group);
@@ -3785,7 +3785,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     }
     let (alice, bob) = (s.fleet_identity("alice"), s.fleet_identity("bob"));
     s.fleet_model.set_mark_for_test(alice, true);
-    s.open_walkto_for_marked();
+    s.open_walkto_for_fleet();
     assert_eq!(s.walk_send.walk_label(), "Walk 1 bots");
 
     let mut ctx = crate::test_support::imgui_context();

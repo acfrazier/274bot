@@ -104,6 +104,16 @@ authority. Watchdog, reconnect and fleet polling cannot restart that run; the
 operator must explicitly Start again.
 `Waiting` remains live until the card's own bound produces a terminal failure.
 
+Native cards can return `Script::waits_for_evidence()` after foreground work
+retires. The slot suspends gameplay-idle recovery and wedge accounting, not
+scheduler-stall checks, missing-packet warnings or session handling.
+This is not a frozen or Blocked state. The card clears its wait before
+evaluation and on Pause, hold, Stop, death or invalid scene/session evidence.
+`NativeTick::note_progress()` records confirmed content progress for the current
+run/session. The slot consumes it once through the existing watchdog path.
+It emits no packet and spends no interaction budget. Clicks and idle ticks
+are not progress.
+
 The typed action-machine facility drives real machines: `NativeActions::begin`
 and `poll` admit and advance each family's operations. Ordinary admission allows
 one interaction event per observed tick. Disposal may admit up to five interaction
@@ -726,6 +736,21 @@ If the clicked loc disappears or transforms, reach completes only after acceptan
 of that exact dispatched interaction. It does not select a replacement. Authored
 settlement predicates still prove the quest effect.
 
+Exact native ground collection uses the same chooser with borrowed selected
+IDs, an exact same-plane square and the current active-zone clip.
+It ranks legal stands by route steps, then by item ID, plane, x and z.
+Reach walks to that stand before Take. It never substitutes another tile.
+A queued Take has no outcome deadline until the host dispatches it.
+The bound is four later observed `PLAYER_INFO` ticks, including one missed
+server input phase. Wall time and evidence-only polls do not advance it.
+An exact-ID pack increase proves success and counts landed units.
+Ground removal alone waits for one later player update before a zero-count
+lost race. A decrease with identical copies remaining waits through the bound.
+Lost races never add a failed-key penalty. An unchanged row and pack at the
+bound can avoid that exact ID/tile/plane for ten ticks. The third true failure
+excludes the key for the run. Capacity and duplicate refusals remain typed.
+Exact-ground reach refusals never enter the legacy door fallback.
+
 `use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
 "source": "content provenance"}`. The optional tile selects an exact ground
 stack; source and target item ids remain explicit. Inventory-item targets
@@ -1004,6 +1029,47 @@ because content itself checks `stat(thieving)` against the pickpocket row
 `stat(thieving)` is effective level, so this check uses effective rather than
 base level. It does not attach the native Thieving machine's attempt, stun,
 completion, inventory, or dialogue policy to this compat click.
+
+### Grinch ground-item collection
+
+Grinch is a compiled native card in Browse. It does not create a V8 isolate.
+Its schema version is 1. All 18 base item choices default to selected:
+Easter egg (1961), Disk of returning (981), Half full wine jug (1989),
+Pumpkin (1959), green mask (1053), blue mask (1055), red mask (1057),
+Santa hat (1050), Christmas cracker (962), Red partyhat (1038),
+Yellow partyhat (1040), Blue partyhat (1042), Green partyhat (1044),
+Purple partyhat (1046), White partyhat (1048), Scythe (1419), Bunny ears
+(1037), and Yo-yo (4079). Mask labels include their colour and ID.
+Certificates and the worn Yo-yo variant are not choices.
+
+`radius` defaults to 12 tiles and accepts 1 through 16. It bounds item tiles
+in an inclusive square around the first ready tile captured by each Start.
+The square uses that anchor's plane. Radius does not bound route detours or
+the bank trip. Grinch also filters rows against the player's current active
+zone window, so it ignores stale rows that lack later deletion updates.
+It does not roam beyond the anchor square.
+
+Grinch collects only selected base IDs. It does not collect a certificate by
+name, use a cracker, wear or eat an item, or transform an ID. `bank` defaults
+to **Nearest reachable** and uses the `named-banks` choices. The bank run
+deposits selected IDs only, closes the bank, then returns to the exact
+captured anchor before another selection. Nonselected inventory stays in the
+pack. The `allow_wilderness`, `allow_danger_zones`, and `allow_teleports`
+script grants default to false.
+
+At the anchor with no eligible item and no active child, Grinch reports
+`Waiting` with `waiting for items, r=<n>`. Collection, banking and return
+report `Working`. A duplicate refusal excludes that ID until the next Start;
+other selected IDs remain eligible. Saved settings return
+`RestartRequired`: the active run keeps its settings, and the next Start
+validates the saved choices and captures a new anchor.
+
+#### Not in this release
+
+Grinch inherits the shared bank kernel's wall-clock settlement floor. That
+floor is deferred to the shared bank endpoint and is not a Grinch release
+gate. This documentation does not claim historical discontinuance for any
+item or completed S4 live qualification.
 
 ### Gatherer gathering and supplies
 
@@ -1368,17 +1434,17 @@ Browse / Start / Pause / Stop / Load are wired in both operator panels
 (`panel-play` script chrome and `tui-play` script pane) over the same
 `host_play::Play` dispatch. Both surfaces expose Reload and the TUI Script
 tab also exposes Start fleet / Stop fleet; the native panel additionally
-exposes Refresh catalog and the MultiBox rail's Start all / Stop all
-described below. The rail keeps Start all / Stop all until the combined fleet
-toolbar (planned for 0.2.6).
+exposes Refresh catalog and the fleet toolbar's Start / Stop (in the
+MultiBox rail, the side panel's fleet section and the Fleet window)
+described below.
 
 | Control | Behavior |
 | --- | --- |
 | **Browse…** | Pick a compiled or loaded/catalog card for the focused profile (pending until Start). |
 | **Load** | Open a file picker; register/transpile a File card. Disabled while a script is active on the focus. |
 | **Reload** | Hash current card origin (+ siblings). Unchanged → “Nothing changed; nothing to reload”. Changed with no running/paused owners → apply. Changed with owners → **Confirm** / **Cancel reload**: running bots that still match the warned generation **restart**; named **paused** bots are **Stopped** (not left half-reloaded). |
-| **Start / Pause / Resume / Stop** | Focused profile only. Per-bot Stop also cancels a Start that is still waiting. Start refuses a File card whose file is gone (`missing file: <name>`) instead of running the copy loaded before the delete; every bulk Start (Start all, Start fleet, the Fleet window's Start) refuses it the same way. |
-| **Start all / Stop all** (panel MultiBox rail), **Start fleet / Stop fleet** (TUI Script tab `T` / `E`) and the Fleet window's **Start** / **Stop** | Bulk script controls. Separate from **Login all / Logout all**. The rail's Start all / Stop all act on every wall member. Start fleet / Stop fleet and the Fleet window's buttons run the fleet plan: the marked profiles, or with nothing marked the loaded bots the filter shows after a confirmation, with one result line (see [tui.md](tui.md) and [panel.md](panel.md)). Every bulk Start (one shared command for panel and TUI) skips already running/paused/stopping members and starts the rest one after another over the next frames, not all in one frame. One running report covers every Start click while any of its bots still waits or is still setting up: it counts each bot once as `started`, `queued`, `skipped` or `failed`, lists failures before skips, and updates as waiting bots start or are refused. A second click in that time joins the same report instead of replacing it. Every skipped or failed bot also gets a line in its own log. Waiting rows show `queued k/n`. Marked Start with a heading card starts that card on every marked row. Stop on marked rows reports waiting bots as `cancelled`. Stop all stops running and paused across wall members and live slots **and cancels waiting Starts**. A member removed, re-assigned, or operator-logged-out while waiting does not start stale work. |
+| **Start / Pause / Resume / Stop** | Focused profile only. Per-bot Stop also cancels a Start that is still waiting. Start refuses a File card whose file is gone (`missing file: <name>`) instead of running the copy loaded before the delete; every bulk Start (the fleet toolbar's Start, Start fleet) refuses it the same way. |
+| The fleet toolbar's **Start** / **Stop** (panel: rail, side panel fleet section, Fleet window) and **Start fleet / Stop fleet** (TUI Script tab `T` / `E`) | Bulk script controls, separate from **Log in / Log out**. They run the fleet plan: the marked profiles, or with nothing marked the loaded bots the filter shows after a confirmation, with one result line (see [tui.md](tui.md) and [panel.md](panel.md)). Every bulk Start (one shared command for panel and TUI) skips already running/paused/stopping members and starts the rest one after another over the next frames, not all in one frame. Its result counts each bot once as started, queued, skipped or failed, lists failures before skips, and reads as pending while a bot still waits or sets up. Every skipped or failed bot also gets a line in its own log. Waiting rows show `queued k/n`. Start with a heading card starts that card on every target. Stop reports waiting bots as `cancelled` and cancels their Starts. A member removed, re-assigned, or operator-logged-out while waiting does not start stale work. |
 | **Refresh catalog** | Re-scan `$RS2B0T` / catalog root. Unchanged scan → “Nothing changed.” Changed with owners → confirm; same restart/stop policy as manual reload. |
 
 While a settings-copy confirmation waits for **Apply** or **Cancel**, all new
@@ -1826,6 +1892,12 @@ production selection, built-in filters, nearest ranking, validity or targeting.
 `EntityQuery.fromSnapshots` remains caller-driven and preserves supplier,
 wrapper, predicate, getter, public-override and thrown-value behavior.
 Interactions keep the existing selected-identity checks and host queue.
+
+`GroundItem.interact` and `Input.takeObj` preserve the selected item ID.
+The host requires that exact ID at the requested tile and plane before dispatch.
+A supplied name is diagnostic when an ID is present. A missing selected ID
+sends nothing, even when another item at that tile has the same name.
+External `obj` interaction requests may omit `id` to retain name-and-tile lookup.
 
 ## Hard no
 

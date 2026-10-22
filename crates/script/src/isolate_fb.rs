@@ -6106,6 +6106,7 @@ fn decode_interact_rows<'a>(
                     .action()
                     .ok_or_else(|| "obj has no action".to_string())?
                     .to_string(),
+                id: row.index(),
             }),
             "player" => out.push(crate::shim::InteractReq::Player {
                 name: row
@@ -7276,7 +7277,9 @@ fn interact_off<'b>(
                 table.add_index(*id);
             }
         }
-        InteractReq::Obj { x, z, level, .. } => {
+        InteractReq::Obj {
+            x, z, level, id, ..
+        } => {
             table.add_x(*x);
             table.add_z(*z);
             table.add_level(*level);
@@ -7284,6 +7287,9 @@ fn interact_off<'b>(
                 table.add_name(off);
             }
             table.add_action(action_off.unwrap());
+            if let Some(id) = id {
+                table.add_index(*id);
+            }
         }
         InteractReq::Player { .. } => {
             table.add_name(name_off.unwrap());

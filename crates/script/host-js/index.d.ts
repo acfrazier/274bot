@@ -319,7 +319,7 @@ export type InteractReq =
   | { op: 'close'}
   | { op: 'npc'; name: string; action: string; index?: number | null}
   | { op: 'loc'; x: number; z: number; level: number; action: string; id?: number | null}
-  | { op: 'obj'; x: number; z: number; level: number; name?: string | null; action: string}
+  | { op: 'obj'; x: number; z: number; level: number; name?: string | null; action: string; id?: number | null}
   | { op: 'player'; name: string; action: string}
   | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; source_item_id?: number | null; source_item_slot?: number | null; target_item_id?: number | null; target_item_slot?: number | null}
   | { op: 'use-widget-on'; component_id: number; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null}

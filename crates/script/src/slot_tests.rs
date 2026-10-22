@@ -41,6 +41,30 @@ fn wait_state(slot: &mut SlotScript, want: RunState) {
 }
 
 #[cfg(feature = "load")]
+#[test]
+fn loaded_script_without_native_wait_retains_gameplay_wedge_detection() {
+    let (mut slot, _selected) = ignored_randoms_load();
+    assert!(slot.native_run().is_none());
+    assert!(slot.evidence_wait_run.is_none());
+    let here = Some((3200, 3200, 0));
+    let started = Instant::now();
+    slot.note_game_packet_tick(started);
+    assert_eq!(
+        slot.feed_watchdog(started, here, &[], false, true, &[]),
+        WatchdogAction::None
+    );
+    let wedged = started + crate::watchdog::WEDGE;
+    slot.watchdog.stamp_scheduler(wedged);
+    slot.note_game_packet_tick(wedged);
+    assert_eq!(
+        slot.feed_watchdog(wedged, here, &[], false, true, &[]),
+        WatchdogAction::RequestAnchor,
+        "two absent native run keys do not authorize a Load evidence wait"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
 fn allow_onstop_completion(slot: &SlotScript) {
     slot.load
         .as_ref()

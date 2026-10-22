@@ -1611,13 +1611,18 @@ mod tests {
         }
     }
 
-    fn prepare_current_registry(
+    /// Prepares from an explicit folder source, never the process-global one,
+    /// so a parallel test that publishes through the global source can't pick
+    /// up this test's folder.
+    fn prepare_registry(
+        source: FolderSource,
         selected: Arc<SelectedGameData>,
         revision: u64,
         barriers: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
     ) -> crate::preparation::PreparedTask<Result<PreparedRegistry, CompileError>> {
         use crate::preparation::CooperativePreparationStep as Step;
-        let mut preparation = RegistryPreparation::from_current(selected).unwrap();
+        let mut preparation =
+            RegistryPreparation::from_source_without_catalog(source, selected).unwrap();
         let mut completed = 0_u32;
         let input = crate::preparation::PreparationInput::new(
             revision,
@@ -2237,18 +2242,26 @@ mod tests {
 
         let folder = Folder::new();
         folder.cook("stale-publish-draft", "unpublished");
-        set_source(folder.source(true));
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-        let stale = prepare_current_registry(Arc::clone(&selected), 1, None);
+        let stale = prepare_registry(folder.source(true), Arc::clone(&selected), 1, None);
         let completed = stale.identity();
         let prepared = stale.join().unwrap().unwrap();
+        assert!(
+            prepared
+                .registry()
+                .rows()
+                .iter()
+                .any(|row| row.id == "stale-publish-draft"),
+            "the stale candidate must carry the draft it must not publish"
+        );
         let wrong_current = crate::work_admission::WorkService::shared()
             .unwrap()
             .lock()
             .mint_identity(Scope::Process, None)
             .unwrap();
         assert_ne!(completed, wrong_current);
-        assert!(commit_snapshot(prepared, completed, wrong_current).is_err());
+        let refused = commit_snapshot(prepared, completed, wrong_current).unwrap_err();
+        assert_eq!(refused.code.as_ref(), "stale-preparation");
         assert!(snapshot()
             .rows()
             .iter()
@@ -2256,7 +2269,8 @@ mod tests {
 
         let checkpoint = Arc::new(Barrier::new(2));
         let proceed = Arc::new(Barrier::new(2));
-        let mut cancelled = prepare_current_registry(
+        let mut cancelled = prepare_registry(
+            folder.source(true),
             Arc::clone(&selected),
             2,
             Some((Arc::clone(&checkpoint), Arc::clone(&proceed))),
@@ -2274,6 +2288,5 @@ mod tests {
             .rows()
             .iter()
             .all(|row| row.id != "stale-publish-draft"));
-        set_source(FolderSource::default());
     }
 }

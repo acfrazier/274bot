@@ -345,6 +345,7 @@ fn help_lists_the_card_picker_and_the_shown_row_mark_keys() {
     assert_eq!(what("c"), Some("Pick fleet card…"));
     assert_eq!(what("a"), Some("Mark shown rows"));
     assert_eq!(what("A"), Some("Unmark shown rows"));
+    assert_eq!(what("s"), Some("Cycle fleet sort"));
     assert_eq!(what("m"), Some("Load + log in fleet"));
     assert_eq!(what("U"), Some("Log out fleet"));
 
@@ -1829,5 +1830,284 @@ fn the_world_picker_draws_into_any_area_without_panicking() {
                 );
             }
         }
+    }
+}
+
+/// An app whose fleet is carol (ready), alice (ready) and bob (offline), in
+/// that Load order: Name gives alice, bob, carol; Status gives bob (offline
+/// before ready), alice, carol.
+fn sort_app() -> TuiApp {
+    let mut app = fleet_app(&["carol", "alice", "bob"]);
+    app.fleet_model.set_universe_for_test(
+        vec![
+            crate::test_support::ready("carol", 2),
+            crate::test_support::ready("alice", 2),
+            frontend_core::FleetRow::fixture("bob", frontend_core::Phase::Offline, None, None),
+        ],
+        &[],
+    );
+    app.refresh();
+    app
+}
+
+fn shown_names(app: &TuiApp) -> Vec<&str> {
+    app.fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
+        .collect()
+}
+
+fn left_click(column: u16, row: u16) -> crossterm::event::MouseEvent {
+    mouse(
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column,
+        row,
+    )
+}
+
+/// `s` in the Fleet pane cycles Load order, Name, Status and back, through
+/// the core command; the header and the shown rows follow, and the cursor
+/// stays on its profile.
+#[test]
+fn s_cycles_the_fleet_sort_and_the_cursor_keeps_its_profile() {
+    use frontend_core::FleetOrder;
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    assert_eq!(app.key_focus, Pane::Fleet);
+    assert_eq!(shown_names(&app), ["carol", "alice", "bob"]);
+    // The cursor goes to alice, the second row.
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.cursor_profile(), Some("alice"));
+
+    for (order, label, names) in [
+        (FleetOrder::Name, "sort: Name", ["alice", "bob", "carol"]),
+        (
+            FleetOrder::Status,
+            "sort: Status",
+            ["bob", "alice", "carol"],
+        ),
+        (
+            FleetOrder::LoadOrder,
+            "sort: Load order",
+            ["carol", "alice", "bob"],
+        ),
+    ] {
+        assert_eq!(app.on_key(ch('s')), AppAction::SetFleetSort(order));
+        // The key submits the command; the model is core's until it runs.
+        assert_eq!(shown_names(&app).len(), 3);
+        seam.apply(&mut app, AppAction::SetFleetSort(order));
+        assert_eq!(app.fleet_model.order(), order);
+        assert_eq!(shown_names(&app), names);
+        assert_eq!(app.cursor_profile(), Some("alice"), "{order:?}");
+        let screen = text(&draw(&mut app, 120, 40));
+        assert!(screen.contains(label), "{label}: {screen}");
+    }
+}
+
+/// The key goes through the real dispatcher: `s` returns the action, the
+/// dispatcher runs it, and the next `s` continues from the new order.
+#[test]
+fn s_through_the_dispatcher_walks_the_three_orders() {
+    use frontend_core::FleetOrder;
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    for order in [
+        FleetOrder::Name,
+        FleetOrder::Status,
+        FleetOrder::LoadOrder,
+        FleetOrder::Name,
+    ] {
+        seam.press(&mut app, ch('s'), AppAction::SetFleetSort(order));
+        assert_eq!(app.fleet_model.order(), order);
+    }
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+}
+
+/// While the filter field is edited, `s` is text; in another pane it is not
+/// the sort key.
+#[test]
+fn s_is_text_in_the_filter_and_does_nothing_in_other_panes() {
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    app.on_key(ch('/'));
+    assert!(app.table.editing);
+    assert_eq!(
+        app.on_key(ch('s')),
+        AppAction::FleetFilter(FilterEdit::Push('s'))
+    );
+    assert_eq!(
+        app.fleet_model.order(),
+        frontend_core::FleetOrder::LoadOrder
+    );
+    app.on_key(key(KeyCode::Esc));
+    app.table.editing = false;
+
+    for (pane, screen) in [
+        (Pane::Detail, Screen::Overview),
+        (Pane::Detail, Screen::Chat),
+        (Pane::Detail, Screen::Script),
+    ] {
+        app.show_screen(screen);
+        app.focus_pane(pane);
+        let action = app.on_key(ch('s'));
+        assert!(
+            !matches!(action, AppAction::SetFleetSort(_)),
+            "{screen:?}: {action:?}"
+        );
+        assert_eq!(
+            app.fleet_model.order(),
+            frontend_core::FleetOrder::LoadOrder
+        );
+    }
+}
+
+/// A click on the `sort:` part of the header cycles the sort; a click on
+/// the `card:` part opens the card picker; a click on the marked count
+/// does neither; a right click still opens the context menu.
+#[test]
+fn header_clicks_cycle_the_sort_and_open_the_card_picker() {
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    let rows = draw(&mut app, 120, 40);
+    let (sort_x, sort_y) = find(&rows, "sort: ").expect("the sort part");
+    let (card_x, card_y) = find(&rows, "card: ").expect("the card part");
+    let (marked_x, marked_y) = find(&rows, "0 marked").expect("the marked count");
+
+    // Off the parts: the separator and the marked count do nothing.
+    assert_eq!(
+        app.on_mouse(left_click(marked_x, marked_y)),
+        AppAction::None
+    );
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.on_mouse(left_click(marked_x.saturating_sub(1), marked_y)),
+        AppAction::None,
+        "the separator"
+    );
+    assert!(app.modal.is_none());
+
+    // The last cell of the part still counts; the cell after it does not.
+    let sort_end = sort_x + "sort: Load order".chars().count() as u16;
+    assert_eq!(
+        app.on_mouse(left_click(sort_end, sort_y)),
+        AppAction::None,
+        "one past the part"
+    );
+    let click = app.on_mouse(left_click(sort_end - 1, sort_y));
+    assert_eq!(
+        click,
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Name)
+    );
+    seam.apply(&mut app, click);
+    let rows = draw(&mut app, 120, 40);
+    assert!(text(&rows).contains("sort: Name"), "{}", text(&rows));
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+
+    // The card part opens the picker, as `c` does.
+    assert_eq!(app.on_mouse(left_click(card_x, card_y)), AppAction::None);
+    assert!(
+        matches!(app.modal, Some(Modal::FleetCard(_))),
+        "{:?}",
+        app.modal
+    );
+    app.on_key(key(KeyCode::Esc));
+    assert!(app.modal.is_none());
+
+    // The sort part also takes the click on its first cell.
+    let rows = draw(&mut app, 120, 40);
+    let (sort_x, sort_y) = find(&rows, "sort: ").expect("the sort part");
+    assert_eq!(
+        app.on_mouse(left_click(sort_x, sort_y)),
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Status)
+    );
+
+    // A right click on the header keeps opening the Fleet context menu.
+    assert_eq!(app.on_mouse(right_click(sort_x, sort_y)), AppAction::None);
+    assert!(
+        matches!(app.modal, Some(Modal::Context(_))),
+        "{:?}",
+        app.modal
+    );
+}
+
+/// The palette lists the sort command with its key `s`, and running it from
+/// the palette cycles the sort.
+#[test]
+fn the_palette_lists_the_sort_command_with_its_key_and_runs_it() {
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    assert_eq!(crate::palette::key_text(Command::CycleFleetSort), "s");
+    assert_eq!(Command::CycleFleetSort.availability(&app), Ok(()));
+    assert!(Command::ALL.contains(&Command::CycleFleetSort));
+    app.on_key(ctrl('p'));
+    for c in "fleet sort".chars() {
+        app.on_key(ch(c));
+    }
+    let shown = text(&draw(&mut app, 120, 40));
+    assert!(shown.contains("Cycle fleet sort"), "{shown}");
+    assert!(!shown.contains("Cycle fleet sort…"), "no ellipsis: {shown}");
+    seam.press(
+        &mut app,
+        key(KeyCode::Enter),
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Name),
+    );
+    assert!(
+        app.modal.is_none(),
+        "running the command closes the palette"
+    );
+    assert_eq!(app.fleet_model.order(), frontend_core::FleetOrder::Name);
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+}
+
+/// Help and the footer hint name the sort key and the m / U scope.
+#[test]
+fn help_and_the_footer_name_the_sort_key_and_the_log_in_scope() {
+    let mut app = sort_app();
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.context == "Fleet" && row.keys == "s" && row.what == "Cycle fleet sort"),
+        "{rows:?}"
+    );
+    let scope = rows
+        .iter()
+        .find(|row| row.context == "Fleet" && row.keys == "m U")
+        .expect("the m / U row");
+    assert!(
+        scope.what.contains("log in / log out")
+            && scope
+                .what
+                .contains("marked rows, else the loaded shown rows")
+            && scope.what.contains("asks first"),
+        "{scope:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.keys == "click fleet header" && row.what.contains("sort:")),
+        "{rows:?}"
+    );
+    // The rest of the fleet keys stay.
+    for keys in ["c", "a", "A", "W", "Alt-Up Alt-Down", "/"] {
+        assert!(
+            rows.iter()
+                .any(|row| row.context == "Fleet" && row.keys == keys),
+            "{keys}: {rows:?}"
+        );
+    }
+    for order in [
+        frontend_core::FleetOrder::LoadOrder,
+        frontend_core::FleetOrder::Name,
+        frontend_core::FleetOrder::Status,
+    ] {
+        app.fleet_model.set_order_for_test(order);
+        let hint = app.key_hints();
+        assert!(
+            hint.contains("s sort")
+                && hint.contains("m log in · U log out (marked, else loaded shown; asks first)"),
+            "{order:?}: {hint}"
+        );
+        assert!(!hint.contains("load all") && !hint.contains("logout all"));
     }
 }

@@ -71,18 +71,39 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   and unmark the shown rows, and both mark the shown rows by status. In
   the TUI, mark profiles that are not loaded before logging them in.
 - The TUI Script pane's bulk buttons are now **Start fleet** (`T`) and
-  **Stop fleet** (`E`) and run the fleet action. The panel rail keeps
-  **Start all** / **Stop all** until the combined fleet toolbar.
+  **Stop fleet** (`E`) and run the fleet action.
 - Switch a bot's world: click its world marker on a MultiBox tile, Grid
   cell or Fleet row and pick a public world, or press `W` on a TUI fleet
-  row. To move several bots, mark them and choose **Switch world…** in the
-  Fleet window's Marks menu or **Switch world of marked…** in the TUI
+  row. To move several bots, mark them and press **Switch world** in the
+  fleet toolbar or choose **Switch world of marked…** in the TUI
   palette. Fleet asks first and names the bots. Each bot saves its new
   world, logs out and logs back in through the login queue; a running
   script continues after it reconnects, and a paused script stays paused.
   A bot that is queued, logging in, not logged in or already on that world
   is skipped with the reason, and a bot whose world could not be saved
-  stays logged in. A server with one world offers no switch.
+  stays logged in. A server with one world offers no switch. An action
+  that a later command takes over (Log in, Log out, Relog now, another
+  Switch world, Remove) reads "cancelled" in the result and names that
+  command.
+- Panel: the MultiBox rail now contains the Fleet card picker, marks,
+  filter, sort and all Fleet actions: Start, Stop, Assign, Assign &
+  restart, Log in, Log out, Walk, Switch world and Copy settings to. The
+  Fleet window keeps its table and shows the same state; clicking a bot's
+  name there focuses it. Grid and single-bot layouts show the actions in
+  the side panel's **fleet** section. The rail's Login all, Logout all,
+  Start all and Stop all buttons are gone: with nothing marked, the fleet
+  buttons act on every loaded bot shown, after asking first.
+- Panel: fold the Fleet toolbar to leave more room for bot previews.
+  Pending questions and action results remain visible, and the bot
+  previews scroll under the toolbar.
+- TUI: the fleet header shows the active card and order. Use `c` to choose
+  a card, `s` to change sort, `a` / `A` to mark or unmark shown rows, and
+  `W` to choose a world; a click on the header's card or sort does the
+  same. The palette offers the same Fleet actions.
+- Walk with nothing marked (the fleet toolbar's Walk, WalkTo's **Group**
+  and the TUI Map's `g`) marks only the loaded bots the filter shows, and
+  of those only the bots that can walk. A bot the filter hides is not
+  added.
 - Copy settings to more than 64 bots now saves every bot. The copy saves a
   few dozen bots at a time and the rest wait their turn; Starts wait until
   the last bot is saved. Cancel stops the bots that are still waiting.
@@ -142,6 +163,42 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
 
+### Scripts
+
+- Ground-item interactions keep the selected item ID through dispatch. Items
+  with the same name on one tile, such as Halloween masks, no longer substitute
+  for the selected type. Requests without an ID retain name-and-tile lookup.
+  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
+  retain the selected row's ID.
+- Exact ground Take actions settle from inventory and ground evidence within
+  four later observed game ticks after dispatch. Lost races do not penalize
+  the item tile. Native scripts can report confirmed progress and wait for
+  relevant evidence without disabling scheduler or connection checks.
+- Native ground-item selections reject more than 32 IDs, so later items
+  cannot bypass the selected-ID exclusion bitset.
+- Grinch is a native Gathering card that collects selected visible holiday
+  items around its Start tile. All 18 base choices default on. Set a radius
+  from 1 through 16 tiles, use the nearest reachable or a named bank, and
+  deposit only selected items before returning to the exact Start tile.
+  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  item until the next Start. Saved settings apply on the next Start.
+- Grinch uses the player's network tile, not the rendered tile, for its Start
+  tile and return arrival. A confirmed walking arrival no longer fails while
+  the rendered player catches up.
+- Native script failures keep their stop reason visible in the TUI status
+  pane after the run stops. This includes Grinch stopping with a full pack
+  that contains no selected item to deposit.
+
+### Not in this release
+
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+- A bot can't get through a door that another player closes again on every
+  tick, when that player's moves are handled before the bot's. The bot tries
+  the door until its retries run out and then stops at the door. Finding
+  another way around, changing worlds when allowed, and a clear "door held
+  shut" result are planned for 0.2.6.
+
 ### Fixed during development
 
 #### Startup and saved state
@@ -192,6 +249,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   field before script Start. The receipt records the wait and observed loot.
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
+- Grinch has repeatable live checks for private drops, contested respawns,
+  duplicate refusals and selected-item banking. Each check runs on a private
+  engine copy with log-only receipts. Respawn checks also add map rows.
+  The shared engines and content do not change.
 
 - Scenario wait budgets and the receipt `ticks` count now use observed game
   ticks, not dirty snapshots. Repeated steps send at most once per game

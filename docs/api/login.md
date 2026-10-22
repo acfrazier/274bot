@@ -213,12 +213,13 @@ its attempt started cannot start; the slot queues again. Host-play keeps
 transient response 1 in Connecting rather than publishing phase Error.
 
 
-## Panel: Login all vs auto-login
+## Panel: Log in vs auto-login
 
 The panel arms logins through `SlotArm` flags (host-play), not
 `api::interact::login` directly. Two intents differ:
 
-- **Login all / Log in** is a **one-shot**: it clears the member's logout
+- **Log in** (the focused bot's button, or the fleet toolbar's **Log in** over
+  the marked or shown bots) is a **one-shot**: it clears the member's logout
   latch and repeat-logout history, cancels any pending logout, and arms the
   handshake. Once the grant lands the one-shot disarms. A running or paused
   script still relogs after an unexpected disconnect; a slot without a script
@@ -228,8 +229,9 @@ The panel arms logins through `SlotArm` flags (host-play), not
   provenance. Turning it on arms an unlatched parked slot only when no
   explicit intent is already active; turning it off withdraws only
   auto-derived intent, including during preparation/backoff. An explicit
-  **Log in** survives an auto on→off toggle. An explicit **Logout / Logout
-  all** latches the member until the next explicit login clears it.
+  **Log in** survives an auto on→off toggle. An explicit **Log out** (one bot
+  or the fleet toolbar's) latches the member until the next explicit login
+  clears it.
 
 ## Host-owned session liveness
 

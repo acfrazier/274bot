@@ -918,15 +918,21 @@ pub struct Session {
     /// The draw policy the render mirror (`focus`) follows; changed by
     /// `SetDraw` only.
     pub(crate) draw: frontend_core::DrawPolicy,
-    /// The Fleet window's card drop-down search text while it is open
-    /// (`None` while closed, so each opening starts with an empty search).
-    pub(crate) fleet_card_filter: Option<String>,
-    /// The Fleet window's count-bearing labels, rebuilt only when the fleet
-    /// model's generation moves.
-    pub(crate) fleet_labels: crate::fleet::FleetLabels,
+    /// The open card drop-down: the toolbar site that owns it, its search
+    /// text and the entries the search narrows (`None` while every
+    /// drop-down is closed, so each opening starts with an empty search).
+    pub(crate) fleet_card_filter:
+        Option<(crate::fleet_toolbar::Site, crate::fleet_toolbar::CardSearch)>,
+    /// The fleet toolbar's filter field buffer, shared by every toolbar on
+    /// screen and edited in place by ImGui (no allocation per frame).
+    pub(crate) fleet_filter_edit: dear_imgui_rs::ImString,
+    /// The fleet toolbar's count-bearing labels (one set for every site that
+    /// draws the toolbar), rebuilt only when the fleet model's generation
+    /// moves.
+    pub(crate) fleet_labels: crate::fleet_toolbar::FleetLabels,
     /// The one world picker every Switch world entry opens (a world marker,
-    /// the Fleet window's World / login cell and its Marks menu entry);
-    /// closed until one asks.
+    /// the Fleet window's World / login cell and the toolbar's Switch world
+    /// button); closed until one asks.
     pub(crate) world_picker: crate::world_picker::WorldPicker,
     /// Core-owned map custody: staged actions, selected destination, cache
     /// demand, bake consent and panel input channel.
@@ -1447,7 +1453,8 @@ impl Session {
                 true,
             ),
             fleet_card_filter: None,
-            fleet_labels: crate::fleet::FleetLabels::default(),
+            fleet_filter_edit: dear_imgui_rs::ImString::with_capacity(64),
+            fleet_labels: crate::fleet_toolbar::FleetLabels::default(),
             world_picker: crate::world_picker::WorldPicker::default(),
             walkto_open: false,
             route_through_zones: false,
@@ -4070,12 +4077,27 @@ impl Session {
         self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
+    /// Focused or Group. Entering Group with no walker marked marks the
+    /// bots a fleet action covers while nothing is marked (the loaded,
+    /// shown ones) that can walk; a bot the fleet filter hides is not
+    /// added. "All eligible" ([`Self::walk_send_all_eligible`]) marks every
+    /// row of the Send list.
     pub fn set_walk_send_mode(&mut self, mode: WalkSendMode) {
         self.walk_send.mode = mode;
         if mode == WalkSendMode::Group
             && self.walk_send.checked_count(self.fleet_model.marks()) == 0
         {
-            self.walk_send_all_eligible();
+            let identities = self
+                .walk_send
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.status.is_eligible() && self.fleet_model.in_unmarked_scope(row.identity)
+                })
+                .map(|row| row.identity)
+                .collect::<Vec<_>>();
+            self.core.stage_mark_all(identities);
+            self.submit(OperatorCommand::MarkAll, Targets::Application);
         }
         self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
@@ -4093,14 +4115,22 @@ impl Session {
         self.walk_send.sync_walk_label(self.fleet_model.marks());
     }
 
-    /// Open (or bring forward) the WalkTo picker for the Fleet window's
-    /// marked bots: group mode, checked from the marks (a mark is never
-    /// added here).
-    pub fn open_walkto_for_marked(&mut self) {
+    /// The fleet toolbar's Walk: open (or bring forward) the WalkTo picker in
+    /// Group mode over the toolbar's scope. With bots marked, the Send list
+    /// is checked from the marks and no mark is added. With nothing marked,
+    /// Group mode marks the loaded, shown bots that can walk (the button
+    /// counts every loaded, shown bot; a bot that cannot walk is skipped),
+    /// so the Send list names who walks before the operator picks a tile; a
+    /// bot the fleet filter hides is not added.
+    pub fn open_walkto_for_fleet(&mut self) {
         self.open_window(PanelWindow::WalkTo);
         self.refresh_walk_send();
-        self.walk_send.mode = WalkSendMode::Group;
-        self.walk_send.sync_walk_label(self.fleet_model.marks());
+        if self.fleet_model.marks().is_empty() {
+            self.set_walk_send_mode(WalkSendMode::Group);
+        } else {
+            self.walk_send.mode = WalkSendMode::Group;
+            self.walk_send.sync_walk_label(self.fleet_model.marks());
+        }
     }
 
     pub fn walk_send_none(&mut self) {

@@ -155,7 +155,7 @@
         "test": 0
       },
       "clippy::large_enum_variant": {
-        "non_test": 9,
+        "non_test": 10,
         "test": 0
       },
       "clippy::manual_clamp": {
