@@ -815,6 +815,129 @@ fn reexport_r4_allowlisted_macros_and_test_scope_pass() {
 }
 
 #[test]
+fn reexport_r5_bare_type_alias_chain_is_denied() {
+    assert_r5_alias_is_denied(
+        "pub type A = client::io::client_prot::ClientProt; pub type B = A;",
+        "api::B",
+    );
+}
+
+#[test]
+fn reexport_r5_bare_use_of_type_alias_is_denied() {
+    assert_r5_alias_is_denied(
+        "pub type A = client::io::client_prot::ClientProt; pub use A as C;",
+        "api::C",
+    );
+}
+
+#[test]
+fn reexport_r5_box_argument_is_denied() {
+    assert_r5_alias_is_denied(
+        "use client::io::client_prot::ClientProt as D; pub type W = Box<D>;",
+        "api::W",
+    );
+}
+
+#[test]
+fn reexport_r5_option_argument_is_denied() {
+    assert_r5_alias_is_denied(
+        "use client::io::client_prot::ClientProt as D; pub type W = Option<D>;",
+        "api::W",
+    );
+}
+
+#[test]
+fn reexport_r5_parameter_default_is_denied() {
+    assert_r5_alias_is_denied(
+        "use client::io::client_prot::ClientProt as D; pub type W<T = D> = Vec<T>;",
+        "api::W",
+    );
+}
+
+#[test]
+fn reexport_r5_tuple_component_is_denied() {
+    assert_r5_alias_is_denied(
+        "use client::io::client_prot::ClientProt as D; pub type W = (D, u8);",
+        "api::W",
+    );
+}
+
+fn assert_r5_alias_is_denied(source: &str, alias: &str) {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([(PathBuf::from("lib.rs"), source.to_owned())]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+    assert_reexported_seed_is_denied(
+        &closure,
+        alias,
+        &format!("use {alias};"),
+        (FindingKind::UsePath, Some(alias)),
+    );
+}
+
+#[test]
+fn reexport_r5_local_thread_local_definition_fails_closed() {
+    assert_r5_macro_fails_closed(
+        "macro_rules! thread_local { () => { pub use client::io as wire; }; }
+         thread_local!();",
+    );
+}
+
+#[test]
+fn reexport_r5_thread_local_rename_fails_closed() {
+    assert_r5_macro_fails_closed(
+        "macro_rules! reexport { () => { pub use client::io as wire; }; }
+         use reexport as thread_local;
+         thread_local!();",
+    );
+}
+
+#[test]
+fn reexport_r5_local_include_definition_fails_closed() {
+    assert_r5_macro_fails_closed(
+        "macro_rules! include { ($file:literal) => { pub use client::io as wire; }; }
+         include!(\"empty.rs\");",
+    );
+}
+
+fn assert_r5_macro_fails_closed(source: &str) {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([
+        (PathBuf::from("lib.rs"), source.to_owned()),
+        (PathBuf::from("empty.rs"), String::new()),
+    ]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+    assert!(
+        closure
+            .findings
+            .iter()
+            .any(|finding| finding.kind == FindingKind::UnsupportedReexport),
+        "{closure:#?}"
+    );
+}
+
+#[test]
+fn reexport_r5_unknown_bare_name_fails_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    for source in ["pub use Unknown as Export;", "pub type Export = Unknown;"] {
+        let files = SourceMap::from([(PathBuf::from("lib.rs"), source.to_owned())]);
+        let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+        assert!(
+            closure
+                .findings
+                .iter()
+                .any(|finding| finding.kind == FindingKind::UnsupportedReexport),
+            "{source}: {closure:#?}"
+        );
+    }
+}
+
+#[test]
 fn aliases_are_scoped_to_inline_modules() {
     let report = action_report(
         "mod a { use api::interact as x; fn f() { x::walk(); } }\
