@@ -511,7 +511,7 @@ the operator's consent and adopts the tiles already verified).
 | --- | --- | --- |
 | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | `load` feature gates the isolate |
 | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
-| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Quester` and (with `load`) `Sherlock` |
+| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Grinch`, `Quester` and (with `load`) `Sherlock` |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
@@ -873,14 +873,14 @@ The crate's `tests/` hold the engine-backed live cells (`nav_*`, `scenario_walk`
 
 ## Native script machines
 
-The 0.2.0 headline scripts are compiled into the host. Quester and Gatherer
-drive host verbs directly, with no isolate; they hold per-slot state in
-bounded structs and read the snapshot Rust already holds.
+The native cards are compiled into the host and use no V8 isolate. They drive
+host verbs directly, hold per-slot state in bounded structs, and read the
+snapshot Rust already holds.
 
 | Machine | Card | What it does |
 | --- | --- | --- |
 | Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](quester-paths.md). |
-| Gatherer (`script/src/gatherer/`) | `Gatherer` | Woodcutting, mining and fishing from live observation: held-tool loop, disposal including power-drop batching, bank trips and provisioning, over methods from the selected content facts. |
+| Grinch (`script/src/grinch.rs`) | `Grinch` | Collects selected visible base ground-item IDs inside a same-plane anchor square, deposits selected IDs only, then returns to the exact anchor. |
 | Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
 | Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |
 

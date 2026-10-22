@@ -7,6 +7,7 @@ pub struct CompiledId(pub &'static str);
 
 static CARDS: &[CompiledCard] = &[
     crate::gatherer::CARD,
+    crate::grinch::CARD,
     crate::quester::CARD,
     #[cfg(feature = "load")]
     crate::sherlock::CARD,

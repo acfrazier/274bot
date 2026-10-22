@@ -155,6 +155,42 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
 
+### Scripts
+
+- Ground-item interactions keep the selected item ID through dispatch. Items
+  with the same name on one tile, such as Halloween masks, no longer substitute
+  for the selected type. Requests without an ID retain name-and-tile lookup.
+  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
+  retain the selected row's ID.
+- Exact ground Take actions settle from inventory and ground evidence within
+  four later observed game ticks after dispatch. Lost races do not penalize
+  the item tile. Native scripts can report confirmed progress and wait for
+  relevant evidence without disabling scheduler or connection checks.
+- Native ground-item selections reject more than 32 IDs, so later items
+  cannot bypass the selected-ID exclusion bitset.
+- Grinch is a native Gathering card that collects selected visible holiday
+  items around its Start tile. All 18 base choices default on. Set a radius
+  from 1 through 16 tiles, use the nearest reachable or a named bank, and
+  deposit only selected items before returning to the exact Start tile.
+  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  item until the next Start. Saved settings apply on the next Start.
+- Grinch uses the player's network tile, not the rendered tile, for its Start
+  tile and return arrival. A confirmed walking arrival no longer fails while
+  the rendered player catches up.
+- Native script failures keep their stop reason visible in the TUI status
+  pane after the run stops. This includes Grinch stopping with a full pack
+  that contains no selected item to deposit.
+
+### Not in this release
+
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+- A bot can't get through a door that another player closes again on every
+  tick, when that player's moves are handled before the bot's. The bot tries
+  the door until its retries run out and then stops at the door. Finding
+  another way around, changing worlds when allowed, and a clear "door held
+  shut" result are planned for 0.2.6.
+
 ### Fixed during development
 
 #### Startup and saved state
@@ -205,6 +241,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   field before script Start. The receipt records the wait and observed loot.
 - Retired the earned-drop Rock Crab bank check. The separate seeded-cargo
   check keeps its name and still checks deposit, return and further combat.
+- Grinch has repeatable live checks for private drops, contested respawns,
+  duplicate refusals and selected-item banking. Each check runs on a private
+  engine copy with log-only receipts. Respawn checks also add map rows.
+  The shared engines and content do not change.
 
 - Scenario wait budgets and the receipt `ticks` count now use observed game
   ticks, not dirty snapshots. Repeated steps send at most once per game

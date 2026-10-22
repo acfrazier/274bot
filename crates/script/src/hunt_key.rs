@@ -561,6 +561,7 @@ fn emit_obj(rt: &mut KeyRuntime, drop: &KeyGround) -> Value {
         "x": drop.tile.x,
         "z": drop.tile.z,
         "level": drop.tile.level,
+        "id": drop.id,
         "name": drop.name,
         "action": "Take",
     }))
