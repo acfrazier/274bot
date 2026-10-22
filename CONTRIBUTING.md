@@ -116,7 +116,8 @@ Workspace members (`Cargo.toml` `[workspace] members`):
 | `frontend-core` | Shared panel/TUI core: fleet marks, walk grants, operator session |
 | `panel` | `panel-play`: the ImGui operator window |
 | `tui` | `tui-play`: the headless ratatui operator panel |
-| `nav` | Baked collision + transport pack, router, `Traveller::follow` |
+| `nav` | Baked collision + transport pack, router, packed world |
+| `nav-executor` | Pollable `Traveller::follow` over the `nav` world |
 | `script` | Script kernel: compiled cards (Quester, Gatherer, Sherlock) and the JS isolate compat surface |
 | `scenario` | Live scenario steps, proofs and fleet-start helpers |
 | `e2e` | Native suite runner and headed/headless live twins |

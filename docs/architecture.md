@@ -143,7 +143,8 @@ workspace member; it is listed as an architecture external.
 | `vault` | Encrypted profile store, secret strings, owner-only file helpers | A dependant of api/host/ui |
 | `api` | Host-facing read/act/settle types mapped onto `client`; selected game facts | A dependant of host, nav, script, or UI |
 | `host` | Native slot/tick APIs, login FIFO, guardian | A dependant of nav, script, host-play, or UI |
-| `nav` | Packed world, router, Traveller, map data | Script isolate or operator UI |
+| `nav` | Packed world, router, map data | Script isolate or operator UI |
+| `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
 | `script` | Native card machines (Quester, Gatherer, Combat, Sherlock), Load isolate, thin JS shim | A production dependant of `client` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
 | `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); fleet marks and the commands on marked bots (Assign, log in/out, group walk); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
@@ -159,9 +160,10 @@ graph, derived from the manifests:
 - `api` → `client`
 - `host` → `api`, `client`, `vault`
 - `nav` → `api`, `client`
+- `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
 - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
-- `host-play` → `api`, `client`, `host`, `script`, `vault`; `nav` runtime and **build**; `scenario` **optional** (and **dev**); `script` also **dev**
-- `scenario` → `api`, `client`, `nav`, `script`
+- `host-play` → `api`, `client`, `host`, `script`, `vault`; `nav` runtime and **build**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+- `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
 - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `client`, `host-play`, `scenario` **dev-only**
 - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `frontend-core` and `host-play` also **dev**
 - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**; `frontend-core` and `host-play` also **dev**
@@ -181,6 +183,10 @@ claim that `e2e` owns those crates' production behavior.
   `[dev-dependencies]` only; promoting it to a normal/optional/target
   dependency fails the checker, so the compiled script crate stays
   client-free.
+- **`script`** has no `nav-executor` edge. Script walks run through the host's
+  `Traveller` owner and read plans through `nav::contract`. `panel` has no
+  `nav-executor` edge. Its one executor test builds through the `host-play`
+  test-support seam `WalkArm::with_latched_essence`.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
   through `frontend-core` and `host-play`.
 - **`frontend-core` → `host`** carries `SlotInput`/`FrameBuf` for
@@ -356,7 +362,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
-| `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
+| `router/grid.rs` | legacy grid A-star | `find_on_grid` for `nav-executor` `Traveller` and harness |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
@@ -366,13 +372,8 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `transport/gates.rs`, `transport/quest_doors.rs`, `transport/doors.rs`, `transport/door_members.rs`, `transport/scripted_doors.rs`, `transport/stage_doors.rs`, `transport/stage_doors_forced.rs`, `transport/brass_key.rs`, `transport/membergate.rs`, `transport/members_guard.rs`, `transport/webs.rs`, `transport/vertical.rs`, `transport/shortcuts.rs` | door, gate, vertical, and shortcut families | one family each; stage doors evaluate the engine's door openers |
 | `transport/engine_door_procs.rs2`, `transport/engine_forced_procs.rs2` | engine opener procedures | content text read by the stage-door deriver |
 | `transport/static_routes.rs`, `transport/npc_hops.rs`, `transport/gliders.rs`, `transport/spirit_trees.rs`, `transport/levers.rs`, `transport/toll.rs`, `transport/magic_guild.rs`, `transport/ranging_guild.rs`, `transport/zanaris.rs`, `transport/teleports.rs`, `transport/wilderness.rs` | fixed-route, guild, teleport, and wilderness-legality families | one family each |
-| `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state |
-| `traveller/snapshot.rs` | snapshot-query helpers | scene reads for hops |
-| `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
-| `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
-| `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
-| `traveller/npc_hop.rs` | NPC-backed Boat/Npc/Glider approach and recovery | live scene operability, reachable-cost selection, bounded retry |
-| `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
+| `executor_adapter.rs` | raw forwarding surface for `nav-executor` only | plan-count/leg helpers, web/door predicates, shared constants; not part of `contract` |
+| `test_support.rs`, `test_support/source_scan.rs` | planner fixture builders and source scanner | test scope plus `test-support` feature gates |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
 | `world.rs` | bound world handle | packed collision plus transport graph |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
@@ -381,6 +382,19 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+
+### nav-executor
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade and re-exports | `mod traveller;` plus the six root re-exports; the `traveller` module stays private |
+| `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state |
+| `traveller/snapshot.rs` | snapshot-query helpers | scene reads for hops |
+| `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
+| `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
+| `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
+| `traveller/npc_hop.rs` | NPC-backed Boat/Npc/Glider approach and recovery | live scene operability, reachable-cost selection, bounded retry |
+| `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
 
 #### Shared bounded routing
 

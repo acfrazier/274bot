@@ -5,6 +5,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ## Unreleased
 
+### Nav
+
+- Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
+
 ### Scripts
 
 - Scripts may pass an item ID to `Bank.withdrawLoad`.

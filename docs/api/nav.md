@@ -1,8 +1,9 @@
 # Nav: whole-world routing, transports, and WalkTo
 
-`crates/nav` is the single nav stack: a whole-world collision bake, a
-content-derived transport graph, a Dijkstra router, and a pollable route
-follower. It acts only through the kernel API (`api::interact`,
+`crates/nav` and `crates/nav-executor` are the nav stack: `nav` owns the
+whole-world collision bake, the content-derived transport graph and the
+Dijkstra router; `nav-executor` owns the pollable route follower. The
+follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
 ## Pack bake
@@ -937,9 +938,11 @@ requires an explicit Start; **Read Journal** cannot revive the old run. The
 host and native action still publish one correlated receipt for the original
 request.
 
-## Traveller (`nav::traveller`)
+## Traveller (`nav-executor`)
 
-`Traveller::follow(client, snapshot, route, &mut options)` is **pollable**:
+Consumers use `nav_executor::Traveller` (re-exported at the crate root; the
+`traveller` module stays private). `Traveller::follow(client, snapshot,
+route, &mut options)` is **pollable**:
 call it once per delivered server tick; it returns `None` while in
 progress and `Some(TravelOutcome)` at a terminal state
 (`Arrived`/`Stalled`/`Refused`/`Blocked`/`EvidenceUnproven`/`GaveUp`). One driver send per

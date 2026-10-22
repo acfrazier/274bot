@@ -28,9 +28,9 @@ use nav::bank_fetch::BankRows;
 use nav::router::{FindOptions, Leg, Route};
 use nav::tile::Tile;
 use nav::transport::{DoorDir, TransportKind};
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
+use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 use serde_json::json;
 
 const LUMBRIDGE: WorldTile = WorldTile {

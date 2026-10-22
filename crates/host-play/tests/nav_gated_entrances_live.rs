@@ -22,10 +22,10 @@ use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClient
 use nav::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav::router::{find_many_with, find_with, FindOptions, Leg, Route, RouteError, TargetError};
 use nav::transport::TransportEdge;
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::zones::ZoneExempt;
 use nav::WorldState;
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use serde::Serialize;
 use serde_json::{json, Value};
 

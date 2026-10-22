@@ -5,9 +5,9 @@ use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
+use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 
 use crate::admission::{Admission, RouteBasis};
 use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
@@ -39,6 +39,19 @@ pub struct WalkArm {
     pub refusal: Option<WalkRefusal>,
     pub refusal_detail: Option<Arc<str>>,
     pub admission_pending: bool,
+}
+
+#[cfg(feature = "test-support")]
+impl WalkArm {
+    /// Build an idle arm with the supplied essence-mine return session.
+    pub fn with_latched_essence(session: Option<nav::essence::EssenceSession>) -> Self {
+        let mut traveller = Traveller::new();
+        traveller.set_essence(session);
+        Self {
+            traveller,
+            ..Default::default()
+        }
+    }
 }
 
 impl WalkArm {

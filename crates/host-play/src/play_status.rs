@@ -298,7 +298,7 @@ pub fn player_world_tile(
 
 /// The local player's world tile `(x, z, level)` from the scene origin,
 /// route head, and [`Client::minusedlevel`] — the same level
-/// [`GameSnapshot::tile`] and [`nav::traveller::Traveller::follow`] use.
+/// [`GameSnapshot::tile`] and [`nav_executor::Traveller::follow`] use.
 pub fn player_here_tile(c: &Client) -> Option<(i32, i32, i32)> {
     c.local_player.as_ref().map(|lp| {
         let (tx, tz) = player_world_tile(

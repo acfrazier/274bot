@@ -123,11 +123,11 @@ pub use instance_lock::{
 use nav::bank_fetch::BankStep;
 #[cfg(test)]
 use nav::router::{find_with, FindOptions, Route};
-#[cfg(test)]
-use nav::traveller::Traveller;
 use nav::world::NavWorld;
 #[cfg(test)]
 use nav::WorldState;
+#[cfg(test)]
+use nav_executor::Traveller;
 #[cfg(test)]
 use play_bootstrap::bot_client_config;
 use play_bootstrap::PlayConnection;
