@@ -119,7 +119,8 @@ fn session(label: &str, loaded: usize, unloaded: usize) -> OperatorSession<()> {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("create fleet allocation fixture Play");
     let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").expect("vault");
     for index in 0..loaded + unloaded {
         vault

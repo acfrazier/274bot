@@ -3601,7 +3601,8 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
                 runtime.on_frame(client, username, frame.hold, &selected);
             }
         },
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let start_handle = play.script_start_handle();
     let observed_runtime = Arc::clone(&runtime);
     let observed_handle = start_handle.clone();

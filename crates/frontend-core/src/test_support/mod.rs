@@ -59,6 +59,7 @@ impl IsolatedStores {
 /// (empty) profile list stays inside frontend-core.
 pub fn empty_play(options: &host_play::PlayOptions) -> host_play::Play {
     host_play::run_with_io(options, Vec::new(), |_| (None, None), |_, _, _| {})
+        .expect("create empty test Play")
 }
 
 /// The thread's script catalogue selection (`$RS2B0T`, or the isolated

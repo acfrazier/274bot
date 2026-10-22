@@ -217,7 +217,8 @@ fn game_input_submitted_through_the_session_allocates_nothing_after_warm_up() {
         vec![],
         |_| (None, None),
         |_, _, _| {},
-    );
+    )
+    .expect("create command allocation fixture Play");
     let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").expect("vault");
     vault
         .upsert(Profile {

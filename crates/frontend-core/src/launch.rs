@@ -655,6 +655,9 @@ enum ProfileFault {
     /// Preparing or validating the client template failed.
     #[error("{0}")]
     Prepare(String),
+    /// The process network service could not start.
+    #[error("network service start failed: {0}")]
+    ServiceStart(String),
     /// The shared preparation worker failed or lost the job.
     #[error("{0}")]
     Worker(String),
@@ -686,6 +689,7 @@ impl ProfileError {
             ProfileFault::Arguments(message)
             | ProfileFault::Resolve(message)
             | ProfileFault::Prepare(message)
+            | ProfileFault::ServiceStart(message)
             | ProfileFault::Worker(message)
             | ProfileFault::BotOperationRefused(message) => message.capacity(),
             #[cfg(feature = "debug-catalog")]
@@ -1010,6 +1014,11 @@ impl PreparationSteps {
             host_play::TemplateStep::Continue { completed, total } => {
                 Step::Continue { completed, total }
             }
+            host_play::TemplateStep::ServiceStart(error) => Step::Complete {
+                output: Err(ProfileError(ProfileFault::ServiceStart(error.to_string()))),
+                completed: 1,
+                total: Some(1),
+            },
             host_play::TemplateStep::Complete(output) => Step::Complete {
                 output: output.map_err(|error| ProfileError(ProfileFault::Prepare(error))),
                 completed: 1,

@@ -873,18 +873,19 @@ impl<Io> OperatorSession<Io> {
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
-            )?,
+            ),
             LaunchParts::Template(template, mainland) => host_play::run_with_template(
                 template,
                 mainland,
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
-            )?,
+            ),
             LaunchParts::Direct(options) => {
                 host_play::run_with_io(&options, Vec::new(), |_| (None, None), per_frame)
             }
-        };
+        }
+        .map_err(|error| error.to_string())?;
         if let Some(number) = auto_world {
             play.set_auto_world(number)?;
         }
