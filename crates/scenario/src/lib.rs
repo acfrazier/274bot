@@ -683,17 +683,23 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// The reverse dungeon wait remains 240 game ticks (144s). First-egg,
 /// empty, close and further-egg waits remain 150 game ticks.
 ///
-/// **Deadline:** the estimated run needs about 385s. The fixed deadline is
-/// 420s. The 600- and 240-game-tick waits allow 504s together, so the whole-run
-/// deadline can end the scenario before both waits exhaust. Keep that deadline
-/// unless live evidence shows the expected terminal predicate needs more time.
-/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged; diagnosis remains
-/// provisional. No product seed, forced post-Start bank, debug command or
-/// engine acceleration was used. The prior 1755 ladder stall (empty-pack cell)
-/// is not included.
+/// **Deadline:** the text above sizes the cycle for the old fresh-account
+/// seed (HP 10), which FIX-025-F-HERBLORE replaced with upstream's level-40
+/// account. At 40 the script spends its lobsters on pack-full eats instead
+/// of HP eats, so a trip gathers 26 to 27 eggs and the measured full cycle
+/// grew: four completed sizing runs took 627, 622, 627 and 627 game ticks
+/// (longest wall 403.05s), and a fifth had looted 26 eggs, banked and
+/// returned but was still short of the terminal egg at 656 game ticks when
+/// the old 420s wall expired (420.73s). The fixed deadline is 600s: 196.95s
+/// above the longest complete run and 179.27s above the expired run. The
+/// per-watch budgets can still sum past it (deposit 360s, empty and close
+/// 90s each, return 144s), so on a stall the whole-run deadline ends the
+/// scenario first. Script `walkTo` `timeoutMs` 180_000 per hop is unchanged. No
+/// forced post-Start bank, debug command or engine acceleration was used.
+/// The prior 1755 ladder stall (empty-pack cell) is not included.
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
-const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
+const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(600);
 /// B2's completed HerbloreSecondaries cycle needed 412 observed game ticks
 /// (`FIX-025/integrate-b2/engine-a-600ms-b2/cells/herblore_secondaries/receipt.json`).
 /// The newt branch still returned from Draynor at its old 180s deadline.
@@ -787,8 +793,7 @@ const ARDY_THIEVER_FIGHT_DEADLINE: Duration = Duration::from_secs(240);
 /// **Deadline:** pre-Start about 12s. Gear trip about 30s. Fletch about 5s.
 /// Deposit trip and return about 35s. Two geometric chops at 2.4s a roll.
 /// 420s leaves about 140 rolls for two logs, so P(fewer than 2) < 0.1%.
-/// The per-arm budgets are the binding limit. Same 420s pattern as
-/// [`HERBLORE_EGG_DEADLINE`].
+/// The per-arm budgets are the binding limit.
 const MAGIC_TREE_CHOP_WATCH_GAME_TICKS: u32 = 450;
 const MAGIC_TREE_CHOP_DEADLINE: Duration = Duration::from_secs(420);
 
