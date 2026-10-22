@@ -4939,6 +4939,20 @@ fn m0_event<'a>(capture: &'a CombatCapture, kind: &str) -> Option<&'a Value> {
         .find(|event| event["kind"] == kind)
 }
 
+/// Main ruling 2 (2026-10-22): the reason of an M0 cell that times out
+/// without an eligible takeover moment.
+const M0_NOT_ELIGIBLE: &str =
+    "M0 INVALID: no eligible takeover moment; every engaged moment had no registered walk";
+
+/// The INVALID reason of an M0 cell that times out, or `None` for a FAIL.
+/// The cell never took over, and it saw engaged moments that had no
+/// registered walk (`M0NotEligible`): the fixture never reached an eligible
+/// state, which is not a product failure. Any other timeout is a FAIL.
+fn m0_timeout_invalid_reason(capture: &CombatCapture) -> Option<&'static str> {
+    (m0_event(capture, "M0Takeover").is_none() && m0_event(capture, "M0NotEligible").is_some())
+        .then_some(M0_NOT_ELIGIBLE)
+}
+
 /// The active `farm-imps` step (`quester/runner.rs` status fields).
 fn m0_step_active(status: &Value) -> bool {
     status["phase"] == "Working"
@@ -7945,6 +7959,9 @@ fn run_case(case: Case) {
     };
 
     let scenario = scenario_for(case, stand, placement, Arc::clone(&capture));
+    // The runner starts its whole-run deadline when it is made; this instant
+    // is no later, so it tells a runner timeout from a step failure.
+    let runner_made = Instant::now();
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -8015,6 +8032,7 @@ fn run_case(case: Case) {
     let deadline = Instant::now() + case.timeout();
     let mut terminal_error = None;
     let mut abort_observation_end = None;
+    let mut runner_timed_out = false;
     loop {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
@@ -8156,10 +8174,15 @@ fn run_case(case: Case) {
                 terminal_error.get_or_insert_with(|| format!("ScenarioRunner failed: {error}"));
                 if case.is_m0() {
                     // The parked Quester ends the scenario step; the M0
-                    // receipt, not the Blocked status alone, decides.
+                    // receipt, not the Blocked status alone, decides. Without
+                    // a takeover, a step failure is a FAIL, and the runner's
+                    // deadline is the cell's timeout (classified below).
                     if !m0.injected {
-                        writer.outcome = "FAIL".to_owned();
-                        break;
+                        if runner_made.elapsed() < state.runner.deadline() {
+                            writer.outcome = "FAIL".to_owned();
+                            break;
+                        }
+                        runner_timed_out = true;
                     }
                 } else if case == Case::R2 && ranged_abort_horizon_end.is_some() {
                     // The blocked Quester ends the scenario step, not the
@@ -8178,7 +8201,7 @@ fn run_case(case: Case) {
             }
             _ => {}
         }
-        if Instant::now() >= deadline {
+        if runner_timed_out || Instant::now() >= deadline {
             writer.scenario_status = format!("TimedOut({:?})", state.runner.status());
             terminal_error = Some(format!(
                 "{} live proof exceeded {:?}",
@@ -8186,17 +8209,15 @@ fn run_case(case: Case) {
                 case.timeout()
             ));
             writer.outcome = "FAIL".to_owned();
-            let never_eligible = case.is_m0()
-                && !m0.injected
-                && m0_event(
-                    &capture.lock().unwrap_or_else(|e| e.into_inner()),
-                    "M0NotEligible",
-                )
-                .is_some();
-            if never_eligible {
-                let reason = "takeover not eligible: no registered walk".to_owned();
-                combat_proof::mark_invalid(&account, reason.clone());
-                terminal_error = Some(reason);
+            let invalid = case
+                .is_m0()
+                .then(|| {
+                    m0_timeout_invalid_reason(&capture.lock().unwrap_or_else(|e| e.into_inner()))
+                })
+                .flatten();
+            if let Some(reason) = invalid {
+                combat_proof::mark_invalid(&account, reason);
+                terminal_error = Some(reason.to_owned());
                 writer.outcome = "INVALID".to_owned();
             }
             break;
@@ -11866,4 +11887,38 @@ fn m0_paused_oracle_accepts_a_restart_and_rejects_each_bad_behaviour() {
              cancelled by user input"
         ));
     assert!(!m0_paused_ready(&child), "a child terminal trace line");
+}
+
+/// Main ruling 2 (2026-10-22): an M0 timeout that saw only engaged moments
+/// without a registered walk is INVALID with the named reason (review-r2-sol
+/// live-off: 673 `M0NotEligible` observations, no takeover). A timeout after
+/// a takeover, or before any engaged moment, stays a FAIL.
+#[test]
+fn m0_timeout_without_an_eligible_moment_is_invalid_not_fail() {
+    let not_eligible = json!({
+        "kind": "M0NotEligible", "tick": 148, "last_tick": 816, "observations": 673,
+    });
+    let mut never_eligible = CombatCapture::default();
+    never_eligible.random_events.push(not_eligible.clone());
+    assert_eq!(
+        m0_timeout_invalid_reason(&never_eligible),
+        Some(M0_NOT_ELIGIBLE)
+    );
+    assert!(M0_NOT_ELIGIBLE.starts_with("M0 INVALID:"));
+
+    for paused in [false, true] {
+        let mut took_over = m0_oracle_capture(paused);
+        took_over.random_events.push(not_eligible.clone());
+        assert_eq!(
+            m0_timeout_invalid_reason(&took_over),
+            None,
+            "a timeout after a takeover is a FAIL"
+        );
+    }
+
+    assert_eq!(
+        m0_timeout_invalid_reason(&CombatCapture::default()),
+        None,
+        "a timeout before any engaged moment is a FAIL"
+    );
 }
