@@ -425,6 +425,110 @@ fn unresolved_ancestor_module_alias_fails_closed() {
 }
 
 #[test]
+fn reexport_item_extern_crate_alias_tracks_denied_seed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let client = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod io { pub mod client_prot {} }".to_owned(),
+    )]);
+    let api = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub extern crate client as c;".to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(
+        &[("api", &api), ("client", &client)],
+        &["client::io::client_prot"],
+    );
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "api::c::io::client_prot",
+        "use api::c::io::client_prot::ClientProt;",
+        (
+            FindingKind::UsePath,
+            Some("api::c::io::client_prot::ClientProt"),
+        ),
+    );
+}
+
+#[test]
+fn reexport_item_extern_crate_self_alias_fails_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let client = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod io { pub mod client_prot {} } pub extern crate self as me;".to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(&[("client", &client)], &["client::io::client_prot"]);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "client::me::io::client_prot",
+        "use client::me::io::client_prot::ClientProt;",
+        (
+            FindingKind::UsePath,
+            Some("client::me::io::client_prot::ClientProt"),
+        ),
+    );
+    assert_eq!(closure.findings.len(), 1, "{:#?}", closure.findings);
+    assert_eq!(closure.findings[0].kind, FindingKind::UnsupportedReexport);
+    assert_eq!(closure.findings[0].path.as_deref(), Some("client"));
+    assert!(closure.findings[0].detail.contains("recursive"));
+}
+
+#[test]
+fn reexport_item_extern_crate_without_rename_tracks_denied_seed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let client = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod io { pub mod client_prot {} }".to_owned(),
+    )]);
+    let api = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod prelude { pub extern crate client; }".to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(
+        &[("api", &api), ("client", &client)],
+        &["client::io::client_prot"],
+    );
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "api::prelude::client::io::client_prot",
+        "use api::prelude::client::io::client_prot::ClientProt;",
+        (
+            FindingKind::UsePath,
+            Some("api::prelude::client::io::client_prot::ClientProt"),
+        ),
+    );
+}
+
+#[test]
+fn reexport_item_unsupported_public_trait_alias_fails_closed() {
+    use crate::test_support::source_scan::{
+        compute_deny_closure_sources, FindingKind, Scope, SourceMap,
+    };
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub trait Wire = client::io::client_prot::Out;".to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+    assert_eq!(closure.findings.len(), 1, "{:#?}", closure.findings);
+    let finding = &closure.findings[0];
+    assert_eq!(finding.kind, FindingKind::UnsupportedReexport);
+    assert_eq!(finding.path.as_deref(), Some("api::Wire"));
+    assert_eq!(finding.file, PathBuf::from("lib.rs"));
+    assert_eq!(finding.scope, Scope::Production);
+    assert!(finding.detail.contains("trait alias"));
+}
+
+#[test]
 fn aliases_are_scoped_to_inline_modules() {
     let report = action_report(
         "mod a { use api::interact as x; fn f() { x::walk(); } }\
