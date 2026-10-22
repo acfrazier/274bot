@@ -13,6 +13,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Script paint: scripts that use the standard paint-controls helper now show
   working Pause/Resume and Stop buttons. Resume remains available while
   paused. The panel and TUI use the same controls.
+- Script paint buttons in the panel now use the same text size as the
+  paint rows on scaled displays. Release 0.2.4 drew the button labels
+  too large at display scaling above 100 %.
 - Starting a script now stops at once with a clear message when the saved
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
@@ -299,6 +302,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The FireGiant bank check now prepares a level-40 Rune kit and eight Lobsters,
   with time for the full trip at normal game speed. It still requires earned
   loot in the bank, a return to the dungeon, and further combat.
+
+#### Script paint
+
+- The Pause and Stop buttons stay visible when a script's paint rows fill
+  the chat area. Before this fix, a script with many rows could push Stop
+  out of view.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
