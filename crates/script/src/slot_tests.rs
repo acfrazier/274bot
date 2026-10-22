@@ -1643,6 +1643,7 @@ fn compiled_ctx<'a>(
         snapshot: None,
         obj_names: None,
         compiled: crate::CompiledTick {
+            walk_danger: None,
             selected,
             reach: None,
             reach_flood: None,

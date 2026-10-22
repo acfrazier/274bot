@@ -6,6 +6,7 @@ use api::snapshot::{
 };
 use client::client::{Client, ClientConfig, ClientPlayer};
 use client::config::{Cache, ObjType};
+use script::native::AllowWalkDanger;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -889,6 +890,7 @@ struct GatherReconnectRig {
     tick: u64,
     external_session: api::identity::SessionKey,
     service_arm: Option<Arc<SlotArm>>,
+    walk_danger: Option<&'static dyn script::native::WalkDangerQuery>,
 }
 
 impl GatherReconnectRig {
@@ -961,6 +963,7 @@ impl GatherReconnectRig {
             external_session,
             service_arm,
             tick: 1,
+            walk_danger: None,
         }
     }
 
@@ -1024,7 +1027,10 @@ impl GatherReconnectRig {
             inv: None,
             snapshot: Some(snapshot),
             obj_names: Some(names.as_ref()),
-            compiled: script::CompiledTick::default(),
+            compiled: script::CompiledTick {
+                walk_danger: self.walk_danger,
+                ..Default::default()
+            },
         };
         slot.on_game_tick(&mut context);
         drop(slot);
@@ -1444,8 +1450,73 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 }
 
 #[test]
+fn guardian_no_navigation_terminal_drains_after_guardian_release() {
+    let mut rig = GatherReconnectRig::new();
+    rig.walk_danger = None;
+    let token = rig.start_through_host();
+    rig.expect_running_page(token);
+    assert!(rig.slot().lock().unwrap().api_owns_foreground());
+
+    // No data only blocks a needed walk, not work at the current stand.
+    // Move the observed player away while keeping the target tree in place.
+    rig.tile.x += 4;
+    let mut player = rig.snapshot.local_player().unwrap().clone();
+    player.player.actor.tile = rig.tile;
+    player.player.network = rig.tile;
+    rig.snapshot.seed_local_player(player);
+
+    let _ = rig.probe("globalThis.__stop = true");
+    rig.slot().lock().unwrap().seat_guardian_hold(true);
+    for tick in 0..40 {
+        rig.isolate_tick_without_host_drain();
+        if tick % 2 == 0 {
+            let _ = rig.drain_host();
+        } else {
+            rig.slot().lock().unwrap().retain_held_seat_batches();
+        }
+    }
+
+    let result = rig.probe("globalThis.__runResult");
+    assert_eq!(result["value"]["end"], "blocked", "{result}");
+    assert_eq!(
+        result["value"]["failure"]["code"], "resource-unavailable",
+        "{result}"
+    );
+    assert!(
+        result["value"]["failure"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no navigation data")),
+        "{result}"
+    );
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    assert!(
+        rig.slot().lock().unwrap().seat_batch_backlog() > 0,
+        "the held Stop must exercise the retained-batch drain"
+    );
+
+    rig.slot().lock().unwrap().seat_guardian_hold(false);
+    let (rows, owned) = rig.drain_host();
+    assert!(rows.is_empty());
+    assert!(!owned);
+    let cell = rig.slot();
+    let slot = cell.lock().unwrap();
+    assert_eq!(
+        slot.seat_batch_backlog(),
+        0,
+        "state={:?}, seat={:?}",
+        slot.state(),
+        slot.seat_probe()
+    );
+    drop(slot);
+    assert!(!rig.slot().lock().unwrap().api_owns_foreground());
+    assert_eq!(rig.probe("globalThis.__settleCount"), 1);
+    assert_eq!(rig.probe("globalThis.__runResult"), result);
+}
+
+#[test]
 fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
     let mut rig = GatherReconnectRig::new();
+    rig.walk_danger = Some(&AllowWalkDanger);
     let token = rig.start_through_host();
     rig.expect_running_page(token);
     let _ = rig.probe("globalThis.__stop = true");
@@ -1465,8 +1536,12 @@ fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
         );
     }
     rig.slot().lock().unwrap().seat_guardian_hold(false);
+    assert!(
+        rig.slot().lock().unwrap().api_owns_foreground(),
+        "the active-seat fixture must remain live throughout the forty held frames"
+    );
     let deadline = Instant::now() + Duration::from_secs(60);
-    while rig.slot().lock().unwrap().api_owns_foreground() {
+    loop {
         let _ = rig.drain_host();
         if !rig.slot().lock().unwrap().api_owns_foreground() {
             break;

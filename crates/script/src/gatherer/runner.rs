@@ -509,6 +509,7 @@ impl Gatherer {
             self.settings(),
             area,
             ReturnObservation {
+                walk_danger: tick.walk_danger,
                 here: here.value,
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
@@ -563,6 +564,12 @@ impl Gatherer {
             }
             ResourceReturn::InvalidGoals(error) => {
                 self.fail("return-failed", format!("observation goals: {error}"));
+            }
+            ResourceReturn::Danger(failure) => {
+                self.fail(
+                    "return-failed",
+                    self.block_context(Some(here.value), &failure.to_string()),
+                );
             }
         }
     }
@@ -1305,7 +1312,22 @@ impl Gatherer {
         }
         self.method = Arc::clone(&selected.plan.alias);
         self.target = Some(selected.plan.clone());
-        if let Some(request) = selected.approach(tick.cx.snapshot(), tick.cx.evidence()) {
+        let approach =
+            match selected.approach(tick.cx.snapshot(), tick.cx.evidence(), tick.walk_danger) {
+                Ok(approach) => approach,
+                Err(error) => {
+                    self.fail(
+                        if self.trip == TripStep::Return {
+                            "return-failed"
+                        } else {
+                            "resource-unavailable"
+                        },
+                        format!("safe resource access goals: {error}"),
+                    );
+                    return;
+                }
+            };
+        if let Some(request) = approach {
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
                 Ok(handle) => {
                     self.scratch.observation_walk = selected.observation_goals.is_some();
@@ -1971,7 +1993,26 @@ impl Gatherer {
             };
             if enabled
                 && observation == Some(TargetObservation::Active)
-                && selected.approach(snapshot, tick.cx.evidence()).is_none()
+                && (selected.plan.npc_index >= 0
+                    || super::select::resource_arrived(
+                        Some(snapshot),
+                        selected.plan.entity,
+                        selected.plan.tile,
+                    ))
+                && tick.walk_danger.is_none_or(|query| {
+                    !matches!(
+                        query.check(
+                            selected.plan.tile,
+                            match selected.plan.entity {
+                                api::selected::EntityId::Loc(id) => Some(id),
+                                _ => None,
+                            },
+                            super::select::RESOURCE_APPROACH_RADIUS,
+                            ArrivalKind::Reach,
+                        ),
+                        crate::native::WalkDanger::Denied { .. }
+                    )
+                })
             {
                 self.wait_until = None;
                 self.absent = 0;
@@ -1993,6 +2034,8 @@ impl Gatherer {
             area,
             &self.avoid,
             super::select::SelectionObservation {
+                snapshot: Some(snapshot),
+                walk_danger: tick.walk_danger,
                 world: world.value,
                 locs: locs.value,
                 npcs: npcs.value,
@@ -2071,6 +2114,12 @@ impl Gatherer {
                     self.fail(
                         "resource-unavailable",
                         format!("observation goals: {error}"),
+                    );
+                }
+                Selection::Danger(failure) => {
+                    self.fail(
+                        "resource-unavailable",
+                        self.block_context(Some(here.value), &failure.to_string()),
                     );
                 }
                 Selection::Absent { absent } => {

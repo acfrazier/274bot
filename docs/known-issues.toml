@@ -143,3 +143,55 @@ listed = "0.2.5"
 target = "0.2.6"
 severity = "medium"
 owner = "event-driven runtime endpoint"
+
+[[item]]
+id = "grinch-bank-fixed-waits"
+kind = "not-in-release"
+area = "Scripts"
+text = """When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed."""
+first = "0.2.5"
+target = "none"
+severity = "low"
+owner = "shared bank trip (event-driven runtime endpoint)"
+
+[[item]]
+id = "door-held-shut"
+kind = "not-in-release"
+area = "Navigation"
+text = """A bot can't get through a door that another player closes again on every
+  tick, when that player's moves are handled before the bot's. The bot tries
+  the door until its retries run out and then stops at the door. Finding
+  another way around, changing worlds when allowed, and a clear "door held
+  shut" result are planned for 0.2.6."""
+first = "0.2.5"
+target = "0.2.6"
+severity = "medium"
+owner = "nav"
+
+[[item]]
+id = "sherlock-compat-clue-machine"
+kind = "not-in-release"
+area = "Scripts"
+text = """Sherlock was meant to be a native clue solver. In practice it runs on the
+  clue machine ported for rs2b0t clue scripts, so it is available only in
+  builds that include the JS script runtime (every release build does). A
+  native clue solver is planned."""
+first = "0.1.8"
+listed = "0.2.5"
+target = "none"
+severity = "low"
+owner = "T2.rest clues"
+
+[[item]]
+id = "thiever-stun-wait"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t Thiever script waits about three game ticks longer than the
+  game requires after each stun, so it gains Thieving XP more slowly than it
+  could. A fix is planned with the native thieving rework."""
+first = "0.2.4"
+listed = "0.2.5"
+target = "none"
+severity = "medium"
+owner = "T2.rest thieving"

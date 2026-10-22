@@ -190,6 +190,7 @@ impl Driver {
                 observed_walk_outcome_seq: 0,
             };
             let mut native = NativeTick {
+                walk_danger: None,
                 actions: &mut actions,
                 cx,
                 output: &mut self.output,
@@ -203,6 +204,7 @@ impl Driver {
                     snapshot: Some(snapshot),
                     obj_names: None,
                     compiled: crate::CompiledTick {
+                        walk_danger: None,
                         selected: Some(&selected),
                         reach: None,
                         reach_flood: None,
