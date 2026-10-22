@@ -783,6 +783,11 @@ fn profile_selection_retries_after_work_admission_is_full() {
     let mut state = PanelState::default();
     state
         .session
+        .core
+        .start_network_composition()
+        .expect("panel fixture starts Play network composition");
+    state
+        .session
         .configure_profile_with_env(
             frontend_core::launch::ProfileArgs::from_host(options),
             frontend_core::launch::ProfileEnv::from_host(env),
