@@ -612,6 +612,14 @@ const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
 /// whole-scenario cap (independent of game-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
+/// FlaxRunner pair cell whole-run cap. The worst of three measured passing
+/// runs took 170.6 s in total: 155.5 s of script plus 15.1 s of setup
+/// (`FIX-025/f/flax/report.md`). That is only 9.4 s under the shared 180 s
+/// [`SCRIPT_GOLD_DEADLINE`], and the nightly run was still spinning flax
+/// when that cap ended it. 240 s is about 1.4x the worst measured total,
+/// a 69.4 s margin. Only `flax_runner` uses this cap; the other pair
+/// cells keep [`SCRIPT_GOLD_DEADLINE`].
+const FLAX_RUNNER_DEADLINE: Duration = Duration::from_secs(240);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
 /// **Units:** this constant is a `budget_ticks` count of observed game
