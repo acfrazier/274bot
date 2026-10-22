@@ -30,7 +30,7 @@
 
 - Say **random-event handling**, not "guardian".
 - Say **navigation data**, not "nav pack", unless you are quoting the `nav-pack` tool.
-- **Danger routing** has three levels: **Never**, **When survivable** and **Always**.
+- **Danger routing** has three levels: **Never**, **When survivable** and **Always**. **When survivable** acts as **Never** until the bot can track poison.
 - Use the button names as the app shows them: **Log in**, **Start**, **Pause**,
   **Resume**, **Stop**, **Browse…**, **Load**, **Reload**. The panel's login row
   says **Logout**; the Fleet actions say **Log out**.
