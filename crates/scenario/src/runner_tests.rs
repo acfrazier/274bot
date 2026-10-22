@@ -1649,6 +1649,28 @@ fn deadline_fails_a_stuck_run() {
         RunnerStatus::Failed(msg) => assert!(msg.contains("deadline"), "msg: {msg}"),
         other => panic!("expected Failed, got {other:?}"),
     }
+    assert!(runner.deadline_exceeded(), "the deadline ended the run");
+}
+
+/// R3-F1 (M0 round 5): a step failure read after the deadline is still a
+/// step failure. `deadline_exceeded` reports the recorded cause, not the
+/// time at which the caller reads the status.
+#[test]
+fn a_step_failure_read_after_the_deadline_is_not_a_deadline_failure() {
+    let mut runner = ScenarioRunner::new(stat_scenario(999, 1));
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_deadline(Duration::ZERO);
+    let mut c = seeded_client();
+    runner.tick(&mut c);
+    let RunnerStatus::Failed(msg) = runner.status() else {
+        panic!("expected Failed, got {:?}", runner.status());
+    };
+    assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
+    assert!(runner.started.elapsed() > runner.deadline());
+    assert!(
+        !runner.deadline_exceeded(),
+        "a step failure is not a deadline failure"
+    );
 }
 
 /// A one-step shot scenario: no send, the arm holds on the first
