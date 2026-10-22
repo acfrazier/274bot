@@ -259,6 +259,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tick.
 - Game-tick counts now advance only for applied `PLAYER_INFO` packets;
   unrelated player-family invalidations no longer inflate scenario receipts.
+- The Gatherer lifecycle check accepts planned restarts only at the measured
+  ten-bot size. Other sizes fail with `restart_bound_unmeasured`.
+  An observation that ends during a planned Stop records the qualified
+  stopped state instead of an unfinished qualification.
 
 #### Gatherer
 

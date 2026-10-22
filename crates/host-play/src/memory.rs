@@ -1340,6 +1340,16 @@ impl Run {
         {
             return Err("BOT_MEMORY_SUSTAIN=1 requires the active thiever scenario".into());
         }
+        if requested_scenario == "gatherer"
+            && config.workload == Workload::Lifecycle
+            && config.n != crate::memory_diagnostics::GATHERER_RESTART_MEASURED_N
+        {
+            return Err(format!(
+                "restart_bound_unmeasured:n={}:measured_n={}",
+                config.n,
+                crate::memory_diagnostics::GATHERER_RESTART_MEASURED_N
+            ));
+        }
         client::profiling::enable();
         use vault::{Profile, ProfileSettings, Vault};
 
@@ -2164,7 +2174,9 @@ impl Run {
             value["duel_gate"] = gate;
         }
         if self.is_gatherer_fleet() {
-            if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json() {
+            if let Some((_, summary)) =
+                crate::memory_diagnostics::gatherer_verdict_json(phase == "observe-end")
+            {
                 value["gatherer_fleet_qualification"] = summary;
             }
         }
@@ -2207,7 +2219,7 @@ impl Run {
             value["duel_gate"] = gate;
         }
         if self.is_gatherer_fleet() {
-            if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json() {
+            if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json(false) {
                 value["gatherer_fleet_qualification"] = summary;
             }
         }
@@ -2959,6 +2971,29 @@ mod tests {
             .shared_world()
             .expect("world");
         assert!(Arc::ptr_eq(&world, &shared));
+    }
+
+    #[test]
+    fn gatherer_lifecycle_accepts_only_the_measured_n10_scope() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_DIAGNOSTICS",
+        ]);
+        std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
+        Run::prepare_unseeded(unit_config(10, Workload::Lifecycle), "unit")
+            .expect("N10 lifecycle has a measured restart bound");
+        for n in [1, 2, 9, 11, 16, 50, 128] {
+            let result = Run::prepare_unseeded(unit_config(n, Workload::Lifecycle), "unit");
+            assert_eq!(
+                result.err().as_deref(),
+                Some(format!("restart_bound_unmeasured:n={n}:measured_n=10").as_str())
+            );
+        }
+        Run::prepare_unseeded(unit_config(2, Workload::Active), "unit")
+            .expect("active Gatherer cells do not use a restart bound");
     }
 
     #[test]
