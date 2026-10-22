@@ -1,9 +1,11 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.4` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.5` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
+
+## [0.2.5] — 2026-10-22 — Beta 2
 
 ### Scripts
 
@@ -310,6 +312,92 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Pause and Stop buttons stay visible when a script's paint rows fill
   the chat area. Before this fix, a script with many rows could push Stop
   out of view.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4
+  has the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 has the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 has the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for 0.2.6.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.4 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a Ryzen
+  with built-in graphics plus a separate graphics card), the panel can close
+  right after it starts with "importing the supplied dmabufs failed". Start it
+  with `WGPU_POWER_PREF=high ./panel-play` until this is fixed. 0.2.0.2 to 0.2.4
+  have the same problem.
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.4 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.4 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.4 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for 0.2.6. 0.2.4 has the same
+  problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 has the
+  same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp.
+- **Scripts:** A script notices that you moved the bot yourself only while it is
+  walking, or while an rs2b0t script runs a Gather or Combat session. If you
+  move the bot while it fights or gathers in place, "Pause script on manual
+  movement" does not pause the script, the script does not stop, and it carries
+  on. A Quester fight notices your movement only when the fight began with a
+  walk to its spot. 0.2.0 to 0.2.4 have the same problem.
+- **Scripts:** In the FlaxRunner script, the Spinner banking step does not check
+  whether the walk to the Seers' Village bank or the bank opening succeeded
+  before it tries to deposit. If either step fails once, the deposit does
+  nothing for that trip and the trip counter still increases. The script retries
+  on the next loop, so work continues, but a trip can be wasted. The fix belongs
+  to the upstream script.
+- **Scripts:** The rs2b0t HerbloreSecondaries script does not eat while it
+  walks, and its eat rule refuses a lobster above 5 hitpoints because the
+  12-point heal does not fit a low-Hitpoints account. On a low-level account the
+  red spiders' eggs trip through Edgeville dungeon can kill the bot with food
+  still in its pack. Run this script on an account with mid-level combat stats
+  (the script's own tests use level 40) until the script is fixed upstream.
+- **Scripts:** The rs2b0t GnomeMagicChopper script looks for the Gnome
+  Stronghold bank's north staircase in the wrong place, a few tiles from the
+  real stairs. If its first walk to the bank fails and it switches to the north
+  staircase, that bank trip can fail. The south staircase works, and the script
+  usually recovers on a later trip. If a fletching bank trip gets stuck, move
+  the bot beside the south staircase and restart the script. The fix belongs to
+  the upstream script.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 
