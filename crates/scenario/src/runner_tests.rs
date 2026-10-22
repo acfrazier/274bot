@@ -3882,23 +3882,29 @@ fn assert_ardy_running(runner: &ScenarioRunner, context: &str) {
     );
 }
 
-/// The `base-d7` receipt (two catches and one public pile before the style),
-/// carried on to the style and the fight. Every pre-style session uses most
-/// of its budget, so the style comes far beyond the old 320-game-tick bar.
+/// The `base-d7` receipt (`FIX-ARDY-STYLE-025/runs/base-d7/timeline.txt`):
+/// two Guard catches and one public Bones pile before the style, with the
+/// deposits at +95, +160 and +279 game ticks after Start. The card had
+/// stocked a Cake at +324 and was about to select its style when the old
+/// 320-game-tick watch failed it. Projected on: style at +326, first
+/// Strength hit at +333, then the ordinary bank chain.
 #[test]
-fn ardy_fighter_bank_style_watch_accepts_any_number_of_content_trips() {
-    let session = ardy_budget(ARDY_STYLE_STEP) as usize;
+fn ardy_fighter_bank_style_watch_accepts_the_base_d7_receipt() {
     let (mut runner, mut c) = ardy_bank_after_start();
-    for banked in 1..=3 {
-        ardy_pre_style_trip(&mut runner, &mut c, banked, session - 10);
-        assert_ardy_running(&runner, &format!("pre-style trip {banked}"));
+    // Each trip takes `spend + 3` game ticks to its observed deposit and one
+    // more to the close.
+    let mut now = 0;
+    for (banked, deposit_at) in [(1, 95), (2, 160), (3, 279)] {
+        ardy_pre_style_trip(&mut runner, &mut c, banked, deposit_at - now - 3);
+        now = deposit_at + 1;
+        assert_ardy_running(&runner, &format!("deposit {banked} at +{deposit_at}"));
     }
     set_world_tile(&mut c, ARDY_ORACLE.field);
-    oracle_settle(&mut runner, &mut c, session - 10);
-    assert!(4 * (session - 10) > 320, "the receipt outlasts the old bar");
+    oracle_settle(&mut runner, &mut c, 324 - now);
     set_inv(&mut c, &[(ARDY_CAKE, 1)]);
-    set_combat_style(&mut c, 1);
     oracle_settle(&mut runner, &mut c, 2);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 7);
     oracle_gain_strength(&mut c);
     oracle_settle(&mut runner, &mut c, 2);
     set_inv(&mut c, &[(ARDY_BONES, 1)]);
@@ -3953,7 +3959,7 @@ fn ardy_fighter_bank_style_watch_rejects_a_session_beyond_one_content_trip() {
         &mut runner,
         &mut c,
         ARDY_STYLE_STEP,
-        &format!("not seen within {session} game ticks [pre-style trips=1 deposited=1]"),
+        &format!("[pre-style trips=1 deposited=1] not seen within {session} game ticks"),
     );
 }
 
