@@ -1,5 +1,8 @@
 # Architecture
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+
 274bot is a Rust bot host over a vendored client library. Ownership is crate
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.

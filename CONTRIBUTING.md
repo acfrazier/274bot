@@ -23,6 +23,9 @@ Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
 [FIRST-START.md](FIRST-START.md), [docs/](docs/README.md),
 [docs/architecture.md](docs/architecture.md).
 
+Build commands, live-test runs and navigation-pack notes are in
+[docs/dev/build-from-source.md](docs/dev/build-from-source.md).
+
 ## Prerequisites
 
 - A **local** Lost City engine for the profile under test:
@@ -94,7 +97,7 @@ lair. The headed twin is the `panel`
 Shared profile flags (all three binaries):
 `--profile NAME`, `--rs2b2t`, `--revision 274|289`, `--engine`, `--cache`,
 `--vault`, `--catalog`, and related overrides. `--prod` and `BOT_TARGET` are
-removed. See [README.md](README.md) and [FIRST-START.md](FIRST-START.md).
+removed. See [server-profiles.md](docs/reference/server-profiles.md) and [FIRST-START.md](FIRST-START.md).
 
 ## Toolchain
 
