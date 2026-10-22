@@ -13,9 +13,7 @@ pub(crate) struct Runtime {
     pub ledger: Option<Box<Ledger>>,
     pub budget: TickBudget,
     pub clock: ActiveClock,
-    pub observed_walk_outcome_seq: u64,
-    /// The host's cancel reason for `observed_walk_outcome_seq`.
-    pub observed_walk_cancel_reason: super::WalkCancelReason,
+    pub observed_walk_outcome: ObservedWalkOutcome,
     /// One confirmed native gameplay change, fenced to its run and session.
     pub pending_note_progress: Option<RunKey>,
 }
@@ -36,6 +34,38 @@ impl Runtime {
     /// run/session. A stale marker is never carried into the current run.
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
+    }
+}
+
+/// The host walk outcome the slot observed last: its sequence and its cancel
+/// reason, packed in one word so the per-slot runtime keeps its size
+/// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The host counts the
+/// sequence one per outcome from 1, so it never reaches the reason bit.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObservedWalkOutcome(u64);
+
+impl ObservedWalkOutcome {
+    const USER_INPUT: u64 = 1 << 63;
+
+    pub fn new(seq: u64, cancel_reason: super::WalkCancelReason) -> Self {
+        debug_assert_eq!(seq & Self::USER_INPUT, 0, "walk outcome sequence overflow");
+        let reason = match cancel_reason {
+            super::WalkCancelReason::None => 0,
+            super::WalkCancelReason::UserInput => Self::USER_INPUT,
+        };
+        Self((seq & !Self::USER_INPUT) | reason)
+    }
+
+    pub fn seq(self) -> u64 {
+        self.0 & !Self::USER_INPUT
+    }
+
+    pub fn cancel_reason(self) -> super::WalkCancelReason {
+        if self.0 & Self::USER_INPUT == 0 {
+            super::WalkCancelReason::None
+        } else {
+            super::WalkCancelReason::UserInput
+        }
     }
 }
 /// Typed host work retains an owner, never a frame borrow. The host must check
@@ -794,5 +824,26 @@ mod tests {
         // A relog's first in-game frame enters its scene.
         budget.observe_frame(9, Some(&scene_frame(0, 3184, 3311, (3120, 3256))));
         assert!(budget.entered_scene());
+    }
+}
+
+#[cfg(test)]
+mod observed_walk_outcome_tests {
+    use super::super::WalkCancelReason;
+    use super::ObservedWalkOutcome;
+
+    #[test]
+    fn packed_outcome_keeps_sequence_and_reason() {
+        assert_eq!(ObservedWalkOutcome::default().seq(), 0);
+        assert_eq!(
+            ObservedWalkOutcome::default().cancel_reason(),
+            WalkCancelReason::None
+        );
+        for seq in [1, 41, u64::MAX >> 1] {
+            for reason in [WalkCancelReason::None, WalkCancelReason::UserInput] {
+                let outcome = ObservedWalkOutcome::new(seq, reason);
+                assert_eq!((outcome.seq(), outcome.cancel_reason()), (seq, reason));
+            }
+        }
     }
 }
