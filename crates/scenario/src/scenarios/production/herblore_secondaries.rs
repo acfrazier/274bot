@@ -6,6 +6,13 @@ pub(crate) const HERBLORE_EGG_FOOD_SEED: i32 = 50;
 /// Canonical `FOOD_DEFAULT_COUNT` / `foodWithdraw` default. Carried at Start
 /// so loot `needsRestock` is false (takeFood && foodCount < 1).
 pub(crate) const HERBLORE_EGG_FOOD_CARRY: i32 = 10;
+/// Combat levels seeded before Start. The eggs anchor stands inside Deadly
+/// red spider (L34) territory and the Edgeville bank route crosses the
+/// Skeleton (L21-L25) and Thug (L10) corridor, so a fresh account at HP 10
+/// survives the trip only on lucky hit rolls: a chance outcome, not product
+/// behaviour this cell proves. 40 matches the account upstream's own eggs
+/// e2e seeds (`e2e/herblore-secondaries-test.ts:128-130`, frozen `90a69240a`).
+const HERBLORE_EGG_COMBAT_SEED: i32 = 40;
 pub(crate) const HERBLORE_NEWT_COIN_SEED: i32 = 5000;
 const EGG_FIELD: WorldTile = WorldTile {
     x: 3120,
@@ -227,6 +234,35 @@ pub(crate) fn herblore_secondaries_scenario() -> Scenario {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
     steps.push(bank_fletcher_close_seed_bank());
+    // Seed the upstream e2e account levels only after the seed bank has
+    // closed, then drain the queued level-up dialogs before the dungeon
+    // teleport (the shared hostile-field pattern).
+    steps.push(Step {
+        name: "seed upstream combat levels before the dungeon trip",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                for stat in [
+                    "attack",
+                    "strength",
+                    "defence",
+                    "hitpoints",
+                    "agility",
+                    "herblore",
+                ] {
+                    cheat(c, &format!("setstat {stat} {HERBLORE_EGG_COMBAT_SEED}"));
+                }
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: HERBLORE_EGG_COMBAT_SEED,
+            },
+            budget_ticks: 120,
+        },
+    });
+    steps.push(drain_setstat_levelups_before_hostile_tele());
     // Pack is empty of seed after deposit; clearinv only after bank accepts seed.
     // Carry canonical food so takeFood loot does not BankTrip before first Take.
     steps.push(Step {
