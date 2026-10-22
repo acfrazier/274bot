@@ -16,7 +16,7 @@ assets. You bring your own local Lost City engine to run it.
 - Documentation. Read [Writing 274bot docs](docs/dev/writing-docs.md) first.
 
 Discuss a change in a [GitHub issue](https://github.com/acfrazier/274bot/issues)
-before you write a large one. Open pull requests against `main`. Read and run
+before you write a large one. Open pull requests against `dev`. Read and run
 your change before you send it: a pull request that looks like unchecked
 generated output is closed. Do not describe script compatibility as complete in
 a pull request or a doc.
