@@ -5835,7 +5835,27 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/engine-q/start-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-q/status-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-q/stop-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/malbec-mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/nightly-mac.sh",
       "owner": "T1"
     },
     {
@@ -5844,6 +5864,10 @@
     },
     {
       "path": "tools/nightly/run_nightly.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/systemd/run-quest-job.sh",
       "owner": "T1"
     },
     {
