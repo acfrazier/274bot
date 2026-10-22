@@ -14645,7 +14645,7 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
     use crate::scenarios::quester::RUNE_MYST_DEADLINE;
 
     for (name, measured_ms, deadline) in [
-        ("ardy_fighter_bank", 239_154_u64, ARDY_FIGHTER_BANK_DEADLINE),
+        ("ardy_fighter_bank", 365_610_u64, ARDY_FIGHTER_BANK_DEADLINE),
         (
             "auto_fighter_targets",
             580_326,
@@ -14685,4 +14685,60 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
         get("thiever_guard_no_bank").unwrap().settings.deadline,
         Duration::from_secs(420)
     );
+}
+
+/// The earned-kill bank cell waits for the card's own Strength selection
+/// across the Loot-count trips that a Guard catch or a public pile can send
+/// it on first, then gives the first Strength XP one fight window. The
+/// bank-Off sibling keeps its single style watch.
+#[test]
+fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
+    use crate::scenarios::combat::{
+        ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS, ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
+        ARDY_FIGHTER_STRENGTH_STYLE,
+    };
+    let scenario = get("ardy_fighter_bank").unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let style = &scenario.steps[start + 1];
+    assert!(
+        matches!(
+            style.kind,
+            StepKind::ObserveStyleAcrossLootTrips {
+                deposit_id: BONES_ID,
+                food,
+                progress_stat: 17,
+            } if [1891, 1893, 1895, 1897, 1899, 1901, 2309]
+                .iter()
+                .all(|id| food.contains(id))
+        ),
+        "the style watch restarts on deposited Bones and Thieving XP and knows every stall food"
+    );
+    assert_eq!(style.wait.arm, ARDY_FIGHTER_STRENGTH_STYLE);
+    assert_eq!(style.wait.arm, Proof::VarpExact { id: 43, value: 1 });
+    assert_eq!(
+        style.wait.budget_ticks,
+        ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS
+    );
+    let fight = &scenario.steps[start + 2];
+    assert_eq!(
+        fight.name,
+        "watch Strength XP from the selected melee style after Start"
+    );
+    assert_eq!(
+        fight.wait.arm,
+        Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    );
+    assert_eq!(fight.wait.budget_ticks, ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS);
+    let plain = get("ardy_fighter").unwrap();
+    assert!(!plain
+        .steps
+        .iter()
+        .any(|step| matches!(step.kind, StepKind::ObserveStyleAcrossLootTrips { .. })));
 }
