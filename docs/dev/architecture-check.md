@@ -53,7 +53,9 @@ headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
 feature-gated test lanes (script `load` and V8-free `--no-default-features`,
 host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
 `memory-profile-no-alloc`, panel `render-diagnostics`) and the inline
-architecture check: the step itself runs `git clone --depth 1 --branch main
+architecture check: the step itself clones the checker branch that `ci.yml`
+names (`main` on `dev` and `main`; a `release-<version>` branch on a release
+line, for example `release-0.2.5`) with `git clone --depth 1 --branch <that branch>
 https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
 verifies the rust-analyzer binary (SHA-256
 `fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
