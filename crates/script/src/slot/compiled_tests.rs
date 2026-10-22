@@ -2322,13 +2322,13 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
     slot.bind_incarnation(10);
     slot.start_test_script(Box::new(WalkingRows(0)), Some(selected()))
         .unwrap();
-    slot.observe_walk_outcome(10, None);
+    slot.observe_walk_outcome(10, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
-    slot.observe_walk_outcome(11, None);
+    slot.observe_walk_outcome(11, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     let (_, older, _) = slot.drain_host_interacts();
 
-    slot.observe_walk_outcome(12, None);
+    slot.observe_walk_outcome(12, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     slot.restore_host_interacts(older);
     let (_, rows, _) = slot.drain_host_interacts();

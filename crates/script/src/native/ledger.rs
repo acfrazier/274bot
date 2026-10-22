@@ -14,6 +14,8 @@ pub(crate) struct Runtime {
     pub budget: TickBudget,
     pub clock: ActiveClock,
     pub observed_walk_outcome_seq: u64,
+    /// The host's cancel reason for `observed_walk_outcome_seq`.
+    pub observed_walk_cancel_reason: super::WalkCancelReason,
     /// One confirmed native gameplay change, fenced to its run and session.
     pub pending_note_progress: Option<RunKey>,
 }

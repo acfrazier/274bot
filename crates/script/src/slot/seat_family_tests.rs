@@ -935,9 +935,17 @@ fn physical_walk_terminals_resolve_the_producer_namespace() {
     slot.dispatch_seat_rows();
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 2);
 
-    slot.observe_walk_outcome(1, Some(SeatWalkTerminal::Native(raw)));
+    slot.observe_walk_outcome(
+        1,
+        crate::native::WalkCancelReason::None,
+        Some(SeatWalkTerminal::Native(raw)),
+    );
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 1);
-    slot.observe_walk_outcome(2, Some(SeatWalkTerminal::Load(raw)));
+    slot.observe_walk_outcome(
+        2,
+        crate::native::WalkCancelReason::None,
+        Some(SeatWalkTerminal::Load(raw)),
+    );
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 0);
     slot.stop();
 }
@@ -1223,7 +1231,11 @@ fn three_walk_terminals_during_guardian_hold_free_all_slots() {
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 3);
     slot.seat_guardian_hold(true);
     for (seq, raw) in (1..=3).zip(40..43) {
-        slot.observe_walk_outcome(seq, Some(SeatWalkTerminal::Load(id(raw))));
+        slot.observe_walk_outcome(
+            seq,
+            crate::native::WalkCancelReason::None,
+            Some(SeatWalkTerminal::Load(id(raw))),
+        );
     }
     assert_eq!(slot.seat.as_ref().unwrap().reserved_releases(), 3);
     slot.seat_guardian_hold(false);

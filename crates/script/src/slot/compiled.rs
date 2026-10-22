@@ -407,6 +407,7 @@ pub(super) fn frame_context<'a>(
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
         observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
+        observed_walk_cancel_reason: runtime.observed_walk_cancel_reason,
     }
 }
 

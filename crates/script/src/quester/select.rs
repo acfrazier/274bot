@@ -226,6 +226,7 @@ mod tests {
             retained: &mut retained,
             action_id: 0,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,

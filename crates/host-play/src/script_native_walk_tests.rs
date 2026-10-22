@@ -4188,6 +4188,67 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     assert_eq!(rig.shared.lock().results.len(), 1);
 }
 
+/// A compiled fight keeps its walk request registered after the walk arrives
+/// (`script/src/slot.rs` `live_walking_operation`), so a later manual step is
+/// an eligible takeover. The host then has no correlated request: the posted
+/// reason stays `None` and only the sequence and the watermark move. The
+/// compiled side still reads that takeover outcome as `UserInput`, and the
+/// next ordinary outcome clears it.
+#[test]
+fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_compiled() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").unwrap();
+    let (seq, request, generation) = (
+        bot.walk_outcome_seq,
+        bot.walk_outcome_request_id,
+        bot.walk_outcome_generation,
+    );
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+
+    bot.cancel_for_manual_input();
+    assert_eq!(
+        bot.walk_outcome_cancel_reason,
+        script::isolate_fb::WalkCancelReason::None,
+        "no correlated request: the posted Load reason stays None"
+    );
+    assert_eq!(bot.walk_outcome_request_id, request);
+    assert_eq!(bot.walk_outcome_generation, generation);
+    assert!(!bot.walk_outcome_failed);
+    assert_eq!(bot.walk_outcome_seq, seq + 1, "the sequence moves");
+    assert_eq!(bot.manual_takeover_watermark, seq + 1, "the watermark moves");
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, seq + 2);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a later ordinary outcome is not a takeover"
+    );
+}
+
 #[test]
 fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
     let mut rig = open_rig(false);
