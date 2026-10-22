@@ -757,7 +757,7 @@ impl ProfilePreparation {
             script::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
-            move |_| steps.step(),
+            move |worker| steps.step(worker),
         )
         .map_err(submit_error)?;
         Ok(PreparationJob {
@@ -767,20 +767,12 @@ impl ProfilePreparation {
         })
     }
 
-    /// Run the whole preparation on this thread (tests).
+    /// Submit the whole preparation and wait outside the worker (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_blocking(&self) -> Result<ProfileTemplate, ProfileError> {
-        let mut steps = PreparationSteps::new(
-            Arc::clone(&self.inputs),
-            host_play::progress::ProfileProgressObserver::default(),
-        );
-        loop {
-            if let script::preparation::CooperativePreparationStep::Complete { output, .. } =
-                steps.step()
-            {
-                return output.map(ProfileTemplate);
-            }
-        }
+        self.submit()
+            .map_err(|error| ProfileError(ProfileFault::Worker(error.to_string())))?
+            .join()
     }
 }
 
@@ -968,6 +960,7 @@ impl PreparationSteps {
 
     fn step(
         &mut self,
+        worker: &mut api::selected::FamilyPreparation,
     ) -> script::preparation::CooperativePreparationStep<
         Result<Arc<SharedClientTemplate>, ProfileError>,
     > {
@@ -1003,9 +996,10 @@ impl PreparationSteps {
                 },
             };
         };
-        match template.step(
+        match template.step_on_worker(
             std::time::Instant::now() + host_play::TEMPLATE_STEP_WAIT,
             &self.observer,
+            worker,
         ) {
             host_play::TemplateStep::Continue { completed, total } => {
                 Step::Continue { completed, total }

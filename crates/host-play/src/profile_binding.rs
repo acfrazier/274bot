@@ -1096,11 +1096,32 @@ pub enum TemplateStep {
 }
 
 impl TemplatePreparation {
-    /// Do the next bounded unit. Network and lock waits end at `until`.
+    /// Do the next bounded unit outside the preparation worker.
+    /// Network and lock waits end at `until`.
     pub fn step(
         &mut self,
         until: std::time::Instant,
         observer: &ProfileProgressObserver,
+    ) -> TemplateStep {
+        self.step_inner(until, observer, None)
+    }
+
+    /// Do the next unit using the enclosing WorkAdmission preparation.
+    /// Quest facts use this capability without submitting or joining work.
+    pub fn step_on_worker(
+        &mut self,
+        until: std::time::Instant,
+        observer: &ProfileProgressObserver,
+        worker: &mut api::selected::FamilyPreparation,
+    ) -> TemplateStep {
+        self.step_inner(until, observer, Some(worker))
+    }
+
+    fn step_inner(
+        &mut self,
+        until: std::time::Instant,
+        observer: &ProfileProgressObserver,
+        worker: Option<&mut api::selected::FamilyPreparation>,
     ) -> TemplateStep {
         let waiting = TemplateStep::Continue {
             completed: 0,
@@ -1177,9 +1198,12 @@ impl TemplatePreparation {
                     Err(error) => TemplateStep::Complete(Err(error)),
                 }
             }
-            TemplateStage::Load(profile) => TemplateStep::Complete(
-                crate::SharedClientTemplate::load_with_progress(profile, observer),
-            ),
+            TemplateStage::Load(profile) => TemplateStep::Complete(match worker {
+                Some(worker) => {
+                    crate::SharedClientTemplate::load_on_worker(profile, observer, worker)
+                }
+                None => crate::SharedClientTemplate::load_with_progress(profile, observer),
+            }),
             TemplateStage::Done => {
                 TemplateStep::Complete(Err("profile preparation already finished".into()))
             }
@@ -1434,6 +1458,83 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn template_load_with_game_data_completes_on_the_preparation_worker() {
+        use script::preparation::{
+            submit_cooperative, CooperativePreparationStep as Step, PreparationInput,
+            PreparationKind,
+        };
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let root = scratch_dir("template-preparation-worker");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
+        let selection = super::ProfileOptions {
+            revision: Some("289".into()),
+            cache_dir: Some(fixtures.clone()),
+            cache_manifest: Some(fixtures.join("manifest-289.json")),
+            unpack_dir: Some(root.join("unpack")),
+            nav_pack: Some(root.join("missing.navpack")),
+            ..Default::default()
+        }
+        .resolve_with_env(
+            None,
+            &super::ProfileEnvironment {
+                home: Some(root.clone()),
+                engine_dir: Some(root.join("fixture-engine")),
+                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut profile = selection.bind().unwrap();
+        // The tiny cache tests decoding, not source attestation. Supply the
+        // real embedded family to exercise the panel's game-data load branch.
+        Arc::get_mut(&mut profile).unwrap().game_data =
+            Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap());
+        let mut preparation = selection.begin_template_preparation();
+        // Cache fill and binding precede this stage in the panel. Enter its
+        // actual load step on the same shared preparation worker.
+        preparation.stage = super::TemplateStage::Load(profile);
+        let observer = super::ProfileProgressObserver::default();
+        let task = submit_cooperative(
+            PreparationKind::Profile,
+            api::identity::Scope::Process,
+            PreparationInput::new(1, 64 << 20, 32 << 20, 32 << 20).unwrap(),
+            move |worker| match preparation.step_on_worker(
+                Instant::now() + super::TEMPLATE_STEP_WAIT,
+                &observer,
+                worker,
+            ) {
+                super::TemplateStep::Continue { completed, total } => {
+                    Step::Continue { completed, total }
+                }
+                super::TemplateStep::Complete(output) => Step::Complete {
+                    output,
+                    completed: 1,
+                    total: Some(1),
+                },
+            },
+        )
+        .unwrap();
+        let started = Instant::now();
+        while !task.is_finished() {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "template load blocked its own preparation worker"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let template = task.join().unwrap().unwrap();
+        let data = template.game_data().expect("the profile has game data");
+        assert!(
+            data.try_quests().is_some(),
+            "quest facts are ready before play"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

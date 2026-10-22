@@ -53,6 +53,16 @@ Assignment changes after Ready, never on enqueue. Stop, replacement and
 profile removal invalidate late replies. Invalid settings or factory failure
 retain the previous assignment and report a structured rejection.
 
+Preparation callbacks share one WorkAdmission background worker. Pass the
+existing `FamilyPreparation` capability to nested family decoders. Profile
+preparation uses `TemplatePreparation::step_on_worker` for this reason.
+Do not submit another background job and wait for it from that worker.
+`WorkService::wait_terminal` returns `WorkWaitError::WouldDeadlock` for a
+pending job on the caller's own background worker. `PreparedTask::join`
+preserves that typed error and abandons the unconsumed job. An already
+published terminal remains consumable without waiting. This refusal does
+not mark the service unavailable.
+
 `NativeTick` borrows the frame/evidence/pin/recovery views and the shared
 status/paint/log output. Native instances allocate no isolate. Status and paint
 are shared on change; focused detail retains rich status while fleet rows remain
