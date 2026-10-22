@@ -435,6 +435,49 @@ fn logout_and_wait(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut 
         && wait_for(client, snapshot, pump, LOGOUT_TIMEOUT, |s| !s.ingame())
 }
 
+/// Client logout does not prove that the engine released account ownership.
+/// World.ts:795-804 retries persistence after 15 s. As in play_login.rs,
+/// allow 30 s for the initial save and one retry, probing every 5 s.
+/// Only response 5 (pending logout or active player, World.ts:813-867)
+/// permits another attempt. Successful login is the readiness signal.
+fn login_after_logout(
+    client: &mut Client,
+    credentials: (&str, &str),
+    phase: &str,
+    logout_tick: u32,
+    receipt: &mut Value,
+    receipt_path: &Path,
+) {
+    let started = Instant::now();
+    let budget = Duration::from_secs(30);
+    let cadence = Duration::from_secs(5);
+    let mut attempts = Vec::new();
+    loop {
+        let result = client.login(credentials.0, credentials.1, false);
+        attempts.push(json!({
+            "attempt": attempts.len() + 1,
+            "elapsed_ms": started.elapsed().as_millis(),
+            "logout_tick": logout_tick,
+            "accepted": result.is_ok(),
+            "response_code": result.as_ref().err().map(|error| error.code),
+            "message": format!("{} {}", client.login_mes1, client.login_mes2),
+        }));
+        receipt["relogin"][phase] = json!(attempts);
+        write_receipt(receipt_path, receipt);
+        match result {
+            Ok(()) => return,
+            Err(error) => {
+                assert_eq!(error.code, 5, "{phase} relog refused: {error:?}");
+                assert!(
+                    started.elapsed() + cadence < budget,
+                    "{phase} account ownership was not released within {budget:?}"
+                );
+                std::thread::sleep(cadence);
+            }
+        }
+    }
+}
+
 fn evidence_stamp(snapshot: &GameSnapshot) -> EvidenceStamp {
     EvidenceStamp {
         run: QUEST_TEST_RUN,
@@ -1144,11 +1187,14 @@ fn run_case(case: EntranceCase) {
         logout_and_wait(&mut client, &mut snapshot, &mut pump),
         "tutorial relog-out failed"
     );
-    assert!(
-        interact::login(&mut client, &account, &password, false),
-        "relogin refused: {} {}",
-        client.login_mes1,
-        client.login_mes2
+    // The clean login binds tutorial-locked side icons and the quest journal.
+    login_after_logout(
+        &mut client,
+        (&account, &password),
+        "tutorial",
+        snapshot.tick(),
+        &mut receipt,
+        &receipt_path,
     );
     assert!(
         wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
@@ -1268,11 +1314,13 @@ fn run_case(case: EntranceCase) {
             logout_and_wait(&mut client, &mut snapshot, &mut pump),
             "quest-seed relog-out failed"
         );
-        assert!(
-            interact::login(&mut client, &account, &password, false),
-            "quest-seed relog-in refused: {} {}",
-            client.login_mes1,
-            client.login_mes2
+        login_after_logout(
+            &mut client,
+            (&account, &password),
+            "quest_seed",
+            snapshot.tick(),
+            &mut receipt,
+            &receipt_path,
         );
         assert!(
             wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
