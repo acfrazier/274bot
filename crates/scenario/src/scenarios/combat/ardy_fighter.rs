@@ -334,14 +334,15 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
 /// 158.134 s (246) and 239.154 s (381). The largest is 239.154 s; the deadline
 /// is that plus 50% headroom, rounded up to a whole second (358.73 s ->
 /// 359 s). The other two runs failed the pre-existing 320-game-tick style
-/// watch, which this deadline does not replace. `FIX-ARDY-STYLE-025` then
-/// measured eight more passes on the same binary, at 95.354 s (142),
-/// 106.437 s (160), 124.373 s (191), 155.732 s (243), 191.284 s (302),
-/// 220.489 s (351), 228.680 s (364) and 243.907 s (388). The largest is now
-/// 243.907 s, so the same rule gives 365.86 s -> 366 s. The seeded sibling
-/// keeps the short gold deadline and every post-Start watch keeps its
-/// game-tick budget.
-pub(crate) const ARDY_FIGHTER_BANK_DEADLINE: Duration = Duration::from_secs(366);
+/// watch, which this deadline does not replace. `FIX-ARDY-STYLE-025`
+/// replaced that watch with the trip-aware style watch, so runs with up to
+/// three pre-style Loot-count trips now pass, and they take longer. It
+/// measured 32 more passes on Engine A (`runs/base-d*`, `final-r*`,
+/// `head2-r*`). The largest is `head2-r6`: 365.610 s (593 game ticks, three
+/// pre-style trips, style at +367). The same rule gives 548.42 s -> 549 s.
+/// The seeded sibling keeps the short gold deadline and every post-Start
+/// watch keeps its game-tick budget.
+pub(crate) const ARDY_FIGHTER_BANK_DEADLINE: Duration = Duration::from_secs(549);
 
 /// ArdyFighter startup PeriodicBank witness. One DEFAULT_LOOT Guard drop is
 /// seeded with one Cake so only PeriodicBank owns the first trip instead of
