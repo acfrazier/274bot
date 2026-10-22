@@ -70,16 +70,20 @@ fn capture_bank_sweep() {
 
     // Take the initial frame.
     let take = |idx: usize| {
+        let path = std::env::temp_dir()
+            .join(format!("booth_{idx:02}.ppm"))
+            .display()
+            .to_string();
         for _ in 0..40 {
             play.maintain_services(Instant::now());
             match pixels.take() {
                 Some(FrameOutput::Texture(handle)) => {
                     let frame = handle.read_back();
-                    save_ppm(&frame, &format!("/tmp/booth_{idx:02}.ppm"));
+                    save_ppm(&frame, &path);
                     return;
                 }
                 Some(FrameOutput::PixMap(pix)) => {
-                    save_ppm(&pix.pixels, &format!("/tmp/booth_{idx:02}.ppm"));
+                    save_ppm(&pix.pixels, &path);
                     return;
                 }
                 None => service_wait(&play, Duration::from_millis(100)),

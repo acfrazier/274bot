@@ -62,6 +62,9 @@ use crate::walk_permissions::DangerLevel;
 /// `OperationBook`, `operations.rs:9-14`).
 pub const SETTLED_REPORT_CAP: usize = 64;
 
+/// Evicted member lists kept for reuse.
+const SPARE_MEMBER_LISTS: usize = 4;
+
 /// One operator command. Each row documents the current code it
 /// characterizes. Rows with a parameter take only scalar values; the
 /// subjects are supplied per member to [`CommandBook::open`].
@@ -89,8 +92,10 @@ pub enum OperatorCommand {
     /// Offline it is a plain login; a stronger row (Log in, Log out, Remove)
     /// supersedes its pending login half.
     RelogNow,
-    /// Switch to a world: the contract row composed today of Logout, a world
-    /// save and Log in (B03 `03-lifecycle.md:50`); no single current command.
+    /// Switch a logged-in bot to a public world: save its world, then a
+    /// turnover that relogs it through the login queue
+    /// (`session/world_switch.rs`; the fleet plan's world picker). Settled
+    /// by the relog, not by the post.
     SwitchWorld(u16),
     /// Persist the auto-login preference (`OperatorSession::set_auto_login`,
     /// `session.rs:2053-2064`).
@@ -135,38 +140,28 @@ pub enum OperatorCommand {
     /// start_all}`; `selection::start_marked`).
     StartScript,
     /// Pause the running script (`OperatorSession::toggle_pause`,
-    /// `session.rs:1728-1750`; native `NativeCommand::Pause`).
+    /// `session.rs:1728-1750`).
     PauseScript,
-    /// Resume a paused script (same paths; native `NativeCommand::Resume`).
+    /// Resume a paused script through the same operator row.
     ResumeScript,
     /// Stop the script (`OperatorSession::{stop_script, stop_scripts}`,
-    /// `session.rs:1754-1796`; `Scripts::stop_all`; `selection::stop_marked`;
-    /// native `NativeCommand::Stop`).
+    /// `session.rs:1754-1796`; `Scripts::stop_all`; `selection::stop_marked`).
     StopScript,
     /// Drop a queued Start-all/marked Start before it is admitted
     /// (`Scripts::{cancel_queued, cancel_queued_as}`, `scripts/mod.rs:973-998`).
     CancelQueuedStart,
-    /// Make a card the shared Browse selection: the application's one
-    /// `script_sel` both surfaces show (panel `select_script_selection`,
-    /// `session_catalog.rs:128-129`, `app.rs:2709-2710`; TUI Browse pick
-    /// into `app.script_sel`, `app.rs:1481-1482,1581-1582`). It needs no
-    /// profile. Today's handlers compose it with a focused profile's
-    /// [`Self::SelectScriptCard`] and, for a loaded card on the panel, with
-    /// [`Self::PrepareScriptCard`]; each of the three has its own report.
+    /// Make a card the shared Browse selection displayed by both surfaces.
+    /// This row is application-scoped and needs no profile. A focused-profile
+    /// handler may then submit [`Self::SelectScriptCard`]; a loaded card may
+    /// also submit [`Self::PrepareScriptCard`]. Each row has its own settlement.
     PickBrowseCard,
-    /// Make the shared Browse card the member's pending script choice
-    /// (`Scripts::set_pending_browse`, `scripts/mod.rs:598-599`; panel
-    /// `session_catalog.rs:130-132` for the focused profile; TUI
-    /// `bin.rs:2420-2424` for the profile whose heading it replaced). It
-    /// neither persists the assignment ([`Self::AssignScript`]) nor starts
+    /// Apply the staged Browse card to the member's pending profile selection.
+    /// This neither persists the assignment ([`Self::AssignScript`]) nor starts
     /// a run ([`Self::StartScript`]).
     SelectScriptCard,
-    /// Queue the preparation (transpile) of one loaded card: the warm-up
-    /// the panel queues for a picked loaded card (`enqueue_transpile`,
-    /// `session_catalog.rs:133-135`, pumped one `ensure_js` per armed
-    /// frame by `pump_script_transpile`). A preparation job with its own
-    /// admission and terminal; neither [`Self::PickBrowseCard`]'s terminal
-    /// nor a single-card [`Self::TranspileAll`].
+    /// Queue worker preparation (transpilation) of one staged loaded card. It
+    /// has its own admission and terminal; unlike [`Self::TranspileAll`], it
+    /// prepares only the selected card, not every unwarmed catalog card.
     PrepareScriptCard,
     /// Assign the staged script selection (`Scripts::persist_assignment`,
     /// `scripts/mod.rs:638`; `marked::assign_marked`).
@@ -317,37 +312,48 @@ pub enum OperatorCommand {
     DeleteProfileImportExport,
 
     // --- Loadouts ---
-    /// Make the selected loadout the editing draft (panel Loadouts list,
-    /// `loadouts.rs:240-246`, `sync_draft`; TUI loadouts popup row 0,
-    /// `tui/src/loadouts.rs:111-115`, `sync_scratch_from_selection`).
-    /// Unsaved draft edits of the previous selection are dropped, as today.
+    /// Make the selected loadout the editing draft (panel Loadouts list and
+    /// opener, `loadouts::select`; TUI loadouts popup row 0 and its open).
+    /// The front end stages the index (`LoadoutForm::stage_selection`).
+    /// Unsaved draft edits of the previous selection are dropped, as today;
+    /// `Skipped(NothingSelected)` when the index names no loadout.
     SelectLoadout,
     /// A staged edit of the loadout draft (panel name, worn slot, supplies,
     /// Clear unassigned: `loadouts.rs:267,277-281,311-434` and the item
-    /// search popup; TUI scratch rows 1-4, typed or erased character by
-    /// character, `tui/src/loadouts.rs:200-225`). It changes the draft
-    /// only; [`Self::SaveLoadout`] writes it.
+    /// search popup). The widget edits the draft in place through
+    /// `LoadoutForm::draft_mut`; the row commits the edit: a status about
+    /// the draft's last save or copy no longer describes it. It changes the
+    /// draft only; [`Self::SaveLoadout`] writes it. `Rejected(NotStaged)`
+    /// without a draft. The TUI edits its scratch text itself and stages
+    /// the parsed draft for [`Self::SaveLoadout`].
     EditLoadoutDraft(LoadoutField),
     /// Copy the member's current equipment into the loadout draft, keeping
-    /// its supplies (`copy_equipment`, `loadouts.rs:134-148`): a draft edit,
-    /// nothing is written. Skipped `NotLoggedIn` without an in-game focused
-    /// character, `NothingSelected` without a draft.
+    /// its supplies (panel `copy_equipment`; `OperatorSession::observed_equipment`):
+    /// a draft edit, nothing is written. Skipped `NotLoggedIn` without an
+    /// in-game focused character, `NothingSelected` without a draft.
     CopyEquipmentToLoadout,
     /// Create a loadout and write the loadout file at once, the in-memory
     /// set rolled back if the write fails (panel `add_loadout`,
     /// `loadouts.rs:65-80`; TUI row 5, `tui/src/loadouts.rs:123-140`).
+    /// Settles `Done`, or `Failed(WriteFailed)` with the store's reason.
     CreateLoadout,
     /// Duplicate the selected loadout and write at once, rolled back if the
     /// write fails (panel `duplicate_loadout`, `loadouts.rs:82-106`; TUI
     /// row 6, `tui/src/loadouts.rs:141-166`). `Skipped(NothingSelected)`
-    /// without a selection.
+    /// without a selection; `Failed(WriteFailed)` when the write is rolled
+    /// back.
     DuplicateLoadout,
     /// Save the edited loadout draft (panel `save_draft`, `loadouts.rs:37-63`;
     /// TUI Enter on a scratch row or row 8, `commit_scratch`,
-    /// `tui/src/loadouts.rs:56-85`).
+    /// `tui/src/loadouts.rs:56-85`). `Rejected(NotStaged)` without a draft,
+    /// `Rejected(NotApplicable)` for a blank name or a name another loadout
+    /// has, `Failed(WriteFailed)` when the write is rolled back (the draft is
+    /// kept).
     SaveLoadout,
     /// Delete the selected loadout, written at once (panel `delete_loadout`,
     /// `loadouts.rs:108-132`; TUI row 7, `tui/src/loadouts.rs:167-190`).
+    /// `Skipped(NothingSelected)` without a selection;
+    /// `Failed(WriteFailed)` when the write is rolled back.
     DeleteLoadout,
 
     // --- Selection and marks ---
@@ -359,6 +365,28 @@ pub enum OperatorCommand {
     MarkAll,
     /// Clear the marks (`MarkedSelection::clear`).
     ClearMarks,
+    /// Reorder the saved Load order with the staged
+    /// [`crate::profile_order::ReorderOp`] (a rail or Fleet-row drag, the
+    /// TUI move keys, Move marked to top;
+    /// [`crate::OperatorSession::stage_reorder`]). Refused unless the fleet
+    /// view shows Load order. Settles `Done` when the saved order is
+    /// durable (at once when nothing moved).
+    ReorderProfiles,
+    /// Commit the fleet card the lent fleet model staged
+    /// ([`crate::FleetModel::stage_card`]): which card the fleet buttons
+    /// use. Changes no assignment, Browse pick, form or run.
+    SetFleetCard,
+    /// Mark, unmark or invert the shown fleet rows, or mark the shown rows
+    /// in a status ([`crate::MarkOp`]).
+    MarkFleet(crate::fleet::MarkOp),
+    /// Freeze a fleet action into a plan ([`crate::fleet_plan`]): the
+    /// marked profiles (hidden ones too), or the loaded shown rows with no
+    /// marks, the resolved card, the interrupted and skipped rows and the
+    /// prompt. The plan then runs with [`crate::Targets::Plan`].
+    PlanFleetAction(crate::fleet_plan::FleetAction),
+    /// Drop the pending fleet plan without running it (a settings copy's
+    /// start hold is released; nothing is written).
+    CancelFleetPlan,
 
     // --- Movement and game input ---
     /// Walk the focused member to the staged map destination (panel
@@ -391,7 +419,9 @@ pub enum OperatorCommand {
     /// the member settles on the writer.
     SetRaster(RasterMode),
     /// One draw-policy switch (panel `game renderer`, `capture input`,
-    /// `sidecar 50 fps`, `focused 50 fps`, `full rate (this run)`).
+    /// `sidecar 50 fps`, `focused 50 fps`, `full rate (this run)`). The
+    /// switch applies at once; a saved switch settles on the preference
+    /// writer's durable receipt.
     SetDraw(DrawSwitch, bool),
 
     // --- Preferences and notices ---
@@ -440,18 +470,24 @@ pub enum OperatorCommand {
     /// `OperatorSession::set_capacity_render`, `session.rs:564`).
     SetRenderAll(bool),
     /// Acknowledge a one-time notice (background bots, walk-permission and
-    /// danger-routing notices).
+    /// danger-routing notices). A saved acknowledgement settles on the
+    /// preference writer's durable receipt.
     AcknowledgeNotice,
     /// Save the log view to a file (panel log `Save`, TUI log `w`).
     SaveLog,
 }
 
-/// A raster mode for one member's game image.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A raster mode for one member's game image. Saved lowercase, as the
+/// vault saves it (the panel keeps its global choice in its preferences).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum RasterMode {
     /// No game image.
     Off,
     /// GPU raster.
+    #[default]
     Gpu,
     /// CPU raster.
     Cpu,
@@ -473,11 +509,11 @@ pub enum DrawSwitch {
 }
 
 /// The fleet row order, owned by the core fleet model
-/// ([`crate::fleet::fill_visible_indices`]): the panel offers `Name`
-/// (its default) and `Status`; the TUI keeps `LoadOrder`.
+/// ([`crate::FleetModel`]). Load order is the default on every surface;
+/// Name and Status are view sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetOrder {
-    /// The order the surface supplied the rows in (load order).
+    /// The order the universe holds the rows in (load order).
     LoadOrder,
     /// By profile name.
     Name,
@@ -486,8 +522,8 @@ pub enum FleetOrder {
 }
 
 impl FleetOrder {
-    /// The orders the panel's Sort drop-down offers.
-    pub const PANEL_CHOICES: [FleetOrder; 2] = [Self::Name, Self::Status];
+    /// The orders the Sort drop-down offers, the default first.
+    pub const CHOICES: [FleetOrder; 3] = [Self::LoadOrder, Self::Name, Self::Status];
 
     /// The drop-down entry.
     pub fn label(self) -> &'static str {
@@ -675,7 +711,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 91] = [
+    pub const ALL: [OperatorCommand; 96] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -746,6 +782,11 @@ impl OperatorCommand {
         Self::SetMark(true),
         Self::MarkAll,
         Self::ClearMarks,
+        Self::ReorderProfiles,
+        Self::SetFleetCard,
+        Self::MarkFleet(crate::fleet::MarkOp::Shown),
+        Self::PlanFleetAction(crate::fleet_plan::FleetAction::Start),
+        Self::CancelFleetPlan,
         Self::WalkTo,
         Self::GroupWalk,
         Self::Teleport,
@@ -815,6 +856,11 @@ impl OperatorCommand {
             | Self::DeleteLoadout
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::ReorderProfiles
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetMultiBox(_)
             | Self::SetDraw(..)
             | Self::SetNavPreference(..)
@@ -832,6 +878,14 @@ impl OperatorCommand {
             | Self::SaveLog => SubjectKind::Application,
             _ => SubjectKind::Profile,
         }
+    }
+
+    /// Whether this command accepts a member of `kind`.
+    ///
+    /// `WalkTo` also accepts the process member for an unfocused refusal
+    /// receipt; its ordinary target remains a profile.
+    pub(crate) fn accepts_subject(self, kind: SubjectKind) -> bool {
+        self.subject() == kind || matches!((self, kind), (Self::WalkTo, SubjectKind::Application))
     }
 
     /// The `IntentMailbox` row this command posts to each member's slot, if
@@ -931,13 +985,15 @@ impl OperatorCommand {
     /// How a pending member settles.
     pub const fn settles(self) -> Settles {
         match self {
-            Self::Login | Self::Logout | Self::RelogNow | Self::SwitchWorld(_) => {
-                Settles::IntentApplied
-            }
+            Self::Login | Self::Logout | Self::RelogNow => Settles::IntentApplied,
             Self::Select
             | Self::SetMark(_)
             | Self::MarkAll
             | Self::ClearMarks
+            | Self::SetFleetCard
+            | Self::MarkFleet(_)
+            | Self::PlanFleetAction(_)
+            | Self::CancelFleetPlan
             | Self::SetFleetFilter
             | Self::SetFleetSort(_)
             | Self::PickBrowseCard
@@ -968,9 +1024,7 @@ impl OperatorCommand {
             | Self::DeclineMapBake
             | Self::SetRenderAll(_)
             | Self::SetMultiBox(_)
-            | Self::SetDraw(..)
-            | Self::GameInput
-            | Self::AcknowledgeNotice => Settles::AtDispatch,
+            | Self::GameInput => Settles::AtDispatch,
             _ => Settles::Owner,
         }
     }
@@ -995,6 +1049,23 @@ impl OperatorCommand {
                 matches!(older, Self::Login | Self::RelogNow | Self::SwitchWorld(_))
             }
             _ => false,
+        }
+    }
+
+    /// What a member this row supersedes ([`Self::supersedes`]) reads as
+    /// its reason in a result: what the book knows when this row is
+    /// posted, in the operator's words. A posted Remove or Quit is still
+    /// pending (each settles when the slot retires), so it reads as
+    /// requested, not as done. `None` for a row that supersedes nothing.
+    pub const fn took_over_words(self) -> Option<&'static str> {
+        match self {
+            Self::Login => Some("a later Log in took over"),
+            Self::Logout => Some("a later Log out took over"),
+            Self::RelogNow => Some("a later Relog now took over"),
+            Self::SwitchWorld(_) => Some("a later Switch world took over"),
+            Self::Remove => Some("Remove was requested"),
+            Self::Quit => Some("Quit was requested"),
+            _ => None,
         }
     }
 
@@ -1082,6 +1153,8 @@ pub enum SkipReason {
     /// the Discard / Keep editing decision was staged instead
     /// (`session/chooser.rs:193-200,282-285,295-299`).
     DecisionStaged,
+    /// The bot is already on the requested world (Switch world).
+    AlreadyOnWorld,
 }
 
 /// Why a member failed.
@@ -1138,6 +1211,19 @@ pub enum Rejection {
     /// The script start was refused (`script::StartLoadError`,
     /// `session.rs:1701-1705`).
     StartRefused,
+    /// The front end that issued the command does not hold the model the
+    /// row changes (for example the TUI and the panel's profile form):
+    /// nothing was changed.
+    NoModel,
+    /// The row commits a staged input and nothing was staged (no
+    /// passphrase, no destination, no selected card, no loadout draft).
+    NotStaged,
+    /// The vault could not be opened or created with the staged
+    /// passphrase, or the vault file could not be reset.
+    VaultRefused,
+    /// The row's target state already holds or does not apply to this
+    /// member (a mark on an unknown row, a walk with no map bound).
+    NotApplicable,
 }
 
 /// An owner-reported failure (today's `Outcome::Failed` strings produced
@@ -1395,6 +1481,9 @@ impl CommandReport {
 pub struct CommandBook {
     pending: Vec<CommandReport>,
     settled: VecDeque<CommandReport>,
+    /// Member buffers of evicted reports, reused by [`Self::open`] so a
+    /// steady stream of commands allocates no member lists.
+    spare: Vec<Vec<MemberReport>>,
 }
 
 impl CommandBook {
@@ -1429,7 +1518,7 @@ impl CommandBook {
         for (index, &(subject, scope)) in targets.iter().enumerate() {
             let application_in_process =
                 subject.kind() != SubjectKind::Application || scope == Scope::Process;
-            if subject.kind() != command.subject() || !application_in_process {
+            if !command.accepts_subject(subject.kind()) || !application_in_process {
                 return Err(CommandError::WrongSubject {
                     request,
                     subject,
@@ -1454,19 +1543,17 @@ impl CommandBook {
             }
             None => MemberState::Pending(Pending::Accepted),
         };
-        let members = targets
-            .iter()
-            .map(|&(subject, scope)| MemberReport {
-                subject,
-                scope,
-                stage: Stage::Admitted,
-                state: match &state {
-                    MemberState::Pending(pending) => MemberState::Pending(*pending),
-                    MemberState::Settled(terminal) => MemberState::Settled(terminal.clone()),
-                },
-                detail: None,
-            })
-            .collect();
+        let mut members = self.spare.pop().unwrap_or_default();
+        members.extend(targets.iter().map(|&(subject, scope)| MemberReport {
+            subject,
+            scope,
+            stage: Stage::Admitted,
+            state: match &state {
+                MemberState::Pending(pending) => MemberState::Pending(*pending),
+                MemberState::Settled(terminal) => MemberState::Settled(terminal.clone()),
+            },
+            detail: None,
+        }));
         self.pending.push(CommandReport {
             request,
             command,
@@ -1474,6 +1561,11 @@ impl CommandBook {
         });
         self.file_settled();
         Ok(())
+    }
+
+    /// Whether any report still has a pending member.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// The report for `request`.
@@ -1485,6 +1577,18 @@ impl CommandBook {
     /// then the reports with a pending member, in the order they opened.
     pub fn reports(&self) -> impl Iterator<Item = &CommandReport> {
         self.settled.iter().chain(&self.pending)
+    }
+
+    /// Whether [`Self::posted`] would record a post of `request`'s intent
+    /// row to `slot` for `subject`. An owner that posts the row itself asks
+    /// first, so a refused member never reaches the slot's mailbox.
+    pub fn may_post(
+        &self,
+        request: RequestId,
+        subject: Subject,
+        slot: SlotKey,
+    ) -> Result<(), CommandError> {
+        self.postable(request, subject, slot).map(|_| ())
     }
 
     /// Record the receipt of posting the command's intent row to `slot` for
@@ -1515,6 +1619,8 @@ impl CommandBook {
                 if matches!(member.state, MemberState::Pending(_)) {
                     member.state =
                         MemberState::Settled(Settlement::Cancelled(Cancellation::Superseded));
+                    // Results name what took the member over.
+                    member.detail = command.took_over_words().map(Box::from);
                 }
             }
         }
@@ -1650,6 +1756,27 @@ impl CommandBook {
         settled
     }
 
+    /// Why a login the slot no longer wants was withdrawn, in the
+    /// operator's words, from the snapshot's park reason alone: a lifecycle
+    /// fact (the repeat guard, a saved logged-out hold) or a logout row the
+    /// slot's mailbox applied, which this book did not post (a row it posts
+    /// settles the members it supersedes when posted). A logout row comes
+    /// from more than the Log out command (Remove logs the bot out first)
+    /// and may still be under way, so it reads as requested and names no
+    /// command. `None` when the snapshot names no cause (the result then
+    /// says only "cancelled") and for a world error, which fails the member
+    /// instead.
+    pub(crate) const fn withdrawn_words(reason: Option<ParkReason>) -> Option<&'static str> {
+        match reason {
+            Some(ParkReason::RepeatGuard) => {
+                Some("the automatic login guard stopped repeated logins")
+            }
+            Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
+            Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
+            Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
+        }
+    }
+
     /// Apply the slot's mailbox snapshot, read after its events were
     /// observed. First the resolution fence: a pending login-wanting member
     /// posted to `slot` whose resolved attempt the mailbox no longer asks
@@ -1661,8 +1788,10 @@ impl CommandBook {
     /// Switch world) posted to `slot` whose want a later generation
     /// withdrew settles: a world error as `Failed(WorldRejected)`, a latch
     /// or withdrawal as `Cancelled(Superseded)` (today `arm.login_latched()`
-    /// cancels the pending Log in, `session.rs:1641-1644`). Members posted to
-    /// another slot are untouched. Returns how many settled.
+    /// cancels the pending Log in, `session.rs:1641-1644`), with the
+    /// snapshot's park reason as its detail ([`Self::withdrawn_words`]).
+    /// Members posted to another slot are untouched. Returns how many
+    /// settled.
     pub fn observe_intent(&mut self, slot: SlotKey, snapshot: &IntentSnapshot) -> usize {
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in report.members.iter_mut().filter(|m| m.on_slot(slot)) {
@@ -1682,6 +1811,9 @@ impl CommandBook {
             }
             _ => Settlement::Cancelled(Cancellation::Superseded),
         };
+        // A row this book posted settled the members it superseded when it
+        // was posted; what is left was withdrawn by the slot's own latch.
+        let detail = Self::withdrawn_words(snapshot.park_reason());
         let mut settled = 0;
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in &mut report.members {
@@ -1692,6 +1824,7 @@ impl CommandBook {
                 {
                     if posted == slot && generation < snapshot.generation() {
                         member.state = MemberState::Settled(terminal());
+                        member.detail = detail.map(Box::from);
                         settled += 1;
                     }
                 }
@@ -1955,7 +2088,13 @@ impl CommandBook {
             }
         }
         while self.settled.len() > SETTLED_REPORT_CAP {
-            self.settled.pop_front();
+            if let Some(evicted) = self.settled.pop_front() {
+                let mut members = evicted.members;
+                members.clear();
+                if self.spare.len() < SPARE_MEMBER_LISTS {
+                    self.spare.push(members);
+                }
+            }
         }
     }
 }

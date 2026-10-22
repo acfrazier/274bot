@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level};
-use api::identity::{Deadline, Event, Scope, SessionKey, SlotKeyMinter};
+use api::identity::{Deadline, Event, Scope, SessionKey, SlotKey, SlotKeyMinter};
 use api::lifecycle::{
     AbortedAttempt, HandshakeKind, HoldReason, Intent, IntentCommand, IntentMailbox, LifecycleFact,
     LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker, SessionEndCause,
@@ -128,6 +128,12 @@ struct SlotLifecycle {
     session: SessionGate,
     last_session: Option<SessionKey>,
     scene_ready: bool,
+    /// The public world the slot's client is configured for: the world
+    /// the next handshake logs in to.
+    configured_world: Option<u16>,
+    /// The public world the current session logged in to (copied from
+    /// `configured_world` at its handshake), bound to that session.
+    session_world: Option<u16>,
     latest_event: Option<Event<SessionEventOut>>,
     /// Bounded, chronological unconsumed session boundaries. Overflow is
     /// counted separately rather than silently replacing an unread boundary.
@@ -185,6 +191,7 @@ impl SlotLifecycle {
             .expect("owner minted a new session");
         self.last_session = Some(next);
         self.scene_ready = false;
+        self.session_world = self.configured_world;
         self.last_queue = None;
         self.slot_event(SessionEventOut::HandshakeOk { kind });
     }
@@ -453,6 +460,8 @@ impl SlotArm {
                 session: SessionGate::new(slot),
                 last_session: None,
                 scene_ready: false,
+                configured_world: None,
+                session_world: None,
                 latest_event: None,
                 pending_session_ends: VecDeque::new(),
                 missed_session_ends: 0,
@@ -759,6 +768,30 @@ impl SlotArm {
     /// The owner-authorized session; absent once it ends.
     pub fn session_key(&self) -> Option<SessionKey> {
         self.lifecycle.lock().session.current()
+    }
+
+    /// The current session once its scene is ready, with the public world
+    /// it logged in to (`None` on a local server): read under one lock, so
+    /// the key, the readiness and the world describe the same session. A
+    /// session that has not reached its scene yet, or none, is `None`.
+    pub fn ready_session(&self) -> Option<(SessionKey, Option<u16>)> {
+        let lifecycle = self.lifecycle.lock();
+        let key = lifecycle.session.current()?;
+        lifecycle
+            .scene_ready
+            .then_some((key, lifecycle.session_world))
+    }
+
+    /// Record the public world the slot's client is configured for; the
+    /// next session to log in is bound to it.
+    pub(super) fn note_configured_world(&self, world: u16) {
+        self.lifecycle.lock().configured_world = Some(world);
+    }
+
+    /// The slot identity minted when this arm was created; every lifecycle
+    /// event of this arm is scoped to it.
+    pub fn slot(&self) -> SlotKey {
+        self.lifecycle.lock().session.slot()
     }
 
     /// Borrow the actual session gate while its owner lock remains held.
@@ -2247,6 +2280,17 @@ fn abort_login_transport(client: &mut Client) {
 
 #[cfg(any(test, feature = "test-support"))]
 impl SlotArm {
+    /// Configure the next login's public world, as the slot does before its
+    /// handshake.
+    pub fn configure_world_for_test(&self, world: u16) {
+        self.note_configured_world(world);
+    }
+
+    /// The current session's scene is built, as the slot's frame reports.
+    pub fn scene_ready_for_test(&self) {
+        self.update_session_readiness(true, false, false, false);
+    }
+
     pub fn complete_login_for_test(&self) {
         if self.session_key().is_some() {
             self.observe_session_exit(SessionEndCause::ServerLogout, false);
@@ -2259,6 +2303,21 @@ impl SlotArm {
             HandshakeKind::Fresh
         };
         lifecycle.login_succeeded(command, kind);
+    }
+
+    /// The session drops and the repeat guard latches automatic logins off,
+    /// as the slot reports after repeated unexpected logouts: no command is
+    /// posted.
+    pub fn exit_and_trip_repeat_guard_for_test(&self) {
+        self.observe_session_exit(SessionEndCause::ConnectionLost, false);
+        self.lifecycle
+            .lock()
+            .mailbox
+            .observe(LifecycleFact::RepeatGuardTripped {
+                count: UNEXPECTED_LOGOUT_THRESHOLD as u8,
+                window_seconds: UNEXPECTED_LOGOUT_WINDOW.as_secs(),
+            })
+            .expect("test repeat-guard generation exhausted");
     }
 }
 

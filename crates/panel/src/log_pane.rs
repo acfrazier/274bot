@@ -6,9 +6,8 @@ use std::path::PathBuf;
 
 use dear_imgui_rs::{ChildFlags, Ui};
 use frontend_core::log::{
-    default_save_path, global, save_text, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
+    default_save_path, global, Level, LogEntry, LogScope, LogView, SaveTicket, Source,
 };
-use frontend_core::log_file::apply_session_log;
 
 use crate::session::Session;
 use crate::theme::{scale_px, ERROR, TEXT, TEXT_DIM, WARN};
@@ -34,6 +33,8 @@ pub struct LogPane {
     pub scope: PaneScope,
     pub search: String,
     save_path: String,
+    /// The Save button was pressed: the next body draw submits `SaveLog`.
+    save_requested: bool,
     save: Option<SaveTicket>,
     /// Last Copy/Save/session-file outcome shown under the controls.
     status: Option<(bool, String)>,
@@ -49,6 +50,7 @@ impl Default for LogPane {
             scope: PaneScope::Bot,
             search: String::new(),
             save_path: String::new(),
+            save_requested: false,
             save: None,
             status: None,
             session_log_status: None,
@@ -132,6 +134,9 @@ pub fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
 /// The log body is shared by the inline section and the dockable Log tab.
 /// `last` is whether the body fills the remaining panel height.
 pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
+    if std::mem::take(&mut session.log_pane.save_requested) {
+        session.save_log();
+    }
     let focused = session.core.selected();
     let pane = &mut session.log_pane;
     pane.refresh(focused);
@@ -298,8 +303,7 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
         ui.input_text("##save-log-path", &mut pane.save_path)
             .build();
         if ui.button("Save") && !pane.save_path.trim().is_empty() {
-            let path = std::path::PathBuf::from(pane.save_path.trim());
-            pane.save = Some(save_text(path, pane.view.to_text()));
+            pane.save_requested = true;
             ui.close_current_popup();
         }
         ui.same_line();
@@ -313,10 +317,7 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
 pub fn session_log_row(ui: &Ui, session: &mut Session) {
     let mut on = session.ui.session_log_file;
     if ui.checkbox("session log file", &mut on) {
-        session.ui.session_log_file = on;
-        crate::ui_state::save(&session.preferences, &session.ui);
-        let path = apply_session_log(on);
-        session.log_pane.set_session_log_path(path);
+        session.set_session_log(on);
     }
     ui.set_item_tooltip("write this session's log to ~/.274bot/logs/ (rotated, off by default)");
     if on {
@@ -328,10 +329,43 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
 
 /// Start the session file at launch when the saved preference is on.
 pub fn apply_session_log_pref(session: &mut Session) {
-    let path = session
-        .ui
-        .session_log_file
-        .then(|| apply_session_log(true))
-        .flatten();
+    let path = frontend_core::log_file::restore_session_log(&session.preferences);
     session.log_pane.set_session_log_path(path);
+}
+
+impl Session {
+    /// Save log…: the rows the view shows, to the dialog's path, through
+    /// the `SaveLog` command; the pane follows its write for the status.
+    pub(crate) fn save_log(&mut self) {
+        let path = PathBuf::from(self.log_pane.save_path.trim());
+        let text = self.log_pane.view.to_text();
+        self.core.stage_log_save(path, text);
+        if let Some(submitted) = self.submit(
+            frontend_core::OperatorCommand::SaveLog,
+            frontend_core::Targets::Application,
+        ) {
+            match self.core.command_failure(submitted.request()) {
+                Some(error) => self.log_pane.status = Some((false, error.to_string())),
+                None => self.log_pane.save = self.core.log_save(submitted.request()),
+            }
+        }
+    }
+
+    /// The "session log file" preference, through `SetSessionLog`.
+    pub(crate) fn set_session_log(&mut self, on: bool) {
+        let Some(submitted) = self.submit(
+            frontend_core::OperatorCommand::SetSessionLog(on),
+            frontend_core::Targets::Application,
+        ) else {
+            return;
+        };
+        match self.core.command_failure(submitted.request()) {
+            Some(error) => self.error = Some(error.to_string()),
+            None => {
+                self.ui.session_log_file = on;
+                self.log_pane
+                    .set_session_log_path(frontend_core::log_file::session_log_path());
+            }
+        }
+    }
 }

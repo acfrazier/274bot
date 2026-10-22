@@ -10,6 +10,8 @@ use dear_imgui_rs::{sys, Condition, Context, FramePrepareOptions, MouseButton, U
 use super::PanelState;
 use crate::session::{PanelWindow, Session};
 use crate::test_support::TestDir;
+use frontend_core::launch::ProfileTemplate;
+use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice};
 
 use host_play as map_host;
 
@@ -183,11 +185,11 @@ fn assert_no_start(session: &Session, step: &str) {
             "{step}: nothing may start a script"
         );
     }
-    if let Some(play) = session.core.play() {
+    if session.core.has_play() {
         for name in session.core.slots().keys() {
             assert_eq!(
-                play.script_state(name),
-                script::RunState::Idle,
+                session.core.script_state(name),
+                frontend_core::scripts::ScriptRunState::Idle,
                 "{step}: {name}'s script stays idle"
             );
         }
@@ -223,18 +225,12 @@ fn no_opener(_: &Ui, _: &mut PanelState) {}
 
 fn add_vault(state: &mut PanelState) {
     let dir = TestDir::new("opener-focus-vault");
-    let mut vault = vault::Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
     for (i, name) in ["alice", "bob"].into_iter().enumerate() {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: "pw".into(),
-                uid: 1 + i as i32,
-                settings: vault::ProfileSettings::default(),
-            })
-            .unwrap();
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
-    state.session.core.set_vault(Some(vault));
+    frontend_core::test_support::session::install_vault(&mut state.session.core, vault);
 }
 
 fn with_vault(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
@@ -245,14 +241,15 @@ fn with_vault(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
 fn with_marked_bob(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
     add_vault(state);
     let bob = state.session.core.profile_identity("bob").unwrap();
-    state.session.fleet_selection.set(bob, true);
+    state.session.fleet_model.set_mark_for_test(bob, true);
     state.session.open_window(PanelWindow::Fleet);
     None
 }
 
 fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
-    // A filled catalog: Browse/Load never raise the first-use import prompt.
-    state.session.scripts.mark_catalog_filled();
+    // The first-use catalog prompt was already answered this session:
+    // Browse/Load never raise it again.
+    state.session.rs2b0t_browse_prompted = true;
     state
         .session
         .ui
@@ -281,7 +278,10 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
         Vec::new(),
     );
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
-    state.session.server_profile = Some(Arc::clone(fixture.template.profile()));
+    state
+        .session
+        .launcher
+        .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     Some(fixture)
 }
 
@@ -408,13 +408,13 @@ fn opener_cases() -> Vec<OpenerCase> {
             press: Press::Op(|s| s.open_rs2b0t_catalog_picker(false)),
         },
         OpenerCase {
-            name: "Fleet Walk 1 marked bots",
+            name: "Fleet toolbar Walk 1",
             target: PanelWindow::WalkTo,
             setup: with_marked_bob,
             opener: no_opener,
             press: Press::Button {
                 host: fleet,
-                label: "Walk 1 marked bots",
+                label: "Walk 1###fleet-action-6",
             },
         },
     ]
@@ -447,7 +447,7 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
 
         // Open the target the ordinary way; it appears and has the focus.
         match case.target {
-            PanelWindow::WalkTo => state.session.open_walkto_for_marked(),
+            PanelWindow::WalkTo => state.session.open_walkto_for_fleet(),
             PanelWindow::LoadScript => state.session.open_script_load_browser(),
             PanelWindow::ImportCatalog => state.session.open_rs2b0t_catalog_picker(false),
             target => {
@@ -603,7 +603,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("multibox-unlock-real-input");
     let path = dir.join("vault");
-    let mut vault = vault::Vault::create(&path, "test-passphrase-01").unwrap();
+    let mut vault = frontend_core::test_support::VaultFixture::create(&path, "test-passphrase-01");
     for (uid, (name, kind, card)) in [
         ("alice", "catalog", "Thiever"),
         ("bob", "compiled", "Gatherer"),
@@ -611,23 +611,12 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     .into_iter()
     .enumerate()
     {
-        vault
-            .upsert(vault::Profile {
-                username: name.into(),
-                password: "pw".into(),
-                uid: uid as i32 + 1,
-                settings: vault::ProfileSettings {
-                    auto_login: true,
-                    script_assignment: Some(vault::ScriptAssignment {
-                        source_kind: kind.into(),
-                        identity: card.into(),
-                        display_name: card.into(),
-                        unavailable: None,
-                    }),
-                    ..vault::ProfileSettings::default()
-                },
-            })
-            .unwrap();
+        vault.put(
+            frontend_core::test_support::FixtureProfile::new(name, "pw")
+                .uid(uid as i32 + 1)
+                .auto_login(true)
+                .script_assignment(kind, card, card),
+        );
     }
     drop(vault);
     crate::ui_state::save(
@@ -654,7 +643,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         state.session.pump_status();
         frames(ctx, state, panel, 2)
     };
-    let gatherer = Some(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
+    let gatherer = Some(ScriptChoice::compiled(
+        CompiledCardId::lookup("Gatherer").unwrap(),
+    ));
     frames(&mut ctx, &mut state, panel, 2);
 
     let press = |label| FrameInput {
@@ -664,7 +655,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     step(&mut ctx, &mut state, press("MultiBox"));
     let s = &state.session;
     assert!(s.multibox && s.wall.chooser_open, "MultiBox opens Profiles");
-    assert!(s.core.vault().is_none() && s.core.slots().is_empty());
+    assert!(!s.core.vault_open() && s.core.slots().is_empty());
     assert_no_start(s, "MultiBox while locked");
 
     // The unlock prompt in Profiles: type, click, then the startup pump's
@@ -691,7 +682,13 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
     step(&mut ctx, &mut state, FrameInput::default());
     let s = &state.session;
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
-    assert!(s.core.play().unwrap().arm("alice").unwrap().wants_login());
+    assert!(s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
     assert!(
         s.core.fleet().contains("alice"),
         "the unlocked bot is on the rail"
@@ -700,9 +697,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
 
     step(&mut ctx, &mut state, press("Profiles…"));
     for (pick, heading) in [
-        ("bob", gatherer.clone()),
+        ("bob", gatherer.as_ref().map(ScriptChoice::duplicate)),
         ("alice", None),
-        ("bob", gatherer.clone()),
+        ("bob", gatherer.as_ref().map(ScriptChoice::duplicate)),
     ] {
         step(
             &mut ctx,
@@ -726,10 +723,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         } else {
             assert_eq!(
                 s.script_sel,
-                Some(script::ScriptSel::Loaded(
-                    script::ScriptSource::Catalog,
-                    "Thiever".into()
-                )),
+                Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever")),
                 "alice's own card"
             );
         }
@@ -765,7 +759,9 @@ fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
     ] {
         let fixture = map_fixture::MapFixture::new(&world, profile);
         let mut session = Session::new();
-        session.server_profile = Some(Arc::clone(fixture.template.profile()));
+        session
+            .launcher
+            .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
         assert_eq!(session.debug_ui(), debug_allowed, "{profile} allows Debug");
         ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let shown = super::draw_test_rail_mark_tooltip(ctx.frame(), session.debug_ui());
@@ -806,4 +802,126 @@ fn resource_readout_is_drawn_once_in_single_rail_and_grid_layouts() {
         (false, 1),
         "Grid: the strip's section"
     );
+}
+
+/// One rail cap over a real Dear ImGui context (no GPU) with the shared
+/// world picker drawn after it, as `ui_frame` does: the cap's world marker
+/// is a button only while the server has public worlds. A click on it
+/// reports `world` and nothing else, and once the tile click is applied the
+/// picker opens for that bot with its own world ticked. A one-world server's
+/// marker (and every other part of the cap) opens nothing.
+#[test]
+fn a_rail_cap_world_marker_is_a_button_only_while_the_server_has_worlds() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::IsolatedStores::ensure_thread();
+    let mut ctx = context();
+    let row = frontend_core::FleetRow::fixture("alice", frontend_core::Phase::Ready, Some(2), None);
+    let labels = super::CapLabels {
+        title: "alice: idle###cap".into(),
+        world: "2".into(),
+        world_tip: "w2 · idle".into(),
+    };
+
+    // One frame with the pointer at `at`, the left button held when `down`:
+    // what the cap reported, and its items as `[min_x, min_y, max_x, max_y]`.
+    let mut frame = |session: &mut Session,
+                     switch_world: bool,
+                     at: [f32; 2],
+                     down: bool|
+     -> (super::CapClicks, Vec<[f32; 4]>) {
+        let io = ctx.io_mut();
+        io.add_mouse_pos_event(at);
+        io.add_mouse_button_event(MouseButton::Left, down);
+        ctx.prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        super::TEST_RAIL_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+        let mut clicks = super::CapClicks::default();
+        {
+            let ui = ctx.frame();
+            ui.window("Rail harness")
+                .position([0.0, 0.0], Condition::Always)
+                .size([300.0, 120.0], Condition::Always)
+                .build(|| {
+                    let mut marked = false;
+                    clicks = super::rail_cap(
+                        ui,
+                        &row,
+                        &labels,
+                        super::CapDrawState {
+                            is_focused: false,
+                            width: 264.0,
+                            preview: false,
+                            restart_required: false,
+                            debug_actions: false,
+                            switch_world,
+                        },
+                        &mut marked,
+                        None,
+                    );
+                });
+            crate::world_picker::popup(ui, session);
+        }
+        ctx.render();
+        let items = super::TEST_RAIL_ITEM_BOUNDS.with_borrow(Clone::clone);
+        (clicks, items)
+    };
+    let centre = |[x0, y0, x1, y1]: [f32; 4]| [(x0 + x1) / 2.0, (y0 + y1) / 2.0];
+    let away = [1000.0, 700.0];
+
+    for switch_world in [false, true] {
+        let mut session = Session::new();
+        session.persist_ui = false;
+        if switch_world {
+            session.core.set_public_worlds_for_test(&[1, 2, 3]);
+        }
+        session
+            .fleet_model
+            .set_universe_for_test(vec![row.snapshot()], &[]);
+        assert_eq!(session.can_switch_world(), switch_world);
+        let (_, items) = frame(&mut session, switch_world, away, false);
+        assert_eq!(items.len(), 5, "marker, mark, name, fold, remove");
+        let at = centre(items[0]);
+
+        // Hover, press, release over the marker.
+        frame(&mut session, switch_world, at, false);
+        let (pressed, _) = frame(&mut session, switch_world, at, true);
+        assert!(!pressed.world, "a button acts on release");
+        let (released, _) = frame(&mut session, switch_world, at, false);
+        assert_eq!(released.world, switch_world, "switch_world: {switch_world}");
+        assert!(
+            !released.select && !released.remove && !released.fold,
+            "only the marker was clicked"
+        );
+
+        // The tile click the frame loop applies after the rows are back.
+        if released.world {
+            super::apply_tile_click(&mut session, Some(super::TileClick::World(0)));
+        }
+        assert_eq!(session.world_picker.is_open(), switch_world);
+        frame(&mut session, switch_world, away, false);
+        let rows = crate::world_picker::take_entries();
+        if switch_world {
+            assert_eq!(session.world_picker.target(), Some("alice"));
+            assert_eq!(
+                rows.iter()
+                    .map(|row| (row.world, row.ticked))
+                    .collect::<Vec<_>>(),
+                [(1, false), (2, true), (3, false)]
+            );
+        } else {
+            assert!(rows.is_empty());
+        }
+        assert!(session.core.fleet_plan().is_none(), "opening plans nothing");
+
+        // The cap's other items are not the marker: a click on the name is
+        // the select click, and never opens a picker.
+        let mut session = Session::new();
+        session.persist_ui = false;
+        session.core.set_public_worlds_for_test(&[1, 2, 3]);
+        let name_at = centre(items[2]);
+        frame(&mut session, true, name_at, false);
+        frame(&mut session, true, name_at, true);
+        let (selected, _) = frame(&mut session, true, name_at, false);
+        assert!(selected.select && !selected.world);
+        assert!(!session.world_picker.is_open());
+    }
 }

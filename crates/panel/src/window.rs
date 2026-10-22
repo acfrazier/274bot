@@ -602,14 +602,11 @@ fn first_surface(
 fn adapter_and_device(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface<'static>,
-    power_preference: wgpu::PowerPreference,
+    override_preference: Option<wgpu::PowerPreference>,
 ) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), PanelError> {
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference,
-        compatible_surface: Some(surface),
-        force_fallback_adapter: false,
-    }))
-    .map_err(PanelError::AdapterUnavailable)?;
+    let request_options = panel_adapter_request_options(Some(surface), override_preference);
+    let adapter = block_on(instance.request_adapter(&request_options))
+        .map_err(PanelError::AdapterUnavailable)?;
     let device_desc = wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),
@@ -622,25 +619,47 @@ fn adapter_and_device(
     Ok((adapter, device, queue))
 }
 
+fn panel_power_preference(
+    override_preference: Option<wgpu::PowerPreference>,
+) -> wgpu::PowerPreference {
+    override_preference.unwrap_or(if cfg!(target_os = "linux") {
+        // Keep the display system's adapter order. A low-power sort can
+        // put an integrated GPU ahead of the compositor's discrete GPU,
+        // even when Vulkan advertises surface support for both.
+        wgpu::PowerPreference::None
+    } else {
+        wgpu::PowerPreference::LowPower
+    })
+}
+
+fn panel_adapter_request_options<'a>(
+    compatible_surface: Option<&'a wgpu::Surface<'a>>,
+    override_preference: Option<wgpu::PowerPreference>,
+) -> wgpu::RequestAdapterOptions<'a, 'a> {
+    wgpu::RequestAdapterOptions {
+        power_preference: panel_power_preference(override_preference),
+        compatible_surface,
+        force_fallback_adapter: false,
+    }
+}
+
 /// Adapter and device for `surface`, off the UI thread. When the current
 /// backend yields no usable adapter or device, the next attempt gets a
 /// fresh instance and surface here (only Windows has a next attempt, and a
-/// Win32 window accepts a surface from any thread). Low power by default:
-/// on a hybrid laptop that is the integrated GPU driving the display, which
-/// skips the discrete GPU's cold start; single-GPU machines get their only
-/// adapter either way. `WGPU_POWER_PREF=high` overrides.
+/// Win32 window accepts a surface from any thread). Linux keeps the system's
+/// adapter order. Other platforms prefer low power to avoid the discrete
+/// GPU's cold start on hybrid laptops. `WGPU_POWER_PREF` overrides both.
 fn request_gpu(
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     window: Arc<Window>,
     fallbacks: Vec<wgpu::Backends>,
 ) -> Result<GpuParts, PanelError> {
-    let power_preference =
-        wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+    let override_preference = wgpu::PowerPreference::from_env();
     let mut fallbacks = fallbacks.into_iter();
     let mut attempt = (instance, surface);
     loop {
-        let error = match adapter_and_device(&attempt.0, &attempt.1, power_preference) {
+        let error = match adapter_and_device(&attempt.0, &attempt.1, override_preference) {
             Ok((adapter, device, queue)) => {
                 let (instance, surface) = attempt;
                 return Ok(GpuParts {
@@ -755,7 +774,7 @@ impl AppWindow {
         // it, before GPU bring-up shows the frame.
         fit_new_window(&window, event_loop);
         #[cfg(feature = "memory-profile")]
-        host_play::memory::mark_startup(host_play::memory::StartupMark::WindowCreated);
+        frontend_core::bench::mark_startup(frontend_core::bench::StartupMark::WindowCreated);
 
         let (instance, surface, fallbacks) = first_surface(&window)?;
 
@@ -790,16 +809,15 @@ impl AppWindow {
         #[cfg(feature = "memory-profile")]
         {
             let info = adapter.get_info();
-            host_play::memory::record_adapter(host_play::memory::AdapterRecord {
-                name: info.name,
-                backend: format!("{:?}", info.backend),
-                device_type: format!("{:?}", info.device_type),
-                driver: info.driver,
-                driver_info: info.driver_info,
-                vendor: info.vendor,
-                device: info.device,
-                pci_bus_id: info.device_pci_bus_id,
-            });
+            frontend_core::bench::record_adapter(
+                frontend_core::bench::AdapterIdentity::new(
+                    info.name,
+                    format!("{:?}", info.backend),
+                    format!("{:?}", info.device_type),
+                )
+                .with_driver(info.driver, info.driver_info)
+                .with_pci(info.vendor, info.device, info.device_pci_bus_id),
+            );
         }
 
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
@@ -943,7 +961,7 @@ impl AppWindow {
         };
 
         #[cfg(feature = "memory-profile")]
-        host_play::memory::mark_startup(host_play::memory::StartupMark::GpuReady);
+        frontend_core::bench::mark_startup(frontend_core::bench::StartupMark::GpuReady);
 
         Ok(Self {
             instance,
@@ -986,7 +1004,7 @@ impl AppWindow {
     {
         let _profile_frame = client::profiling::UI_FRAME.start();
         #[cfg(feature = "memory-profile")]
-        let memory_profile_frame = host_play::memory::PanelFrameTimer::start();
+        let memory_profile_frame = frontend_core::bench::PanelFrameTimer::start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);
@@ -1804,7 +1822,7 @@ where
         // wakes for its next deadline, so a render grant whose head stops
         // consuming expires on time even when no frame is drawn. It never
         // renders on this thread.
-        let render_due = host::render_head::pump(Instant::now()).map(|deadline| deadline.instant());
+        let render_due = frontend_core::surface::pump_render(Instant::now());
         if self.poll_gpu(event_loop) {
             event_loop.set_control_flow(ControlFlow::WaitUntil(earliest(
                 Instant::now() + GPU_INIT_POLL,

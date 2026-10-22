@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hourly finished-run mirror from malbec. __HOME__ is filled locally;
+     the granted nightly274-launch binary dispatches NIGHTLY274_ACTION. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.274bot-nightly-malbec-pull</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/libexec/274bot-nightly/nightly274-launch</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.local/state/274bot-nightly-malbec-pull/pull.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.local/state/274bot-nightly-malbec-pull/pull.log</string>
+	<key>StartCalendarInterval</key>
+	<dict><key>Minute</key><integer>51</integer></dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>NIGHTLY274_ACTION</key>
+		<string>malbec-mirror</string>
+	</dict>
+</dict>
+</plist>

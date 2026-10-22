@@ -3,6 +3,8 @@
 //! the `load` feature: a picker library of JS cards plus a rustyscript/V8
 //! isolate spawned only on Start.
 
+/// Inventory-first acquisition shared by native consumers.
+pub mod acquire;
 pub mod api_combat;
 #[cfg(feature = "load")]
 pub mod api_gather;
@@ -42,6 +44,9 @@ pub mod gather_locations;
 pub mod gather_tools;
 /// Native woodcutting and mining gatherer card.
 pub mod gatherer;
+/// Native anchored holiday-item collector.
+pub mod grinch;
+pub mod ground_take;
 pub mod host_js;
 pub mod identity;
 #[cfg(feature = "load")]

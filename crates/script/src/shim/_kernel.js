@@ -84,3 +84,12 @@ export function optionalText(value) {
     if (value == null || value === '') return null;
     return String(value);
 }
+
+// The host's Pause/Resume and Stop paint controls (ids match
+// `script::shim::HOST_*_CONTROL_ID`; the operator front ends own their
+// labels and commands). One frozen list per isolate: `Paint`'s `buttons`
+// records these descriptors without a copy.
+export const HOST_CONTROLS = Object.freeze([
+    Object.freeze({ id: '__rs2b0t.pause', label: 'Pause' }),
+    Object.freeze({ id: '__rs2b0t.stop', label: 'Stop' }),
+]);

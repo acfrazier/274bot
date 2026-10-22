@@ -160,7 +160,10 @@ export const Bank = new Proxy(
         // Rust picks the row's Withdraw-All or the fill ladder and settles
         // on the posted pack.
         async withdrawLoad(name) {
-            const out = await runMachine('bank_withdraw_load', { name: String(name) });
+            const args = typeof name === 'number'
+                ? { id: Number(name) }
+                : { name: String(name) };
+            const out = await runMachine('bank_withdraw_load', args);
             return out.kind === 'done' && out.value === true;
         },
         async openNearestAccess(access, log) {

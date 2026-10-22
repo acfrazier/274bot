@@ -369,6 +369,7 @@ export default class T extends LoopingBot {{
         slot.slot.complete_native_walk(
             &walk_authority,
             WalkReceipt {
+                goal: None,
                 request_id: walk.request_id.get(),
                 evidence: EvidenceStamp {
                     run: walk_authority.run(),

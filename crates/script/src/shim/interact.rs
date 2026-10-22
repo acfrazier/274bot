@@ -130,9 +130,18 @@ pub enum InteractReq {
     /// separate baked `Walk` / `WalkNear` requests.
     #[serde(rename = "walk-to")]
     WalkTo { x: i32, z: i32, level: i32 },
-    /// Deposit-all the bank-side item named `name`.
+    /// Deposit-all the bank-side item named `name`. When `id` is present the
+    /// host takes only the bank-side row with that exact item id and name and
+    /// refuses rather than taking another row with the same name: a noted
+    /// form is a different obj type (`certlink`) from its unnoted form, so the
+    /// id keeps notes and edible food apart. Absent `id` keeps the first-name
+    /// match.
     #[serde(rename = "deposit")]
-    Deposit { name: String },
+    Deposit {
+        name: String,
+        #[serde(default)]
+        id: Option<i32>,
+    },
     /// Withdraw the bank item named `name` with the action label
     /// (`Withdraw All` / `Withdraw 10` / `Withdraw 1`).
     #[serde(rename = "withdraw")]
@@ -212,6 +221,8 @@ pub enum InteractReq {
         id: Option<i32>,
     },
     /// Interact with a ground item at `(x, z, level)` using an action label.
+    /// A supplied `id` selects only that type at the exact tile and plane.
+    /// Without it, dispatch retains the name/tile lookup for external callers.
     #[serde(rename = "obj")]
     Obj {
         x: i32,
@@ -219,6 +230,8 @@ pub enum InteractReq {
         level: i32,
         name: Option<String>,
         action: String,
+        #[serde(default)]
+        id: Option<i32>,
     },
     /// Interact with a player by name using an action label.
     #[serde(rename = "player")]

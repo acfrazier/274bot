@@ -111,6 +111,15 @@ pub fn persist_background_bots_ack(preferences: &Preferences) -> io::Result<()> 
     preferences.set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
 }
 
+/// [`persist_background_bots_ack`] for the operator command that reports
+/// its outcome: a write still queued when the bounded wait ends comes
+/// back [`crate::local_state::Update::Queued`].
+pub fn begin_persist_background_bots_ack(
+    preferences: &Preferences,
+) -> io::Result<crate::local_state::Update> {
+    preferences.begin_set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,8 +206,7 @@ mod tests {
         let scratch = script::IsolatedEnv::enter("ack-json");
         let preferences = preferences(&scratch);
         let path = preferences.path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"{"last_focus":"alice"}"#).unwrap();
+        vault::write_private_file(&path, br#"{"last_focus":"alice"}"#).unwrap();
         assert!(!background_bots_acked(&preferences));
         persist_background_bots_ack(&preferences).unwrap();
         assert!(background_bots_acked(&preferences));
@@ -217,9 +225,8 @@ mod tests {
         let scratch = script::IsolatedEnv::enter("ack-corrupt");
         let preferences = preferences(&scratch);
         let path = preferences.path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let corrupt = b"{not valid json";
-        std::fs::write(&path, corrupt).unwrap();
+        vault::write_private_file(&path, corrupt).unwrap();
 
         persist_background_bots_ack(&preferences).unwrap();
 

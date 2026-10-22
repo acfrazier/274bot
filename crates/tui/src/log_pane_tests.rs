@@ -65,43 +65,45 @@ fn the_pane_filters_like_the_panel_and_fits_80x24() {
     assert_eq!(&clock[2..3], ":");
     assert_eq!(&clock[8..9], ".");
 
-    state.on_key(key(KeyCode::Char('v')), Some(slot), None); // info → warn
+    state.on_key(key(KeyCode::Char('v'))); // info → warn
     state.refresh(Some(slot));
     let text = screen(&state, slot, 80, 23).join("\n");
     assert!(!text.contains("Chopping oak"));
     assert!(text.contains("withdraw lobster"));
     assert!(text.contains("login code 3"));
 
-    state.on_key(key(KeyCode::Char('s')), Some(slot), None); // all → script
-    state.on_key(key(KeyCode::Char('s')), Some(slot), None); // script → login
+    state.on_key(key(KeyCode::Char('s'))); // all → script
+    state.on_key(key(KeyCode::Char('s'))); // script → login
     state.refresh(Some(slot));
     let text = screen(&state, slot, 80, 23).join("\n");
     assert!(text.contains("src:login"));
     assert!(!text.contains("withdraw lobster"));
     assert!(text.contains("login code 3"));
 
-    state.on_key(key(KeyCode::Char('s')), Some(slot), None); // login → nav
+    state.on_key(key(KeyCode::Char('s'))); // login → nav
     for _ in 0..4 {
-        state.on_key(key(KeyCode::Char('s')), Some(slot), None); // … → all
+        state.on_key(key(KeyCode::Char('s'))); // … → all
     }
-    state.on_key(key(KeyCode::Char('v')), Some(slot), None); // warn → error
-    state.on_key(key(KeyCode::Char('v')), Some(slot), None); // error → debug
-    state.on_key(key(KeyCode::Char('/')), Some(slot), None);
+    state.on_key(key(KeyCode::Char('v'))); // warn → error
+    state.on_key(key(KeyCode::Char('v'))); // error → debug
+    state.on_key(key(KeyCode::Char('/')));
     for c in "LOBSTER".chars() {
-        state.on_key(key(KeyCode::Char(c)), Some(slot), None);
+        state.on_key(key(KeyCode::Char(c)));
     }
-    state.on_key(key(KeyCode::Enter), Some(slot), None);
+    state.on_key(key(KeyCode::Enter));
     state.refresh(Some(slot));
     assert_eq!(state.view.len(), 1, "case-insensitive search");
     assert!(!state.editing);
 
-    assert!(
-        !state.on_key(key(KeyCode::Esc), Some(slot), None),
+    assert_eq!(
+        state.on_key(key(KeyCode::Esc)),
+        LogKey::Ignored,
         "Esc outside the search line is left to the router (back / close)"
     );
-    state.on_key(key(KeyCode::Char('/')), Some(slot), None);
-    assert!(
-        state.on_key(key(KeyCode::Esc), Some(slot), None),
+    state.on_key(key(KeyCode::Char('/')));
+    assert_eq!(
+        state.on_key(key(KeyCode::Esc)),
+        LogKey::Used,
         "Esc inside the search line only ends the search"
     );
     assert!(!state.editing);
@@ -117,14 +119,14 @@ fn scrolling_up_pauses_follow_and_end_resumes_it() {
     state.refresh(Some(slot));
     let newest = screen(&state, slot, 80, 24).join("\n");
     assert!(newest.contains("hop 59"));
-    state.on_key(key(KeyCode::PageUp), Some(slot), None);
+    state.on_key(key(KeyCode::PageUp));
     assert!(!state.view.follow());
     push(slot, Source::Nav, Level::Info, "hop 60");
     state.refresh(Some(slot));
     let paused = screen(&state, slot, 80, 24).join("\n");
     assert!(!paused.contains("hop 60"), "a paused view keeps its place");
     assert!(paused.contains("paused"));
-    state.on_key(key(KeyCode::End), Some(slot), None);
+    state.on_key(key(KeyCode::End));
     state.refresh(Some(slot));
     assert!(screen(&state, slot, 80, 24).join("\n").contains("hop 60"));
 }

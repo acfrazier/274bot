@@ -1,6 +1,7 @@
 #[cfg(feature = "memory-profile")]
 #[global_allocator]
-static ALLOCATOR: host_play::memory::BenchmarkAllocator = host_play::memory::BENCHMARK_ALLOCATOR;
+static ALLOCATOR: frontend_core::process::BenchmarkAllocator =
+    frontend_core::process::BENCHMARK_ALLOCATOR;
 
 fn parse_args() -> panel::PanelArgs {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -15,16 +16,14 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() -> std::process::ExitCode {
-    script::bootstrap_v8_platform().expect("protected V8 bootstrap on process main thread");
-    #[cfg(feature = "memory-profile")]
-    host_play::memory::mark_process_start();
+    frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
     let args = parse_args();
     // Before any slot starts: a Finder-launched app gets 256 open files.
     // The session log records the result when it opens.
-    host_play::fd_limit::raise_at_startup();
-    host_play::passphrase::warn_legacy_env("panel-play");
+    frontend_core::process::raise_fd_limit();
+    frontend_core::launch::warn_legacy_passphrase_env("panel-play");
     let run = panel::run_panel(args);
-    let shutdown = script::work_admission::WorkService::shutdown_if_started();
+    let shutdown = frontend_core::process::shutdown_background_work();
     if let Err(error) = &run {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel: {error}");
     }

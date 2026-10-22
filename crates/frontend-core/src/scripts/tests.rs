@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::{
-    parse_parameter_text, CatalogError, Notice, ParameterCommit, ParameterEditKey, Scripts,
+    parse_parameter_text, CardRuntime, CardSource, CatalogError, CompiledCardId, Notice,
+    ParameterCommit, ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState,
+    ScriptStartErrorKind, Scripts, SettingView,
 };
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
@@ -27,6 +29,17 @@ use serde_json::{json, Map, Value};
 
 use vault::{Profile, ProfileSettings, Vault};
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+
+/// Hang guard for every wait in this file, never a pass condition and never a
+/// latency target. Each wait ends on the product's own settlement signal
+/// (`starts_pending()`, `catalog_work_pending()`, the slot's run state): every
+/// admitted job reaches a terminal and a Start refused as Full is resubmitted
+/// on each poll. Card and catalogue preparation share one process-wide
+/// background worker and one byte allowance (`script::work_admission`), so a
+/// test waits behind the preparations of every other test in this binary; on a
+/// loaded host that queue is far longer than one job. The guard only stops a
+/// deadlocked test and is minutes, not the expected duration.
+const HANG_GUARD: Duration = Duration::from_secs(600);
 
 struct Fixture {
     core: OperatorSession<()>,
@@ -100,44 +113,47 @@ impl Fixture {
         self.core.flush_writes();
     }
 
-    /// Poll the core and the coordinator until no Start is pending.
+    /// Pump the core and the coordinator, as the front end does once per
+    /// frame, until `done` holds. The pass condition is the product's own
+    /// settlement signal; the only time bound is `HANG_GUARD`.
+    fn pump_until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
+        let guard = Instant::now() + HANG_GUARD;
+        while !done(self) {
+            assert!(Instant::now() < guard, "{what}: hang guard expired");
+            self.core.poll();
+            self.scripts.poll(&mut self.core);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Poll until no Start is pending (settled, failed or skipped).
     fn settle(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.scripts.starts_pending() && Instant::now() < deadline {
-            self.core.poll();
-            self.scripts.poll(&mut self.core);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert!(
-            !self.scripts.starts_pending(),
-            "script Start did not settle"
-        );
+        self.pump_until("script Start did not settle", |f| {
+            !f.scripts.starts_pending()
+        });
     }
+
     fn settle_catalog_work(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.scripts.catalog_work_pending() && Instant::now() < deadline {
-            self.core.poll();
-            self.scripts.poll(&mut self.core);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert!(
-            !self.scripts.catalog_work_pending(),
-            "catalog work did not settle"
-        );
+        self.pump_until("catalog work did not settle", |f| {
+            !f.scripts.catalog_work_pending()
+        });
     }
 
-    fn wait_state(&mut self, name: &str, want: script::RunState) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while self.state(name) != want && Instant::now() < deadline {
-            self.core.poll();
-            self.scripts.poll(&mut self.core);
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(self.state(name), want, "{name}");
+    /// Poll until the slot reaches `want`. A slot that ends in `Error` when
+    /// another state was wanted has failed: that fails the test now.
+    fn wait_state(&mut self, name: &str, want: ScriptRunState) {
+        self.pump_until(name, |f| {
+            let state = f.state(name);
+            assert!(
+                state == want || state != ScriptRunState::Error,
+                "{name} ended {state:?}, wanted {want:?}"
+            );
+            state == want
+        });
     }
 
-    fn state(&self, name: &str) -> script::RunState {
-        self.core.play().unwrap().script_state(name)
+    fn state(&self, name: &str) -> ScriptRunState {
+        ScriptRunState::from_script(self.core.play().unwrap().script_state(name))
     }
 
     fn start_running(&mut self, name: &str) {
@@ -145,7 +161,7 @@ impl Fixture {
             .start_profile(&mut self.core, name, None)
             .unwrap();
         self.settle();
-        self.wait_state(name, script::RunState::Running);
+        self.wait_state(name, ScriptRunState::Running);
     }
 
     fn generation(&self, name: &str) -> u64 {
@@ -171,7 +187,7 @@ impl Fixture {
             .set_profile_setting(
                 &mut self.core,
                 name,
-                card.source,
+                CardSource::from_script(card.source),
                 &card.name,
                 &card.path,
                 id,
@@ -181,8 +197,13 @@ impl Fixture {
     }
 
     fn prepare(&mut self, source: &str, card: &script::JsCard) {
-        self.scripts
-            .prepare_settings_sync(&self.core, source, card.source, &card.name, &card.path);
+        self.scripts.prepare_settings_sync(
+            &self.core,
+            source,
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+        );
     }
 
     /// Posting `bag` again is refused when the run already has it.
@@ -221,7 +242,7 @@ fn newer_native_edit_keeps_the_copy_drafts_assignment() {
         .set_compiled_setting(
             &mut f.core,
             "alice",
-            id,
+            CompiledCardId::from_script(id),
             "targetPreference",
             json!("Nearest"),
         )
@@ -232,14 +253,20 @@ fn newer_native_edit_keeps_the_copy_drafts_assignment() {
         &f.core,
         &mut f.scripts,
         "alice",
-        &script::ScriptSel::Compiled(id),
+        &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
     )
     .unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     // The editor composes over the accepted copy draft before preparation
     // settlement. Its newer same-card preparation supersedes the first one.
     f.scripts
-        .set_compiled_setting(&mut f.core, "bob", id, "targetPreference", json!("Nearest"))
+        .set_compiled_setting(
+            &mut f.core,
+            "bob",
+            CompiledCardId::from_script(id),
+            "targetPreference",
+            json!("Nearest"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -248,7 +275,10 @@ fn newer_native_edit_keeps_the_copy_drafts_assignment() {
         disk.get("bob").unwrap().settings.script_assignment,
         Some(script::compiled_assignment(id))
     );
-    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    let want = f
+        .scripts
+        .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+        .unwrap();
     assert_eq!(want["targetPreference"], "Nearest");
     f.start_running("bob");
     assert!(
@@ -265,7 +295,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         "export const SETTINGS = { count: { type: 'number', default: 1 } };\nexport default class T extends LoopingBot { override loop() {} }\n",
     );
     f.assign("alice", &card);
-    let selection = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let key = ParameterEditKey::new(Some("alice"), &selection, "count");
     let def = card
         .settings_schema
@@ -276,10 +307,10 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
     f.scripts.merged_profile_bag(
         &mut f.core,
         "alice",
-        card.source,
+        CardSource::from_script(card.source),
         &card.name,
         &card.path,
-        &card.settings_schema,
+        SchemaRef::new(&card.settings_schema),
     );
     f.core.flush_writes();
     let before = f.core.last_operation().map(|report| report.id());
@@ -300,7 +331,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
                 &selection,
                 "count",
                 ("1", Some(current.clone())),
-                def,
+                SettingView::new(def),
                 &[],
             ),
             Ok(json!(text.parse::<u64>().unwrap()))
@@ -324,7 +355,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             &selection,
             "count",
             ("1", Some(current.clone())),
-            def,
+            SettingView::new(def),
             &[],
         )
         .is_err());
@@ -348,7 +379,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             &selection,
             "count",
             ("1", Some(current.clone())),
-            def,
+            SettingView::new(def),
             &[],
         ),
         Ok(json!(123))
@@ -358,14 +389,19 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         .scripts
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
-    assert!(start_error.contains("uncommitted"));
+    match (start_error.kind(), start_error.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => {
+            assert!(message.contains("uncommitted"), "{message}")
+        }
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     assert!(
         f.scripts.parameter_edit_blocks_start("alice"),
         "a valid but uncommitted draft must hold Start"
     );
 
-    let value = parse_parameter_text(def, "123", &[]).unwrap();
+    let value = parse_parameter_text(SettingView::new(def), "123", &[]).unwrap();
     let op = match f
         .scripts
         .commit_parameter_value(
@@ -433,10 +469,16 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
 fn unknown_resource_save_survives_and_radius_remains_editable() {
     let mut f = native_fixture("unknown-resource-radius", &["alice"]);
     let id = script::CompiledId("Gatherer");
-    let selection = script::ScriptSel::Compiled(id);
+    let selection = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
     let setup = f
         .scripts
-        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Mining"))
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Mining"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -444,7 +486,10 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
         f.core.operation(setup).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
     );
-    let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let bag = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
     let current = bag.get("miningResources").cloned().unwrap();
     let schema = (script::compiled_card(id).unwrap().schema)();
     let def = schema
@@ -470,7 +515,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
                 &selection,
                 "miningResources",
                 (&initial_text, Some(current.clone())),
-                def,
+                SettingView::new(def),
                 &[],
             )
             .unwrap(),
@@ -500,7 +545,10 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
         Some(&Outcome::Completed),
         "an unknown Gatherer resource remains a persistable value: {report:?}"
     );
-    let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let saved = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
     assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
 
     for _ in 0..4 {
@@ -520,7 +568,10 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
         assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
     }
 
-    let current_bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let current_bag = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
     let current_radius = current_bag.get("radius").cloned().unwrap();
     let radius_def = schema
         .iter()
@@ -544,7 +595,7 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
             &selection,
             "radius",
             (&initial_radius_text, Some(current_radius.clone())),
-            radius_def,
+            SettingView::new(radius_def),
             &[],
         )
         .unwrap();
@@ -567,7 +618,10 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
     let radius_report = f.core.operation(radius_op).unwrap();
     assert_eq!(radius_report.action(), ActionKind::SaveProfile);
     assert_eq!(radius_report.outcome("alice"), Some(&Outcome::Completed));
-    let saved = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let saved = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
     assert_eq!(saved.get("miningResources"), Some(&json!(["coppe"])));
     assert_eq!(saved.get("radius"), Some(&json!(13)));
 }
@@ -582,16 +636,204 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 fn browse_card_list_includes_compiled_cards() {
     let f = fixture("compiled-card-list", &["alice"]);
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    let sherlock = cards
+    if script::compiled_id("Sherlock").is_some() {
+        let sherlock = cards
+            .iter()
+            .find(|card| card.name() == "Sherlock")
+            .expect("compiled Sherlock is available to Browse when registered");
+        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+        assert_eq!(sherlock.category(), "Treasure Trails");
+        assert_eq!(
+            sherlock.selection(),
+            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        );
+    } else {
+        assert!(
+            cards.iter().all(|card| card.name() != "Sherlock"),
+            "Browse omits Sherlock when the load feature omits its registration"
+        );
+    }
+    let grinch = cards
         .iter()
-        .find(|card| card.name() == "Sherlock")
-        .expect("load builds expose Sherlock to Browse");
-    assert_eq!(sherlock.kind(), script::ScriptKind::Compiled);
-    assert_eq!(sherlock.category(), "Treasure Trails");
+        .find(|card| card.name() == "Grinch")
+        .expect("Grinch is available in Browse without a running instance");
+    assert_eq!(grinch.kind(), CardRuntime::Compiled);
+    assert_eq!(grinch.category(), "Gathering");
+    assert_eq!(grinch.source(), super::CardSource::Builtin);
     assert_eq!(
-        sherlock.selection(),
-        script::ScriptSel::Compiled(script::CompiledId("Sherlock"))
+        grinch.compiled_id(),
+        Some(CompiledCardId::from_script(script::CompiledId("Grinch")))
     );
+    assert_eq!(
+        grinch.selection(),
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Grinch")))
+    );
+}
+
+fn prepare_grinch(
+    f: &Fixture,
+    bag: Map<String, Value>,
+) -> Result<std::sync::Arc<script::native::PreparedConfig>, script::native::StartError> {
+    let id = script::CompiledId("Grinch");
+    let worker = f
+        .core
+        .play()
+        .unwrap()
+        .script_prepare_config(id, 1, std::sync::Arc::new(bag))
+        .expect("Grinch settings preparation is admitted");
+    let identity = worker.identity();
+    worker
+        .join()
+        .expect("Grinch settings worker does not panic")?
+        .commit(identity)
+}
+
+#[test]
+fn grinch_defaults_and_radius_use_the_real_compiled_schema_and_preparer() {
+    let f = native_fixture("grinch-defaults", &["alice"]);
+    let id = script::CompiledId("Grinch");
+    let compiled_id = CompiledCardId::from_script(id);
+    let super::SchemaView::Ready { version, fields } =
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), compiled_id)
+    else {
+        panic!("registered Grinch schema must be available");
+    };
+    assert_eq!(version, 1);
+
+    let editor_bag = f
+        .scripts
+        .compiled_edit_bag(&f.core, Some("alice"), compiled_id)
+        .unwrap();
+    let expected_ids = [
+        "1961", "981", "1989", "1959", "1053", "1055", "1057", "1050", "962", "1038", "1040",
+        "1042", "1044", "1046", "1048", "1419", "1037", "4079",
+    ];
+    let selected: Vec<_> = editor_bag["items"]
+        .as_array()
+        .expect("items editor value is a JSON array")
+        .iter()
+        .map(|value| value.as_str().expect("item IDs are decimal strings"))
+        .collect();
+    assert_eq!(selected, expected_ids);
+    assert_eq!(editor_bag["radius"].as_u64(), Some(12));
+    assert_eq!(editor_bag["bank"], "Nearest");
+    for permission in ["allow_wilderness", "allow_danger_zones", "allow_teleports"] {
+        assert_eq!(editor_bag[permission], false, "{permission} defaults off");
+    }
+
+    let items = fields.get("items").expect("items editor field");
+    let labels = items.option_labels();
+    for (id, colour) in [("1053", "green"), ("1055", "blue"), ("1057", "red")] {
+        assert!(
+            labels
+                .iter()
+                .any(|label| { label.contains(id) && label.to_ascii_lowercase().contains(colour) }),
+            "mask option label names {colour} and ID {id}: {labels:?}"
+        );
+    }
+    for id in expected_ids {
+        assert!(
+            labels.iter().any(|label| label.contains(id)),
+            "item option label contains ID {id}: {labels:?}"
+        );
+    }
+    let bank = fields.get("bank").expect("bank editor field");
+    assert_eq!(bank.options_from(), Some("named-banks"));
+    let radius = fields.get("radius").expect("radius editor field");
+    let (min, max, _) = radius.bounds();
+    assert_eq!((min, max), (Some("1"), Some("16")));
+
+    let prepared = prepare_grinch(&f, editor_bag.clone()).expect("default settings prepare");
+    let config = prepared
+        .get::<std::sync::Arc<script::grinch::Prepared>>()
+        .expect("Grinch preparer returns typed settings");
+    assert_eq!(
+        config.ids.as_ref(),
+        &expected_ids.map(|id| id.parse::<i32>().unwrap())
+    );
+    assert_eq!(config.radius, 12);
+    assert_eq!(
+        config.bank, None,
+        "Nearest is represented by no explicit bank"
+    );
+
+    for radius in [1, 16] {
+        let mut values = editor_bag.clone();
+        values.insert("radius".into(), json!(radius));
+        let prepared = prepare_grinch(&f, values).expect("inclusive radius bound prepares");
+        let config = prepared
+            .get::<std::sync::Arc<script::grinch::Prepared>>()
+            .expect("Grinch preparer returns typed settings");
+        assert_eq!(config.radius, radius);
+    }
+    for radius in [0, 17] {
+        let mut values = editor_bag.clone();
+        values.insert("radius".into(), json!(radius));
+        assert!(
+            prepare_grinch(&f, values).is_err(),
+            "radius {radius} is outside the accepted 1..=16 range"
+        );
+    }
+}
+
+#[test]
+fn grinch_mask_ids_survive_the_shared_panel_tui_settings_editor_path() {
+    let mut f = native_fixture("grinch-mask-settings", &["alice"]);
+    let id = script::CompiledId("Grinch");
+    let compiled_id = CompiledCardId::from_script(id);
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            &script::ScriptSel::Compiled(id),
+            None,
+            super::StartKind::Start,
+            false,
+        )
+        .unwrap();
+    f.settle();
+    f.wait_state("alice", ScriptRunState::Running);
+
+    let mut values = f
+        .scripts
+        .compiled_edit_bag(&f.core, Some("alice"), compiled_id)
+        .unwrap();
+    let masks = vec![json!("1053"), json!("1055"), json!("1057")];
+    values.insert("items".into(), Value::Array(masks.clone()));
+
+    let operation = f
+        .scripts
+        .set_compiled_overrides(&mut f.core, "alice", compiled_id, values)
+        .unwrap();
+    f.core.flush_writes();
+    assert_eq!(
+        f.core.operation(operation).unwrap().outcome("alice"),
+        Some(&Outcome::Completed),
+        "the shared native settings editor write prepares and persists"
+    );
+    let writes = f.core.take_settings_writes();
+    assert!(matches!(
+        writes.as_slice(),
+        [write]
+            if write.op() == operation
+                && write.result().delivery() == Some(&super::LiveDelivery::RestartRequired)
+    ));
+    let saved = f
+        .saved_bag("alice", &script::compiled_identity_key(id))
+        .expect("Grinch settings saved in the profile vault");
+    let (_, saved_values) = vault::CompiledSettingsRecord::view(&saved).unwrap();
+    assert_eq!(saved_values["items"], Value::Array(masks));
+    let reloaded = f
+        .scripts
+        .compiled_bag(&f.core, "alice", compiled_id)
+        .unwrap();
+    assert_eq!(reloaded["items"], saved_values["items"]);
+    let prepared = prepare_grinch(&f, reloaded).expect("reloaded editor settings prepare");
+    let config = prepared
+        .get::<std::sync::Arc<script::grinch::Prepared>>()
+        .expect("Grinch preparer returns typed settings");
+    assert_eq!(config.ids.as_ref(), &[1053, 1055, 1057]);
 }
 
 #[test]
@@ -608,10 +850,10 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     let merged = f.scripts.merged_profile_bag(
         &mut f.core,
         "alice",
-        card.source,
+        CardSource::from_script(card.source),
         &card.name,
         &card.path,
-        &card.settings_schema,
+        SchemaRef::new(&card.settings_schema),
     );
     assert_eq!(merged.get("clueDuelPartner"), Some(&json!("Helper")));
 
@@ -619,10 +861,10 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     let injected = f.scripts.merged_profile_bag(
         &mut f.core,
         "alice",
-        card.source,
+        CardSource::from_script(card.source),
         &card.name,
         &card.path,
-        &card.settings_schema,
+        SchemaRef::new(&card.settings_schema),
     );
     assert_eq!(
         injected.get("clueDuelPartner"),
@@ -741,26 +983,32 @@ fn focused_and_profile_start_wait_for_pending_copy() {
         .scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap_err();
-    assert!(
-        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
-        "{err}"
-    );
+    match (err.kind(), err.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
     let err = f
         .scripts
         .start_profile(&mut f.core, "bob", None)
         .unwrap_err();
-    assert!(
-        err.contains("blocked") && err.contains("waiting for Apply or Cancel"),
-        "{err}"
-    );
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    match (err.kind(), err.to_string()) {
+        (ScriptStartErrorKind::Waiting, message) => assert!(
+            message.contains("blocked") && message.contains("waiting for Apply or Cancel"),
+            "{message}"
+        ),
+        other => panic!("expected a waiting start error, got {other:?}"),
+    }
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
 
     f.scripts.cancel_settings_sync();
     f.scripts
         .start_selected(&mut f.core, "bob", None, None)
         .unwrap();
     f.settle();
-    f.wait_state("bob", script::RunState::Running);
+    f.wait_state("bob", ScriptRunState::Running);
 }
 
 #[test]
@@ -775,14 +1023,14 @@ fn queued_start_waits_for_copy_confirmation() {
         f.core.flush_writes();
         f.scripts.start_all(&mut f.core, None);
         let place = f.scripts.start_queue_place("bob").expect("Bob queued");
-        assert_eq!(f.state("bob"), script::RunState::Idle);
+        assert_eq!(f.state("bob"), ScriptRunState::Idle);
         f.prepare("alice", &card);
         for _ in 0..3 {
             f.core.poll();
             f.scripts.poll(&mut f.core);
-            assert_eq!(f.state("bob"), script::RunState::Idle);
+            assert_eq!(f.state("bob"), ScriptRunState::Idle);
             assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
-            assert_eq!(f.state("carol"), script::RunState::Idle);
+            assert_eq!(f.state("carol"), ScriptRunState::Idle);
         }
         assert!(f.scripts.prepared_settings_sync().is_some());
         assert!(shown_bulk(&f).contains("bob:") && shown_bulk(&f).contains("settings copy"));
@@ -794,14 +1042,14 @@ fn queued_start_waits_for_copy_confirmation() {
         }
         f.settle();
         for name in ["bob", "carol"] {
-            f.wait_state(name, script::RunState::Running);
+            f.wait_state(name, ScriptRunState::Running);
             let want = f.scripts.merged_profile_bag(
                 &mut f.core,
                 name,
-                card.source,
+                CardSource::from_script(card.source),
                 &card.name,
                 &card.path,
-                &card.settings_schema,
+                SchemaRef::new(&card.settings_schema),
             );
             assert_eq!(
                 want["target"],
@@ -832,7 +1080,7 @@ fn queued_js_copy_releases_start_after_staging_without_waiting_for_commit() {
     f.core.poll();
     f.scripts.poll(&mut f.core);
     assert!(f.scripts.start_queue_place("bob").is_none());
-    f.wait_state("bob", script::RunState::Running);
+    f.wait_state("bob", ScriptRunState::Running);
     let want = bag(&[("target", json!("Knight of Ardougne"))]);
     assert!(f.run_has_bag("bob", &want));
     drop(held);
@@ -876,7 +1124,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
                 StartScriptPump::Hold
             );
             assert!(!pending[0].started);
-            assert_eq!(f.state("bob"), script::RunState::Idle);
+            assert_eq!(f.state("bob"), ScriptRunState::Idle);
         }
         assert!(pending[0].waiting_reason.as_ref().is_some_and(
             |reason| reason.contains("bob") && reason.contains("settings copy confirmation")
@@ -887,7 +1135,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
             fire_pending_catalog_start(&mut pending, true, false, arming),
             StartScriptPump::Continue
         );
-        f.wait_state("bob", script::RunState::Running);
+        f.wait_state("bob", ScriptRunState::Running);
         f.core
             .play()
             .unwrap()
@@ -906,42 +1154,45 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
     for name in ["alice", "bob"] {
         start_sherlock(&mut f, name);
         f.core.stop_script(name);
-        f.wait_state(name, script::RunState::Idle);
+        f.wait_state(name, ScriptRunState::Idle);
     }
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
         .unwrap();
     let handle = f.core.play().unwrap().script_start_handle();
     let arming = || StartArming {
         handle: Some(handle.clone()),
         ..Default::default()
     };
-    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    let want = f
+        .scripts
+        .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+        .unwrap();
     let mut pending = vec![PendingCatalogStart::compiled("bob", id, want.clone())];
     assert_eq!(
         fire_pending_catalog_start(&mut pending, true, false, arming),
         StartScriptPump::Hold
     );
     assert!(!pending[0].started);
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
     f.scripts.cancel_settings_sync();
     assert_eq!(
         fire_pending_catalog_start(&mut pending, true, false, arming),
         StartScriptPump::Continue
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let guard = Instant::now() + HANG_GUARD;
     loop {
         match fire_pending_catalog_start(&mut pending, true, false, arming) {
             StartScriptPump::CompiledRunning => break,
-            StartScriptPump::CompiledFailed(error) => panic!("{error}"),
+            StartScriptPump::Failed(error) => panic!("{error}"),
             _ => assert!(
-                Instant::now() < deadline,
-                "compiled scenario did not settle"
+                Instant::now() < guard,
+                "compiled scenario did not settle: hang guard expired"
             ),
         }
         std::thread::yield_now();
     }
-    assert_eq!(f.state("bob"), script::RunState::Running);
+    assert_eq!(f.state("bob"), ScriptRunState::Running);
     assert!(f.run_has_bag("bob", &want));
 }
 
@@ -1174,7 +1425,7 @@ fn a_run_replaced_before_the_write_is_durable_is_not_posted() {
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     // Replace bob's run while the write is still queued.
     f.core.stop_script("bob");
-    f.wait_state("bob", script::RunState::Idle);
+    f.wait_state("bob", ScriptRunState::Idle);
     f.start_running("bob");
     assert_ne!(f.generation("bob"), before);
     drop(held);
@@ -1197,7 +1448,9 @@ fn an_assignment_is_saved_only_once_its_start_is_ready() {
         "bad.ts",
         "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
     );
-    let sel = |card: &script::JsCard| script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = |card: &script::JsCard| {
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
+    };
     f.scripts.set_pending_browse("alice", sel(&good));
     f.scripts.set_pending_browse("bob", sel(&bad));
 
@@ -1241,7 +1494,7 @@ fn start_all_and_stop_all_cover_every_member() {
         ))
     );
     f.settle();
-    f.wait_state("alice", script::RunState::Running);
+    f.wait_state("alice", ScriptRunState::Running);
 
     // A reload shape on bob: its run is reaping with a replacement queued.
     f.core.stop_script("bob");
@@ -1256,10 +1509,10 @@ fn start_all_and_stop_all_cover_every_member() {
             false,
         )
         .unwrap();
-    assert_eq!(f.state("bob"), script::RunState::Stopping);
+    assert_eq!(f.state("bob"), ScriptRunState::Stopping);
     assert_eq!(f.scripts.stop_all(&mut f.core), 2);
     for name in ["alice", "bob"] {
-        f.wait_state(name, script::RunState::Idle);
+        f.wait_state(name, ScriptRunState::Idle);
     }
     for _ in 0..20 {
         f.core.poll();
@@ -1268,7 +1521,7 @@ fn start_all_and_stop_all_cover_every_member() {
     }
     assert_eq!(
         f.state("bob"),
-        script::RunState::Idle,
+        ScriptRunState::Idle,
         "the queued replacement never runs"
     );
 }
@@ -1315,7 +1568,14 @@ fn a_sync_saved_together_with_another_edit_counts_as_saved_and_reaches_a_run() {
         let gate = f.core.write_gate();
         let held = gate.lock().unwrap();
         let op = f.scripts.apply_settings_sync(&mut f.core).unwrap();
-        f.core.set_auto_login("bob", true).unwrap();
+        f.core
+            .submit_detached(
+                OperatorCommand::SetAutoLogin(true),
+                crate::Targets::Profile("bob"),
+            )
+            .unwrap()
+            .operation()
+            .expect("the write opened an operation");
         drop(held);
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
@@ -1439,8 +1699,14 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         if let Some(error) = newer {
             banner = Some(error.to_string());
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while f.scripts.starts_pending() && Instant::now() < deadline {
+        // The banner folds every notice the coordinator raises while the
+        // Start settles, so it pumps as `pump_until` does, plus that fold.
+        let guard = Instant::now() + HANG_GUARD;
+        while f.scripts.starts_pending() {
+            assert!(
+                Instant::now() < guard,
+                "script Start did not settle: hang guard expired"
+            );
             f.core.poll();
             f.scripts.poll(&mut f.core);
             if let Some(notice) = f.scripts.take_notice() {
@@ -1448,7 +1714,6 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(!f.scripts.starts_pending());
         assert_eq!(banner.as_deref(), newer, "newer banner {newer:?}");
         f.core.play().unwrap().script_stop("alice");
     }
@@ -1465,7 +1730,9 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
         "bad.ts",
         "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
     );
-    let sel = |card: &script::JsCard| script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = |card: &script::JsCard| {
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
+    };
     f.scripts.set_pending_browse("opid-alice", sel(&good));
     f.scripts.set_pending_browse("opid-bob", sel(&bad));
     let op_of = |f: &Fixture, name: &str| {
@@ -1482,22 +1749,13 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.scripts
         .start_selected(&mut f.core, "opid-bob", None, None)
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f
-        .core
-        .fleet_view()
-        .row("opid-alice")
-        .and_then(|row| row.last_op())
-        .is_none_or(|op| op.action() != crate::ActionKind::ScriptStart)
-    {
-        assert!(
-            Instant::now() < deadline,
-            "Start preparation did not publish"
-        );
-        f.core.poll();
-        f.scripts.poll(&mut f.core);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    f.pump_until("Start preparation did not publish", |f| {
+        f.core
+            .fleet_view()
+            .row("opid-alice")
+            .and_then(|row| row.last_op())
+            .is_some_and(|op| op.action() == crate::ActionKind::ScriptStart)
+    });
     let accepted = op_of(&f, "opid-alice");
     assert_eq!(accepted.action(), crate::ActionKind::ScriptStart);
     f.settle();
@@ -1561,7 +1819,8 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
         ProfileIdentity::uid(2),
         ProfileIdentity::uid(3),
     ]);
-    let card_sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let card_sel =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     start_marked(
         &selected,
         &mut f.core,
@@ -1575,8 +1834,8 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     );
 
     f.settle();
-    f.wait_state("bob", script::RunState::Running);
-    f.wait_state("carol", script::RunState::Running);
+    f.wait_state("bob", ScriptRunState::Running);
+    f.wait_state("carol", ScriptRunState::Running);
     assert_eq!(
         shown_bulk(&f),
         "Start selected: started 2, skipped 1: alice: already active"
@@ -1629,16 +1888,16 @@ fn queued_gatherer_copy(test: &str) -> Fixture {
         .set_compiled_overrides(
             &mut f.core,
             "alice",
-            id,
+            CompiledCardId::from_script(id),
             bag(&[("targetPreference", json!("Nearest"))]),
         )
         .unwrap();
     f.core.flush_writes();
     f.scripts.start_all(&mut f.core, None);
     assert!(f.scripts.start_queue_place("bob").is_some());
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
         .unwrap();
     f
 }
@@ -1651,7 +1910,7 @@ fn queued_native_copy_waits_for_durable_apply() {
     for _ in 0..3 {
         f.core.poll();
         f.scripts.poll(&mut f.core);
-        assert_eq!(f.state("bob"), script::RunState::Idle);
+        assert_eq!(f.state("bob"), ScriptRunState::Idle);
         assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
     }
     let gate = f.core.write_gate();
@@ -1662,18 +1921,18 @@ fn queued_native_copy_waits_for_durable_apply() {
     f.scripts.poll(&mut f.core);
     assert_eq!(
         f.state("bob"),
-        script::RunState::Idle,
+        ScriptRunState::Idle,
         "Bob must not start on his pre-copy bag while the native write is pending"
     );
     assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
     // Exercise the second asynchronous boundary too: preparation has staged
     // the copied row, but the writer still cannot commit it.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let guard = Instant::now() + HANG_GUARD;
     let key = script::compiled_identity_key(id);
     loop {
         f.core.poll();
         f.scripts.poll(&mut f.core);
-        assert_eq!(f.state("bob"), script::RunState::Idle);
+        assert_eq!(f.state("bob"), ScriptRunState::Idle);
         assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
         let staged = f.core.vault().unwrap().get("bob").unwrap();
         if staged
@@ -1686,8 +1945,8 @@ fn queued_native_copy_waits_for_durable_apply() {
             break;
         }
         assert!(
-            Instant::now() < deadline,
-            "native preparation did not settle"
+            Instant::now() < guard,
+            "native preparation did not settle: hang guard expired"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1701,8 +1960,11 @@ fn queued_native_copy_waits_for_durable_apply() {
     drop(held);
     f.settle();
     for name in ["bob", "carol"] {
-        f.wait_state(name, script::RunState::Running);
-        let want = f.scripts.compiled_bag(&f.core, name, id).unwrap();
+        f.wait_state(name, ScriptRunState::Running);
+        let want = f
+            .scripts
+            .compiled_bag(&f.core, name, CompiledCardId::from_script(id))
+            .unwrap();
         assert_eq!(want["targetPreference"], json!("Nearest"));
         assert!(
             f.run_has_bag(name, &want),
@@ -1720,7 +1982,10 @@ fn queued_native_copy_waits_for_durable_apply() {
 fn failed_queued_native_copy_releases_start_on_pre_copy_bag() {
     let mut f = queued_gatherer_copy("queued-native-copy-failure");
     let id = script::CompiledId("Gatherer");
-    let before = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    let before = f
+        .scripts
+        .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+        .unwrap();
     let vault_file = f.dir.join("vault");
     let aside = vault_file.with_extension("aside");
     std::fs::rename(&vault_file, &aside).unwrap();
@@ -1730,11 +1995,11 @@ fn failed_queued_native_copy_releases_start_on_pre_copy_bag() {
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.poll();
     f.scripts.poll(&mut f.core);
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
     assert!(f.scripts.start_queue_place("bob").is_some());
     drop(held);
     f.settle();
-    f.wait_state("bob", script::RunState::Running);
+    f.wait_state("bob", ScriptRunState::Running);
     assert!(
         f.run_has_bag("bob", &before),
         "a refused copy leaves the running bag unchanged"
@@ -1755,17 +2020,20 @@ fn cancelling_a_new_prompt_does_not_release_an_accepted_native_copy() {
     let held = gate.lock().unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
         .unwrap();
     f.scripts.cancel_settings_sync();
     f.core.poll();
     f.scripts.poll(&mut f.core);
-    assert_eq!(f.state("bob"), script::RunState::Idle);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
     assert_eq!(f.scripts.start_queue_place("bob"), Some(place));
     drop(held);
     f.settle();
-    f.wait_state("bob", script::RunState::Running);
-    let want = f.scripts.compiled_bag(&f.core, "bob", id).unwrap();
+    f.wait_state("bob", ScriptRunState::Running);
+    let want = f
+        .scripts
+        .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+        .unwrap();
     assert_eq!(want["targetPreference"], json!("Nearest"));
     assert!(f.run_has_bag("bob", &want));
 }
@@ -1783,7 +2051,7 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
         .unwrap();
     f.settle();
     f.core.flush_writes();
-    assert_eq!(f.state(name), script::RunState::Running);
+    assert_eq!(f.state(name), ScriptRunState::Running);
 }
 
 fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
@@ -1820,14 +2088,18 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .unwrap();
         f.core.flush_writes();
         let super::SchemaView::Ready { version, fields } =
-            f.scripts.compiled_schema(&f.core, Some("alice"), id)
+            f.scripts
+                .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id))
         else {
             panic!("legacy Sherlock settings stay usable without a schema bump");
         };
         assert_eq!(version, 1);
-        let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        let bag = f
+            .scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap();
         for key in ["allow_teleports", "allow_wilderness", "allow_danger_zones"] {
-            assert!(fields.iter().any(|field| field.id == key));
+            assert!(fields.iter().any(|field| field.id() == key));
             assert_eq!(bag[key], false, "missing legacy permission defaults off");
         }
     }
@@ -1844,13 +2116,22 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .unwrap();
         f.core.flush_writes();
         assert!(matches!(
-            f.scripts.compiled_schema(&f.core, Some("alice"), id),
+            f.scripts
+                .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id)),
             super::SchemaView::Unavailable(_)
         ));
-        assert!(f.scripts.compiled_bag(&f.core, "alice", id).is_err());
         assert!(f
             .scripts
-            .set_compiled_overrides(&mut f.core, "alice", id, Map::new())
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .is_err());
+        assert!(f
+            .scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                Map::new()
+            )
             .is_err());
         assert_eq!(
             f.saved_bag("alice", &key),
@@ -1858,8 +2139,11 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
         );
     }
     assert!(matches!(
-        f.scripts
-            .compiled_schema(&f.core, None, script::CompiledId("missing")),
+        f.scripts.compiled_schema(
+            &f.core,
+            None,
+            CompiledCardId::from_script(script::CompiledId("missing"))
+        ),
         super::SchemaView::Unavailable(_)
     ));
 }
@@ -1871,7 +2155,12 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     f.assign("alice", &previous);
     let id = script::CompiledId("Sherlock");
     f.scripts
-        .set_compiled_overrides(&mut f.core, "alice", id, bag(&[("unknown", json!(1))]))
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            bag(&[("unknown", json!(1))]),
+        )
         .unwrap();
     f.core.flush_writes();
     assert!(matches!(
@@ -1895,7 +2184,7 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
         .unwrap();
     f.settle();
     f.core.flush_writes();
-    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
     assert_eq!(
         Scripts::assignment(&f.core, "alice"),
         Some(previous.assignment())
@@ -1912,7 +2201,12 @@ fn gatherer_radius_round_trips_through_profile_save_and_load() {
 
     let op = f
         .scripts
-        .set_compiled_overrides(&mut f.core, "alice", id, values)
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            values,
+        )
         .unwrap();
     f.core.flush_writes();
     assert_eq!(
@@ -1929,7 +2223,10 @@ fn gatherer_radius_round_trips_through_profile_save_and_load() {
         "the durable profile stores the integral setting as an integer"
     );
 
-    let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+    let bag = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
     assert_eq!(
         script::gatherer::GathererSettings::from_bag(&bag)
             .unwrap()
@@ -1961,7 +2258,10 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
             .unwrap();
         f.core.flush_writes();
 
-        let bag = f.scripts.compiled_bag(&f.core, "alice", id).unwrap();
+        let bag = f
+            .scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap();
         let parsed = script::gatherer::GathererSettings::from_bag(&bag);
         if bag["radius"].as_f64() == Some(12.5) {
             let error = parsed.expect_err("fractional radius must be rejected");
@@ -2031,13 +2331,21 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
     assert!(bob_revision > original);
     assert_eq!(
         f.scripts
-            .compiled_bag(&f.core, "alice", script::CompiledId("Sherlock"))
+            .compiled_bag(
+                &f.core,
+                "alice",
+                CompiledCardId::from_script(script::CompiledId("Sherlock"))
+            )
             .unwrap()[script::CLUE_DUEL_PARTNER],
         "Bob"
     );
     assert_eq!(
         f.scripts
-            .compiled_bag(&f.core, "bob", script::CompiledId("Sherlock"))
+            .compiled_bag(
+                &f.core,
+                "bob",
+                CompiledCardId::from_script(script::CompiledId("Sherlock"))
+            )
             .unwrap()[script::CLUE_DUEL_PARTNER],
         "Alice"
     );
@@ -2057,11 +2365,18 @@ fn native_settings_reply_loses_to_profile_recreation() {
         .set_compiled_overrides(
             &mut f.core,
             "alice",
-            script::CompiledId("Sherlock"),
+            CompiledCardId::from_script(script::CompiledId("Sherlock")),
             Map::new(),
         )
         .unwrap();
-    f.core.vault_remove("alice").unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
     f.core
         .create_profile(replacement, crate::ArmMirror::none(), "recreate")
         .unwrap();
@@ -2100,7 +2415,10 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
             f.core
                 .start_script(
                     "alice",
-                    crate::ScriptStart::compiled(script::CompiledId("Sherlock"), Map::new()),
+                    crate::ScriptStart::compiled(
+                        CompiledCardId::from_script(script::CompiledId("Sherlock")),
+                        Map::new(),
+                    ),
                     None,
                 )
                 .unwrap();
@@ -2133,15 +2451,15 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
                     false,
                 )
                 .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while f.state("alice") != script::RunState::Running {
-                assert!(Instant::now() < deadline);
-                f.core.poll();
-                std::thread::yield_now();
-            }
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
         }
         f.scripts
-            .set_compiled_overrides(&mut f.core, "alice", id, bag(&[("unknown", json!(1))]))
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                bag(&[("unknown", json!(1))]),
+            )
             .unwrap();
         if writer == "ready" {
             f.scripts.poll(&mut f.core);
@@ -2186,19 +2504,14 @@ fn valid_native_draft_survives_unrelated_writes() {
                     false,
                 )
                 .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while f.state("alice") != script::RunState::Running {
-                assert!(Instant::now() < deadline);
-                f.core.poll();
-                std::thread::yield_now();
-            }
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
         }
         let op = f
             .scripts
             .set_compiled_overrides(
                 &mut f.core,
                 "alice",
-                id,
+                CompiledCardId::from_script(id),
                 bag(&[(script::CLUE_DUEL_PARTNER, json!("bob"))]),
             )
             .unwrap();
@@ -2262,7 +2575,14 @@ fn profile_partner_delivery_survives_unrelated_write() {
         .core
         .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
         .unwrap();
-    f.core.set_auto_login("alice", true).unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::SetAutoLogin(true),
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the write opened an operation");
     f.core.flush_writes();
     assert_eq!(f.core.play().unwrap().script_native_run("alice"), run);
     assert!(f
@@ -2311,27 +2631,21 @@ fn durable_native_reply_never_configures_a_replacement_run() {
         .set_compiled_overrides(
             &mut f.core,
             "alice",
-            script::CompiledId("Sherlock"),
+            CompiledCardId::from_script(script::CompiledId("Sherlock")),
             bag(&[(script::CLUE_DUEL_PARTNER, json!("Changed"))]),
         )
         .unwrap();
     let key = script::compiled_identity_key(script::CompiledId("Sherlock"));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f
-        .core
-        .vault()
-        .unwrap()
-        .get("alice")
-        .unwrap()
-        .settings
-        .script_settings[&key]["values"]
-        .get(script::CLUE_DUEL_PARTNER)
-        .is_none()
-    {
-        assert!(Instant::now() < deadline, "validated edit was never staged");
-        f.core.poll();
-        std::thread::yield_now();
-    }
+    pump_core_until(&mut f.core, "validated edit was never staged", |core| {
+        core.vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings[&key]["values"]
+            .get(script::CLUE_DUEL_PARTNER)
+            .is_some()
+    });
     assert_eq!(f.saved_bag("alice", &key).unwrap()["values"], json!({}));
     f.core.stop_script("alice");
     f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
@@ -2366,10 +2680,17 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
             false,
         )
         .unwrap();
-    f.core.vault_remove("alice").unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
     f.settle();
     f.core.flush_writes();
-    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
     assert!(f.core.durable_profile("alice").is_none());
 }
 
@@ -2384,11 +2705,16 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
     let id = script::CompiledId("Sherlock");
     assert!(f
         .scripts
-        .prepare_compiled_settings_sync(&f.core, "alice", id, Some(script::CLUE_DUEL_PARTNER))
+        .prepare_compiled_settings_sync(
+            &f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            Some(script::CLUE_DUEL_PARTNER)
+        )
         .is_err());
     let scope = f
         .scripts
-        .prepare_compiled_settings_sync(&f.core, "alice", id, None)
+        .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
         .unwrap();
     assert_eq!(
         scope.excluded,
@@ -2447,7 +2773,7 @@ fn failed_native_copy_does_not_assign_an_unassigned_bot() {
     f.core.flush_writes();
     assert!(Scripts::assignment(&f.core, "bob").is_none());
 
-    let sel = script::ScriptSel::Compiled(id);
+    let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
     prepare_apply_settings_marked(&mark_uids(&[2]), &f.core, &mut f.scripts, "alice", &sel)
         .unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
@@ -2489,12 +2815,18 @@ fn gatherer_fishing_fleet(test: &str) -> Fixture {
     }
     f.core.flush_writes();
     f.scripts
-        .set_compiled_setting(&mut f.core, "source", id, "skill", json!("Fishing"))
+        .set_compiled_setting(
+            &mut f.core,
+            "source",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Fishing"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "source", id, None)
+        .prepare_compiled_settings_sync(&f.core, "source", CompiledCardId::from_script(id), None)
         .unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
@@ -2503,7 +2835,9 @@ fn gatherer_fishing_fleet(test: &str) -> Fixture {
     assert!(f.scripts.pending_restart_prompt().is_none());
     for name in ["alice", "bob", "carol"] {
         assert_eq!(
-            f.scripts.compiled_bag(&f.core, name, id).unwrap()["skill"],
+            f.scripts
+                .compiled_bag(&f.core, name, CompiledCardId::from_script(id))
+                .unwrap()["skill"],
             "Fishing"
         );
         f.start_running(name);
@@ -2514,12 +2848,18 @@ fn gatherer_fishing_fleet(test: &str) -> Fixture {
 fn sync_gatherer_skill(f: &mut Fixture, skill: &str) {
     let id = script::CompiledId("Gatherer");
     f.scripts
-        .set_compiled_setting(&mut f.core, "source", id, "skill", json!(skill))
+        .set_compiled_setting(
+            &mut f.core,
+            "source",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!(skill),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "source", id, None)
+        .prepare_compiled_settings_sync(&f.core, "source", CompiledCardId::from_script(id), None)
         .unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
@@ -2534,13 +2874,25 @@ fn single_gatherer_restart_prompt(test: &str) -> Fixture {
         .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
     f.core.flush_writes();
     f.scripts
-        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Fishing"))
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Fishing"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     f.start_running("alice");
     f.scripts
-        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Mining"))
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Mining"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -2548,13 +2900,29 @@ fn single_gatherer_restart_prompt(test: &str) -> Fixture {
     f
 }
 
-fn wait_core_state(f: &mut Fixture, name: &str, want: script::RunState) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while f.state(name) != want && Instant::now() < deadline {
-        f.core.poll();
+/// Poll the core (no coordinator) until `done` holds; only `HANG_GUARD` bounds it.
+fn pump_core_until<Io>(
+    core: &mut OperatorSession<Io>,
+    what: &str,
+    mut done: impl FnMut(&OperatorSession<Io>) -> bool,
+) {
+    let guard = Instant::now() + HANG_GUARD;
+    while !done(core) {
+        assert!(Instant::now() < guard, "{what}: hang guard expired");
+        core.poll();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(f.state(name), want, "{name}");
+}
+
+fn wait_core_state(f: &mut Fixture, name: &str, want: ScriptRunState) {
+    pump_core_until(&mut f.core, name, |core| {
+        let state = ScriptRunState::from_script(core.play().unwrap().script_state(name));
+        assert!(
+            state == want || state != ScriptRunState::Error,
+            "{name} ended {state:?}, wanted {want:?}"
+        );
+        state == want
+    });
 }
 
 #[test]
@@ -2562,13 +2930,13 @@ fn restart_prompt_skips_stopped_profile_at_click() {
     let mut f = single_gatherer_restart_prompt("restart-click-stopped");
     let starts_before = start_accepted(&f, "alice");
     f.core.play().unwrap().script_stop("alice");
-    wait_core_state(&mut f, "alice", script::RunState::Idle);
+    wait_core_state(&mut f, "alice", ScriptRunState::Idle);
 
     f.scripts
         .restart_pending_settings(&mut f.core, None)
         .unwrap();
 
-    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert!(f.scripts.pending_restart_prompt().is_none());
     assert!(matches!(
@@ -2588,22 +2956,19 @@ fn restart_prompt_skips_run_that_ends_after_click_check() {
                 return;
             }
             core.play().unwrap().script_stop("alice");
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while core.play().unwrap().script_state("alice") != script::RunState::Idle
-                && Instant::now() < deadline
-            {
-                core.poll();
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            pump_core_until(core, "alice did not stop", |core| {
+                ScriptRunState::from_script(core.play().unwrap().script_state("alice"))
+                    == ScriptRunState::Idle
+            });
             assert_eq!(
-                core.play().unwrap().script_state("alice"),
-                script::RunState::Idle
+                ScriptRunState::from_script(core.play().unwrap().script_state("alice")),
+                ScriptRunState::Idle
             );
         })
         .unwrap();
     f.settle();
 
-    assert_eq!(f.state("alice"), script::RunState::Idle);
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert!(matches!(
         f.scripts.take_notice(),
@@ -2632,7 +2997,8 @@ fn restart_prompt_skips_logout_latch_at_click() {
 #[test]
 fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
-    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
     let run = f.generation("alice");
     let starts_before = start_accepted(&f, "alice");
     assert!(f.scripts.persist_assignment(
@@ -2646,7 +3012,7 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
         .restart_pending_settings(&mut f.core, None)
         .unwrap();
 
-    assert_eq!(f.state("alice"), script::RunState::Running);
+    assert_eq!(f.state("alice"), ScriptRunState::Running);
     assert_eq!(f.generation("alice"), run);
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert_eq!(
@@ -2663,11 +3029,12 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
 #[test]
 fn restart_badge_clears_after_stop() {
     let mut f = single_gatherer_restart_prompt("restart-badge-stop");
-    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
     assert!(f.scripts.pending_restart_prompt().is_some());
     assert!(f.scripts.restart_required_for("alice", &selection));
     f.core.play().unwrap().script_stop("alice");
-    wait_core_state(&mut f, "alice", script::RunState::Idle);
+    wait_core_state(&mut f, "alice", ScriptRunState::Idle);
 
     f.scripts.poll(&mut f.core);
 
@@ -2743,11 +3110,15 @@ fn restarting_a_merged_prompt_twice_starts_each_profile_once() {
     f.settle();
 
     for (name, starts) in ["alice", "bob", "carol"].into_iter().zip(starts_before) {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         assert_eq!(start_accepted(&f, name), starts + 1, "{name}");
         assert_eq!(
             f.scripts
-                .compiled_bag(&f.core, name, script::CompiledId("Gatherer"))
+                .compiled_bag(
+                    &f.core,
+                    name,
+                    CompiledCardId::from_script(script::CompiledId("Gatherer"))
+                )
                 .unwrap()["skill"],
             "Woodcutting"
         );
@@ -2758,24 +3129,38 @@ fn restarting_a_merged_prompt_twice_starts_each_profile_once() {
 fn single_restart_required_setting_prompts_and_restarts_its_profile() {
     let mut f = native_fixture("gatherer-single-restart", &["alice"]);
     let id = script::CompiledId("Gatherer");
-    let selection = script::ScriptSel::Compiled(id);
+    let selection = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
     assert!(f
         .scripts
         .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
     f.core.flush_writes();
     f.scripts
-        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Fishing"))
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Fishing"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     assert_eq!(
-        f.scripts.compiled_bag(&f.core, "alice", id).unwrap()["skill"],
+        f.scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap()["skill"],
         "Fishing"
     );
     f.start_running("alice");
     let initial_generation = f.generation("alice");
     f.scripts
-        .set_compiled_setting(&mut f.core, "alice", id, "skill", json!("Mining"))
+        .set_compiled_setting(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            "skill",
+            json!("Mining"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
@@ -2795,10 +3180,12 @@ fn single_restart_required_setting_prompts_and_restarts_its_profile() {
         .restart_pending_settings(&mut f.core, None)
         .unwrap();
     f.settle();
-    f.wait_state("alice", script::RunState::Running);
+    f.wait_state("alice", ScriptRunState::Running);
     assert_ne!(f.generation("alice"), initial_generation);
     assert_eq!(
-        f.scripts.compiled_bag(&f.core, "alice", id).unwrap()["skill"],
+        f.scripts
+            .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+            .unwrap()["skill"],
         "Mining"
     );
     assert!(!f.scripts.restart_required_for("alice", &selection));
@@ -2807,7 +3194,8 @@ fn single_restart_required_setting_prompts_and_restarts_its_profile() {
 #[test]
 fn gatherer_sync_restart_confirms_only_the_three_changed_profiles() {
     let mut f = gatherer_fishing_fleet("gatherer-sync-restart");
-    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
     let initial_generations = ["alice", "bob", "carol"].map(|name| f.generation(name));
 
     sync_gatherer_skill(&mut f, "Mining");
@@ -2838,24 +3226,29 @@ fn gatherer_sync_restart_confirms_only_the_three_changed_profiles() {
         .into_iter()
         .zip(initial_generations)
     {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         assert_ne!(f.generation(name), generation);
         assert_eq!(
             f.scripts
-                .compiled_bag(&f.core, name, script::CompiledId("Gatherer"))
+                .compiled_bag(
+                    &f.core,
+                    name,
+                    CompiledCardId::from_script(script::CompiledId("Gatherer"))
+                )
                 .unwrap()["skill"],
             "Mining"
         );
         assert!(!f.scripts.restart_required_for(name, &selection));
     }
-    assert_eq!(f.state("source"), script::RunState::Idle);
+    assert_eq!(f.state("source"), ScriptRunState::Idle);
     assert!(f.scripts.pending_restart_prompt().is_none());
 }
 
 #[test]
 fn gatherer_sync_later_keeps_fishing_runs_and_restart_badges() {
     let mut f = gatherer_fishing_fleet("gatherer-sync-later");
-    let selection = script::ScriptSel::Compiled(script::CompiledId("Gatherer"));
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
     let initial_generations = ["alice", "bob", "carol"].map(|name| f.generation(name));
 
     sync_gatherer_skill(&mut f, "Mining");
@@ -2869,11 +3262,15 @@ fn gatherer_sync_later_keeps_fishing_runs_and_restart_badges() {
         .into_iter()
         .zip(initial_generations)
     {
-        assert_eq!(f.state(name), script::RunState::Running);
+        assert_eq!(f.state(name), ScriptRunState::Running);
         assert_eq!(f.generation(name), generation);
         assert_eq!(
             f.scripts
-                .compiled_bag(&f.core, name, script::CompiledId("Gatherer"))
+                .compiled_bag(
+                    &f.core,
+                    name,
+                    CompiledCardId::from_script(script::CompiledId("Gatherer"))
+                )
                 .unwrap()["skill"],
             "Mining"
         );
@@ -2887,12 +3284,18 @@ fn live_applied_gatherer_sync_does_not_offer_a_restart() {
     let id = script::CompiledId("Gatherer");
     let initial_generations = ["alice", "bob", "carol"].map(|name| f.generation(name));
     f.scripts
-        .set_compiled_setting(&mut f.core, "source", id, "deathPolicy", json!("Stop"))
+        .set_compiled_setting(
+            &mut f.core,
+            "source",
+            CompiledCardId::from_script(id),
+            "deathPolicy",
+            json!("Stop"),
+        )
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
     f.scripts
-        .prepare_compiled_settings_sync(&f.core, "source", id, None)
+        .prepare_compiled_settings_sync(&f.core, "source", CompiledCardId::from_script(id), None)
         .unwrap();
     f.scripts.apply_settings_sync(&mut f.core).unwrap();
     f.core.flush_writes();
@@ -2901,7 +3304,7 @@ fn live_applied_gatherer_sync_does_not_offer_a_restart() {
         .into_iter()
         .zip(initial_generations)
     {
-        assert_eq!(f.state(name), script::RunState::Running);
+        assert_eq!(f.state(name), ScriptRunState::Running);
         assert_eq!(f.generation(name), generation);
     }
 
@@ -2940,14 +3343,14 @@ fn shown_bulk(f: &Fixture) -> String {
 fn starting_among(f: &Fixture, names: &[String]) -> usize {
     names
         .iter()
-        .filter(|name| f.state(name) == script::RunState::Starting)
+        .filter(|name| f.state(name) == ScriptRunState::Starting)
         .count()
 }
 
 fn idle_among<'a>(f: &Fixture, names: &'a [String]) -> Vec<&'a str> {
     names
         .iter()
-        .filter(|name| f.state(name) == script::RunState::Idle)
+        .filter(|name| f.state(name) == ScriptRunState::Idle)
         .map(String::as_str)
         .collect()
 }
@@ -3009,7 +3412,7 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
 
     f.settle();
     for name in &names {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         f.core.play().unwrap().script_stop(name);
     }
 }
@@ -3044,7 +3447,7 @@ fn stop_all_cancels_queued_starts() {
     for name in &queued {
         assert_eq!(
             f.state(name),
-            script::RunState::Idle,
+            ScriptRunState::Idle,
             "{name} started after Stop all cancelled its place"
         );
     }
@@ -3074,7 +3477,7 @@ fn reassign_while_queued_does_not_start_stale_work() {
     f.settle();
     assert_eq!(
         f.state(&queued),
-        script::RunState::Idle,
+        ScriptRunState::Idle,
         "{queued} started after its assignment changed"
     );
     assert_ne!(
@@ -3110,7 +3513,7 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
             f.scripts.start_queue_place("inflight-alice").is_none(),
             "first member already has the worker permit"
         );
-        assert_eq!(f.state("inflight-alice"), script::RunState::Idle);
+        assert_eq!(f.state("inflight-alice"), ScriptRunState::Idle);
         match scenario {
             "reassigned" => f.assign("inflight-alice", &replacement),
             "removed" => {
@@ -3136,10 +3539,10 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
         assert_eq!(start_accepted(&f, "inflight-alice"), 0, "{scenario}");
         assert_ne!(
             f.state("inflight-alice"),
-            script::RunState::Running,
+            ScriptRunState::Running,
             "{scenario}: stale card was dispatched"
         );
-        f.wait_state("inflight-bob", script::RunState::Running);
+        f.wait_state("inflight-bob", ScriptRunState::Running);
         f.core.play().unwrap().script_stop("inflight-bob");
     }
 }
@@ -3172,7 +3575,7 @@ fn remove_while_queued_does_not_start_stale_work() {
     );
     assert_ne!(
         f.state(&queued),
-        script::RunState::Running,
+        ScriptRunState::Running,
         "{queued} started after it was removed from the wall"
     );
     let report = f
@@ -3217,7 +3620,7 @@ fn logout_while_queued_does_not_start_stale_work() {
     f.settle();
     assert_eq!(
         f.state(&queued),
-        script::RunState::Idle,
+        ScriptRunState::Idle,
         "{queued} started after logout while queued"
     );
 }
@@ -3242,12 +3645,12 @@ fn single_start_of_a_queued_member_is_immediate() {
     f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
     assert_eq!(
         f.state(&queued),
-        script::RunState::Idle,
+        ScriptRunState::Idle,
         "the single Start is accepted without waiting for another permit frame"
     );
     assert!(f.scripts.starts_pending());
     f.settle();
-    f.wait_state(&queued, script::RunState::Running);
+    f.wait_state(&queued, ScriptRunState::Running);
     assert_eq!(
         start_accepted(&f, &queued),
         1,
@@ -3269,7 +3672,10 @@ fn single_start_of_a_queued_member_is_immediate() {
 #[test]
 fn marked_start_missing_card_reports_each_skip_as_grants_land() {
     let mut f = fixture("pace-marked-missing", &["alice", "bob", "carol"]);
-    let gone = script::ScriptSel::Loaded(script::ScriptSource::File, "gone.ts".into());
+    let gone = ScriptChoice::from_script(script::ScriptSel::Loaded(
+        script::ScriptSource::File,
+        "gone.ts".into(),
+    ));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&gone), None);
     let click_report = shown_bulk(&f);
@@ -3287,7 +3693,7 @@ fn marked_start_missing_card_reports_each_skip_as_grants_land() {
         "{report}"
     );
     for name in ["alice", "bob", "carol"] {
-        assert_eq!(f.state(name), script::RunState::Idle, "{name}");
+        assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
         assert_eq!(start_accepted(&f, name), 0, "{name} must not Start");
     }
 }
@@ -3326,14 +3732,17 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
         .scripts
         .start_profile(&mut f.core, "alice", Some(&root))
         .expect_err("a card absent from the loaded catalog must be refused");
-    assert!(
-        error.contains(&format!("catalog at {} was scanned", root.display()))
-            && error.contains("MissingBot")
-            && error.contains("missing"),
-        "{error}"
-    );
+    match (error.kind(), error.to_string()) {
+        (ScriptStartErrorKind::Refused, message) => assert!(
+            message.contains(&format!("catalog at {} was scanned", root.display()))
+                && message.contains("MissingBot")
+                && message.contains("missing"),
+            "{message}"
+        ),
+        other => panic!("expected a refused start error, got {other:?}"),
+    }
     assert_eq!(start_accepted(&f, "alice"), 0);
-    assert_ne!(f.state("alice"), script::RunState::Running);
+    assert_ne!(f.state("alice"), ScriptRunState::Running);
 }
 
 #[test]
@@ -3715,7 +4124,10 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
     .unwrap();
     std::fs::write(card_dir.join("BoneBurier.ts"), LOOPING).unwrap();
     let selection = mark_uids(&[1, 2]);
-    let card = script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into());
+    let card = ScriptChoice::from_script(script::ScriptSel::Loaded(
+        script::ScriptSource::Catalog,
+        "BoneBurier".into(),
+    ));
 
     let report =
         crate::marked::assign_marked(&selection, &mut f.core, &mut f.scripts, &card, Some(&root));
@@ -3747,7 +4159,7 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
     for name in ["alice", "bob", "carol"] {
         f.assign(name, &card);
     }
-    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
     let click_report = shown_bulk(&f);
@@ -3769,10 +4181,10 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
         "grant-time remove must name the member: {report}"
     );
     assert_eq!(start_accepted(&f, &queued), 0);
-    assert_ne!(f.state(&queued), script::RunState::Running);
+    assert_ne!(f.state(&queued), ScriptRunState::Running);
     for name in ["alice", "bob", "carol"] {
         if name != queued {
-            f.wait_state(name, script::RunState::Running);
+            f.wait_state(name, ScriptRunState::Running);
             f.core.play().unwrap().script_stop(name);
         }
     }
@@ -3789,7 +4201,7 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
     for name in &names {
         f.assign(name, &card);
     }
-    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
     assert_eq!(
@@ -3805,7 +4217,7 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
     f.settle();
     assert_eq!(shown_bulk(&f), "Start all: started 5, skipped 0");
     for name in &names {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         assert_eq!(start_accepted(&f, name), 1, "{name}");
         f.core.play().unwrap().script_stop(name);
     }
@@ -3882,7 +4294,7 @@ fn start_all_twice_keeps_every_outcome_of_the_first_click() {
         assert_eq!(start_accepted(&f, name), usize::from(i != 4), "{name}");
     }
     for name in [&names[0], &names[1], &names[2], &names[5]] {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         f.core.play().unwrap().script_stop(name);
     }
 }
@@ -3904,9 +4316,14 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
         .scripts
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
-    assert!(error.starts_with("missing file: "), "{error}");
+    match (error.kind(), error.to_string()) {
+        (ScriptStartErrorKind::Refused, message) => {
+            assert!(message.starts_with("missing file: "), "{message}")
+        }
+        other => panic!("expected a refused start error, got {other:?}"),
+    }
     assert_eq!(start_accepted(&f, "alice"), 0);
-    assert_ne!(f.state("alice"), script::RunState::Running);
+    assert_ne!(f.state("alice"), ScriptRunState::Running);
 }
 
 /// A bot logged out while it still waits after a second Start all is
@@ -3939,7 +4356,7 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
     );
     assert_eq!(start_accepted(&f, last), 0);
     for name in &names[..3] {
-        f.wait_state(name, script::RunState::Running);
+        f.wait_state(name, ScriptRunState::Running);
         f.core.play().unwrap().script_stop(name);
     }
 }
@@ -3953,7 +4370,7 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     for name in ["alice", "bob", "carol"] {
         f.assign(name, &card);
     }
-    let sel = script::ScriptSel::Loaded(card.source, card.identity_id());
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
@@ -3972,7 +4389,7 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     f.settle();
     for name in ["alice", "bob", "carol"] {
         assert_eq!(start_accepted(&f, name), 0, "{name}");
-        assert_eq!(f.state(name), script::RunState::Idle, "{name}");
+        assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
     }
 }
 
@@ -4071,7 +4488,7 @@ fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
         .set_compiled_overrides(
             &mut f.core,
             "alice",
-            id,
+            CompiledCardId::from_script(id),
             bag(&[("targetPreference", json!("Nearest"))]),
         )
         .unwrap();
@@ -4087,16 +4504,9 @@ fn a_native_settings_save_needs_the_background_service_only_until_prepared() {
             .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
             .map(|(_, values)| values.get("targetPreference").cloned())
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while staged_value(&f) != Some(Some(json!("Nearest"))) {
-        assert!(
-            Instant::now() < deadline,
-            "native preparation did not settle"
-        );
-        f.core.poll();
-        f.scripts.poll(&mut f.core);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    f.pump_until("native preparation did not settle", |f| {
+        staged_value(f) == Some(Some(json!("Nearest")))
+    });
     assert_eq!(f.saved_bag("alice", &key), None, "nothing durable yet");
     // The preparation owner reports; the member no longer needs the service.
     book.prepared(save, alice).unwrap();

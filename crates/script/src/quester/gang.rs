@@ -161,6 +161,14 @@ impl GangRead {
             ))));
         }
         if self.handle.is_none() {
+            if tick.cx.snapshot().main_modal().is_some_and(|modal| {
+                modal.value.root != crate::quest_journal::ROOT_289
+                    && (modal.value.root != -1 || !modal.value.texts.is_empty())
+            }) {
+                // Let a foreign MAIN owner close before JournalMachine begins.
+                // The existing deadline still bounds this read.
+                return Poll::Pending;
+            }
             match tick.actions.begin::<JournalMachine>(
                 JournalRequest {
                     quest: FactKey::new(super::pair::PairQuest::Arrav.path()),

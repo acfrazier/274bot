@@ -105,6 +105,9 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
 
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) type PostNativePlayerInfo = Arc<dyn Fn(&Client, &str) + Send + Sync>;
+
 pub(super) fn take_slot_frame_input(
     input: &SlotInput,
     name: &str,
@@ -621,6 +624,8 @@ impl Play {
             self.catalog_core.clone(),
             self.paired_core.clone(),
             Arc::clone(&self.per_frame),
+            #[cfg(any(test, feature = "test-support"))]
+            self.post_native_player_info.clone(),
             Arc::clone(&self.capacity),
             &mut self.handles,
         );
@@ -1009,6 +1014,8 @@ fn spawn_slot_thread(
     slot_catalog_core: catalog_core::CoreWatch,
     slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
+    #[cfg(any(test, feature = "test-support"))]
+    post_native_player_info: Option<PostNativePlayerInfo>,
     slot_capacity: Arc<host::CapacityMonitor>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1257,6 +1264,8 @@ fn spawn_slot_thread(
                         if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                             row.world = Some(world.number);
                         }
+                        // The next session to log in is bound to this world.
+                        arm.note_configured_world(world.number);
                         host_log!(
                             Category::Login,
                             Level::Info,
@@ -1682,6 +1691,8 @@ fn spawn_slot_thread(
                     run_policy,
                     {
                         let slot_frame = Arc::clone(&slot_frame);
+                        #[cfg(any(test, feature = "test-support"))]
+                        let post_native_player_info = post_native_player_info.clone();
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_input = Arc::clone(&slot_input);
@@ -1971,7 +1982,7 @@ fn spawn_slot_thread(
                             frame_input.host_move_owned =
                                 project_slot_frame_host_move_owned(script_state, nav_owned);
                             #[cfg(feature = "memory-profile")]
-                            memory::client_frame(c, name, hold);
+                            memory::client_frame(c, name, hold, script_state);
                             slot_frame(c, name, frame_input);
                             if !mainland_sent && mainland && ready {
                                 api::interact::mainland_hop(c);
@@ -2206,6 +2217,12 @@ fn spawn_slot_thread(
                                         ),
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
+                                }
+                            }
+                            #[cfg(any(test, feature = "test-support"))]
+                            if tick_edge {
+                                if let Some(observer) = &post_native_player_info {
+                                    observer(c, name);
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with

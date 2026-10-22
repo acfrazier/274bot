@@ -4,7 +4,7 @@
   "activation_state": "partially-activated",
   "frozen_source": {
     "repository": "https://github.com/rs2b2t/rs2b0t.git",
-    "revision": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+    "revision": "90a69240a4617155f280f098958c3cd7f044f234",
     "runtime_declarations": "packages/rs2b0t-api/index.js",
     "typed_declarations": "packages/rs2b0t-api/index.d.ts"
   },
@@ -12831,6 +12831,16 @@
       "nav_consuming": false
     },
     {
+      "id": "bank-withdraw-load-numeric-id",
+      "module": "api/bank/Bank.js",
+      "selector": "Bank.withdrawLoad",
+      "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
+      "runtime": "crates/script/src/shim/bank.js:162",
+      "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
+      "family_id": "bank",
+      "nav_consuming": true
+    },
+    {
       "id": "native-gathering-helper-types",
       "module": "shim/gathering_locations.js",
       "selector": "$module",
@@ -14114,7 +14124,7 @@
       "selector": "loopReadyOrDetached",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:21",
+      "runtime": "crates/script/src/shim/script_runner.js:22",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -14125,7 +14135,7 @@
       "selector": "stopReasonOf",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-      "runtime": "crates/script/src/shim/script_runner.js:25",
+      "runtime": "crates/script/src/shim/script_runner.js:26",
       "async": false,
       "family_id": "runtime",
       "nav_consuming": true
@@ -14434,7 +14444,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:167",
+      "runtime": "crates/script/src/shim/input.js:154",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14446,7 +14456,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:170",
+      "runtime": "crates/script/src/shim/input.js:157",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14458,7 +14468,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:173",
+      "runtime": "crates/script/src/shim/input.js:160",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14470,7 +14480,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:176",
+      "runtime": "crates/script/src/shim/input.js:163",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14482,7 +14492,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:179",
+      "runtime": "crates/script/src/shim/input.js:166",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14494,7 +14504,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:182",
+      "runtime": "crates/script/src/shim/input.js:169",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14506,7 +14516,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:185",
+      "runtime": "crates/script/src/shim/input.js:172",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -14518,7 +14528,7 @@
       "operation": "not-impl",
       "preserveParameters": true,
       "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-      "runtime": "crates/script/src/shim/input.js:188",
+      "runtime": "crates/script/src/shim/input.js:175",
       "async": false,
       "family_id": "input",
       "nav_consuming": false
@@ -15241,7 +15251,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15258,7 +15268,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15275,7 +15285,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15292,7 +15302,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15309,7 +15319,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15326,7 +15336,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15343,7 +15353,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15360,7 +15370,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15377,7 +15387,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15394,7 +15404,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15411,7 +15421,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "hunt",
@@ -15428,7 +15438,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "walking",
@@ -15445,7 +15455,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "walking",
@@ -15462,7 +15472,24 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+    },
+    {
+      "family_id": "walking",
+      "native_family": "reach-loc-op",
+      "member": "sustain",
+      "call_site": "Hunt and walk sustain pump",
+      "path": "awaited",
+      "value": "ignored",
+      "promise": "polled-same-promise",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "awaited-poll-before-step",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "Non-Hunt movement drivers invoke sustain at reached pump call sites; no Hunt tick cadence applies.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "walking",
@@ -15479,7 +15506,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "tasks",
@@ -15496,7 +15523,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "quests",
@@ -15513,7 +15540,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
     },
     {
       "family_id": "bank",
@@ -15771,6 +15798,40 @@
       "evidence": "$S/reach_entity.rs:578,626"
     },
     {
+      "family_id": "walking",
+      "native_family": "reach-loc-op",
+      "member": "expect",
+      "call_site": "Reach loc expected-state predicate; `{}` is truthy",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/walking/Reach.ts:182-187,252-265; $S/reach_entity.rs:1029-1046"
+    },
+    {
+      "family_id": "walking",
+      "native_family": "reach-loc-op",
+      "member": "refused",
+      "call_site": "Reach loc refusal predicate over the caller's game-message pattern; `{}` is truthy, so the op reads as refused",
+      "path": "call-sync",
+      "value": "used",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "synchronous-at-call-site",
+      "multiplicity": "per-reached-call-site; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "One invocation per reached synchronous call site; sites may be reached repeatedly.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/walking/Reach.ts:183-192,264; $S/reach_entity.rs:1034-1075"
+    },
+    {
       "family_id": "trade",
       "native_family": "partner-trade",
       "member": "productNamesToOffer",
@@ -15955,7 +16016,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15972,7 +16033,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -15989,7 +16050,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16006,7 +16067,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16023,7 +16084,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16040,7 +16101,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -16057,7 +16118,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16074,7 +16135,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16091,7 +16152,24 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+    },
+    {
+      "family_id": "walking",
+      "native_family": "reach-loc-op",
+      "member": "log",
+      "call_site": "Synchronous family log notifications",
+      "path": "call-sync",
+      "value": "ignored",
+      "promise": "opaque-empty-object",
+      "thrown": "family-fails-with-thrown-value",
+      "order": "queued-notifications-before-next-decision",
+      "multiplicity": "per-queued-notification; CALLS_PER_TICK=256 per row per tick",
+      "cadence": "Once per queued notification; delivery precedes the next decision.",
+      "frozen_path": {
+        "status": "matches-frozen-call-form"
+      },
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16108,7 +16186,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16125,7 +16203,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16142,7 +16220,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "tasks",
@@ -16159,7 +16237,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -16176,7 +16254,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -23952,7 +24030,7 @@
       "selector": "loopReadyOrDetached",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:21",
+      "source": "crates/script/src/shim/script_runner.js:22",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:loopReadyOrDetached"
     },
@@ -23962,7 +24040,7 @@
       "selector": "stopReasonOf",
       "module": "runtime/ScriptRunner.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/script_runner.js:25",
+      "source": "crates/script/src/shim/script_runner.js:26",
       "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
       "overlay_id": "not-impl:runtime/ScriptRunner.js:stopReasonOf"
     },
@@ -24242,7 +24320,7 @@
       "selector": "Input.useItemOnLoc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:167",
+      "source": "crates/script/src/shim/input.js:154",
       "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnLoc"
     },
@@ -24252,7 +24330,7 @@
       "selector": "Input.useItemOnNpc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:170",
+      "source": "crates/script/src/shim/input.js:157",
       "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnNpc"
     },
@@ -24262,7 +24340,7 @@
       "selector": "Input.useItemOnObj",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:173",
+      "source": "crates/script/src/shim/input.js:160",
       "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnObj"
     },
@@ -24272,7 +24350,7 @@
       "selector": "Input.useItemOnItem",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:176",
+      "source": "crates/script/src/shim/input.js:163",
       "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.useItemOnItem"
     },
@@ -24282,7 +24360,7 @@
       "selector": "Input.castOnNpc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:179",
+      "source": "crates/script/src/shim/input.js:166",
       "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnNpc"
     },
@@ -24292,7 +24370,7 @@
       "selector": "Input.castOnLoc",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:182",
+      "source": "crates/script/src/shim/input.js:169",
       "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnLoc"
     },
@@ -24302,7 +24380,7 @@
       "selector": "Input.castOnItem",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:185",
+      "source": "crates/script/src/shim/input.js:172",
       "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.castOnItem"
     },
@@ -24312,7 +24390,7 @@
       "selector": "Input.continueDialog",
       "module": "input/Input.js",
       "state": "not-impl",
-      "source": "crates/script/src/shim/input.js:188",
+      "source": "crates/script/src/shim/input.js:175",
       "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
       "overlay_id": "not-impl:input/Input.js:Input.continueDialog"
     },
@@ -25728,7 +25806,7 @@
       "aliases": 0,
       "type_aliases": 0,
       "name_aliases": 0,
-      "callbacks": 11,
+      "callbacks": 15,
       "not_impl_debt": 5
     },
     {

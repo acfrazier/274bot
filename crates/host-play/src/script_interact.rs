@@ -728,15 +728,18 @@ where
                     bot.inspect.apply_ack(seq, generation);
                 }
             }
-            InteractReq::Deposit { name } => {
+            InteractReq::Deposit { name, id } => {
                 // The content's Deposit All operation moves every held copy
                 // of this item, including copies in other inventory slots.
+                // A selected id takes only that item type, never another
+                // row of the same name.
                 if let Some((item, op)) = snapshot.bank_side().iter().find_map(|item| {
-                    obj_names
-                        .and_then(|names| names.name(item.def.id))
-                        .is_some_and(|actual| actual.eq_ignore_ascii_case(&name))
-                        .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
-                        .flatten()
+                    (id.is_none_or(|id| item.def.id == id)
+                        && obj_names
+                            .and_then(|names| names.name(item.def.id))
+                            .is_some_and(|actual| actual.eq_ignore_ascii_case(&name)))
+                    .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
+                    .flatten()
                 }) {
                     wrote |= matches!(
                         ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
@@ -1025,16 +1028,20 @@ where
                 level,
                 name,
                 action,
+                id,
             } => {
                 let obj = snapshot.ground_items().iter().find(|it| {
                     it.tile.x == x
                         && it.tile.z == z
                         && it.tile.level == level
-                        && name.as_deref().is_none_or(|wanted| {
-                            obj_names
-                                .and_then(|n| n.name(it.def.id))
-                                .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
-                        })
+                        && match id {
+                            Some(wanted) => it.def.id == wanted,
+                            None => name.as_deref().is_none_or(|wanted| {
+                                obj_names
+                                    .and_then(|n| n.name(it.def.id))
+                                    .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                            }),
+                        }
                 });
                 if let Some(obj) = obj {
                     wrote |= matches!(

@@ -6,10 +6,93 @@ use rustyscript::Runtime;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Field names shared by every scene entity row, in materialization order.
+///
+/// The order is the public row's own-property order: the templates create
+/// these fields before the materializer writes their values, so the row
+/// never grows from an empty object one store at a time.
+pub(super) const COMMON_ROW_FIELDS: [&str; 23] = [
+    "index",
+    "id",
+    "name",
+    "x",
+    "z",
+    "level",
+    "tile",
+    "distance",
+    "health",
+    "max_health",
+    "totalHealth",
+    "in_combat",
+    "animating",
+    "actions",
+    "reachable",
+    "reachable_adj",
+    "combat_level",
+    "target_kind",
+    "target_index",
+    "faceEntity",
+    "size",
+    "nx",
+    "nz",
+];
+
+/// The NPC-only fields appended when the row carries a packed footprint.
+pub(super) const NPC_NETWORK_ROW_FIELDS: [&str; 2] = ["network_x", "network_z"];
+
+/// Per-isolate templates that give entity rows their fast-property shape.
+///
+/// V8 creates template properties once, migrates the cached instantiation to
+/// fast properties, and copies that layout into every instance. Writing the
+/// actual values afterwards therefore updates existing fast fields instead of
+/// adding fields to a fresh empty object, which V8 turns into a dictionary
+/// once a row exceeds its incremental-store soft limit.
+pub(super) struct EntityRowShapes {
+    pub(super) common: v8::Global<v8::ObjectTemplate>,
+    pub(super) npc_network: v8::Global<v8::ObjectTemplate>,
+}
+
+impl EntityRowShapes {
+    /// Build both templates on the isolate thread that will instantiate rows.
+    fn create(scope: &mut v8::HandleScope) -> Result<Self, String> {
+        Ok(Self {
+            common: row_template(scope, COMMON_ROW_FIELDS.iter().copied())?,
+            npc_network: row_template(
+                scope,
+                COMMON_ROW_FIELDS
+                    .iter()
+                    .copied()
+                    .chain(NPC_NETWORK_ROW_FIELDS),
+            )?,
+        })
+    }
+}
+
+/// One template whose own data properties are the row's complete field list.
+///
+/// `Template::set` installs ordinary writable, enumerable, configurable data
+/// properties. The placeholder is never observed: the materializer overwrites
+/// every field before the row reaches JavaScript.
+fn row_template<'a>(
+    scope: &mut v8::HandleScope,
+    fields: impl IntoIterator<Item = &'a str>,
+) -> Result<v8::Global<v8::ObjectTemplate>, String> {
+    let template = v8::ObjectTemplate::new(scope);
+    let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
+    for field in fields {
+        let name =
+            v8::String::new_from_utf8(scope, field.as_bytes(), v8::NewStringType::Internalized)
+                .ok_or_else(|| "v8 string alloc failed".to_string())?;
+        template.set(name.into(), placeholder);
+    }
+    Ok(v8::Global::new(scope, template))
+}
+
 /// The last successful public-row/native-fact pair for each scene category.
 ///
-/// Only the exact materialized row objects and shared native page owners live
-/// here. The mutable JavaScript arrays and wrapper/query objects are not cached.
+/// Only the exact materialized row objects, shared native page owners and the
+/// per-isolate row templates live here. The mutable JavaScript arrays and
+/// wrapper/query objects are not cached.
 #[derive(Default)]
 pub(super) struct EntityPages {
     pub generation: EntityGeneration,
@@ -17,6 +100,8 @@ pub(super) struct EntityPages {
     pub locs: Vec<v8::Global<v8::Object>>,
     pub players: Vec<v8::Global<v8::Object>>,
     pub ground: Vec<v8::Global<v8::Object>>,
+    /// `None` only until the first snapshot after install or reset.
+    pub shapes: Option<EntityRowShapes>,
 }
 
 impl EntityPages {
@@ -105,7 +190,14 @@ impl StagedEntityPages {
 
 /// Install an empty native mapping in this isolate's private V8 slot.
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
-    let state = Rc::new(RefCell::new(EntityPages::default()));
+    let shapes = {
+        let mut scope = runtime.deno_runtime().handle_scope();
+        EntityRowShapes::create(&mut scope)?
+    };
+    let state = Rc::new(RefCell::new(EntityPages {
+        shapes: Some(shapes),
+        ..EntityPages::default()
+    }));
     if runtime.deno_runtime().v8_isolate().set_slot(state) {
         Ok(())
     } else {
@@ -118,18 +210,29 @@ pub(super) fn state(scope: &v8::HandleScope) -> Option<Rc<RefCell<EntityPages>>>
     scope.get_slot::<Rc<RefCell<EntityPages>>>().cloned()
 }
 
-/// Ensure standalone Runtime materialization starts from a real empty mapping.
+/// Ensure standalone Runtime materialization has a mapping and row templates.
+///
+/// A session reset keeps the installed slot but releases every cached V8
+/// handle, including the templates; the next snapshot rebuilds them on this
+/// same isolate thread.
 pub(super) fn ensure(runtime: &mut Runtime) -> Result<(), String> {
-    if runtime
+    let Some(state) = runtime
         .deno_runtime()
         .v8_isolate()
         .get_slot::<Rc<RefCell<EntityPages>>>()
-        .is_some()
-    {
-        Ok(())
-    } else {
-        install(runtime)
+        .cloned()
+    else {
+        return install(runtime);
+    };
+    if state.borrow().shapes.is_some() {
+        return Ok(());
     }
+    let shapes = {
+        let mut scope = runtime.deno_runtime().handle_scope();
+        EntityRowShapes::create(&mut scope)?
+    };
+    state.borrow_mut().shapes = Some(shapes);
+    Ok(())
 }
 
 /// Clear all row roots and native owners while the isolate is still alive.

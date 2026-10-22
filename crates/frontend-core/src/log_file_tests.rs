@@ -27,11 +27,8 @@ fn read(path: &Path) -> String {
 }
 
 /// The preferences of a process service opened at the state root `dir`.
-fn preferences(dir: &Path) -> host_play::local_state::Preferences {
-    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
-        dir.to_path_buf(),
-    ))
-    .preferences()
+fn preferences(dir: &Path) -> crate::prefs::UiPreferences {
+    crate::prefs::UiPreferences::open_for_test(dir.to_path_buf())
 }
 
 #[test]
@@ -42,7 +39,7 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
     assert!(!session_log_setting(&preferences), "no prefs file: off");
     std::fs::create_dir_all(&dir).unwrap();
     // A 0.1.8.1 prefs file has no such key.
-    std::fs::write(
+    vault::write_private_file(
         &prefs,
         br#"{"last_focus":"alice","collapsed":{},"background_bots_ack":true}"#,
     )
@@ -50,12 +47,12 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
     preferences.reload().unwrap();
     assert!(!session_log_setting(&preferences), "absent key: off");
 
-    persist_session_log_setting(&preferences, true).unwrap();
+    crate::prefs::settled_for_test(persist_session_log_setting(&preferences, true)).unwrap();
     assert!(session_log_setting(&preferences));
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(value["last_focus"], "alice", "other keys survive");
     assert_eq!(value["background_bots_ack"], true);
-    persist_session_log_setting(&preferences, false).unwrap();
+    crate::prefs::settled_for_test(persist_session_log_setting(&preferences, false)).unwrap();
     assert!(!session_log_setting(&preferences));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -69,7 +66,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     std::fs::create_dir_all(&dir).unwrap();
     let preferences = preferences(&dir);
     let prefs = preferences.path();
-    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
+    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -80,7 +77,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     lock.lock().unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let writer_preferences = preferences.clone();
+    let writer_preferences = preferences.share();
     let writer = std::thread::spawn(move || {
         started_tx.send(()).unwrap();
         let result = persist_session_log_setting(&writer_preferences, true);
@@ -90,14 +87,14 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     let premature = done_rx.recv_timeout(Duration::from_millis(100));
     // The lock represents the peer's transaction. Publish its grant before
     // releasing it, so the log writer must merge from this newer document.
-    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
     lock.unlock().unwrap();
     writer.join().unwrap();
     assert!(
         matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
         "the log-pane writer bypassed the shared preference lock"
     );
-    done_rx.recv().unwrap().unwrap();
+    crate::prefs::settled_for_test(done_rx.recv().unwrap()).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(saved["nav"]["allow_danger_zones"], true);
     assert_eq!(saved[SESSION_LOG_KEY], true);

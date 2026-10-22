@@ -10,7 +10,7 @@
 //! logout bounded by [`SLOT_REMOVE_TIMEOUT`], and workers are joined only
 //! once finished.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,11 +18,12 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
 use api::identity::SessionKey;
+use api::lifecycle::Intent;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, PlayComposition, SlotArm, SlotStatus, WalkArms};
 use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault, VaultChange};
 
-use crate::capacity::{CapacityNotice, RenderPolicyLabel};
+use crate::capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 use crate::fleet::Fleet;
 use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
@@ -36,7 +37,7 @@ use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
 /// Clean-logout window a connected member gets on removal before its worker
 /// is stopped regardless.
-const SAVING: &str = "profile is still saving";
+pub(crate) const SAVING: &str = "profile is still saving";
 
 pub const SLOT_REMOVE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -278,19 +279,21 @@ pub struct ScriptStart(ScriptStartKind);
 impl ScriptStart {
     /// Start a compiled card.
     pub fn compiled(
-        id: script::CompiledId,
+        id: crate::scripts::CompiledCardId,
         bag: serde_json::Map<String, serde_json::Value>,
     ) -> Self {
+        let id = id.to_script();
         Self(ScriptStartKind::Compiled { id, bag })
     }
 
     /// Start a loaded JS/TS card.
     pub fn load(
         js: String,
-        shape: script::LoadShape,
+        shape: crate::scripts::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Self {
+        let shape = shape.to_script();
         Self(ScriptStartKind::Load {
             js,
             shape,
@@ -326,6 +329,7 @@ impl StartSettled {
     }
 
     /// Isolate setup outcome, or `None` if removal cancelled it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn outcome(&self) -> Option<&script::StartOutcome> {
         self.outcome.as_ref()
     }
@@ -338,6 +342,23 @@ impl StartSettled {
 #[derive(PartialEq)]
 pub struct ArmMirror(ArmMirrorKind);
 
+/// A script assignment command's profile write after it settles.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScriptAssignmentWrite {
+    op: OperationId,
+    result: SettingsResult,
+}
+
+impl ScriptAssignmentWrite {
+    pub(crate) fn op(&self) -> OperationId {
+        self.op
+    }
+
+    pub(crate) fn result(&self) -> &SettingsResult {
+        &self.result
+    }
+}
+
 impl std::fmt::Debug for ArmMirror {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.0, f)
@@ -346,8 +367,10 @@ impl std::fmt::Debug for ArmMirror {
 
 #[derive(Debug, PartialEq)]
 enum ArmMirrorKind {
-    /// Nothing live changes (assignments, tutorial flag, render prefs).
+    /// No live effect.
     None,
+    /// Signals the script coordinator after the profile assignment is durable.
+    ScriptAssignment,
     AutoLogin(bool),
     Guardian {
         random_events: bool,
@@ -389,6 +412,10 @@ impl ArmMirror {
         Self(ArmMirrorKind::None)
     }
 
+    pub(crate) fn script_assignment() -> Self {
+        Self(ArmMirrorKind::ScriptAssignment)
+    }
+
     pub fn auto_login(on: bool) -> Self {
         Self(ArmMirrorKind::AutoLogin(on))
     }
@@ -401,7 +428,8 @@ impl ArmMirror {
         })
     }
 
-    pub fn random_event_policy(event: String, policy: RandomEventPolicy) -> Self {
+    pub fn random_event_policy(event: String, policy: crate::GuardianPolicy) -> Self {
+        let policy = policy.to_vault();
         Self(ArmMirrorKind::RandomEventPolicy { event, policy })
     }
 
@@ -418,11 +446,12 @@ impl ArmMirror {
     }
 
     pub fn native_settings(
-        id: script::CompiledId,
+        id: crate::scripts::CompiledCardId,
         bag: Arc<serde_json::Map<String, serde_json::Value>>,
         live: Option<LiveSettings>,
         assign: bool,
     ) -> Self {
+        let id = id.to_script();
         Self(ArmMirrorKind::NativeSettings {
             id,
             bag,
@@ -437,15 +466,17 @@ impl ArmMirror {
 
     /// Whether this mirror, on a later write committed together with
     /// `earlier`'s, sets the same setting, so `earlier` need not settle or
-    /// reach the slot on its own. Parameters replace the same card's, and a
-    /// profile save an earlier save's handshake settings and partner: the
-    /// later edit captured the current run, if any.
+    /// reach the slot on its own. Parameters replace the same card's, a
+    /// later assignment replaces an earlier assignment, and a profile save
+    /// replaces earlier handshake settings and partner: the later edit
+    /// captured the current run, if any.
     fn replaces(&self, earlier: &Self) -> bool {
         match (&self.0, &earlier.0) {
             (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
             | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
             | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
-            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_)) => true,
+            | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_))
+            | (ArmMirrorKind::ScriptAssignment, ArmMirrorKind::ScriptAssignment) => true,
             (
                 ArmMirrorKind::RandomEventPolicy { event: later, .. },
                 ArmMirrorKind::RandomEventPolicy { event, .. },
@@ -536,9 +567,23 @@ impl MemoryNotice {
     }
 }
 
+mod commands;
+mod fleet;
+mod fleet_plan;
+mod form;
+mod loadouts;
+pub(crate) mod map;
 mod native_settings;
+pub(crate) mod prefs;
+mod scripts;
+mod vault_rows;
+mod world_switch;
+pub(crate) use commands::StagedProfileWrite;
+pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
+pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
+pub use prefs::{DrawPolicy, Notice};
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
@@ -580,6 +625,8 @@ pub struct OperatorSession<Io> {
     saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
+    /// Command-backed script assignment writes, drained by the script coordinator.
+    script_assignment_writes: VecDeque<ScriptAssignmentWrite>,
     /// Load Starts whose setup has not settled, by slot.
     starts: HashMap<String, OperationId>,
     settled_starts: Vec<StartSettled>,
@@ -592,6 +639,9 @@ pub struct OperatorSession<Io> {
     start_places: HashMap<String, QueuePlace>,
     /// Operator Relog-nows pending a different owner-authorized session.
     mem_relog: HashMap<String, Option<SessionKey>>,
+    /// The bound server's public worlds, read once when the play starts
+    /// (`None` on a one-world server): the Switch world choices.
+    public_worlds: Option<Arc<host_play::public_worlds::PublicWorlds>>,
     /// Operation outcomes taken by the last poll (reused buffer).
     op_changes: Vec<OpChange>,
     /// Reused buffer for operation log lines.
@@ -600,11 +650,15 @@ pub struct OperatorSession<Io> {
     resources: Resources,
     /// The front end's walk arms: a member with an armed WalkTo route is
     /// walking (script walks are on the host rows).
-    walk_arms: Option<WalkArms>,
+    /// Per-slot frame state the slot threads share: walk arms, published
+    /// snapshots, step latch.
+    frames: Arc<crate::frames::FrameShared>,
+    #[cfg(feature = "live-harness")]
+    live_runner: crate::live::RunnerHandle,
     /// Shared preference applied whenever a Play is installed and whenever
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
-    walk_globals: host_play::WalkGlobals,
+    walk_globals: crate::walk_permissions::WalkGlobals,
     walk_globals_store: Option<host_play::local_state::Preferences>,
     /// The process local-state service the front end's composition root
     /// opened; every `Play` this session adopts uses it, so the process has
@@ -623,6 +677,33 @@ pub struct OperatorSession<Io> {
     capacity_due: Option<Instant>,
     /// Moves whenever [`Self::capacity_notice`] changes.
     capacity_generation: u64,
+    /// Moves whenever the vault's profile rows may have changed: a staged
+    /// create, rename, delete or settings write, a restore after a failed
+    /// write, or a vault opened or replaced. The fleet model rebuilds its
+    /// profile universe only then.
+    profiles_generation: u64,
+    /// The saved Load order, reconciled with the vault.
+    profile_order: crate::profile_order::ProfileOrder,
+    /// The preferences hold a saved order (the operator reordered, or a
+    /// rename kept a place): reconcile changes are written back.
+    order_saved: bool,
+    /// The last saved Load order known durable: a reorder whose write
+    /// fails goes back to it.
+    durable_order: crate::profile_order::ProfileOrder,
+    /// The number of the last reorder write begun, and of the newest one
+    /// known durable: writes can be polled out of order, so an older
+    /// write that lands after a newer one never replaces the durable order.
+    order_write_seq: u64,
+    durable_order_seq: u64,
+    /// The profiles generation the order was last reconciled at.
+    order_reconciled_at: Option<u64>,
+    /// Order writes that are not commands (a rename or a reconcile), still
+    /// queued on the writer thread; a failure is logged.
+    order_writes: Vec<host_play::local_state::QueuedUpdate>,
+    /// Operator commands: the book and their settlement state.
+    commands: commands::CommandDesk,
+    /// Load all's preferred selection when nothing is selected.
+    focus_hint: Option<String>,
 }
 
 /// How often the session evaluates host capacity.
@@ -637,6 +718,12 @@ enum CapacityKind {
 }
 
 impl<Io> OperatorSession<Io> {
+    /// A session holding `permit` (the instance lock or the decision to run
+    /// without it).
+    pub fn open(permit: crate::launch::InstancePermit) -> Self {
+        Self::new(permit.into_host())
+    }
+
     pub fn new(instance: InstancePermit) -> Self {
         crate::log::global();
         // Service construction is owned by Play; the session does not start
@@ -667,6 +754,7 @@ impl<Io> OperatorSession<Io> {
             write_failures: Vec::new(),
             saves: SaveBook::default(),
             settings_writes: Vec::new(),
+            script_assignment_writes: VecDeque::new(),
             starts: HashMap::new(),
             settled_starts: Vec::new(),
             spawn_workers: true,
@@ -675,12 +763,15 @@ impl<Io> OperatorSession<Io> {
             views: Views::default(),
             start_places: HashMap::new(),
             mem_relog: HashMap::new(),
+            public_worlds: None,
             op_changes: Vec::new(),
             op_line: String::new(),
             resources: Resources::default(),
-            walk_arms: None,
+            frames: Arc::new(crate::frames::FrameShared::new()),
+            #[cfg(feature = "live-harness")]
+            live_runner: crate::live::RunnerHandle::default(),
             pause_script_on_manual_walk_abort: true,
-            walk_globals: host_play::WalkGlobals::default(),
+            walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
             network_driver: None,
@@ -690,12 +781,33 @@ impl<Io> OperatorSession<Io> {
             capacity_render: RenderPolicyLabel::OnlySelected,
             capacity_due: None,
             capacity_generation: 0,
+            profiles_generation: 0,
+            profile_order: crate::profile_order::ProfileOrder::default(),
+            order_saved: false,
+            durable_order: crate::profile_order::ProfileOrder::default(),
+            order_write_seq: 0,
+            durable_order_seq: 0,
+            order_reconciled_at: None,
+            order_writes: Vec::new(),
+            commands: commands::CommandDesk::default(),
+            focus_hint: None,
         }
+    }
+
+    #[cfg(feature = "live-harness")]
+    pub fn live_runner(&self) -> &crate::live::RunnerHandle {
+        &self.live_runner
+    }
+
+    /// [`Self::start`] for front-end and integration test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_for_test(&mut self, vault: Vault, play: Play) {
+        self.start(vault, play);
     }
 
     /// Adopt an unlocked vault and its freshly built [`Play`]. No slot is
     /// spawned here.
-    pub fn start(&mut self, vault: Vault, mut play: Play) {
+    pub(crate) fn start(&mut self, vault: Vault, mut play: Play) {
         for profile in vault.profiles() {
             api::hostlog::register_secret(&profile.password);
         }
@@ -703,13 +815,18 @@ impl<Io> OperatorSession<Io> {
             play.adopt_local_state(Arc::clone(service));
         }
         play.set_pause_script_on_manual_walk_abort(self.pause_script_on_manual_walk_abort);
-        play.set_walk_globals(self.walk_globals);
+        play.set_walk_globals(self.walk_globals.to_host());
         if let Some(preferences) = self.walk_globals_store.as_ref() {
             play.set_walk_globals_store(preferences.clone());
         }
+        play.statuses_into(&mut self.statuses);
+        self.public_worlds = play
+            .server_profile()
+            .and_then(|profile| profile.public_worlds())
+            .cloned();
         self.play = Some(play);
-        self.network_driver = None;
         self.vault = Some(vault);
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
     }
 
@@ -722,9 +839,142 @@ impl<Io> OperatorSession<Io> {
         Ok(())
     }
 
+    /// Start the play session `launch` describes, with `hook` as the front
+    /// end's per-frame client work on every slot, and adopt it with `vault`.
+    pub(crate) fn start_play(
+        &mut self,
+        vault: Vault,
+        launch: crate::launch::PlayLaunch,
+        hook: Arc<dyn crate::frames::FrameHook>,
+    ) -> Result<(), String> {
+        use crate::launch::LaunchParts;
+        self.start_network_composition()
+            .map_err(|error| error.to_string())?;
+        let (parts, auto_world, keep_world_state) = launch.into_parts();
+        let map_members = parts.map_members();
+        self.frames.set_keep_world_state(keep_world_state);
+        let ops = crate::frames::ClientOps::new(
+            host_play::player_here_tile,
+            host_play::Host::publish_frontend_snapshot,
+            host_play::step_walk_arm_follow,
+            |client| client.gens.player,
+        );
+        #[cfg(feature = "live-harness")]
+        let ops = ops.with_live_frame(crate::live::ScenarioFrame::new(
+            self.live_runner.share(),
+            scenario::ScenarioRunner::tick_with_hold,
+            scenario::ScenarioRunner::companion_tick,
+        ));
+        let per_frame = crate::frames::slot_frame(Arc::clone(&self.frames), hook, ops);
+        let mut play = match parts {
+            LaunchParts::Validated(validated, mainland) => host_play::run_prepared_template(
+                validated,
+                mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            LaunchParts::Template(template, mainland) => host_play::run_with_template(
+                template,
+                mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            LaunchParts::Direct(options) => {
+                host_play::run_with_io(&options, Vec::new(), |_| (None, None), per_frame)
+            }
+        };
+        if let Some(number) = auto_world {
+            play.set_auto_world(number)?;
+        }
+        self.frames.bind_world(play.world(), map_members);
+        self.frames.bind_script_nav_paint(play.script_nav_paint());
+        self.start(vault, play);
+        #[cfg(feature = "live-harness")]
+        {
+            // `start` adopts the session state before the runner snapshots its StartHandle.
+            self.live_runner
+                .install_play(self.play.as_ref().expect("started play is installed"));
+        }
+        Ok(())
+    }
+
     /// Adopt a composition started before this session was constructed.
     pub fn adopt_network_composition(&mut self, composition: PlayComposition) {
         self.network_driver = Some(composition);
+    }
+
+    /// Open (or first-run create) the vault at `path` with `typed` and
+    /// start the play session `launch` describes, with `hook` as the front
+    /// end's per-frame client work.
+    pub(crate) fn unlock_vault(
+        &mut self,
+        path: &std::path::Path,
+        typed: &str,
+        launch: crate::launch::PlayLaunch,
+        hook: Arc<dyn crate::frames::FrameHook>,
+    ) -> Result<(), crate::launch::UnlockError> {
+        use crate::launch::{UnlockError, UnlockStage};
+        let vault = crate::launch::open_vault_typed(path, typed)
+            .map_err(|error| UnlockError::new(UnlockStage::Vault, error.to_string()))?;
+        self.start_play(vault, launch, hook)
+            .map_err(|error| UnlockError::new(UnlockStage::Launch, error))
+    }
+
+    /// Whether a walk ended, was refused or was cancelled since the last
+    /// call (clears the flag).
+    pub fn take_walk_clear(&self) -> bool {
+        self.frames.take_walk_clear()
+    }
+
+    /// Read `name`'s walk arm (tests and the live probe proofs).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_walk_arm<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&host_play::WalkArm) -> R,
+    ) -> Option<R> {
+        let arm = self.frames.walk_arms().lock().unwrap().get(name).cloned()?;
+        let arm = arm.lock().unwrap();
+        Some(f(&arm))
+    }
+
+    /// Whether `name` has an armed walk route.
+    pub fn walk_route_armed(&self, name: &str) -> bool {
+        self.frames
+            .walk_arms()
+            .lock()
+            .unwrap()
+            .get(name)
+            .is_some_and(|arm| arm.lock().unwrap().route.is_some())
+    }
+
+    /// Read `name`'s latest published snapshot.
+    pub fn with_slot_snapshot<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&api::snapshot::GameSnapshot) -> R,
+    ) -> Option<R> {
+        self.frames.with_snapshot(name, f)
+    }
+
+    /// Read `name`'s latest published snapshot with its navigation world
+    /// state (kept when the launch asked for it).
+    pub fn with_slot_world_state<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav::WorldState) -> R,
+    ) -> Option<R> {
+        self.frames.with_world_state(name, f)
+    }
+
+    pub(crate) fn walk_arms(&self) -> &WalkArms {
+        self.frames.walk_arms()
+    }
+
+    pub(crate) fn frames(&self) -> &crate::frames::FrameShared {
+        &self.frames
     }
 
     /// Bind the process local-state service the front end's composition
@@ -734,14 +984,37 @@ impl<Io> OperatorSession<Io> {
         self.local_state = Some(service);
     }
 
+    /// Open the process local-state service over the operator's state
+    /// root (`<bot home>/.274bot`) and bind it: the composition root's one
+    /// writer of preferences and loadouts.
+    pub fn open_process_state(&mut self) {
+        let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+        self.bind_local_state(host_play::local_state::LocalStateService::open_process(
+            root,
+        ));
+    }
+
+    /// The bound service's preferences document.
+    pub fn preferences(&self) -> Option<crate::prefs::UiPreferences> {
+        self.local_state
+            .as_ref()
+            .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+    }
+
     /// The process local-state service bound at startup, if any.
-    pub fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+    pub(crate) fn local_state(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
+        self.local_state.as_ref()
+    }
+
+    /// [`Self::local_state`] for front-end tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn local_state_for_test(&self) -> Option<&Arc<host_play::local_state::LocalStateService>> {
         self.local_state.as_ref()
     }
 
     /// Project the persisted manual-movement pause setting onto the current
     /// Play and retain it for the next Play/session slot.
-    pub fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
+    pub(crate) fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) {
         if self.pause_script_on_manual_walk_abort == enabled {
             return;
         }
@@ -751,40 +1024,79 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    /// The manual-movement pause this session runs with now (tests).
+    #[cfg(test)]
+    pub(crate) fn running_pause_script_on_manual_walk_abort(&self) -> bool {
+        self.pause_script_on_manual_walk_abort
+    }
+
     /// Publish grants before or after Play installation.
-    pub fn set_walk_globals(&mut self, globals: host_play::WalkGlobals) {
+    pub(crate) fn set_walk_globals(&mut self, globals: crate::walk_permissions::WalkGlobals) {
         self.walk_globals = globals;
         if let Some(play) = self.play.as_ref() {
-            play.set_walk_globals(globals);
+            play.set_walk_globals(globals.to_host());
         }
     }
 
     /// Interactive frontends share the durable preferences even after
     /// Continue anyway: every admission reads the globals from them.
-    pub fn set_walk_globals_store(&mut self, preferences: host_play::local_state::Preferences) {
+    pub(crate) fn set_walk_globals_store(&mut self, preferences: crate::prefs::UiPreferences) {
+        let preferences = preferences.inner().clone();
         if let Some(play) = self.play.as_mut() {
             play.set_walk_globals_store(preferences.clone());
         }
         self.walk_globals_store = Some(preferences);
     }
 
-    pub fn vault(&self) -> Option<&Vault> {
+    pub(crate) fn vault(&self) -> Option<&Vault> {
         self.vault.as_ref()
     }
 
-    pub fn play(&self) -> Option<&Play> {
+    pub(crate) fn play(&self) -> Option<&Play> {
         self.play.as_ref()
     }
 
-    pub fn play_mut(&mut self) -> Option<&mut Play> {
+    #[cfg(test)]
+    pub(crate) fn play_mut(&mut self) -> Option<&mut Play> {
+        self.play.as_mut()
+    }
+
+    /// The play session, for front-end test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn play_for_test(&self) -> Option<&Play> {
+        self.play.as_ref()
+    }
+
+    /// The play session, for front-end test fixtures (writes).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn play_mut_for_test(&mut self) -> Option<&mut Play> {
         self.play.as_mut()
     }
 
     /// Drop the play (joins its workers). Final teardown only.
-    pub fn close_play(&mut self) {
+    pub(crate) fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
+        self.public_worlds = None;
         self.play = None;
+    }
+
+    /// Offer `numbers` as this server's public worlds (a direct test play
+    /// has none).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_public_worlds_for_test(&mut self, numbers: &[u16]) {
+        self.public_worlds = Some(Arc::new(host_play::public_worlds::PublicWorlds {
+            schema_version: 1,
+            worlds: numbers
+                .iter()
+                .map(|&number| host_play::public_worlds::PublicWorld {
+                    number,
+                    host: format!("w{number}.test"),
+                    port: 443,
+                    node_id: i32::from(number) + 9,
+                })
+                .collect(),
+        }));
     }
 
     pub fn fleet(&self) -> &Fleet {
@@ -814,8 +1126,17 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Rows from the last [`Self::poll`] (or [`Self::start`]).
-    pub fn statuses(&self) -> &[SlotStatus] {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn statuses_for_test(&self) -> &[SlotStatus] {
         &self.statuses
+    }
+
+    /// Find a terminal startup failure among slots owned by the live runner.
+    #[cfg(feature = "live-harness")]
+    pub fn live_terminal_startup_failure(&self) -> Option<String> {
+        self.play
+            .as_ref()
+            .and_then(|_| self.live_runner.terminal_startup_failure(&self.statuses))
     }
 
     /// Copy the rows into a front end's retained vector, reusing its row
@@ -827,8 +1148,14 @@ impl<Io> OperatorSession<Io> {
         out.extend_from_slice(&self.statuses[kept..]);
     }
 
-    pub fn status(&self, name: &str) -> Option<&SlotStatus> {
+    pub(crate) fn status(&self, name: &str) -> Option<&SlotStatus> {
         self.statuses.iter().find(|s| s.username == name)
+    }
+
+    /// The raw status row of `name`, for front-end test fixtures.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn status_for_test(&self, name: &str) -> Option<&SlotStatus> {
+        self.status(name)
     }
 
     /// Status changes observed by the last poll.
@@ -867,13 +1194,13 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// What the front end is rendering, included in the capacity warning.
-    pub fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
+    pub(crate) fn set_capacity_render(&mut self, render: RenderPolicyLabel) {
         self.capacity_render = render;
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inject_capacity_warning(&mut self, warning: host::CapacityWarning) {
-        self.apply_capacity(CapacityEval::Warn(warning));
+    pub fn inject_capacity_warning(&mut self, warning: CapacityWarning) {
+        self.apply_capacity(CapacityEval::Warn(warning.to_host()));
     }
 
     /// Moves whenever a sample changed [`Self::resources`].
@@ -883,8 +1210,32 @@ impl<Io> OperatorSession<Io> {
 
     /// Hand over the front end's walk arms (the map its WalkTo arms and
     /// its slot hook follows) so the rows show those walks too.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_walk_arms(&mut self, arms: WalkArms) {
-        self.walk_arms = Some(arms);
+        let shared =
+            Arc::get_mut(&mut self.frames).expect("walk arms are replaced before any play starts");
+        shared.replace_walk_arms(arms);
+    }
+
+    /// Publish a retained snapshot and navigation state for frontend tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn publish_test_snapshot(
+        &mut self,
+        name: &str,
+        snapshot: api::snapshot::GameSnapshot,
+        world_state: nav::WorldState,
+    ) {
+        self.frames
+            .publish_test_snapshot(name, snapshot, world_state);
+    }
+
+    /// Complete a retained walk arm and raise the next-frame clear signal.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn finish_walk_for_test(&mut self, name: &str) {
+        if let Some(arm) = self.frames.walk_arms().lock().unwrap().get(name).cloned() {
+            arm.lock().unwrap().route = None;
+        }
+        self.frames.mark_walk_clear();
     }
 
     /// Open an operation for a coordinator in this crate (scripts).
@@ -925,18 +1276,163 @@ impl<Io> OperatorSession<Io> {
             .unwrap_or_else(|| crate::selection::ProfileIdentity::synthetic(name))
     }
 
+    /// Every profile name: the vault's in the saved Load order, then any
+    /// live slot without a vault row.
     pub fn profile_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .vault
-            .as_ref()
-            .map(|v| v.profiles().map(|p| p.username.clone()).collect())
-            .unwrap_or_default();
+        let mut names: Vec<String> = Vec::new();
+        if let Some(vault) = self.vault.as_ref() {
+            names.extend(
+                self.profile_order
+                    .names()
+                    .iter()
+                    .filter(|name| vault.get(name).is_some())
+                    .cloned(),
+            );
+            for profile in vault.profiles() {
+                if !names.contains(&profile.username) {
+                    names.push(profile.username.clone());
+                }
+            }
+        }
         for s in &self.statuses {
             if !names.contains(&s.username) {
                 names.push(s.username.clone());
             }
         }
         names
+    }
+
+    /// The saved Load order.
+    pub fn profile_order(&self) -> &crate::profile_order::ProfileOrder {
+        &self.profile_order
+    }
+
+    /// `name`'s place in the saved Load order; `None` for a name it does
+    /// not hold (sorted after every ordered name).
+    pub(crate) fn order_rank(&self, name: &str) -> Option<usize> {
+        self.profile_order.position(name)
+    }
+
+    /// Adopt the saved Load order from `preferences` (startup) and
+    /// reconcile it with the vault.
+    pub(crate) fn adopt_profile_order(&mut self, preferences: &crate::UiPreferences) {
+        let value = preferences.value(crate::profile_order::PROFILE_ORDER_KEY);
+        self.order_saved = value.is_some();
+        self.profile_order
+            .replace(crate::profile_order::ProfileOrder::from_value(
+                value.as_ref(),
+            ));
+        self.durable_order.assign_from(&self.profile_order);
+        self.order_reconciled_at = None;
+        self.reconcile_profile_order();
+    }
+
+    /// Make the saved order match the vault (seed, append, drop) and the
+    /// fleet members follow it. Moves the profiles generation when the
+    /// order changed, so the fleet views rebuild. A profile the vault
+    /// lacks stays stored while a write of it is queued (its deletion is
+    /// not durable, and a failure puts it back in its place); otherwise it
+    /// is dropped, and the saved order is written.
+    pub(crate) fn reconcile_profile_order(&mut self) {
+        if self.order_reconciled_at == Some(self.profiles_generation) {
+            return;
+        }
+        let before = self.profile_order.names().len();
+        let changed = match self.vault.as_ref() {
+            Some(vault) => {
+                let rows = || {
+                    vault
+                        .profiles()
+                        .map(|profile| (profile.uid, profile.username.as_str()))
+                };
+                let durable = &self.durable;
+                let pending = |uid: i32| {
+                    durable
+                        .values()
+                        .any(|profile| profile.as_ref().is_some_and(|p| p.uid == uid))
+                };
+                // The durable copy follows the vault too, so a failed
+                // write's revert shows current names.
+                self.durable_order.reconcile(rows(), pending);
+                self.profile_order.reconcile(rows(), pending)
+            }
+            None => false,
+        };
+        if changed || self.profile_order.names().len() != before {
+            self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        }
+        if changed && self.order_saved {
+            self.persist_profile_order_quietly();
+        }
+        self.order_reconciled_at = Some(self.profiles_generation);
+        self.sort_members_by_order();
+    }
+
+    /// After profile writes settle: a held deletion may be durable now, so
+    /// reconcile again (dropping it from the saved order).
+    fn reconcile_after_writes(&mut self) {
+        if self.profile_order.holds_deleted() {
+            self.order_reconciled_at = None;
+            self.reconcile_profile_order();
+        }
+    }
+
+    /// The uid for a new profile: above every uid the vault holds and
+    /// every uid the saved order has held, so a new profile never takes a
+    /// deleted profile's place. Shared by every path that creates a
+    /// profile.
+    pub fn fresh_uid(&self) -> i32 {
+        let vault = self.vault.as_ref().map(crate::profiles::next_vault_uid);
+        let order = self
+            .profile_order
+            .max_uid()
+            .max(self.durable_order.max_uid())
+            .saturating_add(1);
+        vault.unwrap_or(crate::profiles::FIRST_UID).max(order)
+    }
+
+    /// Order the fleet members by the saved order (stable: a member the
+    /// order lacks keeps its place after the ordered ones). A login
+    /// already queued keeps its queue place.
+    pub(crate) fn sort_members_by_order(&mut self) {
+        let order = &self.profile_order;
+        self.fleet.sort_by_rank(|name| order.position(name));
+    }
+
+    /// Write the saved order outside a command (a rename, a reconcile). A
+    /// queued write is polled by [`Self::poll`]; a failure is logged.
+    fn persist_profile_order_quietly(&mut self) {
+        let Some(preferences) = self.preferences() else {
+            return;
+        };
+        match preferences.begin_set(
+            crate::profile_order::PROFILE_ORDER_KEY,
+            self.profile_order.to_value(),
+        ) {
+            Ok(host_play::local_state::Update::Durable) => {
+                self.order_write_seq += 1;
+                self.durable_order_seq = self.order_write_seq;
+                self.durable_order.assign_from(&self.profile_order);
+            }
+            Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
+            Err(error) => order_write_failed(&error),
+        }
+    }
+
+    /// Poll the order writes that are not commands.
+    fn poll_order_writes(&mut self) {
+        let mut index = 0;
+        while index < self.order_writes.len() {
+            match self.order_writes[index].poll() {
+                None => index += 1,
+                Some(outcome) => {
+                    self.order_writes.swap_remove(index);
+                    if let Err(error) = outcome {
+                        order_write_failed(&error);
+                    }
+                }
+            }
+        }
     }
 
     /// Live slots other than the selected one.
@@ -951,7 +1447,7 @@ impl<Io> OperatorSession<Io> {
     /// login. The host's focus follows (the preferred login owner), and both
     /// the outgoing and incoming slots are woken so a parked worker re-reads
     /// its draw state within a frame.
-    pub fn select(&mut self, name: &str) -> Selection {
+    pub(crate) fn select(&mut self, name: &str) -> Selection {
         if self.selected.as_deref() == Some(name) || self.profile_saving(name) {
             return Selection::Unchanged;
         }
@@ -989,7 +1485,7 @@ impl<Io> OperatorSession<Io> {
     /// Log in). Without a play (pre-unlock) only the IO is registered.
     /// While the name's previous worker is still stopping, the spawn is
     /// queued and [`Self::poll`] starts it once that worker has exited.
-    pub fn ensure_slot<S: SlotSurface<Io = Io>>(
+    pub(crate) fn ensure_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         arm: Option<Arc<SlotArm>>,
@@ -1013,9 +1509,14 @@ impl<Io> OperatorSession<Io> {
             return Ok(());
         };
         self.deferred.remove(name);
-        surface.lifetime_reset(name);
+        let walk_was_armed = self.frames.end_lifetime(name);
+        surface.lifetime_reset(name, walk_was_armed);
         let retained = self.slots.remove(name);
-        let attach = surface.attach(name, &mut profile, retained);
+        let attach = surface.attach(
+            name,
+            &mut crate::surface::SpawnProfile::new(&mut profile),
+            retained,
+        );
         let (io, input, mailbox) = attach.into_parts();
         if let Some(arm) = arm.as_ref() {
             // The surface may apply a session-only override to the disposable
@@ -1097,20 +1598,31 @@ impl<Io> OperatorSession<Io> {
     /// Bring `name`'s worker up without changing login intent: cancel a
     /// pending removal and spawn with the profile's saved arm. A terminal
     /// lifetime is kept (its failure stays visible) until explicit Log in.
-    pub fn open_slot<S: SlotSurface<Io = Io>>(
+    /// The running bot is a fleet member, as every running lifetime is
+    /// ([`Self::seed_running`]): a single-bot focus (the unlock's
+    /// auto-login of the last focused profile, a chooser pick with MultiBox
+    /// off) is loaded like a Load, so the Fleet window lists it and a
+    /// loaded script can start on it.
+    pub(crate) fn open_slot<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
     ) -> Result<(), String> {
         self.cancel_removal(name);
         let arm = self.arm_for_profile(name);
-        self.ensure_slot(name, arm, false, surface)
+        self.ensure_slot(name, arm, false, surface)?;
+        if self.fleet.add(name) {
+            self.sort_members_by_order();
+        }
+        Ok(())
     }
 
     /// Add `name` to the fleet and bring its worker up. Login intent follows
     /// the profile's auto-login unless the logout latch blocks it. Returns
-    /// whether the name was newly added.
-    pub fn load<S: SlotSurface<Io = Io>>(
+    /// whether the name was newly added. Tests; operators submit
+    /// [`OperatorCommand::Load`].
+    #[cfg(test)]
+    pub(crate) fn load<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
@@ -1128,7 +1640,8 @@ impl<Io> OperatorSession<Io> {
     /// chooses a member (last focus if it is now on the wall, else the
     /// first) so panel and TUI have something to show. Single-row Load /
     /// clicking a bot still focuses that member.
-    pub fn load_all<S: SlotSurface<Io = Io>>(
+    #[cfg(test)]
+    pub(crate) fn load_all<S: SlotSurface<Io = Io>>(
         &mut self,
         surface: &mut S,
         last_focus: Option<&str>,
@@ -1160,6 +1673,9 @@ impl<Io> OperatorSession<Io> {
         }
         let cancelled_removal = self.cancel_removal(name);
         let added = self.fleet.add(name);
+        if added {
+            self.sort_members_by_order();
+        }
         let auto_login = self
             .durable_profile(name)
             .map(|p| p.settings.auto_login)
@@ -1192,7 +1708,11 @@ impl<Io> OperatorSession<Io> {
     /// Log in one member: cancel its removal, clear its latch, and arm an
     /// explicit one-shot handshake. A finished worker is reaped and a
     /// terminal lifetime recreated with its retained IO.
-    pub fn login<S: SlotSurface<Io = Io>>(&mut self, name: &str, surface: &mut S) -> OperationId {
+    pub(crate) fn login<S: SlotSurface<Io = Io>>(
+        &mut self,
+        name: &str,
+        surface: &mut S,
+    ) -> OperationId {
         let op = self.operations.open(ActionKind::Login);
         self.cancel_removal(name);
         self.fleet.clear_latch(name);
@@ -1210,13 +1730,14 @@ impl<Io> OperatorSession<Io> {
     /// Log in every member. Queue membership follows worker arrival; the
     /// selected slot (or the first spawned one) is the sole priority
     /// exception.
-    pub fn login_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> OperationId {
+    #[cfg(test)]
+    pub(crate) fn login_all<S: SlotSurface<Io = Io>>(&mut self, surface: &mut S) -> OperationId {
         let names = self.fleet.members().to_vec();
         self.login_members(&names, surface)
     }
 
-    /// [`Self::login_all`] for the named members only, as one operation.
-    pub fn login_members<S: SlotSurface<Io = Io>>(
+    /// Log in the named members only, as one operation.
+    pub(crate) fn login_members<S: SlotSurface<Io = Io>>(
         &mut self,
         names: &[String],
         surface: &mut S,
@@ -1256,12 +1777,12 @@ impl<Io> OperatorSession<Io> {
         // owns the applied server-mode observation.
         self.mem_relog.remove(name);
         if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
-            arm.arm_explicit_login();
+            self.post(name, &arm, Intent::Login);
             return Ok(());
         }
         let arm = self.arm_for_profile(name);
         if let Some(arm) = arm.as_ref() {
-            arm.arm_explicit_login();
+            self.post(name, arm, Intent::Login);
         }
         self.ensure_slot(name, arm, true, surface)
     }
@@ -1286,7 +1807,9 @@ impl<Io> OperatorSession<Io> {
     /// Log out one member: latch it so auto-login is blocked until Log in,
     /// then arm a clean logout. The slot stays up; only intent changes. A
     /// queued or connecting worker cancels its handshake at the next check.
-    pub fn logout(&mut self, name: &str) -> OperationId {
+    /// Tests; operators submit [`OperatorCommand::Logout`].
+    #[cfg(test)]
+    pub(crate) fn logout(&mut self, name: &str) -> OperationId {
         let op = self.operations.open(ActionKind::Logout);
         self.logout_member(op, name);
         if let Some(play) = self.play.as_ref() {
@@ -1296,7 +1819,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Log out every member and every other running slot.
-    pub fn logout_all(&mut self) -> OperationId {
+    #[cfg(test)]
+    pub(crate) fn logout_all(&mut self) -> OperationId {
         let mut names = self.fleet.members().to_vec();
         if let Some(play) = &self.play {
             for s in play.statuses() {
@@ -1308,8 +1832,8 @@ impl<Io> OperatorSession<Io> {
         self.logout_members(&names)
     }
 
-    /// [`Self::logout_all`] for the named slots only, as one operation.
-    pub fn logout_members(&mut self, names: &[String]) -> OperationId {
+    /// Log out the named slots only, as one operation.
+    pub(crate) fn logout_members(&mut self, names: &[String]) -> OperationId {
         let op = self.operations.open(ActionKind::Logout);
         for name in names {
             self.logout_member(op, name);
@@ -1327,10 +1851,10 @@ impl<Io> OperatorSession<Io> {
         self.operations.cancel_pending(ActionKind::Login, name);
         self.operations.cancel_pending(ActionKind::Logout, name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.request_logout();
-        } else if let Some(arm) = self.deferred.get(name).and_then(|d| d.arm.as_ref()) {
+            self.post(name, &arm, Intent::Logout);
+        } else if let Some(arm) = self.deferred.get(name).and_then(|d| d.arm.clone()) {
             // Not spawned yet: it starts on the title, held logged out.
-            arm.hold_logged_out();
+            self.post(name, &arm, Intent::HoldLoggedOut);
         }
         self.operations.set(op, name, Outcome::Pending);
     }
@@ -1378,10 +1902,201 @@ impl<Io> OperatorSession<Io> {
         )
     }
 
+    /// `name`'s current script paint frame, from its status row. A frame
+    /// that advertises host controls also carries the run it was read with
+    /// (profile, run and lifecycle state), which decides their labels and
+    /// binds their activations.
+    pub fn script_paint(&self, name: &str) -> Option<crate::scripts::PaintFrame> {
+        let paint = self.status(name)?.script_paint.clone()?;
+        let run = crate::scripts::advertises_any_control(&paint).then(|| self.paint_run(name));
+        Some(crate::scripts::PaintFrame::new(paint, run))
+    }
+
+    /// The run a host control on `name`'s paint is shown for.
+    fn paint_run(&self, name: &str) -> crate::scripts::PaintRun {
+        let held = self
+            .play
+            .as_ref()
+            .and_then(|play| play.script_run_key(name));
+        crate::scripts::PaintRun {
+            profile: self.profile_identity_or_synthetic(name),
+            run: held.map(|(slot, generation, _)| crate::scripts::RunToken::new(slot, generation)),
+            state: held.map_or(crate::scripts::ScriptRunState::Idle, |(_, _, state)| {
+                crate::scripts::ScriptRunState::from_script(state)
+            }),
+        }
+    }
+
+    /// Why a host paint control may not issue its row for `name` now, or
+    /// `None` when its binding still holds: `name` is the profile it was
+    /// shown for, the slot still holds the same run, the current frame has
+    /// the same generation and still advertises the control, and the run's
+    /// state still takes the shown action.
+    pub(crate) fn paint_control_refusal(
+        &self,
+        name: &str,
+        activation: &crate::scripts::ControlActivation,
+    ) -> Option<&'static str> {
+        if self.profile_identity_or_synthetic(name) != activation.profile {
+            return Some("the paint control belongs to another profile");
+        }
+        let run = self.paint_run(name);
+        if run.run != Some(activation.run) {
+            return Some("the paint control's run has ended");
+        }
+        let current = self
+            .status(name)
+            .and_then(|status| status.script_paint.as_deref());
+        if !current.is_some_and(|paint| {
+            paint.generation == activation.generation
+                && crate::scripts::advertises_control(paint, activation.control)
+        }) {
+            return Some("the paint control's frame is stale");
+        }
+        if !activation.control.applies(run.state) {
+            return Some("the run no longer takes this paint control");
+        }
+        None
+    }
+
+    /// `name`'s script lifecycle state; `Idle` without a play or a script.
+    pub fn script_state(&self, name: &str) -> crate::scripts::ScriptRunState {
+        self.play
+            .as_ref()
+            .map_or(crate::scripts::ScriptRunState::Idle, |play| {
+                crate::scripts::ScriptRunState::from_script(play.script_state(name))
+            })
+    }
+
+    /// Whether a play session is running.
+    pub fn has_play(&self) -> bool {
+        self.play.is_some()
+    }
+
+    /// `name`'s status row.
+    pub fn slot_view(&self, name: &str) -> Option<crate::SlotView<'_>> {
+        self.status(name).map(crate::SlotView::new)
+    }
+
+    /// Whether `name` has a status row.
+    pub fn has_status(&self, name: &str) -> bool {
+        self.status(name).is_some()
+    }
+
+    /// Run an operator-typed debug command on `name`'s slot.
+    pub(crate) fn debug_command(&self, name: &str, cmd: &str) -> Result<(), String> {
+        let play = self.play.as_ref().ok_or("no active play session")?;
+        play.cheat(name, cmd).map_err(|refusal| refusal.to_string())
+    }
+
+    /// Run the front end's tutorial probe (`getvar tutorial`, a read the
+    /// panel sends itself once a slot is in game) on `name`'s slot. Not an
+    /// operator decision: the panel's rail cheat buttons go through
+    /// [`crate::OperatorCommand::DebugCommand`].
+    pub fn debug_command_internal(&self, name: &str, cmd: &str) -> Result<(), String> {
+        let play = self.play.as_ref().ok_or("no active play session")?;
+        play.cheat_internal(name, cmd)
+            .map_err(|refusal| refusal.to_string())
+    }
+
+    /// Kick `name`'s slot thread so a parked slot applies a draw, capture or
+    /// focus change within a frame.
+    pub fn wake_slot(&self, name: &str) {
+        if let Some(play) = &self.play {
+            play.wake(name);
+        }
+    }
+
+    /// Kick every slot thread.
+    pub fn wake_all_slots(&self) {
+        if let Some(play) = &self.play {
+            play.wake_all();
+        }
+    }
+
+    /// `name`'s last script error, if any.
+    pub fn script_last_error(&self, name: &str) -> Option<String> {
+        self.play.as_ref()?.script_last_error(name)
+    }
+
+    /// `name`'s run progress, while a script run is armed.
+    pub fn script_progress(&self, name: &str) -> Option<crate::progress::RunProgress> {
+        self.play
+            .as_ref()?
+            .script_progress(name)
+            .map(crate::progress::RunProgress::new)
+    }
+
+    /// Why queued script Starts are waiting, if they are.
+    pub fn script_start_wait_reason(&self) -> Option<Arc<String>> {
+        self.play.as_ref()?.script_start_wait_reason()
+    }
+
+    /// Deliver a paint-button click to `name`'s script (the
+    /// `ScriptPaintInput` dispatch target).
+    pub(crate) fn script_paint_click(&self, name: &str, id: &str, generation: u64) {
+        if let Some(play) = &self.play {
+            play.script_paint_click(name, id, generation);
+        }
+    }
+
+    /// Deliver a paint chrome selection to `name`'s script (the
+    /// `ScriptPaintInput` dispatch target).
+    pub(crate) fn script_paint_select(
+        &self,
+        name: &str,
+        key: &str,
+        select_name: &str,
+        generation: u64,
+    ) {
+        if let Some(play) = &self.play {
+            play.script_paint_select(name, key, select_name, generation);
+        }
+    }
+
+    /// Whether the bound map treats the world as members.
+    pub fn map_members(&self) -> bool {
+        self.play.as_ref().is_some_and(|play| play.map_members())
+    }
+
+    /// `name`'s known bank rows (empty without a play).
+    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+        self.play
+            .as_ref()
+            .map(|play| play.bank_rows(name))
+            .unwrap_or_default()
+    }
+
+    /// The bound navigation world, once loaded.
+    pub fn nav_world(&self) -> Option<Arc<nav::world::NavWorld>> {
+        self.play.as_ref()?.world()
+    }
+
+    /// The selected game data, once loaded.
+    pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.play.as_ref()?.game_data()
+    }
+
+    /// The object-name table (empty without a play).
+    pub fn obj_names(&self) -> Option<Arc<api::obj_names::ObjNames>> {
+        self.play.as_ref().map(|play| play.obj_names())
+    }
+
+    /// Whether `name`'s script is paused (its Pause button reads Resume).
+    pub fn script_paused(&self, name: &str) -> bool {
+        self.play
+            .as_ref()
+            .is_some_and(|play| play.script_state(name) == script::RunState::Paused)
+    }
+
     /// Queue and persist the memory mode for the next login. Both front ends
     /// use this command; it never mutates the running client or logs out.
     /// [`Self::memory_status`] retains the applied mode through socket reconnects.
-    pub fn set_memory_mode(&mut self, name: &str, lowmem: bool) -> Result<OperationId, String> {
+    pub(crate) fn set_memory_mode(
+        &mut self,
+        name: &str,
+        lowmem: bool,
+    ) -> Result<OperationId, String> {
         let mut profile = self
             .vault
             .as_ref()
@@ -1406,7 +2121,7 @@ impl<Io> OperatorSession<Io> {
     /// Post one Relog-now row. The owner holds its login half across the
     /// current session exit; the frontend only tracks the originating
     /// session for the operator's pending notice.
-    pub fn request_memory_relog<S: SlotSurface<Io = Io>>(
+    pub(crate) fn request_memory_relog<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         surface: &mut S,
@@ -1416,7 +2131,7 @@ impl<Io> OperatorSession<Io> {
         };
         let op = self.operations.open(ActionKind::Logout);
         let previous = arm.session_key();
-        arm.request_relog();
+        self.post(name, &arm, Intent::RelogNow);
         self.mem_relog.insert(name.to_string(), previous);
         self.operations.cancel_pending(ActionKind::Logout, name);
         self.operations.set(op, name, Outcome::Pending);
@@ -1446,7 +2161,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Adopt every running slot into the fleet (MultiBox on), cancelling
     /// their pending removals so the retained IO returns.
-    pub fn seed_running(&mut self) {
+    pub(crate) fn seed_running(&mut self) {
         let running: Vec<String> = self
             .play
             .as_ref()
@@ -1456,6 +2171,7 @@ impl<Io> OperatorSession<Io> {
             self.cancel_removal(name);
         }
         self.fleet.seed_running(&running);
+        self.sort_members_by_order();
     }
 
     /// Remove a member and return immediately. A connected slot gets a
@@ -1463,7 +2179,7 @@ impl<Io> OperatorSession<Io> {
     /// disconnected worker is stopped asynchronously. Neither path sleeps
     /// or joins on the caller. When the removed member was selected, its
     /// neighbour is selected (or the selection cleared).
-    pub fn remove<S: SlotSurface<Io = Io>>(
+    pub(crate) fn remove<S: SlotSurface<Io = Io>>(
         &mut self,
         name: &str,
         now: Instant,
@@ -1518,7 +2234,8 @@ impl<Io> OperatorSession<Io> {
             }
         }
         self.operations.set(op, name, Outcome::Pending);
-        surface.lifetime_reset(name);
+        let walk_was_armed = self.frames.end_lifetime(name);
+        surface.lifetime_reset(name, walk_was_armed);
         surface.released(name);
         let mut removal = Removal {
             op,
@@ -1563,6 +2280,11 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        // The saved Load order follows the vault before anything reads it
+        // (both halves of a split poll reach here).
+        self.reconcile_profile_order();
+        self.poll_order_writes();
+        self.refresh_fleet_result();
         self.transitions.clear();
         self.op_changes.clear();
         self.take_preparations(false);
@@ -1595,6 +2317,7 @@ impl<Io> OperatorSession<Io> {
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
         self.refresh_capacity(now);
+        self.settle_commands();
     }
 
     /// Evaluate host capacity once per [`CAPACITY_EVAL_EVERY`]; the notice
@@ -1605,7 +2328,8 @@ impl<Io> OperatorSession<Io> {
         }
         self.capacity_due = Some(now + CAPACITY_EVAL_EVERY);
         let eval = self.play.as_ref().map_or(CapacityEval::Clear, |play| {
-            play.capacity().evaluate(now, self.capacity_render)
+            play.capacity()
+                .evaluate(now, self.capacity_render.to_host())
         });
         self.apply_capacity(eval);
     }
@@ -1615,7 +2339,8 @@ impl<Io> OperatorSession<Io> {
     fn apply_capacity(&mut self, eval: CapacityEval) {
         let was_warning = self.capacity_kind == CapacityKind::Warn;
         let kind = match eval {
-            CapacityEval::Warn(warning) => {
+            CapacityEval::Warn(host_warning) => {
+                let warning = CapacityWarning::from_host(host_warning);
                 if self.capacity.as_ref().map(CapacityNotice::warning) != Some(warning) {
                     self.capacity = Some(CapacityNotice::from_warning(warning));
                     self.capacity_generation = self.capacity_generation.wrapping_add(1);
@@ -1698,10 +2423,12 @@ impl<Io> OperatorSession<Io> {
             });
         // Map before arm, the order every walk-arm user takes; an arm its
         // slot thread holds is not waited on (see `views::update_row`).
-        let walks = self.walk_arms.as_ref().map(|arms| {
-            arms.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
+        let walks = Some(
+            self.frames
+                .walk_arms()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         let input = Inputs {
             members: self.fleet.members(),
             selected,
@@ -1979,7 +2706,19 @@ impl<Io> OperatorSession<Io> {
     /// Start a script on `name`. Both execution kinds settle through
     /// [`Self::poll`], even while the slot is offline or queued.
     /// `identity` is the Load identity; native installation owns its identity.
-    pub fn start_script(
+    /// [`Self::start_script`] for front-end tests; the refusal as text.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_script_for_test(
+        &mut self,
+        name: &str,
+        start: ScriptStart,
+        identity: Option<String>,
+    ) -> Result<OperationId, String> {
+        self.start_script(name, start, identity)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn start_script(
         &mut self,
         name: &str,
         start: ScriptStart,
@@ -2011,7 +2750,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Pause `name`'s script, or resume it when paused.
-    pub fn toggle_pause(&mut self, name: &str) -> OperationId {
+    pub(crate) fn toggle_pause(&mut self, name: &str) -> OperationId {
         let paused = self
             .play
             .as_ref()
@@ -2036,7 +2775,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Stop `name`'s script (teardown hook, instance dropped). Settles when
     /// the host reports the slot idle, including while offline.
-    pub fn stop_script(&mut self, name: &str) -> OperationId {
+    pub(crate) fn stop_script(&mut self, name: &str) -> OperationId {
         let op = self.operations.open(ActionKind::ScriptStop);
         match self.play.as_ref() {
             Some(play) => {
@@ -2051,7 +2790,7 @@ impl<Io> OperatorSession<Io> {
     /// Stop every listed slot's script, including a slot still reaping a
     /// previous run with a replacement Start queued behind it: Stop drops
     /// that queued Start. Returns the operation and how many were stopped.
-    pub fn stop_scripts(&mut self, names: &[String]) -> (OperationId, usize) {
+    pub(crate) fn stop_scripts(&mut self, names: &[String]) -> (OperationId, usize) {
         let op = self.operations.open(ActionKind::ScriptStop);
         let mut stopped = 0;
         for name in names {
@@ -2083,7 +2822,7 @@ impl<Io> OperatorSession<Io> {
     /// successful write applies `mirror` to a running slot and a failed one
     /// restores the durable value (unless a newer write is queued) and is
     /// reported through [`Self::take_write_failures`] prefixed by `label`.
-    pub fn save_profile(
+    pub(crate) fn save_profile(
         &mut self,
         profile: Profile,
         mirror: ArmMirror,
@@ -2109,7 +2848,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(&profile.username)
             .ok_or_else(|| format!("{label}: vault locked"))?;
         api::hostlog::register_secret(&profile.password);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_upsert(profile.clone());
         }
         Ok(self.submit_write(
@@ -2124,7 +2863,7 @@ impl<Io> OperatorSession<Io> {
     /// Stage a new profile like [`Self::save_profile`], refused when a
     /// profile of that username already exists: a new row never overwrites
     /// another profile.
-    pub fn create_profile(
+    pub(crate) fn create_profile(
         &mut self,
         profile: Profile,
         mirror: ArmMirror,
@@ -2149,7 +2888,7 @@ impl<Io> OperatorSession<Io> {
     /// and the removal of the old one are written in a single commit, and a
     /// failure puts both back. Refused when another profile already has the
     /// new username: a rename never overwrites it.
-    pub fn rename_profile(
+    pub(crate) fn rename_profile(
         &mut self,
         old: &str,
         profile: Profile,
@@ -2169,7 +2908,7 @@ impl<Io> OperatorSession<Io> {
         self.hold_durable(old);
         self.cancel_profile_start(old);
         api::hostlog::register_secret(&profile.password);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_upsert(profile.clone());
             vault.stage_remove(old);
         }
@@ -2213,13 +2952,10 @@ impl<Io> OperatorSession<Io> {
     /// instead of silently dropping the draft. The panel's Profiles form
     /// gates its explicit edit-target switch on this; the TUI settings popup
     /// persists each edit as it is made, so it never holds a draft.
-    pub fn profile_form_dirty(
-        &self,
-        target: Option<&str>,
-        username: &str,
-        password: &str,
-        settings: &ProfileSettings,
-    ) -> bool {
+    pub fn profile_form_dirty(&self, target: Option<&str>, draft: &crate::ProfileDraft) -> bool {
+        let username = draft.username();
+        let password = draft.password_secret().as_str();
+        let settings = draft.settings().settings();
         match target.filter(|t| !t.is_empty()) {
             Some(name) => match self.vault.as_ref().and_then(|v| v.get(name)) {
                 Some(row) => {
@@ -2241,7 +2977,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Delete a vault profile only; a live member is not logged out or
     /// dropped. Returns `None` when there was no such profile.
-    pub fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
+    pub(crate) fn vault_remove(&mut self, name: &str) -> Result<Option<OperationId>, String> {
         if self.profile_saving(name) {
             return Err(format!("chooser: {name}: {SAVING}"));
         }
@@ -2255,7 +2991,7 @@ impl<Io> OperatorSession<Io> {
         }
         self.hold_durable(name);
         self.cancel_profile_start(name);
-        if let Some(vault) = self.vault.as_mut() {
+        if let Some(vault) = self.vault_for_write() {
             vault.stage_remove(name);
         }
         Ok(Some(self.submit_write(
@@ -2344,7 +3080,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist a profile's auto-login; a running slot's arm follows once the
     /// write is durable. Never spawns or stops a slot.
-    pub fn set_auto_login(&mut self, name: &str, on: bool) -> Result<OperationId, String> {
+    pub(crate) fn set_auto_login(&mut self, name: &str, on: bool) -> Result<OperationId, String> {
         let mut profile = self
             .vault
             .as_ref()
@@ -2359,7 +3095,7 @@ impl<Io> OperatorSession<Io> {
     /// Persist a profile's random-event guardian fields; a running slot's
     /// arm follows once the write is durable, so toggling off never acts or
     /// holds without a respawn.
-    pub fn set_random_settings(
+    pub(crate) fn set_random_settings(
         &mut self,
         name: &str,
         random_events: bool,
@@ -2382,11 +3118,11 @@ impl<Io> OperatorSession<Io> {
 
     /// Persist one hostile random's policy and mirror it to a running slot
     /// once the vault write is durable.
-    pub fn set_random_event_policy(
+    pub(crate) fn set_random_event_policy(
         &mut self,
         name: &str,
         event: &str,
-        policy: RandomEventPolicy,
+        policy: crate::GuardianPolicy,
     ) -> Result<OperationId, String> {
         let mut profile = self
             .vault
@@ -2396,12 +3132,127 @@ impl<Io> OperatorSession<Io> {
             .cloned()
             .ok_or_else(|| format!("random: no profile {name}"))?;
         let event = event.trim().to_ascii_lowercase();
-        profile.settings.set_random_event_policy(&event, policy);
+        profile
+            .settings
+            .set_random_event_policy(&event, policy.to_vault());
         self.save_profile(
             profile,
             ArmMirror::random_event_policy(event, policy),
             "random",
         )
+    }
+
+    /// The profile a form's Save writes: the draft's credentials over the
+    /// existing row's uid and settings (a form edits only its world and clue
+    /// partner), or a new row with a fresh uid and the draft's settings.
+    /// `None` while the vault is locked.
+    pub(crate) fn compose_profile(
+        &self,
+        rename_from: Option<&str>,
+        username: &str,
+        draft: &crate::ProfileDraft,
+        form_open: bool,
+    ) -> Option<Profile> {
+        let vault = self.vault.as_ref()?;
+        let existing = vault.get(rename_from.unwrap_or(username)).cloned();
+        let staged = draft.settings().settings();
+        Some(Profile {
+            uid: existing
+                .as_ref()
+                .map(|p| p.uid)
+                .unwrap_or_else(|| self.fresh_uid()),
+            username: username.to_string(),
+            password: draft.password_secret().clone(),
+            settings: existing
+                .map(|p| {
+                    let mut settings = p.settings;
+                    if form_open {
+                        settings.world = staged.world;
+                        settings.clue_duel_partner = staged.clue_duel_partner.trim().to_string();
+                    }
+                    settings
+                })
+                .unwrap_or_else(|| staged.clone()),
+        })
+    }
+
+    /// Persist the cached TutSkip state of `name` (an engine `getvar` read,
+    /// or the operator's TutSkip through
+    /// [`crate::OperatorCommand::MarkTutorialSkipped`]). Unchanged state
+    /// writes nothing.
+    /// Adopt the engine's `getvar tutorial` reading of `name` as its
+    /// cached TutSkip state: an owner result, not an operator decision
+    /// (the operator's TutSkip is [`crate::OperatorCommand::MarkTutorialSkipped`]).
+    pub fn adopt_tutorial_reading(
+        &mut self,
+        name: &str,
+        skipped: bool,
+    ) -> Result<(), crate::profile_saves::ProfileWriteRefused> {
+        self.record_tutorial_state(name, skipped)
+            .map(|_| ())
+            .map_err(crate::profile_saves::ProfileWriteRefused)
+    }
+
+    pub(crate) fn record_tutorial_state(
+        &mut self,
+        name: &str,
+        skipped: bool,
+    ) -> Result<Option<OperationId>, String> {
+        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+            return Ok(None);
+        };
+        if profile.settings.tutorial_skipped == Some(skipped) {
+            return Ok(None);
+        }
+        profile.settings.tutorial_skipped = Some(skipped);
+        self.save_profile(profile, ArmMirror::none(), "tutorial")
+            .map(Some)
+    }
+
+    /// Persist `name`'s game-image raster mode.
+    pub(crate) fn set_profile_raster(
+        &mut self,
+        name: &str,
+        raster: crate::command::RasterMode,
+    ) -> Result<Option<OperationId>, String> {
+        let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+            return Ok(None);
+        };
+        profile.settings.raster = raster.to_vault();
+        self.save_profile(profile, ArmMirror::none(), "render prefs")
+            .map(Some)
+    }
+
+    /// Whether a vault is open.
+    pub fn vault_open(&self) -> bool {
+        self.vault.is_some()
+    }
+
+    /// The open vault for a staged profile change; moves
+    /// [`Self::profiles_generation`] so a fleet model rebuilds its
+    /// profile universe.
+    pub(crate) fn vault_for_write(&mut self) -> Option<&mut Vault> {
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
+        self.vault.as_mut()
+    }
+
+    /// Moves whenever the vault's profile rows may have changed (a staged
+    /// create, rename, delete or settings write, a restore after a failed
+    /// write, or a vault opened or replaced).
+    pub fn profiles_generation(&self) -> u64 {
+        self.profiles_generation
+    }
+
+    /// The staged (vault) row of `name`, as the forms show it.
+    pub fn profile(&self, name: &str) -> Option<crate::ProfileView<'_>> {
+        self.vault.as_ref()?.get(name).map(crate::ProfileView::new)
+    }
+
+    /// Every vault profile, in vault order.
+    pub fn profiles(&self) -> impl Iterator<Item = crate::ProfileView<'_>> {
+        self.vault
+            .iter()
+            .flat_map(|vault| vault.profiles().map(crate::ProfileView::new))
     }
 
     /// Whether `name` has no durable row yet: its first save (new or
@@ -2438,7 +3289,7 @@ impl<Io> OperatorSession<Io> {
     /// write settles in [`Self::poll`]; the record then moves from
     /// [`Self::saves_in_flight`] to [`Self::take_settled_saves`], with the
     /// write's result.
-    pub fn track_save(&mut self, record: SaveRecord) {
+    pub(crate) fn track_save(&mut self, record: SaveRecord) {
         self.saves.track(record);
     }
 
@@ -2459,20 +3310,34 @@ impl<Io> OperatorSession<Io> {
         std::mem::take(&mut self.settings_writes)
     }
 
+    pub(crate) fn take_script_assignment_write(&mut self) -> Option<ScriptAssignmentWrite> {
+        self.script_assignment_writes.pop_front()
+    }
+
     /// Wait for every queued profile write and settle it. For startup and
     /// harness boundaries only: it blocks on disk I/O, so frame paths use
     /// [`Self::poll`] instead.
     pub fn flush_writes(&mut self) {
         self.take_preparations(true);
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::wait_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.take_native_deliveries(true);
     }
 
     fn take_writes(&mut self) {
+        let mut settled = false;
         while let Some(written) = self.writer.as_mut().and_then(ProfileWriter::try_take) {
             self.settle_write(written);
+            settled = true;
+        }
+        if settled {
+            self.reconcile_after_writes();
         }
         self.release_abandoned_copy_writes();
     }
@@ -2502,7 +3367,7 @@ impl<Io> OperatorSession<Io> {
             // The copy wait already failed. Still reconcile a late writer's
             // durable result, but do not deliver or announce a second result.
             if written.result.is_err() {
-                if let Some(vault) = self.vault.as_mut() {
+                if let Some(vault) = self.vault_for_write() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
                     }
@@ -2511,6 +3376,7 @@ impl<Io> OperatorSession<Io> {
             return;
         }
         let member = pending.member;
+        let script_assignment = matches!(&pending.mirror.0, ArmMirrorKind::ScriptAssignment);
         let settings = matches!(
             &pending.mirror.0,
             ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
@@ -2583,7 +3449,7 @@ impl<Io> OperatorSession<Io> {
                         .map(|profile| profile.settings.lowmem),
                     _ => None,
                 };
-                if let Some(vault) = self.vault.as_mut() {
+                if let Some(vault) = self.vault_for_write() {
                     for (name, durable) in newest {
                         vault.restore(&name, durable);
                     }
@@ -2631,7 +3497,13 @@ impl<Io> OperatorSession<Io> {
                 SettingsResult::Superseded
             }
         };
-        if settings {
+        if script_assignment {
+            self.script_assignment_writes
+                .push_back(ScriptAssignmentWrite {
+                    op: written.op,
+                    result,
+                });
+        } else if settings {
             self.settings_writes
                 .push(SettingsWrite::new(written.op, member, result));
         }
@@ -2661,6 +3533,7 @@ impl<Io> OperatorSession<Io> {
         };
         match mirror.0 {
             ArmMirrorKind::None => {}
+            ArmMirrorKind::ScriptAssignment => {}
             ArmMirrorKind::AutoLogin(on) => {
                 if let Some(arm) = play.arm(name) {
                     arm.set_auto_login(on);
@@ -2778,10 +3651,11 @@ impl<Io> OperatorSession<Io> {
 
     /// Direct vault access for fixture setup. Settles queued writes first
     /// and lets the next write snapshot whatever the fixture persisted.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn vault_mut(&mut self) -> Option<&mut Vault> {
         self.flush_writes();
         self.writer = None;
-        self.vault.as_mut()
+        self.vault_for_write()
     }
 
     /// Held by the writer while it gathers and commits a batch; holding it
@@ -2791,14 +3665,17 @@ impl<Io> OperatorSession<Io> {
         Arc::clone(&self.write_gate)
     }
 
-    pub fn set_vault(&mut self, vault: Option<Vault>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_vault(&mut self, vault: Option<Vault>) {
         self.flush_writes();
         self.vault = vault;
+        self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
     }
 
     pub fn set_play(&mut self, play: Option<Play>) {
-        if play.is_some() {
+        if let Some(play) = play.as_ref() {
+            self.frames.bind_world(play.world(), play.map_members());
             self.network_driver = None;
         }
         self.play = play;
@@ -2870,6 +3747,15 @@ fn record_transitions(
             }
         }
     }
+}
+
+/// Log a saved Load order write that failed outside a command.
+fn order_write_failed(error: &std::io::Error) {
+    host_log!(
+        Category::Lifecycle,
+        Level::Warn,
+        "profile order: the saved Load order was not written: {error}"
+    );
 }
 
 #[cfg(test)]

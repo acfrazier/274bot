@@ -149,6 +149,8 @@ impl Widget for StatusPane<'_> {
 
 #[cfg(test)]
 mod tests {
+    use frontend_core::scripts::CompiledCardId;
+    use frontend_core::test_support::scripts::NativeStatus;
     use frontend_core::{
         ActionKind, FleetRow, Metric, OpBrief, OperationId, Outcome, Phase, ResourceView,
         SlotDetail,
@@ -275,23 +277,12 @@ mod tests {
         let mut detail = SlotDetail::default();
         detail.set_row(FleetRow::fixture("qs-alice", Phase::Ready, None, None));
         detail.set_state("ingame scene 2");
-        let status = script::native::ScriptStatus {
-            run: api::selected::RunKey {
-                slot: 1,
-                run: 2,
-                session: 3,
-            },
-            card: script::CompiledId("Quester"),
-            phase: script::native::NativePhase::Blocked,
-            active_settings: 1,
-            pending_settings: None,
-            fields: std::sync::Arc::from([]),
-            failure: Some(script::native::ScriptFailure {
-                code: "empty-queue".into(),
-                message: "no quests selected; review Script prefs and Skip, then Stop/Start".into(),
-            }),
-        };
-        let detail = detail.with_native_status(Some(std::sync::Arc::new(status)));
+        let status = NativeStatus::blocked(
+            CompiledCardId::QUESTER,
+            "empty-queue",
+            "no quests selected; review Script prefs and Skip, then Stop/Start",
+        );
+        let detail = status.attach_to(detail);
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
         assert!(text.contains("script: stopped (blocked)"), "{text:?}");
         assert!(text.contains("no quests selected"), "{text:?}");
@@ -299,6 +290,30 @@ mod tests {
             text.contains("Script prefs and Skip, then Stop/Start"),
             "{text:?}"
         );
+    }
+
+    #[test]
+    fn errored_grinch_keeps_its_inventory_blocked_reason_visible() {
+        let reason = "inventory is full and contains no selected item to deposit";
+        let mut detail = SlotDetail::default();
+        let mut row = FleetRow::fixture("grinch-stop", Phase::Ready, None, None);
+        row.set_script(frontend_core::scripts::ScriptRunState::Error);
+        detail.set_row(row);
+        detail.set_state("ingame scene 2");
+        let status = NativeStatus::blocked(
+            CompiledCardId::lookup("Grinch").expect("the compiled Grinch card"),
+            "inventory-blocked",
+            reason,
+        );
+        let detail = status.attach_to(detail);
+        let projected = detail.script_phase().expect("the retained native failure");
+        assert_eq!(projected.label(), "error");
+        assert_eq!(projected.reason(), Some(reason));
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 90, 8);
+        assert!(text.contains("script: error"), "{text:?}");
+        assert!(text.contains("phase: blocked"), "{text:?}");
+        assert!(text.contains(reason), "{text:?}");
+        println!("GRINCH_STOP_REASON_UI {text}");
     }
 }
 

@@ -3,13 +3,12 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use frontend_core::{FormNotice, MapBakeChoice};
-use host_play::WalkGlobals;
+use frontend_core::SettingsDraft;
+use frontend_core::{FormNotice, MapBakeChoice, WalkGlobals};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use tui::settings::{SettingsPane, SettingsState};
-use vault::ProfileSettings;
 
 struct Counting;
 
@@ -58,14 +57,14 @@ fn events() -> usize {
 /// Allocation events of one draw of the open popup with `notice`, and the
 /// screen it drew.
 fn draw(notice: Option<&FormNotice>, area: Rect) -> (usize, Buffer) {
-    let mut settings = ProfileSettings::default();
+    let settings = SettingsDraft::default();
     let mut nav = WalkGlobals::default();
     let mut bake = MapBakeChoice::Ask;
     let mut state = SettingsState {
         open: true,
         ..Default::default()
     };
-    let mut pane = SettingsPane::new(&mut settings, &mut nav, &mut bake, &mut state);
+    let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
     pane.notice = notice;
     let mut buf = Buffer::empty(area);
     let before = events();

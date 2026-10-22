@@ -434,7 +434,7 @@ fn distance_one_takes_without_a_walk_and_arrival_is_not_the_key() {
     assert_eq!(step["action"], "Take");
     assert_eq!(step["name"], "Jail key");
     assert_eq!(step["x"], 2901);
-    assert!(step.get("id").is_none(), "obj carries no item id");
+    assert_eq!(step["id"], 1591, "Take retains the selected key ID");
     let queued = call(token, site(json!({})), Some(json!({ "queued": true })));
     assert_ne!(kind(&queued), "yield", "queued is not the key: {queued}");
     assert_ne!(queued["value"], true);

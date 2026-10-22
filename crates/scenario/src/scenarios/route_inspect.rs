@@ -1,3 +1,4 @@
+use super::production::HITPOINTS_STAT;
 use super::script_basics::script_live_seed_steps;
 use crate::*;
 
@@ -22,6 +23,8 @@ pub(crate) const ROUTE_INSPECT_BRIMHAVEN_V2_STOP: &str =
 
 const ROUTE_INSPECT_V2_DEADLINE: Duration = Duration::from_secs(360);
 const ROUTE_INSPECT_V2_WATCH: u32 = 240;
+/// Melee and Hitpoints seeded to 99 before the v2 Start: combat 113.
+const BRIMHAVEN_V2_COMBAT_SKILLS: [&str; 4] = ["attack", "strength", "defence", "hitpoints"];
 
 /// Headed catalog witness for frozen `BrimhavenMossGiants` Travel→Bank→
 /// `sailToField` / `Navigator.findPath`.
@@ -151,6 +154,32 @@ pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
         },
     };
     let mut steps = script_live_seed_steps();
+    // The default Danger routing refuses the Karamja leg for a level-3
+    // account: Jungle spiders (L44), Snakes and Poison Scorpions hunt
+    // (`check_nottoostrong=outside_wilderness`) players up to twice their
+    // level. v2 walk and inspect ops follow that global setting. Seed the
+    // account's own melee stats to 99 (combat 113, above the spiders' 88)
+    // so the route the card inspects is the one the product admits by
+    // default, then drain the level-up dialogs.
+    steps.push(Step {
+        name: "set melee stats to 99 before Start so the Karamja hunters ignore the account",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                for skill in BRIMHAVEN_V2_COMBAT_SKILLS {
+                    cheat(c, &format!("setstat {skill} 99"));
+                }
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: HITPOINTS_STAT,
+                min: 99,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(drain_setstat_levelups_before_hostile_tele());
     steps.push(Step {
         name: "carry coins 30 and setstat agility 10 before Start",
         kind: StepKind::Perform {
@@ -245,6 +274,14 @@ mod tests {
                 .iter()
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
+        );
+        assert!(
+            s.steps[..start].iter().any(|st| st.wait.arm
+                == Proof::Stat {
+                    id: HITPOINTS_STAT,
+                    min: 99,
+                }),
+            "v2 seeds combat stats above the Jungle spider cap before Start"
         );
         assert!(
             !s.steps[start..]

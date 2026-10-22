@@ -69,6 +69,16 @@ required-features = ["load"]
 harness = false
 
 [[test]]
+name = "entity_row_shape"
+required-features = ["load", "test-hooks"]
+harness = false
+
+[[test]]
+name = "paint_controls_shape"
+required-features = ["load", "test-hooks"]
+harness = false
+
+[[test]]
 name = "load_isolate"
 required-features = ["load"]
 [[test]]
@@ -435,6 +445,14 @@ required-features = ["load"]
 
 [[test]]
 name = "crypto_stub"
+required-features = ["load"]
+
+[[test]]
+name = "ground_selected_identity"
+required-features = ["load"]
+harness = false
+[[test]]
+name = "input_ground_identity"
 required-features = ["load"]
 
 [[example]]

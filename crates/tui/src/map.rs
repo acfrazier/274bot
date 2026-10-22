@@ -6,9 +6,7 @@
 //! model, and Esc clears or closes the map. The optional wilderness layer is
 //! toggled from the command palette.
 
-use std::io;
-
-use host_play::local_state::Preferences;
+use frontend_core::UiPreferences as Preferences;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::buffer::Buffer;
@@ -17,7 +15,7 @@ use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
-use host_play::walk_map::Catalogue;
+use frontend_core::walk_map::WalkCatalogue;
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::paint::remaining_path_tiles;
 use nav::router::Route;
@@ -34,22 +32,10 @@ pub const DEFAULT_CENTRE: (i32, i32) = (3220, 3220);
 
 /// Read the shared panel/TUI special-area preference from the process
 /// service's preferences. `MapView::new` does not touch the operator's home.
+/// (Changing it is the `SetNavPreference` command.)
 fn persisted_wilderness(preferences: &Preferences) -> bool {
-    frontend_core::nav_preference(
-        preferences,
-        frontend_core::NavPreference::ShowSpecialAreas,
-        None,
-    )
-    .unwrap_or(false)
-}
-
-fn persist_wilderness(preferences: &Preferences, enabled: bool) -> io::Result<()> {
-    frontend_core::nav_preference(
-        preferences,
-        frontend_core::NavPreference::ShowSpecialAreas,
-        Some(enabled),
-    )
-    .map(|_| ())
+    frontend_core::nav_preference(preferences, frontend_core::NavPreference::ShowSpecialAreas)
+        .unwrap_or(false)
 }
 
 const WILDERNESS_BG: Color = Color::Rgb(72, 16, 72);
@@ -142,19 +128,6 @@ impl MapView {
     }
 }
 
-impl MapView {
-    pub(crate) fn toggle_wilderness(
-        &mut self,
-        preferences: Option<&Preferences>,
-    ) -> io::Result<()> {
-        self.layers.wilderness = !self.layers.wilderness;
-        if let Some(preferences) = preferences {
-            persist_wilderness(preferences, self.layers.wilderness)?;
-        }
-        Ok(())
-    }
-}
-
 impl Default for MapView {
     fn default() -> Self {
         Self::new()
@@ -172,7 +145,7 @@ pub struct Map<'a, F> {
     /// Small shared catalogue projection. The TUI never owns one copy per
     /// bot and never decodes terrain images.
     pub pois: &'a [PoiRecord],
-    pub catalogue: Option<&'a Catalogue>,
+    pub catalogue: Option<&'a WalkCatalogue>,
     pub selected_poi: Option<usize>,
     /// Focused-bot live NPC services; dropped when the map closes.
     pub observed: &'a [ObservedMark],
@@ -211,7 +184,7 @@ impl<'a, F: FnMut(Tile)> Map<'a, F> {
         self
     }
 
-    pub fn catalogue(mut self, catalogue: &'a Catalogue) -> Self {
+    pub fn catalogue(mut self, catalogue: &'a WalkCatalogue) -> Self {
         self.catalogue = Some(catalogue);
         self
     }

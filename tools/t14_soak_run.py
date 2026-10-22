@@ -194,7 +194,9 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=SOURCE_CONFIG)
     parser.add_argument("--output", type=Path, required=True, help="new absent per-run evidence directory")
     parser.add_argument("--seed", type=int, required=True, help="same value for dev baseline and candidate")
-    parser.add_argument("--smoke", action="store_true", help="nonqualifying 2-slot, 3-minute infrastructure smoke")
+    parser.add_argument("--smoke", action="store_true", help="nonqualifying two-slot infrastructure smoke")
+    parser.add_argument("--smoke-duration-seconds", type=int,
+                        help="duration of a nonqualifying smoke (default: 180 seconds)")
     parser.add_argument("--repo", type=Path, default=ROOT, help="repo with the T1.4 live test installed")
     parser.add_argument("--mode", choices=("baseline", "candidate"), required=True,
                         help="baseline has no candidate-only observer feature")
@@ -209,13 +211,19 @@ def main() -> int:
     config = copy.deepcopy(json.loads(source.read_text(encoding="utf-8")))
     if args.seed < 0:
         raise ValueError("seed must be nonnegative")
+    if args.smoke_duration_seconds is not None and not args.smoke:
+        raise ValueError("--smoke-duration-seconds requires --smoke")
+    if args.smoke_duration_seconds is not None and args.smoke_duration_seconds <= 0:
+        raise ValueError("--smoke-duration-seconds must be positive")
     if args.smoke:
         config["run"]["slots"] = 2
-        config["run"]["duration_seconds"] = 180
+        config["run"]["duration_seconds"] = args.smoke_duration_seconds or 180
         # Smoke exercises the first phase only; changing the approved four
         # 1800-second fault phases would cease to be the same shared proxy.
         config["run"]["warmup_min_seconds"] = 0
-        config["_sources"]["smoke_override"] = "Main's T1.4 task: a few minutes and 2 slots (not qualification)"
+        config["_sources"]["smoke_override"] = (
+            f"nonqualifying two-slot infrastructure smoke for {config['run']['duration_seconds']} seconds"
+        )
     else:
         if config["run"]["slots"] != 20 or config["run"]["duration_seconds"] != 7200:
             raise ValueError("qualification cohort must remain 20 slots for 7200 seconds")

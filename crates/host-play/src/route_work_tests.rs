@@ -335,6 +335,8 @@ fn a_completed_search_starts_its_continuation_in_the_harvesting_pump_pass() {
         .as_ref()
         .unwrap()
         .ticket();
+    let first_capacity = shared.lock().capacity();
+    assert_eq!(first_capacity.jobs(), 1);
     WorkService::wait_terminal(&shared, &first).unwrap();
     assert!(matches!(
         shared.lock().borrow_terminal(&first).unwrap(),
@@ -348,6 +350,17 @@ fn a_completed_search_starts_its_continuation_in_the_harvesting_pump_pass() {
         .ticket();
     assert_ne!(next.identity(), first.identity());
     assert!(navs.lock().unwrap()["alice"].pending_route.is_none());
+    let capacity = shared.lock().capacity();
+    let continuation_capacity = match capacity.jobs() {
+        1 => capacity,
+        2 => api::work::WorkCapacity::new(
+            1,
+            capacity.bytes() - first_capacity.bytes(),
+            capacity.handles() - first_capacity.handles(),
+        ),
+        jobs => panic!("unexpected route work charge count: {jobs}"),
+    };
+    wait_for_capacity(&shared, continuation_capacity);
     assert_eq!(shared.lock().capacity().jobs(), 1);
     finish(&shared, &navs, &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));

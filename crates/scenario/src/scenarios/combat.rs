@@ -44,13 +44,13 @@ pub(crate) const COMBAT_ATTACK_LEVEL: i32 = 40;
 const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
 const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
 const COMBAT_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(300);
-/// Runner dirty-snapshot increments, not engine ticks or wall seconds. Live
-/// combat receipts run near two dirty increments/second; 750 keeps the named
-/// 300s wall as the controlling bound instead of the ordinary 150-dirty arm.
+/// Observed game-tick cap (one per `PLAYER_INFO`, about 600ms on 289). The
+/// 750-game-tick wait allows 450s, so the 300s whole-run wall stays controlling
+/// instead of the ordinary 150-game-tick arm.
 const COMBAT_QUALIFICATION_WATCH_TICKS: u32 = 750;
 /// Measured GreenDragon pressure reached its loaded deposit 268s after the
 /// post-Start baseline, before the roughly 320-tile return and resumed combat.
-/// Keep the same 2.5 dirty increments/second allowance as the 300s/750 arm.
+/// The 1500-game-tick cap is a per-step budget, not a whole-run deadline.
 const BANK_QUALIFICATION_WATCH_TICKS: u32 = 1500;
 pub(crate) const RUNE_SCIMITAR_ID: i32 = 1333;
 const DEFENCE_STAT: i32 = 1;
@@ -173,7 +173,7 @@ fn prepared_combat_core_scenario(
 fn apply_combat_qualification_budget(
     scenario: &mut Scenario,
     deadline: Duration,
-    watch_ticks: u32,
+    watch_game_ticks: u32,
 ) {
     scenario.settings.deadline = deadline;
     let start = scenario
@@ -182,7 +182,7 @@ fn apply_combat_qualification_budget(
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("combat qualification has a Start step");
     for step in &mut scenario.steps[start + 1..] {
-        step.wait.budget_ticks = step.wait.budget_ticks.max(watch_ticks);
+        step.wait.budget_ticks = step.wait.budget_ticks.max(watch_game_ticks);
     }
 }
 
@@ -401,36 +401,30 @@ fn combat_core_scenario_with_preparation(
 /// quest-journal command `~quest` (`_test/scripts/cheats/cheat_quest.rs2`
 /// `@debug_quests`): "Select Individual Quest." → the quest's row on the
 /// paginated `p_choice5_header` list → "Complete.", which queues that
-/// quest's own `[queue,<quest>_complete]` script. The path is targeted: the
-/// required quest's completion is the only script queued, so no *other*
-/// completion's rewards can arrive after Start (the demonstrated
-/// `~completequests` leak: `QuestDone(Waterfall)` returned while ~60 queued
-/// completions still owed stats/items/dialogs).
+/// quest's own `[queue,<quest>_complete]` script. The path is targeted: only
+/// the required quest's completion is queued, so no other quest can complete
+/// during these cells.
 ///
 /// `dialog` is the quest's `quest_names_enum` label
 /// (`content/scripts/general/configs/quest.enum`: index 34 `Lost City`,
 /// index 50 `Waterfall Quest`) — the text the native list renders as
-/// `<index>. <label>`; `journal` is the quest-tab row the native
-/// `~send_quest_complete` helper paints green
-/// (`content/scripts/player/interfaces/questlist.if` `[zanaris]`/`[waterfall]`,
-/// `content/scripts/general/scripts/quests.rs2`), the acknowledgement the
-/// fixture waits for.
+/// `<index>. <label>`. `acknowledgement` is the completion boundary: Lost
+/// City and Shilo use their completed journal row; Waterfall requires the
+/// content's fresh generic completion message and exact visible Waterfall
+/// completion-scroll text.
+/// Waterfall varp 65 does not transmit to the client: `[waterfall_quest]`
+/// has no `transmit=yes`. Its varp update and rewards run in the same server
+/// script/tick, so there is no client-visible ordering delay to wait out. The
+/// message plus named scroll provide the observable, quest-specific signal.
 ///
-/// The acknowledgement is the completion boundary itself, verified in clean
-/// native content: `quest_zanaris.rs2` `[queue,zanaris_quest_complete]` sets
-/// `%zanaris = ^zanaris_complete` (the var `levelrequire_zanaris_quest` gates
-/// `opheld2 dragon_dagger` on, `levelrequire/scripts/levelrequire.rs2`) and
-/// then calls `~send_quest_complete(questlist:zanaris, …)`; the FireGiant
-/// counterpart `[queue,waterfall_quest_complete]`
-/// (`quest_waterfall/scripts/quest_waterfall.rs2`) banks 2 diamonds, 2 gold
-/// bars, 40 mithril seeds and 137,500 attack + strength XP before the same
-/// helper. Every reward statement precedes the green, and `send_quest_complete`
-/// is the last call in both scripts, so a fixture that waits for the green and
-/// then resets stats/inventory cannot have quest rewards land after Start.
+/// Shilo and Lost City set their completion varp and paint the corresponding
+/// journal row in their native completion scripts. Their rewards precede
+/// `~send_quest_complete`, so the journal acknowledgement remains their
+/// completion boundary.
 #[derive(Clone, Copy)]
 pub(crate) struct NativeQuestPrereq {
     dialog: &'static str,
-    journal: &'static str,
+    acknowledgement: Proof,
 }
 
 /// Shilo Village (`quest_names_enum` 43, journal row `[zombiequeen]` text
@@ -438,7 +432,9 @@ pub(crate) struct NativeQuestPrereq {
 /// wooden-gate membership (`quest_zombiequeen.rs2` `[oploc1,_shilo_woodengate]`).
 pub(super) const SHILO_VILLAGE_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Shilo Village",
-    journal: "Shilo Village",
+    acknowledgement: Proof::QuestDone {
+        name: "Shilo Village",
+    },
 };
 
 /// The native quest-journal command and the labels of its individual-quest
@@ -466,7 +462,7 @@ pub(crate) struct QuestJournalState {
     answered: Option<(i32, String)>,
 }
 
-/// One tick of the native quest-journal dialog machine: continue a
+/// One game tick of the native quest-journal dialog machine: continue a
 /// `BUTTON_CONTINUE` chat IF (the completion's level-ups), else answer the
 /// option dialog the individual-quest path waits on (Select Individual
 /// Quest. → the required quest's page row → Complete.), else close the
@@ -520,7 +516,7 @@ pub(crate) fn answer_quest_journal_dialogs(
                 state.answered = Some(identity);
                 true
             }
-            // Nothing pressable in that snapshot: retry on the next tick.
+            // Nothing pressable in that snapshot: retry on the next game tick.
             SendResult::Refused { .. } => true,
         };
     }
@@ -542,26 +538,40 @@ pub(crate) fn answer_quest_journal_dialogs(
 /// journal row green. That green row is the completion boundary: the stat
 /// and inventory reset, the prepared-gear acknowledgements and the
 /// hostile-field teleport all follow it, so no quest reward can arrive
-/// after Start. The step's tick budget bounds a preparation that never
+/// after Start. The step's game-tick budget bounds a preparation that never
 /// acknowledges — the run fails before Start instead of starting without
 /// the prerequisite.
+///
+/// The first step re-sends `~quest` every tick until the dialog appears.
+/// `@debug_quests` opens its dialog only when `p_finduid(uid)` returns
+/// true, and the engine returns false while the player is protected,
+/// delayed or inside a modal (`PlayerOps.ts` `P_FINDUID` →
+/// `Player.canAccess`). Right after the seed relog those states are still
+/// settling, so one send can exit silently with no dialog; the next tick's
+/// send lands once the player is free. The send stays quiet while a
+/// choice dialog is already open, so it cannot close the dialog it opened.
 pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
-    // The machine is re-entered once per tick by the runner's `Repeat`
+    // The machine is re-entered once per observed game tick by the runner's `Repeat`
     // arm; its "already answered this dialog" state is behind a mutex so
     // the step closure stays `Fn + Send + Sync` (the `StepKind` bound).
     let state = std::sync::Mutex::new(QuestJournalState::default());
     [
         Step {
             name: "open the native quest-journal prerequisite dialog before Start",
-            kind: StepKind::Perform {
-                send: Box::new(|c, _| {
-                    cheat(c, QUEST_JOURNAL_CHEAT);
+            kind: StepKind::Repeat {
+                send: Box::new(|c, snapshot| {
+                    // Never re-send into the dialog the last send opened:
+                    // `@debug_quests` starts with `if_close`, which would
+                    // close the choice the fixture is about to answer.
+                    if snapshot.chat_options().is_empty() {
+                        cheat(c, QUEST_JOURNAL_CHEAT);
+                    }
                     true
                 }),
             },
             wait: Wait {
                 arm: Proof::ChatChoice,
-                budget_ticks: 20,
+                budget_ticks: 200,
             },
         },
         Step {
@@ -575,9 +585,7 @@ pub(super) fn quest_prereq_steps(prereq: NativeQuestPrereq) -> [Step; 2] {
                 }),
             },
             wait: Wait {
-                arm: Proof::QuestDone {
-                    name: prereq.journal,
-                },
+                arm: prereq.acknowledgement,
                 budget_ticks: 600,
             },
         },
@@ -781,6 +789,7 @@ fn combat_range_scenario(
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some(card),
             script_settings_inject: Some(inject),
+            fixture_loadouts: combat_fixture_loadouts(card),
             terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()

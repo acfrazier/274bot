@@ -173,7 +173,8 @@ use play_wires::dispatch_wires;
 pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    clear_background_bots_ack_error, persist_background_bots_ack, LiveSlot,
+    begin_persist_background_bots_ack, clear_background_bots_ack_error,
+    persist_background_bots_ack, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
@@ -252,6 +253,8 @@ pub struct Play {
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
     queue: SharedLoginQueue,
     per_frame: SlotFrame,
+    #[cfg(any(test, feature = "test-support"))]
+    post_native_player_info: Option<play_slots::PostNativePlayerInfo>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
     /// Vault profiles keyed by username (a later spawn/reconnect looks up
@@ -546,6 +549,17 @@ impl Play {
     /// running. The panel flips the arm's flags to login/logout/stop.
     pub fn arm(&self, name: &str) -> Option<Arc<SlotArm>> {
         self.arms.get(name).cloned()
+    }
+
+    /// Whether `arm` is the current arm of a slot that has a status row.
+    /// Reads the rows in place: nothing is copied or allocated, so a
+    /// caller may ask every frame.
+    pub fn holds_arm(&self, arm: &Arc<SlotArm>) -> bool {
+        lock_statuses(&self.statuses).iter().any(|status| {
+            self.arms
+                .get(&status.username)
+                .is_some_and(|live| Arc::ptr_eq(live, arm))
+        })
     }
 
     /// Keep vault credentials for a later [`Play::spawn_slot`] / reconnect,

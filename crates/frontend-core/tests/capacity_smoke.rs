@@ -11,13 +11,15 @@
 //! ```sh
 //! isohome cargo test -p frontend-core --test capacity_smoke --no-run
 //! isohome env LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=cw BOT_NAV_BUILD=skip \
-//!   WORLD_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack \
-//!   WORLD_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
+//!   WORLD_NAV_PACK=/path/to/289.navpack WORLD_ENGINE_DIR=/path/to/289/engine \
 //!   CAPACITY_SMOKE_CPUS=31 CAPACITY_SMOKE_HOGS=64 CAPACITY_SMOKE_HOG_NICE=-11 \
 //!   CAPACITY_SMOKE_BOTS=20 \
 //!   taskset -c 31 target/debug/deps/capacity_smoke-<hash> \
 //!   --ignored --nocapture --test-threads=1
 //! ```
+//!
+//! On macOS, supply the same local pack and engine paths, omit
+//! `CAPACITY_SMOKE_CPUS`, and run the test binary without `taskset`.
 //!
 //! `CAPACITY_SMOKE_BUSY=1` keeps every bot on the 20 ms frame path (as a
 //! running script does); by default the bots are idle in game (one wake per
@@ -36,7 +38,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use frontend_core::{OperatorSession, RenderPolicyLabel};
+use frontend_core::OperatorSession;
 use host::SlotInput;
 use host_play::{
     mint_live_names, profile_password, run_with_template, InstancePermit, ProfileOptions,
@@ -128,7 +130,7 @@ fn allowed_cpus() -> String {
 }
 
 fn ingame(session: &OperatorSession<()>) -> usize {
-    session.play().map_or(0, |play| {
+    session.play_for_test().map_or(0, |play| {
         play.statuses
             .lock()
             .unwrap()
@@ -142,7 +144,7 @@ fn ingame(session: &OperatorSession<()>) -> usize {
 /// reads them: per bot, the late services (600 ms or more), the max and
 /// the p95, each list lowest to highest.
 fn service_delays(session: &OperatorSession<()>) -> String {
-    let Some(play) = session.play() else {
+    let Some(play) = session.play_for_test() else {
         return "no play".into();
     };
     let bots = play.capacity().service_delays(Instant::now());
@@ -243,8 +245,8 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     )
     .expect("play");
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    session.set_capacity_render(RenderPolicyLabel::Headless);
-    session.start(vault, play);
+    session.declare_headless_render();
+    session.start_for_test(vault, play);
 
     let login_deadline = Instant::now() + Duration::from_secs(180);
     loop {

@@ -29,6 +29,11 @@ libx11-6 libx11-xcb1 libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0
 libwayland-client0 libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
 `tui-play` needs only glibc and OpenSSL 3 (`libssl3t64`).
 
+On Linux, the panel follows the system's choice of graphics chip.
+`WGPU_POWER_PREF=low`, `high` or `none` overrides this default.
+If the panel closes with "importing the supplied dmabufs failed",
+start it with `WGPU_POWER_PREF=high ./panel-play`.
+
 On macOS, `panel-play` and `tui-play` need Apple Silicon running macOS 11.0 or later.
 
 On Windows, `panel-play` uses Vulkan and falls back to Direct3D 12 when

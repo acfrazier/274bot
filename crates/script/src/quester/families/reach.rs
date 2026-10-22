@@ -1,11 +1,15 @@
 //! Native reach/door loop extracted from isolate `reach_entity` / `reach`.
 //! Closed barriers open once; already-open passages use the shared native walk.
 
+use crate::gatherer::WorkArea;
+use crate::ground_take::FailureLedger;
 use crate::native::{
-    defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkRequest,
+    defer_budget, walk::Walk, ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt,
+    WalkRequest,
 };
 use crate::reach_route as route;
 use crate::shim::InteractReq;
+use api::ground_take::{GroundKey, GroundRefusal, TakeOutcome, TakeSettlement};
 use api::quest_progress::EvidenceStamp;
 use api::WorldTile;
 use std::sync::Arc;
@@ -122,6 +126,50 @@ pub struct Reach {
     /// snapshot that chose it, before the server could transform the loc or
     /// teleport the player.
     in_range_at_click: bool,
+    ground_attempt: Option<GroundAttempt>,
+    ground_outcome: Option<TakeOutcome>,
+}
+
+struct GroundAttempt {
+    key: GroundKey,
+    baseline_pack: i32,
+    baseline_rows: usize,
+    queued_at: EvidenceStamp,
+    map_base: (i32, i32),
+    settlement: Option<TakeSettlement>,
+}
+/// Typed result projection of the same Reach machine for exact ground users.
+/// Existing Reach callers retain their boolean success result.
+pub struct GroundTake(Reach);
+
+impl NativeMachine for GroundTake {
+    type Args = ReachArgs;
+    type Output = TakeOutcome;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        if !matches!(args.kind, ReachKind::Ground { .. }) || args.target_tile.is_none() {
+            return Err(ActionError::Unavailable(
+                "ground Take requires an exact ID and tile".into(),
+            ));
+        }
+        Reach::begin(args, cx).map(Self)
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        match self.0.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(self
+                .0
+                .ground_outcome
+                .take()
+                .unwrap_or(TakeOutcome::Cancelled))),
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.0.cancel();
+    }
 }
 
 /// What the chooser asks the reach loop to do next.
@@ -131,6 +179,8 @@ enum Choice {
     /// No NPC or ground match in the area is reachable from here: nav-walk
     /// to the best in-area match instead of a raw click.
     Approach(WorldTile),
+    /// Exact ground pickup walks to the chooser's legal stand at radius zero.
+    ApproachStand(WorldTile),
     Missing,
 }
 
@@ -152,13 +202,15 @@ impl NativeMachine for Reach {
             walk: None,
             request_id: 0,
             in_range_at_click: false,
+            ground_attempt: None,
+            ground_outcome: None,
         };
         reach.click(cx)?;
         Ok(reach)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        if self.attempts > DOOR_ATTEMPTS {
+        if self.attempts > DOOR_ATTEMPTS && self.ground_attempt.is_none() {
             return Poll::Ready(Ok(false));
         }
         match self.phase {
@@ -178,6 +230,9 @@ impl NativeMachine for Reach {
                 }
             }
             Phase::Click => {
+                if self.exact_ground() {
+                    return self.poll_ground(cx);
+                }
                 if matches!(self.args.kind, ReachKind::Held { .. }) {
                     return match cx.interaction_receipt(self.request_id) {
                         Some(receipt) if receipt.accepted => Poll::Ready(Ok(true)),
@@ -290,6 +345,76 @@ impl NativeMachine for Reach {
 }
 
 impl Reach {
+    fn exact_ground(&self) -> bool {
+        matches!(self.args.kind, ReachKind::Ground { .. }) && self.args.target_tile.is_some()
+    }
+
+    fn poll_ground(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<bool, ActionError>> {
+        let Some(attempt) = self.ground_attempt.as_mut() else {
+            return Poll::Ready(Ok(false));
+        };
+        let snapshot = cx.snapshot();
+        let ready = !cx.entered_scene()
+            && cx.run() == attempt.queued_at.run
+            && snapshot.ground_items().is_some()
+            && snapshot.local_player().is_some_and(|player| {
+                ground_zone_live(
+                    player.value.player.network,
+                    attempt.map_base,
+                    attempt.key.tile,
+                )
+            })
+            && snapshot.world().is_some_and(|world| {
+                (world.value.map_base_x, world.value.map_base_z) == attempt.map_base
+            });
+        if !ready {
+            self.ground_outcome = Some(TakeOutcome::Cancelled);
+            return Poll::Ready(Err(ActionError::Stale));
+        }
+        if attempt.settlement.is_none() {
+            let Some(receipt) = cx.interaction_receipt(self.request_id).copied() else {
+                return Poll::Pending;
+            };
+            if !receipt.accepted {
+                self.ground_outcome = Some(TakeOutcome::Cancelled);
+                return Poll::Ready(Ok(false));
+            }
+            self.chat_mark = receipt.chat_since;
+            attempt.settlement = Some(TakeSettlement::new(
+                attempt.key,
+                attempt.baseline_pack,
+                attempt.baseline_rows,
+                receipt.evidence,
+            ));
+        }
+        let rows = snapshot.ground_items().map(|rows| {
+            rows.value
+                .iter()
+                .filter(|row| row.def.id == attempt.key.id && row.tile == attempt.key.tile)
+                .count()
+        });
+        let outcome = attempt
+            .settlement
+            .as_mut()
+            .expect("dispatch bound")
+            .evaluate(cx.evidence(), ready, held_count(cx, attempt.key.id), rows);
+        // Inventory wins even when a refusal or removal arrives in this drain.
+        if let Some(TakeOutcome::Picked { .. }) = outcome {
+            self.ground_outcome = outcome;
+            return Poll::Ready(Ok(true));
+        }
+        if let Some(refusal) = ground_refusal(cx, self.chat_mark, attempt.key.id) {
+            return Poll::Ready(Err(ActionError::GroundTake(refusal)));
+        }
+        match outcome {
+            Some(outcome) => {
+                self.ground_outcome = Some(outcome);
+                Poll::Ready(Ok(false))
+            }
+            None => Poll::Pending,
+        }
+    }
+
     pub(crate) fn interaction_request_id(&self) -> Option<u64> {
         (self.request_id != 0).then_some(self.request_id)
     }
@@ -384,15 +509,20 @@ impl Reach {
                 &avoid,
             )),
             ReachKind::Ground { id, obj } => {
-                let pick = choose_ground(
+                let Some(area) = selected_ground_area(
                     cx,
-                    *id,
-                    None,
-                    ground_area(self.args.anchor, self.args.radius),
-                    &avoid,
-                );
+                    self.args.anchor,
+                    self.args.radius,
+                    self.args.target_tile,
+                ) else {
+                    return Ok(Choice::Missing);
+                };
+                let pick = choose_ground(cx, *id, self.args.target_tile, area, &avoid);
                 match decide(pick, strict, approach) {
                     Some((item, true)) => {
+                        if self.exact_ground() && item.steps != Some(0) {
+                            return Ok(item.stand.map_or(Choice::Missing, Choice::ApproachStand));
+                        }
                         let Some(before) = held_count(cx, *id) else {
                             return Ok(Choice::Missing);
                         };
@@ -401,12 +531,16 @@ impl Reach {
                                 x: item.tile.x,
                                 z: item.tile.z,
                                 level: item.tile.level,
+                                id: Some(item.def.id),
                                 name: Some(obj.to_string()),
                                 action: op.to_string(),
                             },
-                            Some(AvoidKey::Tile(item.tile)),
+                            Some(AvoidKey::Ground(GroundKey {
+                                id: item.def.id,
+                                tile: item.tile,
+                            })),
                             before,
-                            false,
+                            item.steps == Some(0),
                         )
                     }
                     Some((item, false)) => Choice::Approach(item.tile),
@@ -452,6 +586,14 @@ impl Reach {
     fn act(&mut self, choice: Choice, cx: &mut ActionContext<'_>) -> Result<bool, ActionError> {
         let (request, key, before, in_range) = match choice {
             Choice::Click(request, key, before, in_range) => (request, key, before, in_range),
+            Choice::ApproachStand(tile) => {
+                self.walk_to_stand(tile, cx)?;
+                self.ground_attempt = None;
+                self.attempts += 1;
+                self.clicked_loc = None;
+                self.clicked = None;
+                return Ok(true);
+            }
             Choice::Approach(tile) => {
                 self.walk_to(tile, None, None, cx)?;
                 // Count admitted approaches, not same-tick budget deferrals.
@@ -482,7 +624,32 @@ impl Reach {
             )),
             _ => None,
         };
+        let ground_attempt = if self.exact_ground() {
+            let Some(AvoidKey::Ground(key)) = key else {
+                return Ok(false);
+            };
+            let snapshot = cx.snapshot();
+            let (Some(rows), Some(world)) = (snapshot.ground_items(), snapshot.world()) else {
+                return Ok(false);
+            };
+            Some(GroundAttempt {
+                key,
+                baseline_pack: before,
+                baseline_rows: rows
+                    .value
+                    .iter()
+                    .filter(|row| row.def.id == key.id && row.tile == key.tile)
+                    .count(),
+                queued_at: cx.evidence(),
+                map_base: (world.value.map_base_x, world.value.map_base_z),
+                settlement: None,
+            })
+        } else {
+            None
+        };
         self.request_id = cx.emit(request)?;
+        self.ground_attempt = ground_attempt;
+        self.ground_outcome = None;
         self.before_count = before;
         self.in_range_at_click = in_range;
         self.clicked_loc = clicked_loc;
@@ -584,6 +751,31 @@ impl Reach {
     }
 
     fn walk_to_target(&mut self, cx: &mut ActionContext<'_>) -> Result<(), ActionError> {
+        if self.exact_ground() {
+            let ReachKind::Ground { id, .. } = self.args.kind else {
+                unreachable!("exact ground kind");
+            };
+            let area = selected_ground_area(
+                cx,
+                self.args.anchor,
+                self.args.radius,
+                self.args.target_tile,
+            )
+            .ok_or_else(|| ActionError::Unavailable("ground area is not ready".into()))?;
+            let stand = choose_ground(
+                cx,
+                id,
+                self.args.target_tile,
+                area,
+                &self.avoid.at(cx.evidence().tick),
+            )
+            .reachable()
+            .and_then(|choice| choice.stand)
+            .ok_or_else(|| {
+                ActionError::Unavailable("exact ground target has no legal stand".into())
+            })?;
+            return self.walk_to_stand(stand, cx);
+        }
         let clicked = self.clicked_loc;
         let target = clicked.map(|(_, tile)| tile).or_else(|| {
             let avoid = self.avoid.at(cx.evidence().tick);
@@ -600,8 +792,13 @@ impl Reach {
                 ReachKind::Ground { id, .. } => choose_ground(
                     cx,
                     *id,
-                    None,
-                    ground_area(self.args.anchor, self.args.radius),
+                    self.args.target_tile,
+                    selected_ground_area(
+                        cx,
+                        self.args.anchor,
+                        self.args.radius,
+                        self.args.target_tile,
+                    )?,
                     &avoid,
                 )
                 .any()
@@ -622,6 +819,19 @@ impl Reach {
             api::query::loc_approach::distance_from(loc, tile).map(|_| id)
         });
         self.walk_to(target, loc_id, None, cx)
+    }
+
+    fn walk_to_stand(
+        &mut self,
+        target: WorldTile,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        self.walk = Some(Walk::begin(
+            walk_request(target, 0, None, cx.evidence()),
+            cx,
+        )?);
+        self.phase = Phase::WaitWalk { door: None };
+        Ok(())
     }
 
     fn walk_to(
@@ -652,11 +862,11 @@ pub fn target_available(
 ) -> bool {
     let none = Avoid::default();
     match kind {
-        ReachKind::Ground { id, .. } => {
-            choose_ground(cx, *id, None, ground_area(anchor, radius), &none)
-                .usable()
-                .is_some()
-        }
+        ReachKind::Ground { id, .. } => selected_ground_area(cx, anchor, radius, target_tile)
+            .map(|area| choose_ground(cx, *id, target_tile, area, &none))
+            .unwrap_or(Pick::None)
+            .usable()
+            .is_some(),
         ReachKind::Held { id, .. } => cx.snapshot().inventory().is_some_and(|inventory| {
             inventory.value.iter().any(|item| {
                 item.def.id == *id
@@ -702,6 +912,26 @@ pub fn target_available(
 /// anchor; an anchor owns the area otherwise.
 pub fn ground_area(anchor: Option<WorldTile>, radius: i32) -> Area {
     Area::new(anchor, if anchor.is_some() { radius } else { 12 })
+}
+
+fn selected_ground_area(
+    cx: &ActionContext<'_>,
+    anchor: Option<WorldTile>,
+    radius: i32,
+    target: Option<WorldTile>,
+) -> Option<GroundArea> {
+    if target.is_none() {
+        return Some(GroundArea::Legacy(ground_area(anchor, radius)));
+    }
+    let anchor = anchor.or_else(|| {
+        cx.snapshot()
+            .local_player()
+            .map(|player| player.value.player.network)
+    })?;
+    Some(GroundArea::Exact(WorkArea::at_start(
+        anchor,
+        u16::try_from(radius).ok()?,
+    )))
 }
 
 /// Ticks a target that answered "I can't reach that!" stays out of the chooser.
@@ -791,6 +1021,7 @@ impl<T> Pick<T> {
 pub enum AvoidKey {
     Npc(usize),
     Tile(WorldTile),
+    Ground(GroundKey),
 }
 
 /// A small, fixed set of recently unreachable targets, expiring by game tick.
@@ -947,26 +1178,180 @@ pub fn choose_npc<'a>(
     })
 }
 
-pub fn choose_ground<'a>(
+/// Borrowed IDs and run exclusions. Single-ID callers keep their old policy.
+#[derive(Clone, Copy)]
+pub enum GroundIds<'a> {
+    One(i32),
+    /// At most 32 prepared IDs. A longer selection is rejected as a whole.
+    Selected {
+        ids: &'a [i32],
+        /// Excluded positions in `ids`, stored without a per-run ID copy.
+        excluded: u32,
+        failures: Option<&'a FailureLedger>,
+    },
+}
+
+impl From<i32> for GroundIds<'_> {
+    fn from(id: i32) -> Self {
+        Self::One(id)
+    }
+}
+
+impl GroundIds<'_> {
+    fn allows(self, key: GroundKey, tick: u64) -> bool {
+        match self {
+            Self::One(id) => key.id == id,
+            Self::Selected {
+                ids,
+                excluded,
+                failures,
+            } => {
+                ids.len() <= u32::BITS as usize
+                    && ids
+                        .iter()
+                        .position(|id| *id == key.id)
+                        .is_some_and(|index| excluded & (1u32 << index) == 0)
+                    && failures.is_none_or(|failures| failures.is_eligible(key, tick))
+            }
+        }
+    }
+}
+
+/// Exact ground collection does not inherit the loc/NPC radius floor.
+#[derive(Clone, Copy)]
+pub enum GroundArea {
+    Legacy(Area),
+    Exact(WorkArea),
+}
+
+impl From<Area> for GroundArea {
+    fn from(area: Area) -> Self {
+        Self::Legacy(area)
+    }
+}
+
+impl From<WorkArea> for GroundArea {
+    fn from(area: WorkArea) -> Self {
+        Self::Exact(area)
+    }
+}
+
+/// The selected row and the legal stand already resolved by the posted flood.
+#[derive(Debug, Clone, Copy)]
+pub struct GroundChoice<'a> {
+    pub item: &'a api::snapshot::GroundItemView,
+    pub stand: Option<WorldTile>,
+    pub steps: Option<u32>,
+}
+
+impl std::ops::Deref for GroundChoice<'_> {
+    type Target = api::snapshot::GroundItemView;
+    fn deref(&self) -> &Self::Target {
+        self.item
+    }
+}
+
+/// Whether a row lies in the player's active zones and the current build clip.
+/// `map_base` is `(origin_zone - 6) * 8` in the 289 build area.
+pub fn ground_zone_live(here: WorldTile, map_base: (i32, i32), tile: WorldTile) -> bool {
+    let axis = |player: i32, base: i32, target: i32| {
+        let player_zone = player.div_euclid(8);
+        let origin_zone = base.div_euclid(8) + 6;
+        let target_zone = target.div_euclid(8);
+        (player_zone - 3..=player_zone + 3).contains(&target_zone)
+            && (origin_zone - 6..=origin_zone + 6).contains(&target_zone)
+    };
+    tile.level == here.level && axis(here.x, map_base.0, tile.x) && axis(here.z, map_base.1, tile.z)
+}
+
+pub fn choose_ground<'a, 'ids>(
     cx: &'a ActionContext<'_>,
-    id: i32,
+    ids: impl Into<GroundIds<'ids>>,
     tile: Option<WorldTile>,
-    area: Area,
+    area: impl Into<GroundArea>,
     avoid: &Avoid,
-) -> Pick<&'a api::snapshot::GroundItemView> {
-    let Some(items) = cx.snapshot().ground_items() else {
+) -> Pick<GroundChoice<'a>> {
+    let snapshot = cx.snapshot();
+    let Some(items) = snapshot.ground_items() else {
         return Pick::None;
     };
-    choose(
-        cx,
-        area,
-        items.value.iter().filter(|item| {
-            item.def.id == id
-                && tile.is_none_or(|tile| item.tile == tile)
-                && !avoid.contains(AvoidKey::Tile(item.tile))
-        }),
-        ground_footprint,
-    )
+    let ids = ids.into();
+    let area = area.into();
+    let here = snapshot
+        .local_player()
+        .map(|player| player.value.player.network);
+    let view = route::live(snapshot.reach().map(|reach| reach.value), here);
+    let exact = matches!(area, GroundArea::Exact(_));
+    let world = snapshot.world();
+    if exact && (view.is_none() || world.is_none()) {
+        return Pick::None;
+    }
+    let mut reachable = None;
+    let mut unreachable = None;
+    for item in items.value {
+        let key = GroundKey {
+            id: item.def.id,
+            tile: item.tile,
+        };
+        if !ids.allows(key, cx.evidence().tick)
+            || tile.is_some_and(|tile| item.tile != tile)
+            || avoid.contains(AvoidKey::Ground(key))
+            || avoid.contains(AvoidKey::Tile(item.tile))
+        {
+            continue;
+        }
+        let (contains, tie) = match area {
+            GroundArea::Legacy(area) => (
+                area.contains(item.tile, item.distance),
+                area.tie_break(item.tile, item.distance),
+            ),
+            GroundArea::Exact(area) => (
+                area.contains(item.tile)
+                    && here.zip(world).is_some_and(|(here, world)| {
+                        ground_zone_live(
+                            here,
+                            (world.value.map_base_x, world.value.map_base_z),
+                            item.tile,
+                        )
+                    }),
+                0,
+            ),
+        };
+        if !contains {
+            continue;
+        }
+        let stand = view.and_then(|view| route::route_stand(view, ground_footprint(item).shape()));
+        let choice = GroundChoice {
+            item,
+            stand: stand.map(|stand| stand.tile),
+            steps: stand.map(|stand| stand.steps),
+        };
+        let identity = if exact {
+            (item.def.id, item.tile.level, item.tile.x, item.tile.z)
+        } else {
+            (0, 0, 0, 0)
+        };
+        if let Some(steps) = stand.map(|stand| stand.steps).or_else(|| {
+            (!exact && view.is_none()).then_some(u32::try_from(item.distance).unwrap_or(u32::MAX))
+        }) {
+            let rank = stand.map_or(0, |stand| stand.rank);
+            let key = (steps, tie, if exact { 0 } else { rank }, identity);
+            if reachable.as_ref().is_none_or(|(best, _)| key < *best) {
+                reachable = Some((key, choice));
+            }
+        } else if !exact {
+            let key = (tie, item.distance, identity);
+            if unreachable.as_ref().is_none_or(|(best, _)| key < *best) {
+                unreachable = Some((key, choice));
+            }
+        }
+    }
+    match (reachable, unreachable) {
+        (Some((_, choice)), _) if view.is_some() => Pick::Reachable(choice),
+        (Some((_, choice)), _) => Pick::Unverified(choice),
+        (None, Some((_, choice))) => Pick::Unreachable(choice),
+        (None, None) => Pick::None,
+    }
 }
 
 fn ground_footprint(item: &api::snapshot::GroundItemView) -> Footprint {
@@ -1025,14 +1410,6 @@ pub fn loc_route_steps(cx: &ActionContext<'_>, loc: &api::snapshot::LocView) -> 
 /// Route steps from the player to an NPC's best footprint stand, when known.
 pub fn npc_route_steps(cx: &ActionContext<'_>, npc: &api::snapshot::NpcView) -> Option<u32> {
     footprint_route_steps(cx, npc_footprint(npc))
-}
-
-/// Route steps to a ground item, when known.
-pub fn ground_route_steps(
-    cx: &ActionContext<'_>,
-    item: &api::snapshot::GroundItemView,
-) -> Option<u32> {
-    footprint_route_steps(cx, ground_footprint(item))
 }
 
 /// Whether a live reach flood from the player's tile is posted.
@@ -1145,6 +1522,24 @@ pub fn loc_walk_request(
     }
 }
 
+/// A straight-wall approach that targets its facing tile may retry from the
+/// wall tile, once, if the native route planner explicitly reports no route.
+pub(super) fn loc_wall_fallback_tile(
+    loc: &api::snapshot::LocView,
+    initial: &WalkRequest,
+) -> Option<WorldTile> {
+    (loc.layer == api::snapshot::LocLayer::Wall
+        && loc_walk_id(loc).is_none()
+        && initial.radius == 0
+        && initial.loc_id.is_none()
+        && initial.target != loc.tile)
+        .then_some(loc.tile)
+}
+
+pub(super) fn loc_wall_route_failed(receipt: &WalkReceipt) -> bool {
+    receipt.end == WalkEnd::NoPath
+}
+
 pub fn last_chat_seq(cx: &ActionContext<'_>) -> i32 {
     cx.snapshot()
         .chat_lines(0)
@@ -1169,6 +1564,23 @@ pub(super) fn saw_game_message(cx: &ActionContext<'_>, since: i32, message: &str
     })
 }
 
+/// Content refusals are server lines newer than this dispatch's chat mark.
+fn ground_refusal(cx: &ActionContext<'_>, since: i32, id: i32) -> Option<GroundRefusal> {
+    if saw_game_message(
+        cx,
+        since,
+        "You don't have enough inventory space to hold that item.",
+    ) {
+        return Some(GroundRefusal::Capacity);
+    }
+    let message = match id {
+        1419 => "You already have a scythe, you don't need another one.",
+        1037 => "You don't need another set of bunny ears.",
+        _ => return None,
+    };
+    saw_game_message(cx, since, message).then_some(GroundRefusal::AlreadyOwned { id })
+}
+
 fn chebyshev(a: WorldTile, b: WorldTile) -> i32 {
     if a.level != b.level {
         return i32::MAX;
@@ -1186,6 +1598,7 @@ pub fn walk_request(
 ) -> WalkRequest {
     WalkRequest {
         target: tile,
+        candidate_goals: None,
         loc_id,
         radius,
         arrival: nav::contract::ArrivalKind::Reach,
@@ -1307,6 +1720,8 @@ mod tests {
             walk: None,
             request_id: 0,
             in_range_at_click: false,
+            ground_attempt: None,
+            ground_outcome: None,
         }
     }
 
@@ -1439,3 +1854,7 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "ground_tests.rs"]
+mod ground_tests;
