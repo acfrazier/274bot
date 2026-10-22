@@ -693,12 +693,26 @@ impl Guardian {
         }
     }
 
-    /// Chat lines newer than the last scanned line. This runs before the
-    /// tick's chat scan advances `chat_seen`, so both callers see one batch.
+    /// Whether a fresh server game message contains a marker. Every
+    /// caller matches server text, never player text. The stun
+    /// lines, the two plant lines, and the wrong-talk rejection
+    /// line are content `mes` messages. The snapshot row
+    /// is `ChatLineView { type_, username, text, sequence }`
+    /// (`crates/api/src/snapshot/views.rs:481-486`). A `mes`
+    /// reaches the client as `MESSAGE_GAME` and is stored as type 0
+    /// with an empty sender (`client.rs:6425`); the snapshot maps an
+    /// empty sender to `None` (`decode.rs:362-363`). Public chat
+    /// from another player is type 2 with a sender
+    /// (`actor_289.rs:613`) and a private message is type 3 or 7
+    /// (`client.rs:5899-5903`). Player text is not a server signal,
+    /// so only type 0 with no sender counts. This runs before the
+    /// tick's chat scan advances `chat_seen`, so every caller sees
+    /// the same batch.
     fn fresh_chat_has(&self, snap: &GameSnapshot, markers: &[&str]) -> bool {
         snap.chat_lines()
             .iter()
             .take_while(|l| l.sequence > self.chat_seen)
+            .filter(|l| l.type_ == 0 && l.username.is_none())
             .any(|l| markers.iter().any(|marker| l.text.contains(marker)))
     }
 
