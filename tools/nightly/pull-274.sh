@@ -20,6 +20,12 @@
 # is pruned here: there is no archive-host copy of a 274 run, so this
 # folder is the record. The guest prunes its own runs after 14 days.
 set -euo pipefail
+case "${NIGHTLY274_ACTION:-pull-274}" in
+    pull-274) ;;
+    nightly-mac) exec /bin/bash "$HOME/.local/lib/274bot-nightly/nightly-mac.sh" ;;
+    malbec-mirror) exec /bin/bash "$HOME/.local/lib/274bot-nightly/malbec-mirror-pull.sh" ;;
+    *) printf '%s\n' "unknown NIGHTLY274_ACTION: $NIGHTLY274_ACTION" >&2; exit 2 ;;
+esac
 
 # launchd opens the log file before it starts the launcher, so the folder
 # must exist already (README.md creates it at install time). Make it here
