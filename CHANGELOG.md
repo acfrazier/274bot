@@ -19,29 +19,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Starting a script now stops at once with a clear message when the saved
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
-- Ground-item interactions keep the selected item ID through dispatch. Items
+- Ground-item interactions keep the item type the script selected. Items
   with the same name on one tile, such as Halloween masks, no longer substitute
-  for the selected type. Requests without an ID retain name-and-tile lookup.
-  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
-  retain the selected row's ID.
-- Exact ground Take actions settle from inventory and ground evidence within
-  four later observed game ticks after dispatch. Lost races do not penalize
-  the item tile. Native scripts can report confirmed progress and wait for
-  relevant evidence without disabling scheduler or connection checks.
-- Native ground-item selections reject more than 32 IDs, so later items
-  cannot bypass the selected-ID exclusion bitset.
-- Grinch is a native Gathering card that collects selected visible holiday
+  for the selected type. Requests without an item type still find the item by
+  name and tile. Native collection, hunt keys, clue key-keeper drops and
+  trail-end rewards all keep the selected item type.
+- A pick-up of an exact ground item is confirmed within four later game ticks,
+  from what the pack and the ground show. If the bot loses the race for an
+  item, it does not avoid that item's tile afterwards. Built-in scripts can
+  report confirmed progress and wait for what they need without switching off
+  the checks that keep the script and its connection healthy.
+- A built-in script's ground-item selection holds at most 32 item types. A
+  longer list is refused as a whole, so no item can skip the script's list of
+  excluded items.
+- Grinch is a built-in Gathering script that collects selected visible holiday
   items around its Start tile. All 18 base choices default on. Set a radius
   from 1 through 16 tiles, use the nearest reachable or a named bank, and
   deposit only selected items before returning to the exact Start tile.
-  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  Empty waits stay visible as Waiting; duplicate refusals skip only that
   item until the next Start. Saved settings apply on the next Start.
-- Grinch uses the player's network tile, not the rendered tile, for its Start
-  tile and return arrival. A confirmed walking arrival no longer fails while
-  the rendered player catches up.
-- Native script failures keep their stop reason visible in the TUI status
-  pane after the run stops. This includes Grinch stopping with a full pack
-  that contains no selected item to deposit.
+- Grinch uses the bot's real position, not the position drawn on screen, for
+  its Start tile and for knowing it has returned. A confirmed walking arrival
+  no longer fails while the drawn player catches up.
+- When a built-in script stops with an error, the TUI status pane keeps the
+  reason visible after the run ends. This includes Grinch stopping with a full
+  pack that has no selected item to deposit.
 
 ### Banking
 
@@ -62,22 +64,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   instead of preferring built-in graphics. This can help on desktops with
   two graphics chips. If "importing the supplied dmabufs failed" still
   appears, start it with `WGPU_POWER_PREF=high ./panel-play`.
-- Panel and TUI now share `frontend-core` live scenario preparation, runner
-  state and proof gates; screenshot capture and TUI proof output remain
-  surface-specific.
-- Every panel action that changes state goes through the shared command
-  path that the TUI and the headless driver also use. This includes Start,
-  the draw switches, the Nav config grants, session log, map bake, Quest
-  Paths, marks, the filter, the vault and Quit. Each action returns a typed
-  report.
-- Fleet Assign & restart reports its paced Starts through completion, after
-  the assignment is durable.
+- The panel and the TUI now prepare, run and judge the built-in live checks
+  with the same code. Only screenshot capture and TUI output still differ.
+- Every panel action that changes something now runs the same way as in the
+  TUI. This includes Start, the draw switches, the Nav config grants, session
+  log, map bake, Quest Paths, marks, the filter, the vault and Quit. Each
+  action reports its result.
+- Fleet Assign & restart reports its spaced-out Starts until they finish,
+  after the assignment is saved.
 - Saved draw preferences (capture input, sidecar and focused 50 fps), the
   render-all and background-bots acknowledgements, the map-bake choice and
   the session log file are written only when you change them. Saving the
   panel's own window state no longer rewrites them.
-- A capture frame that fills the input queue is reported, instead of
-  dropping events silently.
+- When one frame of mouse and keyboard input for the game view overflows the
+  input queue, the panel now reports it instead of dropping events silently.
 
 ### Fleet
 
@@ -94,8 +94,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   down**). Name and Status remain temporary view sorts. Load all logs in bots
   in that order, a new profile goes to the end, a renamed profile keeps its
   place and removing a bot from the wall keeps its place. The order is saved
-  as `profile_order` in the shared preferences; a reorder whose write fails
-  is reported and the last saved order comes back.
+  with your other preferences; a reorder that cannot be saved is reported and
+  the last saved order comes back.
 - Choose each bot's own card, the focused bot's card, or a pinned card (the
   panel's card picker; `c` in the TUI). Choosing a card does not start a
   script or change a bot's assignment.
@@ -156,7 +156,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ### Random events
 
-- The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
+- Random-event handling starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
 - Shared axe and pick swing messages no longer start recovery.
 - The Guardian no longer gives up fleeing a hostile random event while a
   thieving stun stops the bot from moving. Release 0.2.4 counted the
@@ -166,8 +166,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
-  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
-  through the same command path as the panel.
+  danger-routing settings, map bake, Quest Paths, vault unlock and Quit now
+  run the same way as in the panel.
 
 ### Map baking
 
@@ -175,10 +175,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tile instead of failing with "Access is denied".
 ### Gatherer
 
-- At every fishing site, the Gatherer keeps its preferred observation stand
-  when that stand is reachable. Otherwise, it chooses a reachable alternative.
+- At every fishing site, the Gatherer keeps its preferred standing spot
+  when that spot is reachable. Otherwise, it chooses a reachable alternative.
   This applies to the initial approach and the return after banking. It fixes
-  the Catherby failure from the Fishing Guild when the preferred stand is on
+  the Catherby failure from the Fishing Guild when the preferred spot is on
   the Water Obelisk island. A bot already on that island can still use it.
 - Gatherers at Draynor no longer stop Blocked beside the jail, where guards
   killed the idle bots. Resource selection allows danger zones when either
@@ -202,9 +202,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Gatherer now offers both Grand Tree mine sites, the Desert Mining
   Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
   routes check the quest, keys and worn slave kit that the content requires.
-- The bundled map pack now uses format 17. The app rebuilds it automatically.
-  If you use a map pack you baked yourself, rebake it before use with
-  `cargo run -p nav --bin nav-pack`.
+- The bundled navigation data has a new format. The app rebuilds it
+  automatically. If you use navigation data that you baked yourself, bake it
+  again before use with `cargo run -p nav --bin nav-pack`.
 
 - The built-in Elkoy and rune-essence navigation checks start beside the
   transport NPC and seed only their required quest. They no longer start
@@ -239,20 +239,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - Fixed five Path errors. Demon Slayer now waits for Silverlight's delayed
   handoff. Pirate's Treasure estimates its rum and apron at their full-stock
-  prices of 30 gp and 2 gp; its message-scroll journal read still needs S7
-  runtime journal-root handling. Sea Slug no longer reacquires Swamp paste
+  prices of 30 gp and 2 gp; reading its message scroll from the quest journal
+  still does not work. Sea Slug no longer reacquires Swamp paste
   after Holgart takes it. Prince Ali Rescue clears only nearby guards before
   talking to Keli. Gertrude's Cat includes the fence landing tile and walks
   its yard waypoints in order. Monk's Friend skips the ring-stone walk near
   the ladder or inside the cave.
 - Demon Slayer: the Quester no longer stops at Delrith's incantation menu; it
   chooses the phrase Gypsy Aris teaches.
-- Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
-  fixtures may start at an explicit seeded stand such as a bank instead of
-  requiring the Path's authored start anchor.
-- An initial wall-facing `Interact` or `UseOn` loc walk retries once from
-  the wall tile after a typed `NoPath` receipt. The retry stays pending
-  across action-budget exhaustion; other walk failures remain terminal.
+- Totem of Ikov records the 30 gp Brimhaven passage fare, and quest-guide
+  test runs may start at a chosen spot such as a bank instead of the guide's
+  own start point.
+- When a script's first step toward an object on a wall (Interact or Use on)
+  finds no path, it retries once from the wall tile. The retry carries over if
+  the bot runs out of actions that tick; other walk failures still end the
+  step.
 
 #### Scenario checks
 
@@ -267,11 +268,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   engine copy with log-only receipts. Respawn checks also add map rows.
   The shared engines and content do not change.
 
-- Scenario wait budgets and the receipt `ticks` count now use observed game
-  ticks, not dirty snapshots. Repeated steps send at most once per game
-  tick.
-- Game-tick counts now advance only for applied `PLAYER_INFO` packets;
-  unrelated player-family invalidations no longer inflate scenario receipts.
+- The live checks' wait limits and the tick count in their results now count
+  game ticks the bot observed, not every refresh of its game state. Repeated
+  steps send at most once per game tick.
+- Game ticks are now counted only when the server's per-tick player update
+  arrives; other changes to player data no longer inflate the tick counts in
+  live-check results.
 - The Gatherer lifecycle check accepts planned restarts only at the measured
   ten-bot size. Other sizes fail with a message that the restart limit was not measured for that size.
   An observation that ends during a planned Stop records the qualified

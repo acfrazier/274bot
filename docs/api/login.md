@@ -13,7 +13,7 @@ the head.
 
 A process binds one entry from `~/.274bot/servers.json` before sockets open.
 The built-ins are `local-274`, `local-289`, and `rs2b2t`; `public-289` is an
-alias. Profile defaults are documented in [README.md](../../README.md). This
+alias. Profile defaults are documented in [server-profiles.md](../reference/server-profiles.md). This
 page is the FIFO and handshake policy shared by every profile.
 
 ## Where the server stores this
