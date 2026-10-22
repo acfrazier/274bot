@@ -8387,6 +8387,7 @@ mod route_quest_provider_tests {
         let (completion, _receiver) = RouteCompletion::channel();
         let origin = world.collision.origin;
         ScriptRouteRequest {
+            candidate_goals: None,
             generation: 1,
             request_id: 1,
             world,

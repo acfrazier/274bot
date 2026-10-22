@@ -3279,6 +3279,7 @@ fn real_content_inspection_capture_bytes() {
         encode_inspect_bytes(&expected_snapshot, 289_001, false),
         "old/new real-content snapshot bytes include the dynamic route and refusal"
     );
+    let old_bytes = std::fs::read(old_capture).expect("read immutable old inspection capture");
     assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
     let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(

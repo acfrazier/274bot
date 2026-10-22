@@ -155,7 +155,15 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/quest_facts/cache.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/quest_facts/catalog.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/quest_facts/wire.rs",
       "owner": "T2"
     },
     {
@@ -1379,6 +1387,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/nav_gated_entrances_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/nav_origin_live.rs",
       "owner": "T1"
     },
@@ -1995,7 +2007,15 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/src/transport/stage_doors_entrances.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/src/transport/stage_doors_forced.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/transport/stage_doors_keys.rs",
       "owner": "T5"
     },
     {
@@ -2048,6 +2068,10 @@
     },
     {
       "path": "crates/nav/src/traveller/door_expire_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/src/traveller/entrance_exclusion_tests.rs",
       "owner": "T5"
     },
     {
@@ -2131,7 +2155,15 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav/tests/entrance_diagnosis.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav/tests/forced_moves_real_pack.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav/tests/gated_entrances_real_pack.rs",
       "owner": "T5"
     },
     {

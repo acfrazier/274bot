@@ -2949,6 +2949,39 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::quest_gates::QuestEvidence|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/tests/gather_sites_reach.rs",
+      "symbol": "nav::quest_gates::QuestEvidence",
+      "cfg_or_target": "integration-test",
+      "owner": "T5",
+      "reason": "Real-pack gated-entrance fixture supplies observed quest evidence; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::quest_gates::QuestFamilyId|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/tests/gather_sites_reach.rs",
+      "symbol": "nav::quest_gates::QuestFamilyId",
+      "cfg_or_target": "integration-test",
+      "owner": "T5",
+      "reason": "Real-pack gated-entrance fixture supplies the selected quest family; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::world_state::QUEST_COMPLETE_COLOUR|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/tests/gather_sites_reach.rs",
+      "symbol": "nav::world_state::QUEST_COMPLETE_COLOUR",
+      "cfg_or_target": "integration-test",
+      "owner": "T5",
+      "reason": "Real-pack gated-entrance fixture uses the decoded completion colour; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
       "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::pack::decode_flags_sidecar|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
