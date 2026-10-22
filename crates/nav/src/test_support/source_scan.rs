@@ -44,6 +44,7 @@ pub enum FindingKind {
     UnsupportedCfgAttr,
     UnattachedFile,
     UnsupportedReexportGlob,
+    UnsupportedReexport,
     UnresolvedModule,
     ParseError,
     ReadError,
@@ -75,7 +76,7 @@ pub struct ScanReport {
     pub findings: Vec<Finding>,
 }
 
-/// The deny closure plus any unresolved public glob or source error.
+/// The deny closure plus any unresolved public re-export or source error.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClosureReport {
     pub denied: BTreeSet<String>,
@@ -205,9 +206,9 @@ pub fn scan_text(
 /// Compute the seed closure over public re-exports in the supplied crate sources.
 ///
 /// Each tuple contains a crate name and its `src` directory. The source scanner
-/// follows only `lib.rs` and modules attached to it. A public glob outside an
-/// already-denied namespace must resolve to a known module so its exports can be
-/// checked completely.
+/// follows only `lib.rs` and modules attached to it. Public module aliases and
+/// globs include seeds reached through public descendants. Unresolved targets
+/// and recursive aliases outside denied namespaces fail closed.
 pub fn compute_deny_closure(crates: &[(&str, &Path)], seeds: &[&str]) -> ClosureReport {
     let mut owned_sources = Vec::new();
     let mut read_findings = Vec::new();
@@ -279,8 +280,7 @@ pub fn compute_deny_closure_sources(
         }
     }
 
-    // Expand public glob chains so re-exports of denied items cannot hide
-    // behind a module-level `pub use`.
+    // Expand public glob chains, including public module declarations.
     let mut expanded = BTreeSet::new();
     loop {
         let mut additions = Vec::new();
@@ -353,20 +353,82 @@ pub fn compute_deny_closure_sources(
         all_exports.extend(additions);
     }
 
-    loop {
-        let mut changed = false;
-        for export in &all_exports {
+    let mut public_paths: BTreeSet<_> = all_exports
+        .iter()
+        .filter(|export| !export.glob)
+        .map(|export| {
+            let mut path = export.owner.clone();
+            path.push(export.name.clone());
+            path
+        })
+        .collect();
+    // Each derived path retains its export route. Repeated edges can expose
+    // infinitely nested aliases, so fail closed instead of truncating them.
+    let mut pending: Vec<_> = seeds
+        .iter()
+        .map(|seed| {
+            (
+                seed.split("::").map(str::to_owned).collect::<Vec<_>>(),
+                Vec::<usize>::new(),
+            )
+        })
+        .collect();
+    while let Some((denied, route)) = pending.pop() {
+        for (index, export) in all_exports.iter().enumerate() {
             if export.glob || is_denied(&join_path(&export.owner), &report.denied) {
                 continue;
             }
-            if is_denied(&join_path(&export.target), &report.denied) {
-                let mut exported_path = export.owner.clone();
-                exported_path.push(export.name.clone());
-                changed |= report.denied.insert(join_path(&exported_path));
+            let remainder: &[String] = if export.target.starts_with(&denied) {
+                &[]
+            } else if denied.starts_with(&export.target) {
+                &denied[export.target.len()..]
+            } else {
+                continue;
+            };
+            let mut exported_path = export.owner.clone();
+            exported_path.push(export.name.clone());
+            let alias_len = exported_path.len();
+            exported_path.extend_from_slice(remainder);
+            let exported_name = join_path(&exported_path);
+            if is_denied(&exported_name, &report.denied) {
+                continue;
             }
-        }
-        if !changed {
-            break;
+            let unresolved = !remainder.is_empty()
+                && !all_modules.contains(&export.target)
+                && !public_paths.contains(&export.target);
+            if unresolved || route.contains(&index) {
+                let key = format!("unsupported|{}", export_key(export));
+                if expanded.insert(key) {
+                    report.findings.push(Finding {
+                        kind: FindingKind::UnsupportedReexport,
+                        path: Some(join_path(&export.target)),
+                        scope: Scope::Production,
+                        file: export.file.clone(),
+                        detail: if unresolved {
+                            "public module alias target is not a resolved local module"
+                        } else {
+                            "recursive public module aliases cannot be resolved completely"
+                        }
+                        .to_owned(),
+                    });
+                }
+                continue;
+            }
+            // Do not expose a seed through a private module descendant.
+            if !remainder.is_empty()
+                && !(export.target.len() + 1..=denied.len())
+                    .all(|end| public_paths.contains(&denied[..end]))
+            {
+                continue;
+            }
+            // Preserve public descendant paths for aliases of this alias.
+            for end in alias_len..=exported_path.len() {
+                public_paths.insert(exported_path[..end].to_vec());
+            }
+            report.denied.insert(exported_name);
+            let mut next_route = route.clone();
+            next_route.push(index);
+            pending.push((exported_path, next_route));
         }
     }
 
@@ -1642,9 +1704,19 @@ fn collect_reexports(
                 }
             }
             Item::Mod(module) => {
+                let mut child_path = module_path.to_vec();
+                let name = module.ident.to_string();
+                child_path.push(name.clone());
+                if matches!(&module.vis, Visibility::Public(_)) {
+                    output.push(Reexport {
+                        owner: module_path.to_vec(),
+                        name,
+                        target: child_path.clone(),
+                        glob: false,
+                        file: file.to_path_buf(),
+                    });
+                }
                 if let Some((_, nested)) = &module.content {
-                    let mut child_path = module_path.to_vec();
-                    child_path.push(module.ident.to_string());
                     collect_reexports(nested, &child_path, file, scope, resolution, output);
                 }
             }
