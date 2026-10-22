@@ -137,8 +137,12 @@ struct LootTripObservation {
     deposited: i32,
     /// Completed trips: observed rises of `deposited`.
     trips: u32,
+    /// Successful steals: observed rises of the progress stat's XP.
+    steals: u32,
     /// Attack, Strength and Defence XP at the previous frame.
     melee_xp: Option<[i32; 3]>,
+    /// The progress stat's XP at the previous frame.
+    progress_xp: Option<i32>,
 }
 
 const PROTECT_MAGIC_VARP: i32 = 95;
@@ -1182,10 +1186,11 @@ impl ScenarioRunner {
                     .or_else(|| {
                         self.loot_trips.map(|trips| {
                             format!(
-                                "{} [pre-style trips={} deposited={}]",
+                                "{} [pre-style trips={} deposited={} steals={}]",
                                 arm.name(),
                                 trips.trips,
-                                trips.deposited
+                                trips.deposited,
+                                trips.steals
                             )
                         })
                     })
@@ -1414,13 +1419,19 @@ impl ScenarioRunner {
         }
     }
 
-    /// Restart the style watch's budget at each completed pre-style trip, and
-    /// fail when the card fights without its style while it holds food.
+    /// Restart the style watch's budget at each completed pre-style trip and
+    /// each progress-stat XP gain, and fail when the card fights without its
+    /// style while it holds food.
     fn observe_loot_trips(&mut self, style: Proof) -> Result<(), String> {
-        let StepKind::ObserveStyleAcrossLootTrips { deposit_id, food } = self.current_step().kind
+        let StepKind::ObserveStyleAcrossLootTrips {
+            deposit_id,
+            food,
+            progress_stat,
+        } = self.current_step().kind
         else {
             return Ok(());
         };
+        let progress_xp = self.stat_xp(progress_stat);
         let style_holds = self.holds(style);
         let food_held = self
             .snapshot
@@ -1455,6 +1466,13 @@ impl ScenarioRunner {
         if melee_xp.is_some() {
             state.melee_xp = melee_xp;
         }
+        let progressed = matches!(
+            (state.progress_xp, progress_xp),
+            (Some(before), Some(now)) if now > before
+        );
+        if progress_xp.is_some() {
+            state.progress_xp = progress_xp;
+        }
         if rose && food_held && !style_holds {
             return Err(format!(
                 "melee XP rose while stall food was held and {} did not hold",
@@ -1464,6 +1482,10 @@ impl ScenarioRunner {
         if banked > state.deposited {
             state.deposited = banked;
             state.trips += 1;
+            self.game_ticks_waited = 0;
+        }
+        if progressed {
+            state.steals += 1;
             self.game_ticks_waited = 0;
         }
         Ok(())

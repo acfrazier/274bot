@@ -14707,12 +14707,15 @@ fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
     assert!(
         matches!(
             style.kind,
-            StepKind::ObserveStyleAcrossLootTrips { deposit_id: BONES_ID, food }
-                if [1891, 1893, 1895, 1897, 1899, 1901, 2309]
-                    .iter()
-                    .all(|id| food.contains(id))
+            StepKind::ObserveStyleAcrossLootTrips {
+                deposit_id: BONES_ID,
+                food,
+                progress_stat: 17,
+            } if [1891, 1893, 1895, 1897, 1899, 1901, 2309]
+                .iter()
+                .all(|id| food.contains(id))
         ),
-        "the style watch restarts on deposited Bones and knows every stall food"
+        "the style watch restarts on deposited Bones and Thieving XP and knows every stall food"
     );
     assert_eq!(style.wait.arm, ARDY_FIGHTER_STRENGTH_STYLE);
     assert_eq!(style.wait.arm, Proof::VarpExact { id: 43, value: 1 });
