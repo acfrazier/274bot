@@ -4,7 +4,15 @@
 > the architecture data files, and anyone who needs to reproduce the CI
 > architecture check on their own machine. The short version is in
 > [CONTRIBUTING.md](../../CONTRIBUTING.md#run-the-checks). This text moved here from
-> CONTRIBUTING.md; only relative links changed.
+> CONTRIBUTING.md. Relative links changed, and the sentence on which checker
+> branch CI clones was corrected (CI follows `ci.yml`, which names a
+> `release-<version>` branch on a release line).
+>
+> **On a release branch:** `run.sh` fetches the rules from `main`. To check a
+> `release/<version>` tree the way CI does, clone `274bot-arch`, check out its
+> `release-<version>` branch, and run
+> `ARCH_REPO=/path/to/that/clone tools/architecture/run.sh` (the local-clone
+> form uses the clone's checked-out commit).
 
 ```bash
 # Crate-graph ownership (local Python 3.11+ minimum; CI pins 3.14.8). Does

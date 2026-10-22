@@ -65,11 +65,17 @@ run twice.
 | Clippy (client) | The same, in the client | `cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings` |
 | Tests | Failing tests | `cargo test --workspace` |
 | Tests (client) | The same, in the client | `cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace` |
-| Architecture | A crate dependency the rules do not allow | `tools/architecture/run.sh` |
+| Architecture | A crate dependency the rules do not allow | `tools/architecture/run.sh` (on `dev`; for a release branch see below) |
 
 CI runs with `BOT_NAV_BUILD=skip` and `SKIP_GPU=1`: no navigation pack is
 bundled into the build, and tests skip the graphics adapter. Set the same on a
 machine that has no engine or GPU.
+
+`tools/architecture/run.sh` uses the same checker rules as CI on `dev`, where
+pull requests go. A `release/<version>` branch is checked against its own
+`release-<version>` rules instead; to reproduce that,
+[Architecture check in detail](docs/dev/architecture-check.md) shows how to run
+`run.sh` against a local copy of the rules at that branch.
 
 Some tests need a local file, such as a navigation pack. On GitHub they skip and
 print the reason. On your machine they fail and name the environment variable
@@ -180,8 +186,11 @@ tests or commits. [Writing 274bot docs](docs/dev/writing-docs.md#changelog-entri
 has the rules.
 
 The "Known issues" and "Not in this release" lists are generated. Add or change
-an item in [`docs/known-issues.toml`](docs/known-issues.toml), then check it with
-`python3 tools/known-issues/known_issues.py check --release <release>`.
+an item in [`docs/known-issues.toml`](docs/known-issues.toml), then preview the
+lists with `python3 tools/known-issues/known_issues.py render --release <next>`,
+where `<next>` is the release being developed. The `check` command compares the
+lists with a release section of the CHANGELOG, so it only works once that
+section exists, when a release is cut.
 Never edit those lists by hand.
 
 ## More developer pages
