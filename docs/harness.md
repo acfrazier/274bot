@@ -913,7 +913,7 @@ load another copy.
 |---|---|
 | `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start` and `duel_arena`. |
+| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
@@ -923,8 +923,8 @@ load another copy.
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
 `idle` only logs clients in. `seeded-idle` performs the ordinary Thiever seed
-without starting the catalog script. `active` starts the selected real catalog
-script; `lifecycle` additionally alternates Stop and restart every 60
+without starting the catalog script. `active` starts the scenario's native or
+catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
 
@@ -936,6 +936,58 @@ requires seed/proof completion and running scripts for active workloads.
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
 scenario's final Strength-XP-since-Start proof remains mandatory.
+
+Multi-slot `gatherer` uses a fleet qualification for the contended Draynor
+normal trees. Every bot must reach a safe legal tree stand and send a real
+`Chop down` request within its unchanged post-Start tick budget. No sampled
+position may enter a denied zone. A death, native failure or final `Blocked`
+phase fails the cell. The fleet must gain Woodcutting XP. A bot with no XP must
+also show a genuine resource-exhaustion wait. Generic `Waiting`, idle and paused
+states do not supply that evidence. The qualifier collects its evidence even
+when the optional diagnostic sidecar is disabled.
+
+During an N10 planned lifecycle restart, safety checks continue through the
+harness's Stop and Start. Only that Stop arms the restart allowance. The
+admitted Start allows `Starting` for at most three observed `PLAYER_INFO`
+ticks, then requires `Running`. Every slot reached `Running` 0.43-0.93 seconds
+after Start in the N10 measurements. This measured qualification bound is
+not a scheduler guarantee. Gatherer lifecycle cells with any other N fail
+at preparation with `restart_bound_unmeasured`. Active cells retain their
+existing fleet-size support.
+
+The warm start path has four worker dispatches per slot: Load, Configure,
+Construct and Seal (`script/src/preparation.rs` and `slot/compiled.rs`).
+All slots queue in the same harness tick on one shared FIFO `work-admission`
+worker. Each dispatch has a soft 10 ms wall-clock slice
+(`script/src/work_admission.rs::WORK_SLICE`), not one game tick.
+A yielded job returns to the queue's back. Full admission defers submission
+until `poll_compiled` retries it. The next lifecycle observe adopts completed
+work. These facts do not establish a three-tick bound for an unmeasured N.
+
+An unplanned `Starting`, including one between Stop and Start, fails the cell.
+A restart overrun or an unfinished restart at observation end also fails.
+The harness does not start another lifecycle cycle at observation end.
+A planned restart never resets the original 300-tick proof window.
+If observation ends inside a planned Stop, the `observe-end` row records
+`verdict: "pass"` only after all other qualification checks succeed.
+It also records `lifecycle_state: "planned_stop"` and each slot's actual
+`run_state`. During the Stop interval, the ongoing verdict remains `pending`.
+The test `observe_end_inside_planned_stop_records_pass_and_actual_slot_states`
+covers this boundary and rejects missing evidence and an unplanned Start.
+
+The diagnostic record
+`gatherer_fleet_qualification.bots[].first_missing_position` retains the first
+missing sample's tick, reason, run state, ingame flag, scene state, raw tile
+and planned-restart state. Its reason is `coordinates_missing`,
+`geometry_missing`, `geometry_error`, `zone_data_missing` or
+`zone_filter_missing`. The test
+`first_missing_position_records_first_context_without_changing_verdict`
+checks the retained context and unchanged missing-evidence verdict.
+This record is available without `BOT_MEMORY_DIAGNOSTICS=1`.
+
+The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
+Gatherer live cells retain their individual gates. They do not use this fleet's
+shared-tree fixture.
 
 `duel_arena` is the pair-script cell: every slot runs the frozen Duel Arena
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is

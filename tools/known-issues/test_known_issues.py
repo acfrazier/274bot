@@ -475,6 +475,23 @@ class ListedTest(unittest.TestCase):
              "--changelog", str(self.changelog), *args],
             capture_output=True, text=True)
 
+    def test_item_new_in_next_release_renders_without_carried_sentence(self):
+        new_item = LAMP_ITEM.replace('id = "epsilon-early"', 'id = "zeta-new"') \
+            .replace('area = "Lamp"', 'area = "Fan"') \
+            .replace('first = "0.2.0"', 'first = "0.2.5"')
+        self.items = self.load_text(LISTED_LEDGER + "\n" + new_item)
+        self.assertNotIn("Fan", self.render("0.2.4"))
+        fan = [line for line in self.render("0.2.5").splitlines() if "Fan" in line]
+        self.assertEqual(len(fan), 1, fan)
+        self.assertNotIn("same problem", fan[0])
+        rows = {row["id"]: row for row in known_issues.carried_rows(
+            self.items, self.order, "0.2.5")}
+        self.assertEqual(rows["zeta-new"]["carried"], 0)
+
+    def test_first_past_the_next_release_rejected(self):
+        with self.assertRaises(ValueError):
+            self.load_text(LAMP_ITEM.replace('first = "0.2.0"', 'first = "0.2.6"'))
+
     def test_listed_item_absent_before_listed_release(self):
         for release in ("0.2.0", "0.2.3", "0.2.4"):
             self.assertNotIn("Dial", self.render(release), release)

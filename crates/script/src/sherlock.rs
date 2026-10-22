@@ -1662,6 +1662,7 @@ mod tests {
                 snapshot: Some(&self.snapshot),
                 obj_names: self.names.as_ref(),
                 compiled: crate::CompiledTick {
+                    walk_danger: None,
                     selected,
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
@@ -1939,6 +1940,7 @@ mod tests {
         let snapshot = api::snapshot::SnapshotView::new(host.snapshot, evidence);
         let eligible = !host.compiled.hold;
         let mut native = NativeTick {
+            walk_danger: None,
             state: None,
             service_authority: None,
             prompt_port: None,

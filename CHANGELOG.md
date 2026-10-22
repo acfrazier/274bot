@@ -142,6 +142,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   This applies to the initial approach and the return after banking. It fixes
   the Catherby failure from the Fishing Guild when the preferred stand is on
   the Water Obelisk island. A bot already on that island can still use it.
+- Gatherers at Draynor no longer stop Blocked beside the jail, where guards
+  killed the idle bots. Resource selection allows danger zones when either
+  the card's Allow danger zones setting or the global Nav setting allows them.
+  Resources remain eligible only if they have a safe access tile, and walks
+  use only safe access tiles. The same rule applies to finite resource steps
+  in the Quester. If no safe resource remains, the failure names the danger
+  zone. Without navigation data, bots can work or wait at a resource already
+  in range, but cannot walk to another resource.
 
 ### Navigation checks
 
@@ -180,16 +188,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Native script failures keep their stop reason visible in the TUI status
   pane after the run stops. This includes Grinch stopping with a full pack
   that contains no selected item to deposit.
-
-### Not in this release
-
-- When Grinch banks, it uses the shared bank trip, which still waits up to a
-  fixed time for some bank steps. These waits are planned to become game-timed.
-- A bot can't get through a door that another player closes again on every
-  tick, when that player's moves are handled before the bot's. The bot tries
-  the door until its retries run out and then stops at the door. Finding
-  another way around, changing worlds when allowed, and a clear "door held
-  shut" result are planned for 0.2.6.
 
 ### Fixed during development
 
@@ -251,6 +249,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tick.
 - Game-tick counts now advance only for applied `PLAYER_INFO` packets;
   unrelated player-family invalidations no longer inflate scenario receipts.
+- The Gatherer lifecycle check accepts planned restarts only at the measured
+  ten-bot size. Other sizes fail with `restart_bound_unmeasured`.
+  An observation that ends during a planned Stop records the qualified
+  stopped state instead of an unfinished qualification.
 
 #### Gatherer
 

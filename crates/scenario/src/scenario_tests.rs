@@ -2427,7 +2427,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             "ChaosDruidKiller",
             Duration::from_secs(300),
         ),
-        ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
+        (
+            "ardy_fighter_bank",
+            "ArdyFighter",
+            ARDY_FIGHTER_BANK_DEADLINE,
+        ),
         (
             "ardy_fighter_bank_seeded",
             "ArdyFighter",
@@ -3089,16 +3093,20 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
-        let (deadline_secs, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" => (600, 1500),
-            "green_dragon_bank_default_prepared" => (720, 1800),
-            "green_dragon_tele" => (480, 1200),
-            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => (600, 1500),
-            _ => (300, 750),
+        let (deadline, min_watch_ticks) = match name {
+            "green_dragon_bank_prepared" => (Duration::from_secs(600), 1500),
+            "green_dragon_bank_default_prepared" => (
+                GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+                1800,
+            ),
+            "green_dragon_tele" => (Duration::from_secs(480), 1200),
+            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => {
+                (Duration::from_secs(600), 1500)
+            }
+            _ => (Duration::from_secs(300), 750),
         };
         assert_eq!(
-            scenario.settings.deadline,
-            Duration::from_secs(deadline_secs),
+            scenario.settings.deadline, deadline,
             "{name}: named combat/travel qualification wall budget"
         );
         assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
@@ -14378,7 +14386,10 @@ fn e2e_port_conversions_register_converted_gates() {
 
     let targets = get("auto_fighter_targets").expect("auto_fighter_targets");
     assert_eq!(targets.settings.start_script, Some("AutoFighter"));
-    assert_eq!(targets.settings.deadline, Duration::from_secs(420));
+    assert_eq!(
+        targets.settings.deadline, AUTO_FIGHTER_TARGETS_DEADLINE,
+        "the measured whole-cell cycle plus 50% headroom"
+    );
     let inject = settings_inject_map(targets.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("target"),
@@ -14615,4 +14626,119 @@ fn quester_queue_watches_every_selected_quest() {
         true,
     );
     assert!(watches.iter().all(|proof| proof.check(&snapshot, None)));
+}
+
+/// The 10/21 nightly ended these cells on their whole-cell wall deadline
+/// without a failed step witness, after the runner began charging wait
+/// budgets in observed game ticks. Each committed deadline is the largest
+/// completion time measured in live Engine A runs at the 289 engine's
+/// 600 ms game tick, plus the `b35d7382e` headroom rule: 50%, rounded up to
+/// a whole second (`FIX-NIGHTLY-DEADLINES-025`). The Thiever no-bank cell is
+/// deliberately absent: two of its three lifted runs failed its existing
+/// 750-game-tick XP watch, so its 420 s deadline is unchanged.
+#[test]
+fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
+    use crate::scenarios::combat::{
+        ARDY_FIGHTER_BANK_DEADLINE, AUTO_FIGHTER_TARGETS_DEADLINE,
+        GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+    };
+    use crate::scenarios::quester::RUNE_MYST_DEADLINE;
+
+    for (name, measured_ms, deadline) in [
+        ("ardy_fighter_bank", 365_610_u64, ARDY_FIGHTER_BANK_DEADLINE),
+        (
+            "auto_fighter_targets",
+            580_326,
+            AUTO_FIGHTER_TARGETS_DEADLINE,
+        ),
+        (
+            "green_dragon_bank_default_prepared",
+            1_610_792,
+            GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
+        ),
+        ("quester_rune_mysteries", 1_017_780, RUNE_MYST_DEADLINE),
+    ] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline, deadline,
+            "{name}: committed deadline is the measured completion plus headroom"
+        );
+        let measured = Duration::from_millis(measured_ms);
+        assert!(
+            deadline >= measured + measured / 2,
+            "{name}: deadline {deadline:?} must cover {measured:?} plus 50% headroom"
+        );
+    }
+
+    // Scope: the seeded sibling keeps the short gold deadline, the other
+    // quester cells keep the shared Cook deadline, and the Thiever no-bank
+    // cell keeps its existing deadline.
+    assert_eq!(
+        get("ardy_fighter_bank_seeded").unwrap().settings.deadline,
+        SCRIPT_GOLD_DEADLINE
+    );
+    assert_eq!(
+        get("quester_cook").unwrap().settings.deadline,
+        Duration::from_secs(900)
+    );
+    assert_eq!(
+        get("thiever_guard_no_bank").unwrap().settings.deadline,
+        Duration::from_secs(420)
+    );
+}
+
+/// The earned-kill bank cell waits for the card's own Strength selection
+/// across the Loot-count trips that a Guard catch or a public pile can send
+/// it on first, then gives the first Strength XP one fight window. The
+/// bank-Off sibling keeps its single style watch.
+#[test]
+fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
+    use crate::scenarios::combat::{
+        ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS, ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
+        ARDY_FIGHTER_STRENGTH_STYLE,
+    };
+    let scenario = get("ardy_fighter_bank").unwrap();
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    let style = &scenario.steps[start + 1];
+    assert!(
+        matches!(
+            style.kind,
+            StepKind::ObserveStyleAcrossLootTrips {
+                deposit_id: BONES_ID,
+                food,
+                progress_stat: 17,
+            } if [1891, 1893, 1895, 1897, 1899, 1901, 2309]
+                .iter()
+                .all(|id| food.contains(id))
+        ),
+        "the style watch restarts on deposited Bones and Thieving XP and knows every stall food"
+    );
+    assert_eq!(style.wait.arm, ARDY_FIGHTER_STRENGTH_STYLE);
+    assert_eq!(style.wait.arm, Proof::VarpExact { id: 43, value: 1 });
+    assert_eq!(
+        style.wait.budget_ticks,
+        ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS
+    );
+    let fight = &scenario.steps[start + 2];
+    assert_eq!(
+        fight.name,
+        "watch Strength XP from the selected melee style after Start"
+    );
+    assert_eq!(
+        fight.wait.arm,
+        Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    );
+    assert_eq!(fight.wait.budget_ticks, ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS);
+    let plain = get("ardy_fighter").unwrap();
+    assert!(!plain
+        .steps
+        .iter()
+        .any(|step| matches!(step.kind, StepKind::ObserveStyleAcrossLootTrips { .. })));
 }

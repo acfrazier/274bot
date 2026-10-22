@@ -1,4 +1,5 @@
 //! Permission composition and durable danger levels at host admissions.
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -214,8 +215,8 @@ pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mu
 }
 
 /// Resolve native search options and risk policy from one durable settings read.
-/// Running API Gather permissions are supplied by the slot-locked dispatcher,
-/// never copied into per-bot navigation state.
+/// Callback-scoped permissions override the per-bot mirror; when absent, the
+/// mirror remains the fallback. Load API Gather values come from the slot lock.
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -228,16 +229,516 @@ pub(crate) fn native_admission(
     if let Some(bot) = bot.as_deref_mut() {
         log_runtime_net_gate(name, globals, &mut bot.runtime_gate_logged);
     }
-    let script = bot
-        .and_then(|bot| bot.native_permissions)
-        .or(session_permissions)
+    // The slot-locked value describes this callback. The bot copy is updated
+    // afterward, so it may belong to the preceding card revision.
+    let script = session_permissions
+        .or_else(|| bot.as_deref().and_then(|bot| bot.native_permissions))
         .unwrap_or_default();
+    resolve_native_admission(globals, script, walk)
+}
+
+fn resolve_native_admission(
+    globals: WalkGlobals,
+    script: WalkPermissions,
+    walk: WalkOptions,
+) -> (FindOptions, RiskPolicy, bool) {
     let policy = globals.risk_policy(script, walk);
     (
         globals.native_options_with_policy(script, walk, policy),
         policy,
         globals.enforces_risk(script, walk),
     )
+}
+
+/// One callback's borrowed danger authority. Construction only borrows inputs.
+/// The first selection query resolves the same permissions as a native walk.
+pub(crate) struct SelectionDangerQuery<'a> {
+    navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &'a str,
+    world: &'a nav::world::NavWorld,
+    snapshot: Option<&'a api::snapshot::GameSnapshot>,
+    session_permissions: Option<WalkPermissions>,
+    resolved: OnceCell<SelectionDanger>,
+}
+
+enum SelectionDanger {
+    Allowed,
+    Filtered(nav::zones::ZoneFilterOwned),
+    Unavailable,
+}
+
+impl<'a> SelectionDangerQuery<'a> {
+    pub(crate) fn new(
+        navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
+        name: &'a str,
+        world: &'a nav::world::NavWorld,
+        snapshot: Option<&'a api::snapshot::GameSnapshot>,
+        session_permissions: Option<WalkPermissions>,
+    ) -> Self {
+        Self {
+            navs,
+            name,
+            world,
+            snapshot,
+            session_permissions,
+            resolved: OnceCell::new(),
+        }
+    }
+
+    fn resolved(&self) -> &SelectionDanger {
+        self.resolved.get_or_init(|| {
+            let (options, _, _) = native_admission(
+                self.navs,
+                self.name,
+                WalkOptions::default(),
+                self.session_permissions,
+            );
+            if options.zones.is_all() {
+                return SelectionDanger::Allowed;
+            }
+            let Some(table) = self.world.graph.zones.as_ref() else {
+                return SelectionDanger::Unavailable;
+            };
+            let combat = self
+                .snapshot
+                .and_then(|snapshot| snapshot.local_player())
+                .map(|player| player.player.combat_level);
+            match nav::zones::ZoneFilterOwned::new(table.zones().len(), combat, &[], options.zones)
+            {
+                Ok(filter) => SelectionDanger::Filtered(filter),
+                Err(_) => SelectionDanger::Unavailable,
+            }
+        })
+    }
+}
+
+impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
+    fn check(
+        &self,
+        target: api::WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+    ) -> script::native::WalkDanger<'_> {
+        use script::native::WalkDanger;
+
+        let filter = match self.resolved() {
+            SelectionDanger::Allowed => return WalkDanger::Allowed,
+            SelectionDanger::Unavailable => return WalkDanger::Unavailable,
+            SelectionDanger::Filtered(filter) => filter,
+        };
+        let Some(table) = self.world.graph.zones.as_ref() else {
+            return WalkDanger::Unavailable;
+        };
+        let Some(filter) = filter.view(table) else {
+            return WalkDanger::Unavailable;
+        };
+        let mut denied = None;
+        for tile in
+            selection_access_tiles(self.world, self.snapshot, target, loc_id, radius, arrival)
+        {
+            match filter
+                .blocking_at(&self.world.graph.wilderness, tile)
+                .next()
+            {
+                None => return WalkDanger::Allowed,
+                Some(index) => denied = denied.or(Some(index)),
+            }
+        }
+        match denied {
+            Some(index) => {
+                let zone = &table.zones()[usize::from(index)];
+                let label = match table.key(index) {
+                    nav::zones::ZoneKey::Group(group) => &table.groups()[usize::from(group)].label,
+                    nav::zones::ZoneKey::Zone(_) => &table.kinds()[usize::from(zone.kind)].label,
+                };
+                WalkDanger::Denied { zone: label }
+            }
+            // No legal access tile is a geometry failure, not evidence of danger.
+            None => WalkDanger::Allowed,
+        }
+    }
+
+    fn safe_access_goals(
+        &self,
+        target: api::WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+        existing: Option<&script::native::WalkGoals>,
+    ) -> Result<Option<script::native::WalkGoals>, script::native::WalkGoalsError> {
+        use script::native::{WalkGoals, WalkGoalsError};
+
+        let filter = match self.resolved() {
+            SelectionDanger::Allowed => return Ok(None),
+            SelectionDanger::Unavailable => return Err(WalkGoalsError::Empty),
+            SelectionDanger::Filtered(filter) => filter,
+        };
+        let Some(table) = self.world.graph.zones.as_ref() else {
+            return Err(WalkGoalsError::Empty);
+        };
+        let Some(filter) = filter.view(table) else {
+            return Err(WalkGoalsError::Empty);
+        };
+        let is_denied = |tile| {
+            filter
+                .blocking_at(&self.world.graph.wilderness, tile)
+                .next()
+                .is_some()
+        };
+
+        let mut safe_count = 0usize;
+        let mut denied = false;
+        if let Some(existing) = existing {
+            for &tile in existing.as_slice() {
+                if is_denied(tile) {
+                    denied = true;
+                } else {
+                    safe_count += 1;
+                }
+            }
+        } else {
+            for tile in
+                selection_access_tiles(self.world, self.snapshot, target, loc_id, radius, arrival)
+            {
+                if is_denied(tile) {
+                    denied = true;
+                } else {
+                    safe_count += 1;
+                }
+            }
+        }
+
+        if !denied {
+            return Ok(None);
+        }
+        if safe_count == 0 {
+            return Err(WalkGoalsError::Empty);
+        }
+        if safe_count > WalkGoals::MAX {
+            return Err(WalkGoalsError::TooMany {
+                count: safe_count,
+                limit: WalkGoals::MAX,
+            });
+        }
+
+        let mut safe_goals = Vec::with_capacity(safe_count);
+        if let Some(existing) = existing {
+            for &tile in existing.as_slice() {
+                if !is_denied(tile) {
+                    safe_goals.push(tile);
+                }
+            }
+            let mut safe_preferred = Vec::with_capacity(existing.preferred().len());
+            for &tile in existing.preferred() {
+                if !is_denied(tile) {
+                    safe_preferred.push(tile);
+                }
+            }
+            Ok(Some(WalkGoals::with_preferred(
+                safe_goals,
+                &safe_preferred,
+            )?))
+        } else {
+            for tile in
+                selection_access_tiles(self.world, self.snapshot, target, loc_id, radius, arrival)
+            {
+                if !is_denied(tile) {
+                    safe_goals.push(tile);
+                }
+            }
+            Ok(Some(WalkGoals::new(safe_goals)?))
+        }
+    }
+}
+
+/// Scalar radius geometry shared by the route cursor and selection's lazy
+/// access scan. Candidate storage and collision filtering stay with each caller.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RouteRadiusGeometry {
+    target: api::WorldTile,
+    radius: i32,
+    side: usize,
+    len: usize,
+}
+
+impl RouteRadiusGeometry {
+    pub(crate) fn new(target: api::WorldTile, radius: i32) -> Option<Self> {
+        let radius = radius.clamp(0, 104);
+        let side = usize::try_from(radius)
+            .ok()?
+            .checked_mul(2)?
+            .checked_add(1)?;
+        Some(Self {
+            target,
+            radius,
+            side,
+            len: side.checked_mul(side)?,
+        })
+    }
+
+    pub(crate) const fn radius(self) -> i32 {
+        self.radius
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn candidate_at(self, index: usize) -> Option<api::WorldTile> {
+        if index >= self.len {
+            return None;
+        }
+        let dx = i32::try_from(index / self.side)
+            .ok()?
+            .checked_sub(self.radius)?;
+        let dz = i32::try_from(index % self.side)
+            .ok()?
+            .checked_sub(self.radius)?;
+        Some(api::WorldTile {
+            x: self.target.x.checked_add(dx)?,
+            z: self.target.z.checked_add(dz)?,
+            level: self.target.level,
+        })
+    }
+}
+
+/// The scalar footprint predicate used by captured route goals and the
+/// allocation-free selection scan.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LocAccessGeometry {
+    target: api::WorldTile,
+    approach: Option<api::query::loc_approach::LocApproach>,
+    radius: u32,
+}
+
+impl LocAccessGeometry {
+    fn from_loc(loc: &api::snapshot::LocView, target: api::WorldTile, radius: i32) -> Option<Self> {
+        use api::query::loc_approach::{distance_from, LocApproach};
+
+        distance_from(loc, target)?;
+        Some(Self {
+            target,
+            approach: LocApproach::from_loc_def(
+                loc.width,
+                loc.length,
+                loc.angle,
+                loc.force_approach,
+            ),
+            radius: u32::try_from(radius.clamp(0, 104)).ok()?,
+        })
+    }
+
+    pub(crate) fn candidate_at(self, tile: api::WorldTile, flags: i32) -> Option<api::WorldTile> {
+        let approach = self.approach?;
+        if flags & client::dash3d::CollisionFlag::SQ_BLOCKED != 0
+            || !approach.can_operate(self.target, tile, flags)
+        {
+            return None;
+        }
+        let max_x = self
+            .target
+            .x
+            .checked_add(i32::from(approach.width).checked_sub(1)?)?;
+        let max_z = self
+            .target
+            .z
+            .checked_add(i32::from(approach.length).checked_sub(1)?)?;
+        let nearest_x = tile.x.clamp(self.target.x, max_x);
+        let nearest_z = tile.z.clamp(self.target.z, max_z);
+        (tile.x.abs_diff(nearest_x).max(tile.z.abs_diff(nearest_z)) <= self.radius).then_some(tile)
+    }
+}
+
+/// A scene-clipped scalar enumeration window for the route's loc footprint.
+/// It stores no collision flags; route capture and selection read them through
+/// their own existing storage/borrowed-scene paths.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LocAccessWindow {
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    start_x: i32,
+    start_z: i32,
+    height: usize,
+    len: usize,
+}
+
+impl LocAccessWindow {
+    fn new(
+        scene: &api::snapshot::SceneView,
+        target: api::WorldTile,
+        approach: Option<api::query::loc_approach::LocApproach>,
+    ) -> Option<Self> {
+        let (start_x, start_z, width, height) = if let Some(approach) = approach {
+            let dst_x = target.x.checked_sub(scene.base_x)?;
+            let dst_z = target.z.checked_sub(scene.base_z)?;
+            let width = i32::from(approach.width);
+            let height = i32::from(approach.length);
+            let start_x = dst_x.checked_sub(1)?.max(0);
+            let start_z = dst_z.checked_sub(1)?.max(0);
+            let end_x = dst_x.checked_add(width)?.min(scene.width.checked_sub(1)?);
+            let end_z = dst_z.checked_add(height)?.min(scene.height.checked_sub(1)?);
+            if start_x > end_x || start_z > end_z {
+                (start_x, start_z, 0, 0)
+            } else {
+                (
+                    start_x,
+                    start_z,
+                    usize::try_from(end_x.checked_sub(start_x)?.checked_add(1)?).ok()?,
+                    usize::try_from(end_z.checked_sub(start_z)?.checked_add(1)?).ok()?,
+                )
+            }
+        } else {
+            (0, 0, 0, 0)
+        };
+        Some(Self {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            start_x,
+            start_z,
+            height,
+            len: width.checked_mul(height)?,
+        })
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    fn local_at(self, index: usize) -> Option<(i32, i32)> {
+        if index >= self.len || self.height == 0 {
+            return None;
+        }
+        Some((
+            self.start_x
+                .checked_add(i32::try_from(index / self.height).ok()?)?,
+            self.start_z
+                .checked_add(i32::try_from(index % self.height).ok()?)?,
+        ))
+    }
+
+    pub(crate) fn tile_at(self, index: usize) -> Option<api::WorldTile> {
+        let (lx, lz) = self.local_at(index)?;
+        Some(api::WorldTile {
+            x: self.base_x.checked_add(lx)?,
+            z: self.base_z.checked_add(lz)?,
+            level: self.level,
+        })
+    }
+
+    pub(crate) fn collision_index(self, index: usize, scene_height: i32) -> Option<usize> {
+        let (lx, lz) = self.local_at(index)?;
+        usize::try_from(lx)
+            .ok()?
+            .checked_mul(usize::try_from(scene_height).ok()?)?
+            .checked_add(usize::try_from(lz).ok()?)
+    }
+}
+
+/// Resolve the exact live-loc geometry inputs used by the router, without
+/// capturing flags or allocating a candidate vector.
+pub(crate) fn route_loc_access_geometry(
+    snapshot: &api::snapshot::GameSnapshot,
+    target: api::WorldTile,
+    loc_id: i32,
+    radius: i32,
+) -> Option<(
+    LocAccessGeometry,
+    LocAccessWindow,
+    &api::snapshot::SceneView,
+)> {
+    let scene = snapshot.scene();
+    if !api::query::SceneQuery::new(scene, None).contains(target) {
+        return None;
+    }
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == target && loc.id == loc_id)?;
+    let geometry = LocAccessGeometry::from_loc(loc, target, radius)?;
+    let window = LocAccessWindow::new(scene, target, geometry.approach)?;
+    Some((geometry, window, scene))
+}
+
+/// Return the packed collision flags used by both route arrival admission and
+/// the selector's scalar Reach predicate.
+pub(crate) fn packed_arrival_flags(
+    collision: &nav::collision::WorldCollision,
+    tile: api::WorldTile,
+) -> Option<i32> {
+    if !(0..=3).contains(&tile.level) {
+        return None;
+    }
+    let x = i64::from(tile.x) - i64::from(collision.origin.x);
+    let z = i64::from(tile.z) - i64::from(collision.origin.z);
+    if x < 0
+        || z < 0
+        || usize::try_from(x).ok()? >= collision.width
+        || usize::try_from(z).ok()? >= collision.height
+    {
+        return None;
+    }
+    i32::try_from(collision.walkable_word(tile.x, tile.z, tile.level)).ok()
+}
+
+/// The same scalar destination geometry and packed arrival rule used by the
+/// route cursor, without capturing flags or constructing candidate vectors.
+pub(crate) fn selection_access_tiles<'a>(
+    world: &'a nav::world::NavWorld,
+    snapshot: Option<&'a api::snapshot::GameSnapshot>,
+    target: api::WorldTile,
+    loc_id: Option<i32>,
+    radius: u16,
+    arrival: nav::contract::ArrivalKind,
+) -> impl Iterator<Item = api::WorldTile> + 'a {
+    use api::query::{is_arrived, CollisionArrivalProbe};
+
+    let radius_geometry = RouteRadiusGeometry::new(target, i32::from(radius))
+        .expect("a clamped access radius fits the route window");
+    let exact = radius == 0;
+    let live_geometry = if exact {
+        None
+    } else {
+        loc_id.and_then(|loc_id| {
+            snapshot.and_then(|snapshot| {
+                route_loc_access_geometry(snapshot, target, loc_id, radius_geometry.radius())
+            })
+        })
+    };
+    let candidate_count = if exact {
+        1
+    } else {
+        live_geometry.map_or(radius_geometry.len(), |(_, window, _)| window.len())
+    };
+    let collision = &world.collision;
+    let probe = CollisionArrivalProbe::new(move |tile: api::WorldTile| {
+        packed_arrival_flags(collision, tile)
+    });
+    (0..candidate_count).filter_map(move |index| {
+        if exact {
+            return Some(target);
+        }
+        if let Some((geometry, window, scene)) = live_geometry {
+            let tile = window.tile_at(index)?;
+            let flags = window
+                .collision_index(index, scene.height)
+                .and_then(|index| scene.collision_flags.get(index).copied())
+                .unwrap_or(client::dash3d::CollisionFlag::SQ_BLOCKED);
+            return geometry.candidate_at(tile, flags);
+        }
+        let tile = radius_geometry.candidate_at(index)?;
+        if !world.collision.standable(tile) {
+            return None;
+        }
+        // Explicit loc routes without a modeled in-scene footprint use the
+        // router's standable-radius estimate, not plain-tile Reach filtering.
+        (loc_id.is_some()
+            || arrival == nav::contract::ArrivalKind::Area
+            || is_arrived(tile, target, i32::from(radius), || &probe))
+        .then_some(tile)
+    })
 }
 
 /// Compiled callers using the existing bool wire (Sherlock's clue machine and
@@ -303,6 +804,83 @@ pub(crate) fn compiled_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_world() -> nav::world::NavWorld {
+        let origin = api::WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let (walk, blocked) = nav::collision::pack_walk(&[0; 4]);
+        nav::world::NavWorld::from_parts(
+            nav::collision::WorldCollision {
+                origin,
+                width: 1,
+                height: 1,
+                walk,
+                blocked,
+                flags: None,
+            },
+            nav::transport::TransportGraph::default(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn selection_query_construction_does_not_acquire_nav_mutex() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let world = empty_world();
+        let navs = Arc::new(Mutex::new(HashMap::<String, super::super::NavBot>::new()));
+        let guard = navs.lock().unwrap();
+        let (started_tx, started_rx) = mpsc::sync_channel(0);
+        let (constructed_tx, constructed_rx) = mpsc::sync_channel(0);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                started_tx.send(()).unwrap();
+                let _query = SelectionDangerQuery::new(&navs, "alice", &world, None, None);
+                constructed_tx.send(()).unwrap();
+            });
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("query constructor worker started");
+            let constructed = constructed_rx.recv_timeout(Duration::from_secs(2));
+            drop(guard);
+            assert!(
+                constructed.is_ok(),
+                "construction must not inspect nav state before selection"
+            );
+        });
+    }
+
+    #[test]
+    fn native_admission_prefers_callback_permissions_and_keeps_mirror_fallback() {
+        let previous = WalkPermissions {
+            allow_danger_zones: true,
+            ..Default::default()
+        };
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                native_permissions: Some(previous),
+                ..Default::default()
+            },
+        )])));
+        let (current_options, current_policy, _) = native_admission(
+            &navs,
+            "alice",
+            WalkOptions::default(),
+            Some(WalkPermissions::default()),
+        );
+        assert_eq!(current_policy, RiskPolicy::Avoid);
+        assert!(!current_options.zones.is_all());
+
+        let (fallback_options, fallback_policy, _) =
+            native_admission(&navs, "alice", WalkOptions::default(), None);
+        assert_eq!(fallback_policy, RiskPolicy::Proceed);
+        assert!(fallback_options.zones.is_all());
+    }
 
     #[test]
     fn native_permission_truth_table_and_manual_fetch_isolation() {
