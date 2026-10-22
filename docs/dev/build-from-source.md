@@ -141,3 +141,18 @@ LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
 ```
 
 Without `LIVE=1`, ignored tests stay skipped. Ordered multi-case runs use the native suite runner ([docs/e2e-suite.md](../e2e-suite.md)): runner completion is not script qualification; captures that need human readback stay `pending_visual_review`.
+
+### Navigation qualification and paired live runs
+
+The nav real-map qualification tests are `#[ignore]`d. They need the content tree and its client config jag named explicitly (colon-separated, one jag per root or one for all). A missing input fails; it never skips:
+
+```bash
+: "${ENGINE_DIR:?set ENGINE_DIR to the 289 engine root}"
+NAV_CONTENT_ROOT="$ENGINE_DIR/../content" \
+NAV_CACHE="$ENGINE_DIR/data/pack/client/config" \
+cargo test -p nav --lib -- --ignored
+```
+
+Nav, panel and scenario twins live in `crates/e2e`. Login, RSS and null-raster twins live in `crates/host-play`. The memory fleet harness is in [docs/harness.md](../harness.md). `cargo test` here does not run Fairy-Ring client integration tests.
+
+`tui-play --live script_<name>` runs the same scenario harness as `panel-play --live`. Paired capability gold uses disposable profiles minted by the local engine; never substitute public accounts. Run it headlessly with `tui-play --profile local-289 --live script_clue_duel_3554` or `script_jive_kq_four`. KQ uses disposable max-stat qualification fixtures at the normal 600 ms tick and intentionally continues through two kills, two bank returns and the second descent; do not accelerate it or stop the fleet in the lair. The headed twin is the `panel` `pair_watch` example.
