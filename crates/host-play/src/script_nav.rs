@@ -6203,6 +6203,17 @@ impl NavBot {
         self.route_ticket.is_some() || self.pending_route.is_some()
     }
 
+    /// Host walking work still in progress: a route being followed (legacy
+    /// or compact), route work waiting for a pump turn or a worker, a bank
+    /// fetch, or a carried walk. A registered native walk owner is not part
+    /// of it, because the owner stays live after its route arrives.
+    pub(crate) fn walk_work_live(&self) -> bool {
+        self.has_route()
+            || self.route_work_pending()
+            || self.bank_fetch.is_some()
+            || self.carried_walk.is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn set_route_work_preparing_for_test(&mut self) {
         self.pending_route = Some(Box::new(RouteDemand::Preparing {
@@ -6357,12 +6368,11 @@ impl NavBot {
         self.compact_route = None;
     }
 
+    /// A plain increment from 1. It never wraps in practice: see the 63-bit
+    /// lifetime note at `script::native::ledger::ObservedWalkOutcome`.
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
-        self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
-        if self.walk_outcome_seq == 0 {
-            self.walk_outcome_seq = 1;
-        }
+        self.walk_outcome_seq += 1;
     }
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
@@ -6659,6 +6669,24 @@ impl NavBot {
 
     pub(crate) fn walking_decision_is_current(&self, observed_seq: u64) -> bool {
         observed_seq >= self.manual_takeover_watermark
+    }
+
+    /// The cancel reason a compiled card observes for the latest walk
+    /// outcome. A manual takeover always moves the sequence, but it publishes
+    /// `UserInput` only for a correlated request (`cancel_for_manual_input`);
+    /// the takeover of a walk that already arrived leaves the posted reason
+    /// `None`. Its own outcome is still the watermark, so the compiled side
+    /// reads `UserInput` for it. The posted Load reason is unchanged.
+    pub(crate) fn compiled_walk_cancel_reason(&self) -> script::native::WalkCancelReason {
+        let takeover_outcome = self.manual_takeover_watermark != 0
+            && self.walk_outcome_seq == self.manual_takeover_watermark;
+        if takeover_outcome
+            || self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput
+        {
+            script::native::WalkCancelReason::UserInput
+        } else {
+            script::native::WalkCancelReason::None
+        }
     }
 
     /// Cancel active follow/work without sending anything over the human move.

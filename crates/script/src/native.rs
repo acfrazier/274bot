@@ -39,6 +39,21 @@ pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietR
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
 
+/// Why the host's latest walk outcome ended, as compiled cards read it: the
+/// two values of the schema enum `isolate.fbs` `WalkCancelReason`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WalkCancelReason {
+    #[default]
+    None,
+    /// A manual movement took the walk over.
+    UserInput,
+}
+
+/// The largest walk outcome sequence the slot can pack: bits 0-62. The host
+/// counts outcomes from 1 with a plain increment and never wraps; the
+/// lifetime note is at `ledger::ObservedWalkOutcome`.
+pub const WALK_OUTCOME_SEQ_MAX: u64 = u64::MAX >> 1;
+
 /// A walk-local permission bit. Inherit uses the captured global and
 /// per-script settings; Allow can add permission and Forbid can narrow it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -619,6 +634,8 @@ pub struct ActionContext<'a> {
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
     pub(crate) observed_walk_outcome_seq: u64,
+    /// The host's cancel reason for `observed_walk_outcome_seq`.
+    pub(crate) observed_walk_cancel_reason: WalkCancelReason,
 }
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {

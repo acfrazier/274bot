@@ -1,5 +1,5 @@
 use super::*;
-use crate::native::WalkEnd;
+use crate::native::{WalkCancelReason, WalkEnd};
 use crate::quester::compile::{
     compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
 };
@@ -939,6 +939,74 @@ pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn 
     Box::new(run)
 }
 
+/// The real `CombatPlan::begin`: it stamps the walk outcome sequence the step
+/// began at, so a takeover before the begin cannot end the step.
+pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    CombatPlan {
+        request: run.request,
+        tables: run.tables,
+        cross: run.cross,
+        protect: false,
+        until: None,
+        win: None,
+        loot: run.loot,
+        finish: None,
+    }
+    .begin(cx)
+    .unwrap()
+}
+
+#[test]
+fn manual_takeover_after_begin_ends_the_combat_step_on_the_next_poll() {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let at_begin = publish_walk_outcome(7, WalkCancelReason::None);
+    let mut run = with_step_context_at_walk_outcome(&snapshot, &mut ledger, 10, at_begin, |cx| {
+        imp_plan_run_for_runner(cx)
+    });
+    assert!(
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, at_begin, |cx| run.poll(cx))
+            .is_pending(),
+        "no takeover yet"
+    );
+    // The machine's own walk already arrived: the host moves only the
+    // sequence and names the takeover's outcome UserInput.
+    let takeover = publish_walk_outcome(8, WalkCancelReason::UserInput);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 12, takeover, |cx| run.poll(cx));
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+}
+
+#[test]
+fn manual_takeover_before_begin_does_not_end_the_new_combat_step() {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    // An earlier step's takeover is the latest observed outcome at begin.
+    let earlier = publish_walk_outcome(8, WalkCancelReason::UserInput);
+    let mut run = with_step_context_at_walk_outcome(&snapshot, &mut ledger, 10, earlier, |cx| {
+        imp_plan_run_for_runner(cx)
+    });
+    for tick in 11..=13 {
+        let result =
+            with_step_context_at_walk_outcome(&snapshot, &mut ledger, tick, earlier, |cx| {
+                run.poll(cx)
+            });
+        assert!(
+            !matches!(result, Poll::Ready(Err(ActionError::UserInput))),
+            "a stale takeover ended the step at tick {tick}"
+        );
+    }
+    // A later outcome that is not a takeover does not end it either.
+    let later = publish_walk_outcome(9, WalkCancelReason::None);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 14, later, |cx| run.poll(cx));
+    assert!(!matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+}
+
 pub(crate) fn no_food_abort_run_for_runner(
     cx: &mut StepContext<'_, '_>,
     stand: api::WorldTile,
@@ -1113,18 +1181,19 @@ fn with_step_context<R>(
     tick: u64,
     f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
 ) -> R {
-    with_step_context_at_walk_seq(snapshot, ledger, tick, 0, f)
+    with_step_context_at_walk_outcome(snapshot, ledger, tick, WalkOutcomeFact::default(), f)
 }
 
-fn with_step_context_at_walk_seq<R>(
+fn with_step_context_at_walk_outcome<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
     tick: u64,
-    walk_outcome_seq: u64,
+    outcome: WalkOutcomeFact,
     f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
 ) -> R {
     super::super::tests::with_tick(snapshot, ledger, tick, |native| {
-        native.cx.observed_walk_outcome_seq = walk_outcome_seq;
+        native.cx.observed_walk_outcome_seq = outcome.seq;
+        native.cx.observed_walk_cancel_reason = outcome.cancel_reason;
         let quests = QuestCatalog::empty();
         let required_after = native.cx.evidence();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
@@ -1139,25 +1208,15 @@ fn with_step_context_at_walk_seq<R>(
     })
 }
 
-#[cfg(feature = "load")]
-fn publish_walk_outcome(seq: u64, cancel_reason: crate::isolate_fb::WalkCancelReason) {
-    crate::observed::replace(seq, true, |post| {
-        post.walk_outcome(crate::observed::WalkOutcome {
-            seq,
-            generation: 1,
-            request_id: 1,
-            failed: cancel_reason == crate::isolate_fb::WalkCancelReason::UserInput,
-            tile: crate::observed::Tile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            radius: 0,
-            allow_teleports: false,
-            blocked: false,
-        })
-        .walk_outcome_cancel_reason(cancel_reason);
-    });
+/// The host's walk outcome as the slot observes it (`observe_walk_outcome`).
+#[derive(Debug, Clone, Copy, Default)]
+struct WalkOutcomeFact {
+    seq: u64,
+    cancel_reason: WalkCancelReason,
+}
+
+fn publish_walk_outcome(seq: u64, cancel_reason: WalkCancelReason) -> WalkOutcomeFact {
+    WalkOutcomeFact { seq, cancel_reason }
 }
 
 #[test]
@@ -2457,7 +2516,6 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
     assert!(run.action.is_none());
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn manual_movement_baseline_covers_return_and_loot_sublegs() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -2484,22 +2542,22 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
         ],
     );
     run.walk_outcome_seq_at_begin = 40;
-    publish_walk_outcome(40, crate::isolate_fb::WalkCancelReason::None);
+    let outcome = publish_walk_outcome(40, WalkCancelReason::None);
 
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
     let mut ledger = None;
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 12, 40, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 12, outcome, |cx| {
             run.on_combat_report(report(CombatEnd::TargetGone), cx)
         })
         .is_pending()
     );
 
-    publish_walk_outcome(41, crate::isolate_fb::WalkCancelReason::None);
+    let outcome = publish_walk_outcome(41, WalkCancelReason::None);
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 13, 41, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 13, outcome, |cx| {
             run.on_return_walk(
                 WalkReceipt {
                     goal: None,
@@ -2520,20 +2578,23 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
     assert_eq!(run.target_gone_restarts, 1);
 
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 14, 41, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 14, outcome, |cx| {
             run.on_combat_report(report(CombatEnd::Killed), cx)
         })
         .is_pending()
     );
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 15, 41, |cx| { run.poll(cx) })
-            .is_pending()
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 15, outcome, |cx| {
+            run.poll(cx)
+        })
+        .is_pending()
     );
     assert_eq!(run.loot_index, 1);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
-    publish_walk_outcome(42, crate::isolate_fb::WalkCancelReason::UserInput);
-    let result = with_step_context_at_walk_seq(&snapshot, &mut ledger, 16, 42, |cx| run.poll(cx));
+    let outcome = publish_walk_outcome(42, WalkCancelReason::UserInput);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 16, outcome, |cx| run.poll(cx));
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
     assert_eq!(
         run.loot_index, 1,

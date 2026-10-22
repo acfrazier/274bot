@@ -409,6 +409,9 @@ pub struct ScenarioRunner {
     total_game_ticks: u32,
     started: Instant,
     deadline: Duration,
+    /// True when the whole-run deadline ended the run (see
+    /// [`ScenarioRunner::deadline_exceeded`]).
+    deadline_exceeded: bool,
     /// Wall-clock settle before a step can start: the scene must have
     /// held `scene_state == 2` for this long. A cheat tele's rebuild
     /// drops the scene to 1, and sending the next step before it
@@ -561,6 +564,7 @@ impl ScenarioRunner {
             total_game_ticks: 0,
             started: Instant::now(),
             deadline,
+            deadline_exceeded: false,
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
             seed_ready_observed: false,
@@ -671,6 +675,14 @@ impl ScenarioRunner {
     /// overridden by [`ScenarioRunner::set_deadline`]).
     pub fn deadline(&self) -> Duration {
         self.deadline
+    }
+
+    /// True when the whole-run deadline ended the run. A step, proof, or
+    /// other failure leaves it false, even if a caller reads the status
+    /// after the deadline. The `Failed` text alone does not tell the
+    /// causes apart.
+    pub fn deadline_exceeded(&self) -> bool {
+        self.deadline_exceeded
     }
 
     /// Per-run minted usernames replacing `seed.profiles` (live boots mint
@@ -1219,6 +1231,7 @@ impl ScenarioRunner {
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
             && self.started.elapsed() > self.deadline
         {
+            self.deadline_exceeded = true;
             self.finish_fail(&format!(
                 "{}: deadline {:?} exceeded",
                 self.scenario.name, self.deadline

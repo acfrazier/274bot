@@ -2539,11 +2539,18 @@ impl SlotScript {
         }
     }
 
-    /// Only observations update the walk stamp. A matching physical terminal
-    /// retires its seat walk-release slot once; guardian hold defers that edge.
-    pub fn observe_walk_outcome(&mut self, seq: u64, terminal: Option<SeatWalkTerminal>) -> bool {
-        let changed = self.native_runtime.observed_walk_outcome_seq != seq;
-        self.native_runtime.observed_walk_outcome_seq = seq;
+    /// Only observations update the walk stamp and its cancel reason. A
+    /// matching physical terminal retires its seat walk-release slot once;
+    /// guardian hold defers that edge.
+    pub fn observe_walk_outcome(
+        &mut self,
+        seq: u64,
+        cancel_reason: crate::native::WalkCancelReason,
+        terminal: Option<SeatWalkTerminal>,
+    ) -> bool {
+        let changed = self.native_runtime.observed_walk_outcome.seq() != seq;
+        self.native_runtime.observed_walk_outcome =
+            crate::native::ledger::ObservedWalkOutcome::new(seq, cancel_reason);
         if changed {
             let id = match terminal {
                 Some(SeatWalkTerminal::Native(raw)) => native_walk_id(raw.get()),
@@ -3720,7 +3727,7 @@ impl SlotScript {
         match &self.load {
             Some(isolate) => isolate.restore_interacts(drained),
             None => {
-                let seq = self.native_runtime.observed_walk_outcome_seq;
+                let seq = self.native_runtime.observed_walk_outcome.seq();
                 self.restore_host_interacts(
                     drained
                         .into_iter()
@@ -4302,7 +4309,7 @@ impl SlotScript {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
             self.compiled_interact_outcome_seqs.resize(
                 self.compiled_interacts.len(),
-                self.native_runtime.observed_walk_outcome_seq,
+                self.native_runtime.observed_walk_outcome.seq(),
             );
         }
         self.capture_native_seat_rows();

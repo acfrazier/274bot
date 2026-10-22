@@ -13,7 +13,7 @@ pub(crate) struct Runtime {
     pub ledger: Option<Box<Ledger>>,
     pub budget: TickBudget,
     pub clock: ActiveClock,
-    pub observed_walk_outcome_seq: u64,
+    pub observed_walk_outcome: ObservedWalkOutcome,
     /// One confirmed native gameplay change, fenced to its run and session.
     pub pending_note_progress: Option<RunKey>,
 }
@@ -34,6 +34,49 @@ impl Runtime {
     /// run/session. A stale marker is never carried into the current run.
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
+    }
+}
+
+/// The host walk outcome the slot observed last: its sequence and its cancel
+/// reason, packed in one word so the per-slot runtime keeps its size
+/// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The sequence uses
+/// bits 0-62 (a 63-bit domain, `1..=WALK_OUTCOME_SEQ_MAX`) and the reason
+/// uses bit 63. The host counts the sequence from 1 with a plain increment
+/// and never wraps it, because readers compare sequences in order (the
+/// manual takeover watermark uses `>=`). This relies on a lifetime
+/// assumption: at one outcome per 600 ms tick, the count needs about 175
+/// billion years to reach 2^63, so in practice the sequence never wraps and
+/// never reaches bit 63. A sequence above the domain breaks the host
+/// contract: debug builds panic, and release builds drop bit 63, so the
+/// sequence never changes the reason.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObservedWalkOutcome(u64);
+
+impl ObservedWalkOutcome {
+    const USER_INPUT: u64 = 1 << 63;
+
+    pub fn new(seq: u64, cancel_reason: super::WalkCancelReason) -> Self {
+        debug_assert!(
+            seq <= super::WALK_OUTCOME_SEQ_MAX,
+            "walk outcome sequence above WALK_OUTCOME_SEQ_MAX"
+        );
+        let reason = match cancel_reason {
+            super::WalkCancelReason::None => 0,
+            super::WalkCancelReason::UserInput => Self::USER_INPUT,
+        };
+        Self((seq & super::WALK_OUTCOME_SEQ_MAX) | reason)
+    }
+
+    pub fn seq(self) -> u64 {
+        self.0 & !Self::USER_INPUT
+    }
+
+    pub fn cancel_reason(self) -> super::WalkCancelReason {
+        if self.0 & Self::USER_INPUT == 0 {
+            super::WalkCancelReason::None
+        } else {
+            super::WalkCancelReason::UserInput
+        }
     }
 }
 /// Typed host work retains an owner, never a frame borrow. The host must check
@@ -792,5 +835,46 @@ mod tests {
         // A relog's first in-game frame enters its scene.
         budget.observe_frame(9, Some(&scene_frame(0, 3184, 3311, (3120, 3256))));
         assert!(budget.entered_scene());
+    }
+}
+
+#[cfg(test)]
+mod observed_walk_outcome_tests {
+    use super::super::{WalkCancelReason, WALK_OUTCOME_SEQ_MAX};
+    use super::ObservedWalkOutcome;
+
+    #[test]
+    fn packed_outcome_keeps_sequence_and_reason() {
+        assert_eq!(ObservedWalkOutcome::default().seq(), 0);
+        assert_eq!(
+            ObservedWalkOutcome::default().cancel_reason(),
+            WalkCancelReason::None
+        );
+        for seq in [1, 41, WALK_OUTCOME_SEQ_MAX - 1, WALK_OUTCOME_SEQ_MAX] {
+            for reason in [WalkCancelReason::None, WalkCancelReason::UserInput] {
+                let outcome = ObservedWalkOutcome::new(seq, reason);
+                assert_eq!((outcome.seq(), outcome.cancel_reason()), (seq, reason));
+            }
+        }
+    }
+
+    /// A sequence above the host range breaks the host contract: debug
+    /// builds stop at the producer boundary.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "walk outcome sequence above WALK_OUTCOME_SEQ_MAX")]
+    fn sequence_above_the_host_range_panics_in_debug() {
+        let _ = ObservedWalkOutcome::new(WALK_OUTCOME_SEQ_MAX + 1, WalkCancelReason::None);
+    }
+
+    /// Release builds drop bit 63: the sequence never sets the reason.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn sequence_above_the_host_range_never_sets_the_reason_in_release() {
+        let outcome = ObservedWalkOutcome::new(u64::MAX, WalkCancelReason::None);
+        assert_eq!(
+            (outcome.seq(), outcome.cancel_reason()),
+            (WALK_OUTCOME_SEQ_MAX, WalkCancelReason::None)
+        );
     }
 }

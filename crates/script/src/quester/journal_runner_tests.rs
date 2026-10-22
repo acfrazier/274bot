@@ -2907,3 +2907,157 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
     }
     assert!(script.journal_drain.is_none(), "the drain ended");
 }
+
+#[derive(Default)]
+struct TraceLog(Vec<String>);
+impl NativeOutput for TraceLog {
+    fn status(&mut self, _: ScriptStatus) {}
+    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn log(&mut self, _: api::hostlog::Level, message: &str) {
+        self.0.push(message.to_owned());
+    }
+    fn settings_applied(&mut self, _: u64) {}
+}
+
+impl TraceLog {
+    fn manual_failures(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|line| line.contains("failed: cancelled by user input"))
+            .count()
+    }
+}
+
+/// One tick after the slot observed the host's walk outcome `(seq, reason)`.
+fn drive_at_walk_outcome(
+    script: &mut Quester,
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    tick: u64,
+    outcome: (u64, crate::native::WalkCancelReason),
+    output: &mut TraceLog,
+) -> ScriptFlow {
+    with_tick_output(snapshot, ledger, tick, output, |t| {
+        t.cx.observed_walk_outcome_seq = outcome.0;
+        t.cx.observed_walk_cancel_reason = outcome.1;
+        script.tick(t).unwrap()
+    })
+}
+
+/// A real Imp combat step begun while the slot observed outcome `seq`.
+fn begin_imp_combat_step(
+    script: &mut Quester,
+    snapshot: &GameSnapshot,
+    ledger: &mut Ledger,
+    tick: u64,
+    seq: u64,
+) {
+    script.needs_read = false;
+    script.stage = Some(FactKey::new("cook:1"));
+    script.step = Some(with_tick(snapshot, ledger, tick, |tick| {
+        tick.cx.observed_walk_outcome_seq = seq;
+        let required_after = tick.cx.evidence();
+        let mut cx = StepContext {
+            tick,
+            quests: &script.quests,
+            progress: &[],
+            required_after,
+            banks: &script.banks,
+            choices: &script.choices,
+        };
+        super::super::families::combat::tests::imp_plan_run_for_runner(&mut cx)
+    }));
+}
+
+/// "Pause script on manual movement" off: the host does not pause the slot,
+/// and the next poll ends the step with one `manual-movement` terminal.
+#[test]
+fn manual_takeover_ends_the_quester_combat_step_once_when_pause_is_off() {
+    use crate::native::WalkCancelReason;
+    let (mut script, snapshot) = fixture(false);
+    let mut ledger = None;
+    let mut output = TraceLog::default();
+    begin_imp_combat_step(&mut script, &snapshot, &mut ledger, 0, 7);
+    assert!(matches!(
+        drive_at_walk_outcome(
+            &mut script,
+            &snapshot,
+            &mut ledger,
+            1,
+            (7, WalkCancelReason::None),
+            &mut output,
+        ),
+        ScriptFlow::Continue
+    ));
+    assert!(script.step.is_some(), "the fight is still active");
+    for tick in 2..=5 {
+        let flow = drive_at_walk_outcome(
+            &mut script,
+            &snapshot,
+            &mut ledger,
+            tick,
+            (8, WalkCancelReason::UserInput),
+            &mut output,
+        );
+        let ScriptFlow::Blocked(failure) = flow else {
+            panic!("tick {tick}: the takeover did not end the step");
+        };
+        assert_eq!(&*failure.code, "manual-movement");
+        assert_eq!(&*failure.message, "cancelled by user input");
+        assert!(script.step.is_none());
+    }
+    assert_eq!(
+        output.manual_failures(),
+        1,
+        "exactly one terminal: {:?}",
+        output.0
+    );
+}
+
+/// "Pause script on manual movement" on: the takeover pauses the slot. Resume
+/// restarts the step as for every other Quester step, and the takeover before
+/// that new begin does not end it.
+#[test]
+fn paused_manual_takeover_restarts_the_quester_combat_step_without_a_terminal() {
+    use crate::native::WalkCancelReason;
+    let (mut script, snapshot) = fixture(false);
+    let mut ledger = None;
+    let mut output = TraceLog::default();
+    begin_imp_combat_step(&mut script, &snapshot, &mut ledger, 0, 7);
+    assert!(matches!(
+        drive_at_walk_outcome(
+            &mut script,
+            &snapshot,
+            &mut ledger,
+            1,
+            (7, WalkCancelReason::None),
+            &mut output,
+        ),
+        ScriptFlow::Continue
+    ));
+    // The host pauses the slot on the takeover; no tick runs while paused.
+    script.interrupt(Interrupt::Pause);
+    script.interrupt(Interrupt::Resume);
+    assert!(script.step.is_none(), "Resume drops the paused step");
+    assert!(!script.parked);
+    // The restarted step begins after the takeover's outcome.
+    begin_imp_combat_step(&mut script, &snapshot, &mut ledger, 2, 8);
+    for tick in 3..=6 {
+        assert!(
+            matches!(
+                drive_at_walk_outcome(
+                    &mut script,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    (8, WalkCancelReason::UserInput),
+                    &mut output,
+                ),
+                ScriptFlow::Continue
+            ),
+            "tick {tick}: the restarted step ended"
+        );
+        assert!(script.step.is_some());
+    }
+    assert_eq!(output.manual_failures(), 0, "{:?}", output.0);
+}

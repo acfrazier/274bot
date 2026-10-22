@@ -542,11 +542,8 @@ pub(crate) fn take_manual_walk_ownership(
     bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
     // Retained request metadata also deduplicates completed walks; it is
     // not evidence of active work. Route-less families keep their own owner.
-    let active_walk = bot.has_route()
-        || bot.route_work_pending()
-        || bot.bank_fetch.is_some()
-        || bot.carried_walk.is_some()
-        || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    let active_walk =
+        bot.walk_work_live() || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
     if !eligible || !(active_walk || live_work) {
         return false;
     }

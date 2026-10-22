@@ -43,6 +43,14 @@ const IMP_START: WorldTile = WorldTile {
     z: 3222,
     level: 0,
 };
+/// M0 start anchor: ten tiles north of the `farm-imps` stand and inside its
+/// area box, so the combat step's first native action is the machine's walk
+/// to the stand (`script/src/combat/machine.rs` stand walk).
+const M0_START_ANCHOR: WorldTile = WorldTile {
+    x: 2632,
+    z: 3232,
+    level: 0,
+};
 const IMP_QUESTER_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "quests",
     value: ScriptInjectValue::StrList(&["imp"]),
@@ -188,6 +196,11 @@ enum Case {
     M4,
     M5,
     M5Stop,
+    /// M0, "Pause script on manual movement" off: one manual step during the
+    /// `farm-imps` fight ends the step once with `manual-movement`.
+    M0Manual,
+    /// M0, the setting on: the step pauses; after Resume it restarts.
+    M0ManualPaused,
     M6,
     R1,
     R2,
@@ -207,6 +220,8 @@ impl Case {
             Self::M4 => "M4",
             Self::M5 => "M5",
             Self::M5Stop => "M5-Stop",
+            Self::M0Manual => "M0-manual",
+            Self::M0ManualPaused => "M0-manual-paused",
             Self::M6 => "M6",
             Self::R1 => "R1",
             Self::R2 => "R2",
@@ -226,6 +241,8 @@ impl Case {
             Self::M4 => "combat_m4_unattackable_tree",
             Self::M5 => "combat_m5_raised_prayer_interrupt_hygiene",
             Self::M5Stop => "combat_stop_owned_prayer_cleanup",
+            Self::M0Manual => "combat_m0_manual_movement_cancels_combat_step",
+            Self::M0ManualPaused => "combat_m0_manual_movement_pause_restarts_combat_step",
             Self::M6 => "combat_m6_melee_combo_eat",
             Self::R1 => "combat_r1_ranged_rapid",
             Self::R2 => "combat_r2_ranged_wrong_ammo",
@@ -240,9 +257,18 @@ impl Case {
         matches!(self, Self::R1 | Self::R2 | Self::R3)
     }
 
+    fn is_m0(self) -> bool {
+        matches!(self, Self::M0Manual | Self::M0ManualPaused)
+    }
+
     fn path_relative(self) -> &'static str {
         match self {
-            Self::M1 | Self::M1HandIn | Self::M5 | Self::M5Stop => "imp.json",
+            Self::M1
+            | Self::M1HandIn
+            | Self::M5
+            | Self::M5Stop
+            | Self::M0Manual
+            | Self::M0ManualPaused => "imp.json",
             Self::M2 | Self::R1 | Self::R2 | Self::R3 => "fixtures/combat_melee_upkeep.json",
             Self::M3 | Self::M6 => "fixtures/combat_melee_food_only.json",
             Self::M4 => "fixtures/combat_unattackable.json",
@@ -254,7 +280,7 @@ impl Case {
 
     fn items(self) -> &'static [(&'static str, i32)] {
         match self {
-            Self::M1 => M1_ITEMS,
+            Self::M1 | Self::M0Manual | Self::M0ManualPaused => M1_ITEMS,
             Self::M1HandIn => &[
                 ("bronze_scimitar", 1),
                 ("red_bead", 1),
@@ -281,6 +307,7 @@ impl Case {
             Self::M1HandIn | Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 | Self::R1 | Self::R3 => Duration::from_secs(900),
             Self::M4 | Self::R2 => Duration::from_secs(300),
+            Self::M0Manual | Self::M0ManualPaused => Duration::from_secs(600),
             Self::MageAuto | Self::MageManualFallback | Self::MageManualNoFallback => {
                 Duration::from_secs(900)
             }
@@ -290,6 +317,7 @@ impl Case {
     fn stand(self, world: &nav::world::NavWorld) -> Result<WorldTile, String> {
         match self {
             Self::M1 | Self::M5 | Self::M5Stop => Ok(IMP_START),
+            Self::M0Manual | Self::M0ManualPaused => standable_neighbor(world, M0_START_ANCHOR),
             // COMBAT-S3A-2 operator-authorized hand-in-only staging: the
             // CB46 seed cannot cross the default danger zones from Ardougne.
             // Start on the Wizard Tower ground floor, not at the farm.
@@ -731,7 +759,9 @@ impl EvidenceWriter {
             Value::Null
         };
         let mut receipt = json!({
-            "proof": if self.case == Case::M5Stop {
+            "proof": if self.case.is_m0() {
+                "M0-QUESTER-MANUAL-COMBAT"
+            } else if self.case == Case::M5Stop {
                 "LIFECYCLE-FOLLOWUPS-1"
             } else if self.case.is_magic() {
                 "COMBAT-S3C"
@@ -960,7 +990,7 @@ fn preparation_steps(
     capture: Arc<Mutex<CombatCapture>>,
 ) -> Vec<Step> {
     let stats: &[(&'static str, i32, i32)] = match case {
-        Case::M1 | Case::M1HandIn => &[
+        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => &[
             ("attack", 0, 40),
             ("strength", 2, 40),
             ("defence", 1, 40),
@@ -1016,7 +1046,9 @@ fn preparation_steps(
         })
         .collect::<Vec<_>>();
     match case {
-        Case::M1 | Case::M1HandIn => steps.push(wear_step(BRONZE_SCIMITAR_ID)),
+        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => {
+            steps.push(wear_step(BRONZE_SCIMITAR_ID));
+        }
         Case::M2 => {
             steps.push(cheat_step(
                 "drain Prayer to the upkeep floor before Start",
@@ -2102,7 +2134,7 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
         return Some("Start baseline is not an attached in-game scene".to_owned());
     }
     match case {
-        Case::M1 | Case::M1HandIn => {
+        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => {
             if stat_pair(baseline, "attack") != Some((40, 40))
                 || stat_pair(baseline, "strength") != Some((40, 40))
                 || stat_pair(baseline, "defence") != Some((40, 40))
@@ -2480,6 +2512,8 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
         Case::M4 => m4_ready(capture),
         Case::M5 => m5_ready(capture),
         Case::M5Stop => stop_ready(capture),
+        Case::M0Manual => m0_manual_ready(capture),
+        Case::M0ManualPaused => m0_paused_ready(capture),
         Case::M6 => m6_ready(capture),
         Case::R1 | Case::R2 | Case::R3 => ranged_ready(case, capture),
         Case::MageAuto => magic_ready(Case::MageAuto, capture),
@@ -4849,6 +4883,513 @@ fn stop_ready(capture: &CombatCapture) -> bool {
                 && prayer_varp(frame, 97) == Some(0)
         })
         && !capture_has_death(capture)
+}
+
+// M0: the Quester combat step and manual movement (move-plan-r4.md M0 with
+// Main's 2026-10-22 ruling: Pause off ends the step once; Pause on restarts it).
+
+/// The Quester's root trace line for the M0 terminal (`quester/runner.rs`
+/// `trace_root_event`, `families/mod.rs` `MANUAL_MOVEMENT_MESSAGE`).
+const M0_ROOT_FAILURE: &str =
+    "quester imp: stage imp:0 step beads-first (acquire) failed: cancelled by user input";
+/// The takeover's host line (`script_walk.rs` `take_manual_walk_ownership`).
+const M0_HOST_TAKEOVER: &str = "walk outcome=cancelled reason=UserInput";
+
+/// Process host-log sink for the M0 cells. It keeps only the lines the
+/// receipt cites, with their slot.
+struct M0HostLog(Mutex<Vec<(String, String)>>);
+
+impl api::hostlog::Sink for M0HostLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        let Some(slot) = record.slot else {
+            return;
+        };
+        if record.message.contains("cancelled by user input")
+            || record.message.contains(M0_HOST_TAKEOVER)
+        {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((slot.to_owned(), record.message.to_owned()));
+        }
+    }
+}
+
+static M0_HOST_LOG: M0HostLog = M0HostLog(Mutex::new(Vec::new()));
+/// One sink per process (`api::hostlog::install_sink`); every M0 cell of the
+/// process shares it and filters by its own account.
+static M0_HOST_LOG_INSTALLED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| api::hostlog::install_sink(&M0_HOST_LOG));
+
+fn m0_host_log_lines(account: &str) -> Vec<String> {
+    M0_HOST_LOG
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(slot, _)| slot == account)
+        .map(|(_, message)| message.clone())
+        .collect()
+}
+
+fn m0_event<'a>(capture: &'a CombatCapture, kind: &str) -> Option<&'a Value> {
+    capture
+        .random_events
+        .iter()
+        .find(|event| event["kind"] == kind)
+}
+
+/// Main ruling 2 (2026-10-22): the reason of an M0 cell that times out
+/// without an eligible takeover moment.
+const M0_NOT_ELIGIBLE: &str =
+    "M0 INVALID: no eligible takeover moment; every engaged moment had no registered walk";
+
+/// The INVALID reason of an M0 cell that times out, or `None` for a FAIL.
+/// The cell never took over, and it saw engaged moments that had no
+/// registered walk (`M0NotEligible`): the fixture never reached an eligible
+/// state, which is not a product failure. Any other timeout is a FAIL.
+fn m0_timeout_invalid_reason(capture: &CombatCapture) -> Option<&'static str> {
+    (m0_event(capture, "M0Takeover").is_none() && m0_event(capture, "M0NotEligible").is_some())
+        .then_some(M0_NOT_ELIGIBLE)
+}
+
+/// The terminal outcome and error of a cell that timed out: the runner's
+/// whole-run deadline or the cell's own deadline. An M0 cell that saw no
+/// eligible moment is INVALID with the named reason. Any other timeout is
+/// a FAIL.
+fn timeout_outcome(case: Case, capture: &CombatCapture) -> (&'static str, String) {
+    match case
+        .is_m0()
+        .then(|| m0_timeout_invalid_reason(capture))
+        .flatten()
+    {
+        Some(reason) => ("INVALID", reason.to_owned()),
+        None => (
+            "FAIL",
+            format!("{} live proof exceeded {:?}", case.key(), case.timeout()),
+        ),
+    }
+}
+
+/// The terminal outcome and error of an M0 cell whose runner failed with
+/// `error` before a takeover. The cause that the runner recorded decides,
+/// not the time at which the observer reads the status (review-r3-sol
+/// R3-F1). A step or proof failure is a FAIL with the runner's own error.
+/// Only the runner's whole-run deadline is a timeout ([`timeout_outcome`]).
+fn m0_runner_failure_outcome(
+    case: Case,
+    runner: &ScenarioRunner,
+    error: &str,
+    capture: &CombatCapture,
+) -> (&'static str, String) {
+    if runner.deadline_exceeded() {
+        timeout_outcome(case, capture)
+    } else {
+        ("FAIL", format!("ScenarioRunner failed: {error}"))
+    }
+}
+
+/// The active `farm-imps` step (`quester/runner.rs` status fields).
+fn m0_step_active(status: &Value) -> bool {
+    status["phase"] == "Working"
+        && status["fields"]["step_id"] == "beads-first"
+        && status["fields"]["child_recipe_id"] == "acquire:beads"
+        && status["fields"]["child_step_id"] == "farm-imps"
+}
+
+fn m0_imp_attack(action: &Value) -> bool {
+    is_npc_attack(action) && action["request"]["name"] == "Imp" && action_wire_valid(action)
+}
+
+fn m0_manual_failure(status: &Value) -> bool {
+    status["phase"] == "Blocked"
+        && status["failure"].as_str().is_some_and(|failure| {
+            failure.contains("manual-movement") && failure.contains("cancelled by user input")
+        })
+}
+
+fn m0_frame_tick(capture: &CombatCapture) -> Option<i64> {
+    capture
+        .frames
+        .last()
+        .and_then(|frame| frame["tick"].as_i64())
+}
+
+/// The host walk facts that the M0 takeover gate reads, as the receipt
+/// records them.
+pub(crate) fn m0_host_state(bot: &crate::script_runtime::NavBot) -> Value {
+    json!({
+        "route": bot.route.is_some(),
+        "compact_route": bot.compact_route.is_some(),
+        "has_route": bot.has_route(),
+        "pending_route": bot.pending_route.is_some(),
+        "route_ticket": bot.route_ticket.is_some(),
+        "route_work_pending": bot.route_work_pending(),
+        "bank_fetch": bot.bank_fetch.is_some(),
+        "carried_walk": bot.carried_walk.is_some(),
+        "walk_work_live": bot.walk_work_live(),
+        "native_walk_live": bot.native_walk.as_ref().is_some_and(|owner| owner.live()),
+        "walk_outcome_seq": bot.walk_outcome_seq,
+        "walk_outcome_request_id": bot.walk_outcome_request_id,
+        "manual_takeover_watermark": bot.manual_takeover_watermark,
+        "posted_cancel_reason": format!("{:?}", bot.walk_outcome_cancel_reason),
+        "compiled_cancel_reason": format!("{:?}", bot.compiled_walk_cancel_reason()),
+        "user_move_intent_seq": bot.user_move_intent_seq,
+    })
+}
+
+/// Every recorded fact that means host walking work is live
+/// (`NavBot::walk_work_live` and its parts).
+const M0_HOST_WALK_WORK: [&str; 9] = [
+    "route",
+    "compact_route",
+    "has_route",
+    "pending_route",
+    "route_ticket",
+    "route_work_pending",
+    "bank_fetch",
+    "carried_walk",
+    "walk_work_live",
+];
+
+/// The M0 takeover gate: the recorded host state shows no walking work. A
+/// walk still in flight ends the fight by the machine's own walk receipt, so
+/// M0 injects only after the walk arrived. The registered native walk owner
+/// may stay live (`native_walk_live`): that is the arrived case. A missing
+/// host entry keeps the gate closed.
+pub(crate) fn m0_host_gate_open(host: &Value) -> bool {
+    M0_HOST_WALK_WORK.iter().all(|fact| host[*fact] == false)
+}
+
+/// The common takeover facts both cells require: injected once on an active
+/// step after an accepted Imp attack, with live walking work in the slot, no
+/// host walking work in flight, and the intent counter moved.
+fn m0_takeover_valid(takeover: &Value) -> bool {
+    takeover["slot_live_walking_operation"] == true
+        && takeover["host_walk_in_flight"] == false
+        && m0_host_gate_open(&takeover["host_before"])
+        && takeover["intent_seq"]["after"].as_u64() > takeover["intent_seq"]["before"].as_u64()
+        && m0_step_active(&takeover["active_status"])
+        && takeover["first_imp_attack"].is_object()
+}
+
+/// The kept host lines: the takeover line, the Quester's root failure line
+/// exactly `expected_roots` times, and no repeat summary for it. A terminal
+/// also writes child and park lines with the same message (live off-try1);
+/// with no terminal, no line carries the message at all.
+fn m0_host_log_ok(capture: &CombatCapture, expected_roots: usize) -> bool {
+    let Some(log) = m0_event(capture, "M0HostLog") else {
+        return false;
+    };
+    let lines: Vec<&str> = log["lines"]
+        .as_array()
+        .map(|lines| lines.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let repeated = |line: &&str| line.contains("(repeated ");
+    let roots = lines
+        .iter()
+        .filter(|line| line.contains(M0_ROOT_FAILURE) && !repeated(line))
+        .count();
+    let repeats = lines
+        .iter()
+        .any(|line| line.contains("cancelled by user input") && repeated(line));
+    let any_terminal = lines
+        .iter()
+        .any(|line| line.contains("cancelled by user input"));
+    log["sink_installed"] == true
+        && roots == expected_roots
+        && (expected_roots > 0 || !any_terminal)
+        && !repeats
+        && lines.iter().any(|line| line.contains(M0_HOST_TAKEOVER))
+}
+
+/// Pause off: exactly one `manual-movement` terminal after the takeover, never
+/// left again, with no later combat report and no Pause.
+fn m0_manual_ready(capture: &CombatCapture) -> bool {
+    let Some(takeover) = m0_event(capture, "M0Takeover") else {
+        return false;
+    };
+    let Some(at) = takeover["tick"].as_i64() else {
+        return false;
+    };
+    let after: Vec<&Value> = capture
+        .statuses
+        .iter()
+        .skip(takeover["statuses_before"].as_u64().unwrap_or(0) as usize)
+        .collect();
+    let Some(first) = after.iter().position(|status| m0_manual_failure(status)) else {
+        return false;
+    };
+    let terminal_tick = after[first]["observed_tick"].as_i64();
+    // Observe at least ten ticks after the terminal to see no second one.
+    let observed_after = m0_frame_tick(capture)
+        .zip(terminal_tick)
+        .is_some_and(|(now, terminal)| now >= terminal + 10);
+    m0_takeover_valid(takeover)
+        && takeover["setting_pause_on_manual_movement"] == false
+        // A Blocked native card stops its slot (`slot.rs` `stop_blocked`),
+        // so the state after the takeover may already be Idle.
+        && takeover["state_after"] != "Paused"
+        && m0_event(capture, "M0Paused").is_none()
+        && after[first..]
+            .iter()
+            .all(|status| m0_manual_failure(status))
+        && !after.iter().any(|status| {
+            integer(status, "combat_evidence_tick").is_some_and(|tick| tick > at)
+                && !status["fields"]["combat_end"].is_null()
+        })
+        && observed_after
+        && m0_host_log_ok(capture, 1)
+        && !capture_has_death(capture)
+}
+
+/// Pause on: the takeover pauses the script; after Resume the step restarts
+/// and attacks again, and no `manual-movement` terminal follows.
+fn m0_paused_ready(capture: &CombatCapture) -> bool {
+    let (Some(takeover), Some(paused), Some(resumed)) = (
+        m0_event(capture, "M0Takeover"),
+        m0_event(capture, "M0Paused"),
+        m0_event(capture, "M0Resume"),
+    ) else {
+        return false;
+    };
+    let (Some(at), Some(paused_tick), Some(resume_tick)) = (
+        takeover["tick"].as_i64(),
+        paused["tick"].as_i64(),
+        resumed["tick"].as_i64(),
+    ) else {
+        return false;
+    };
+    let actions_at_resume = resumed["actions_before"].as_u64().unwrap_or(u64::MAX) as usize;
+    let statuses_at_resume = resumed["statuses_before"].as_u64().unwrap_or(u64::MAX) as usize;
+    let restarted = capture
+        .statuses
+        .iter()
+        .skip(statuses_at_resume)
+        .any(m0_step_active);
+    let attacked_again = capture
+        .actions
+        .iter()
+        .skip(actions_at_resume)
+        .any(m0_imp_attack);
+    let terminal_after_takeover = capture
+        .statuses
+        .iter()
+        .skip(takeover["statuses_before"].as_u64().unwrap_or(0) as usize)
+        .any(|status| status["phase"] == "Blocked" || !status["failure"].is_null());
+    m0_takeover_valid(takeover)
+        && takeover["setting_pause_on_manual_movement"] == true
+        && takeover["state_after"] == "Paused"
+        && paused_tick - at <= 5
+        && resume_tick >= paused_tick
+        && resumed["state_after"] == "Running"
+        && restarted
+        && attacked_again
+        && !terminal_after_takeover
+        && m0_host_log_ok(capture, 0)
+        && !capture_has_death(capture)
+}
+
+/// The test thread's M0 driver: inject the takeover once, then (Pause on)
+/// Resume after the Paused state. `Err` ends the cell INVALID or FAIL.
+#[derive(Default)]
+struct M0Drive {
+    injected: bool,
+    takeover_tick: Option<i64>,
+    resumed: bool,
+}
+
+impl M0Drive {
+    fn step(
+        &mut self,
+        case: Case,
+        play: &super::Play,
+        account: &str,
+        capture: &Arc<Mutex<CombatCapture>>,
+    ) -> Result<(), (&'static str, String)> {
+        if !self.injected {
+            return self.inject(case, play, account, capture);
+        }
+        if case == Case::M0ManualPaused && !self.resumed {
+            let tick = m0_frame_tick(&capture.lock().unwrap_or_else(|e| e.into_inner()));
+            let state = play.script_state(account);
+            if state == script::RunState::Paused {
+                let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+                proof
+                    .random_events
+                    .push(json!({"kind": "M0Paused", "tick": tick, "state": format!("{state:?}")}));
+                let statuses_before = proof.statuses.len();
+                let actions_before = proof.actions.len();
+                drop(proof);
+                play.script_resume(account);
+                self.resumed = true;
+                let state_after = play.script_state(account);
+                capture
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .random_events
+                    .push(json!({
+                        "kind": "M0Resume",
+                        "tick": tick,
+                        "state_after": format!("{state_after:?}"),
+                        "statuses_before": statuses_before,
+                        "actions_before": actions_before,
+                    }));
+            } else if tick
+                .zip(self.takeover_tick)
+                .is_some_and(|(now, at)| now - at > 5)
+            {
+                return Err((
+                    "FAIL",
+                    format!("the script was not Paused within 5 ticks of the takeover: {state:?}"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn inject(
+        &mut self,
+        case: Case,
+        play: &super::Play,
+        account: &str,
+        capture: &Arc<Mutex<CombatCapture>>,
+    ) -> Result<(), (&'static str, String)> {
+        let (active, attack, here, tick, statuses_before) = {
+            let proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+            let active = proof
+                .statuses
+                .last()
+                .filter(|status| m0_step_active(status))
+                .cloned();
+            let attack = proof
+                .actions
+                .iter()
+                .find(|action| m0_imp_attack(action))
+                .cloned();
+            let frame = proof.frames.last();
+            let engaged = frame.is_some_and(|frame| frame["local_player"]["in_combat"] == true);
+            let here = frame.and_then(|frame| {
+                let tile = frame["tile"].as_array()?;
+                Some((
+                    i32::try_from(tile.first()?.as_i64()?).ok()?,
+                    i32::try_from(tile.get(1)?.as_i64()?).ok()?,
+                    i32::try_from(tile.get(2)?.as_i64()?).ok()?,
+                ))
+            });
+            (
+                active.filter(|_| engaged),
+                attack,
+                here,
+                m0_frame_tick(&proof),
+                proof.statuses.len(),
+            )
+        };
+        let (Some(active), Some(attack), Some((x, z, level))) = (active, attack, here) else {
+            return Ok(());
+        };
+        let host = |play: &super::Play| play.navs.lock().unwrap().get(account).map(m0_host_state);
+        let before_host = host(play).unwrap_or(Value::Null);
+        if !m0_host_gate_open(&before_host) {
+            return Ok(());
+        }
+        let slot_live = super::script_slot(&play.scripts, account)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.live_walking_operation()))
+            .unwrap_or(false);
+        let first_attack = json!({
+            "sequence": attack["sequence"],
+            "run": attack["run"],
+            "action_id": attack["action_id"],
+        });
+        if !slot_live {
+            // Main ruling 2026-10-22: a fight whose Combat action began
+            // without a walk (a NoTarget restart at the stand, live off-r1)
+            // is not an eligible takeover. Keep the first such observation
+            // and wait for a later engaged one with a registered walk; the
+            // run's deadline ends the cell INVALID if none comes.
+            let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(event) = proof
+                .random_events
+                .iter_mut()
+                .find(|event| event["kind"] == "M0NotEligible")
+            {
+                event["observations"] = json!(event["observations"].as_u64().unwrap_or(0) + 1);
+                event["last_tick"] = json!(tick);
+            } else {
+                proof.random_events.push(json!({
+                    "kind": "M0NotEligible",
+                    "tick": tick,
+                    "last_tick": tick,
+                    "observations": 1,
+                    "active_status": active,
+                    "first_imp_attack": first_attack,
+                    "host": before_host,
+                }));
+            }
+            return Ok(());
+        }
+        let intent = |play: &super::Play| {
+            play.navs
+                .lock()
+                .unwrap()
+                .get(account)
+                .map_or(0, |bot| bot.user_move_intent_seq)
+        };
+        let before = intent(play);
+        let step_to = [x + 1, z, level];
+        play.queue_wire(account, super::WireCmd::Walk { x: x + 1, z, level });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while intent(play) <= before && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let after = intent(play);
+        let state_after = play.script_state(account);
+        self.injected = true;
+        self.takeover_tick = tick;
+        capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .random_events
+            .push(json!({
+                "kind": "M0Takeover",
+                "case": case.key(),
+                "tick": tick,
+                "setting_pause_on_manual_movement": case == Case::M0ManualPaused,
+                "active_status": active,
+                "first_imp_attack": first_attack,
+                "step_to": step_to,
+                "intent_seq": {"before": before, "after": after},
+                "slot_live_walking_operation": slot_live,
+                "host_walk_in_flight": !m0_host_gate_open(&before_host),
+                "host_before": before_host,
+                "host_after": host(play).unwrap_or(Value::Null),
+                "state_after": format!("{state_after:?}"),
+                "statuses_before": statuses_before,
+            }));
+        if after <= before {
+            return Err((
+                "FAIL",
+                "the manual step did not move the intent counter in 10 s".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Copy the account's kept host-log lines into the capture for the receipt.
+fn m0_record_host_log(account: &str, capture: &Arc<Mutex<CombatCapture>>, installed: bool) {
+    let lines = m0_host_log_lines(account);
+    let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+    let event = json!({"kind": "M0HostLog", "sink_installed": installed, "lines": lines});
+    if let Some(existing) = proof
+        .random_events
+        .iter_mut()
+        .find(|event| event["kind"] == "M0HostLog")
+    {
+        *existing = event;
+    } else {
+        proof.random_events.push(event);
+    }
 }
 
 // This proves only the production hand-in, never natural bead acquisition.
@@ -7514,6 +8055,12 @@ fn run_case(case: Case) {
         state.start_context = Some((play.script_start_handle(), play.named_banks()));
     }
     play.focus(&account);
+    // M0: Pause off is set explicitly; Pause on is the default (`true`).
+    let m0_sink = case.is_m0() && *M0_HOST_LOG_INSTALLED;
+    if case.is_m0() {
+        play.set_pause_script_on_manual_walk_abort(case == Case::M0ManualPaused);
+    }
+    let mut m0 = M0Drive::default();
 
     let deadline = Instant::now() + case.timeout();
     let mut terminal_error = None;
@@ -7521,6 +8068,21 @@ fn run_case(case: Case) {
     loop {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
+        }
+        if case.is_m0() {
+            m0_record_host_log(&account, &capture, m0_sink);
+            if let Err((outcome, reason)) = m0.step(case, &play, &account, &capture) {
+                if outcome == "INVALID" {
+                    combat_proof::mark_invalid(&account, reason.clone());
+                }
+                terminal_error = Some(reason);
+                writer.outcome = outcome.to_owned();
+                break;
+            }
+            if case_ready(case, &capture.lock().unwrap_or_else(|e| e.into_inner())) {
+                writer.scenario_status = "M0 receipt criteria met".to_owned();
+                break;
+            }
         }
         if case.is_ranged() {
             let target_index = {
@@ -7642,7 +8204,30 @@ fn run_case(case: Case) {
                     writer.scenario_status = format!("Failed({error})");
                 }
                 terminal_error.get_or_insert_with(|| format!("ScenarioRunner failed: {error}"));
-                if case == Case::R2 && ranged_abort_horizon_end.is_some() {
+                if case.is_m0() {
+                    // The parked Quester ends the scenario step; the M0
+                    // receipt, not the Blocked status alone, decides.
+                    // Without a takeover, the cause that the runner
+                    // recorded decides (`m0_runner_failure_outcome`).
+                    if !m0.injected {
+                        let (outcome, reason) = m0_runner_failure_outcome(
+                            case,
+                            &state.runner,
+                            &error,
+                            &capture.lock().unwrap_or_else(|e| e.into_inner()),
+                        );
+                        if state.runner.deadline_exceeded() {
+                            writer.scenario_status =
+                                format!("TimedOut({:?})", state.runner.status());
+                        }
+                        if outcome == "INVALID" {
+                            combat_proof::mark_invalid(&account, reason.clone());
+                        }
+                        terminal_error = Some(reason);
+                        writer.outcome = outcome.to_owned();
+                        break;
+                    }
+                } else if case == Case::R2 && ranged_abort_horizon_end.is_some() {
                     // The blocked Quester ends the scenario step, not the
                     // observer: keep sampling until the post-abort horizon.
                     if ranged_abort_horizon_end.is_some_and(|horizon_end| {
@@ -7661,18 +8246,22 @@ fn run_case(case: Case) {
         }
         if Instant::now() >= deadline {
             writer.scenario_status = format!("TimedOut({:?})", state.runner.status());
-            terminal_error = Some(format!(
-                "{} live proof exceeded {:?}",
-                case.key(),
-                case.timeout()
-            ));
-            writer.outcome = "FAIL".to_owned();
+            let (outcome, reason) =
+                timeout_outcome(case, &capture.lock().unwrap_or_else(|e| e.into_inner()));
+            if outcome == "INVALID" {
+                combat_proof::mark_invalid(&account, reason.clone());
+            }
+            terminal_error = Some(reason);
+            writer.outcome = outcome.to_owned();
             break;
         }
         drop(state);
         thread::sleep(Duration::from_millis(50));
     }
 
+    if case.is_m0() {
+        m0_record_host_log(&account, &capture, m0_sink);
+    }
     let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
     if capture_has_death(&capture_snapshot) {
         writer.outcome = "FAIL".to_owned();
@@ -7725,10 +8314,12 @@ fn run_case(case: Case) {
         );
     }
 
-    if case == Case::M5Stop {
+    if case == Case::M5Stop || case.is_m0() {
         assert_eq!(
-            writer.outcome, "PASS",
-            "Stop live proof: {:?}",
+            writer.outcome,
+            "PASS",
+            "{} live proof: {:?}",
+            case.key(),
             writer.error
         );
     }
@@ -7779,6 +8370,22 @@ fn live_combat_m5_random_interrupt_clears_only_combat_raised_protect() {
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]
 fn live_lifecycle_followups_stop_clears_only_combat_raised_protect() {
     run_case(Case::M5Stop);
+}
+
+/// M0, "Pause script on manual movement" off: one manual step during the
+/// `farm-imps` fight ends the Quester combat step once (`manual-movement`).
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_combat_m0_manual_movement_ends_quester_combat_step_once() {
+    run_case(Case::M0Manual);
+}
+
+/// M0, the setting on: the step pauses; after Resume it restarts and attacks
+/// again, and no `manual-movement` terminal follows.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_combat_m0_manual_movement_pause_restarts_quester_combat_step() {
+    run_case(Case::M0ManualPaused);
 }
 
 #[test]
@@ -11077,4 +11684,387 @@ fn combat_fixture_stages_stats_between_relog_and_stand() {
             );
         }
     }
+}
+
+fn m0_oracle_capture(paused: bool) -> CombatCapture {
+    use client::io::ClientProt289;
+    let active = json!({
+        "phase": "Working",
+        "fields": {
+            "step_id": "beads-first",
+            "child_recipe_id": "acquire:beads",
+            "child_step_id": "farm-imps",
+        },
+        "failure": null,
+        "observed_tick": 99,
+    });
+    let attack = json!({
+        "kind": "interaction", "sequence": 1, "tick": 98, "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPNPC2.id],
+        "run": "run-1", "action_id": 7,
+        "request": {"op": "npc", "name": "Imp", "action": "Attack", "index": 42},
+    });
+    let mut capture = CombatCapture::default();
+    // The arrived case: no host walking work, the native owner still live.
+    let mut host_before = m0_host_state(&crate::script_runtime::NavBot::default());
+    host_before["native_walk_live"] = json!(true);
+    capture.statuses.push(active.clone());
+    capture.actions.push(attack.clone());
+    capture.frames = (95..=115)
+        .map(|tick| json!({"tick": tick, "ingame": true}))
+        .collect();
+    capture.random_events.push(json!({
+        "kind": "M0Takeover",
+        "tick": 100,
+        "setting_pause_on_manual_movement": paused,
+        "active_status": active,
+        "first_imp_attack": {"sequence": 1, "run": "run-1", "action_id": 7},
+        "step_to": [2633, 3222, 0],
+        "intent_seq": {"before": 0, "after": 1},
+        "slot_live_walking_operation": true,
+        "host_walk_in_flight": false,
+        "host_before": host_before,
+        // A Blocked native card stops its slot: live off-try1 read Idle.
+        "state_after": if paused { "Paused" } else { "Idle" },
+        "statuses_before": 1,
+    }));
+    let mut lines = vec![format!(
+        "{M0_HOST_TAKEOVER} request=3 generation=2 intent_seq=1"
+    )];
+    if paused {
+        capture
+            .random_events
+            .push(json!({"kind": "M0Paused", "tick": 100, "state": "Paused"}));
+        capture.random_events.push(json!({
+            "kind": "M0Resume", "tick": 101, "state_after": "Running",
+            "statuses_before": 1, "actions_before": 1,
+        }));
+        let mut restarted = active;
+        restarted["observed_tick"] = json!(104);
+        capture.statuses.push(restarted);
+        let mut again = attack;
+        again["sequence"] = json!(2);
+        capture.actions.push(again);
+    } else {
+        capture.statuses.push(json!({
+            "phase": "Blocked",
+            "fields": {"step_id": "beads-first"},
+            "failure": "ScriptFailure { code: \"manual-movement\", message: \"cancelled by user input\" }",
+            "observed_tick": 101,
+        }));
+        // The order and texts of live off-try1's host log.
+        lines.push(
+            "quester imp: stage imp:0 recipe acquire:beads child farm-imps failed: \
+             cancelled by user input"
+                .to_owned(),
+        );
+        lines.push(M0_ROOT_FAILURE.to_owned());
+        lines.push("quester imp: park: cancelled by user input".to_owned());
+    }
+    capture.random_events.push(json!({
+        "kind": "M0HostLog", "sink_installed": true, "lines": lines,
+    }));
+    capture
+}
+
+fn m0_event_mut<'a>(capture: &'a mut CombatCapture, kind: &str) -> &'a mut Value {
+    capture
+        .random_events
+        .iter_mut()
+        .find(|event| event["kind"] == kind)
+        .expect("oracle fixture event")
+}
+
+#[test]
+fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
+    assert!(m0_manual_ready(&m0_oracle_capture(false)));
+
+    let mut missing = m0_oracle_capture(false);
+    missing.statuses.pop();
+    assert!(!m0_manual_ready(&missing), "no terminal");
+
+    let mut restarted = m0_oracle_capture(false);
+    let active = restarted.statuses[0].clone();
+    let terminal = restarted.statuses[1].clone();
+    restarted.statuses.push(active);
+    restarted.statuses.push(terminal);
+    assert!(!m0_manual_ready(&restarted), "a second terminal");
+
+    let mut other = m0_oracle_capture(false);
+    other.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": "ScriptFailure { code: \"parked\", message: \"step error\" }",
+        "observed_tick": 103,
+    }));
+    assert!(!m0_manual_ready(&other), "a later different failure");
+
+    let mut fought_on = m0_oracle_capture(false);
+    fought_on.statuses[1]["fields"]["combat_end"] = json!("Killed");
+    fought_on.statuses[1]["fields"]["combat_evidence_tick"] = json!(105);
+    assert!(
+        !m0_manual_ready(&fought_on),
+        "a combat report after the takeover"
+    );
+
+    let mut paused = m0_oracle_capture(false);
+    paused
+        .random_events
+        .push(json!({"kind": "M0Paused", "tick": 100}));
+    assert!(!m0_manual_ready(&paused), "Pause off must not pause");
+
+    let mut paused_state = m0_oracle_capture(false);
+    m0_event_mut(&mut paused_state, "M0Takeover")["state_after"] = json!("Paused");
+    assert!(
+        !m0_manual_ready(&paused_state),
+        "Pause off must not leave the script Paused"
+    );
+
+    let mut early = m0_oracle_capture(false);
+    early.frames.truncate(10);
+    assert!(
+        !m0_manual_ready(&early),
+        "fewer than ten ticks after the terminal"
+    );
+
+    let mut ineligible = m0_oracle_capture(false);
+    m0_event_mut(&mut ineligible, "M0Takeover")["slot_live_walking_operation"] = json!(false);
+    assert!(!m0_manual_ready(&ineligible), "an ineligible takeover");
+
+    for fact in M0_HOST_WALK_WORK {
+        let mut in_flight = m0_oracle_capture(false);
+        m0_event_mut(&mut in_flight, "M0Takeover")["host_before"][fact] = json!(true);
+        assert!(
+            !m0_manual_ready(&in_flight),
+            "a takeover with host walking work ({fact})"
+        );
+    }
+
+    let mut unrecorded = m0_oracle_capture(false);
+    m0_event_mut(&mut unrecorded, "M0Takeover")["host_before"] = Value::Null;
+    assert!(
+        !m0_manual_ready(&unrecorded),
+        "a takeover without recorded host state"
+    );
+
+    let mut twice = m0_oracle_capture(false);
+    m0_event_mut(&mut twice, "M0HostLog")["lines"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(M0_ROOT_FAILURE));
+    assert!(!m0_manual_ready(&twice), "the root trace line twice");
+
+    let mut repeated = m0_oracle_capture(false);
+    m0_event_mut(&mut repeated, "M0HostLog")["lines"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(format!(
+            "{M0_ROOT_FAILURE} (repeated 2 additional times)"
+        )));
+    assert!(!m0_manual_ready(&repeated), "a repeated trace line");
+}
+
+#[test]
+fn m0_paused_oracle_accepts_a_restart_and_rejects_each_bad_behaviour() {
+    assert!(m0_paused_ready(&m0_oracle_capture(true)));
+
+    let mut terminal = m0_oracle_capture(true);
+    terminal.statuses.push(json!({
+        "phase": "Blocked",
+        "failure": "ScriptFailure { code: \"manual-movement\", message: \"cancelled by user input\" }",
+        "observed_tick": 105,
+    }));
+    assert!(!m0_paused_ready(&terminal), "a terminal after Resume");
+
+    for fact in ["compact_route", "route_ticket"] {
+        let mut in_flight = m0_oracle_capture(true);
+        m0_event_mut(&mut in_flight, "M0Takeover")["host_before"][fact] = json!(true);
+        assert!(
+            !m0_paused_ready(&in_flight),
+            "a takeover with host walking work ({fact})"
+        );
+    }
+
+    let mut no_attack = m0_oracle_capture(true);
+    no_attack.actions.pop();
+    assert!(
+        !m0_paused_ready(&no_attack),
+        "the restarted step never attacks"
+    );
+
+    let mut no_restart = m0_oracle_capture(true);
+    no_restart.statuses.pop();
+    assert!(!m0_paused_ready(&no_restart), "the step does not restart");
+
+    let mut late = m0_oracle_capture(true);
+    m0_event_mut(&mut late, "M0Paused")["tick"] = json!(107);
+    assert!(!m0_paused_ready(&late), "Paused later than five ticks");
+
+    let mut running = m0_oracle_capture(true);
+    m0_event_mut(&mut running, "M0Takeover")["state_after"] = json!("Running");
+    assert!(!m0_paused_ready(&running), "the takeover did not pause");
+
+    let mut logged = m0_oracle_capture(true);
+    m0_event_mut(&mut logged, "M0HostLog")["lines"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(M0_ROOT_FAILURE));
+    assert!(!m0_paused_ready(&logged), "a terminal trace line");
+
+    let mut child = m0_oracle_capture(true);
+    m0_event_mut(&mut child, "M0HostLog")["lines"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(
+            "quester imp: stage imp:0 recipe acquire:beads child farm-imps failed: \
+             cancelled by user input"
+        ));
+    assert!(!m0_paused_ready(&child), "a child terminal trace line");
+}
+
+/// Main ruling 2 (2026-10-22): an M0 timeout that saw only engaged moments
+/// without a registered walk is INVALID with the named reason (review-r2-sol
+/// live-off: 673 `M0NotEligible` observations, no takeover). A timeout after
+/// a takeover, or before any engaged moment, stays a FAIL.
+#[test]
+fn m0_timeout_without_an_eligible_moment_is_invalid_not_fail() {
+    let not_eligible = json!({
+        "kind": "M0NotEligible", "tick": 148, "last_tick": 816, "observations": 673,
+    });
+    let mut never_eligible = CombatCapture::default();
+    never_eligible.random_events.push(not_eligible.clone());
+    assert_eq!(
+        m0_timeout_invalid_reason(&never_eligible),
+        Some(M0_NOT_ELIGIBLE)
+    );
+    assert!(M0_NOT_ELIGIBLE.starts_with("M0 INVALID:"));
+
+    for paused in [false, true] {
+        let mut took_over = m0_oracle_capture(paused);
+        took_over.random_events.push(not_eligible.clone());
+        assert_eq!(
+            m0_timeout_invalid_reason(&took_over),
+            None,
+            "a timeout after a takeover is a FAIL"
+        );
+    }
+
+    assert_eq!(
+        m0_timeout_invalid_reason(&CombatCapture::default()),
+        None,
+        "a timeout before any engaged moment is a FAIL"
+    );
+}
+
+/// A real `ScenarioRunner` that failed (review-r3-sol/deadline-probe.rs):
+/// one step whose arm `stat(16)>=999` never holds on a seeded test client.
+/// A one-tick budget gives a step failure in the first tick. A budget of
+/// 999 ticks with a zero deadline gives the runner's deadline failure in
+/// the first tick. Returns the runner, its error and the time from just
+/// before the runner was made to the read of its status.
+fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, String, Duration) {
+    use client::client::{Client, ClientConfig, ClientPlayer};
+    use client::io::ServerProt;
+
+    let mut c = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: false,
+    });
+    c.ingame = true;
+    c.set_cheat_admission(client::CheatAdmission::Granted);
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(20, 20));
+    for prot in [
+        ServerProt::PLAYER_INFO,
+        ServerProt::REBUILD_NORMAL,
+        ServerProt::UPDATE_STAT,
+    ] {
+        c.bump_gens(prot);
+    }
+    let arm = Proof::Stat { id: 16, min: 999 };
+    let scenario = Scenario {
+        name: "m0-runner-failure",
+        seed: scenario::Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "missed evidence",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait { arm, budget_ticks },
+        }],
+        proof: arm,
+        companions: vec![],
+        settings: scenario::ScenarioSettings {
+            deadline,
+            ..Default::default()
+        },
+    };
+    let made = Instant::now();
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    let RunnerStatus::Failed(error) = runner.status() else {
+        panic!("the real runner must fail, got {:?}", runner.status());
+    };
+    (runner, error, made.elapsed())
+}
+
+/// Review-r3-sol R3-F1 (M0 round 5): the cause that the real
+/// `ScenarioRunner` recorded classifies an M0 runner failure before a
+/// takeover, not the time at which the observer reads the status. A step
+/// failure read after the deadline stays a FAIL with its own error. Only
+/// the runner's deadline with no eligible moment is INVALID.
+#[test]
+fn m0_runner_failure_follows_the_recorded_cause_not_the_read_time() {
+    let mut never_eligible = CombatCapture::default();
+    never_eligible.random_events.push(json!({
+        "kind": "M0NotEligible", "tick": 148, "last_tick": 816, "observations": 673,
+    }));
+    let step_error = "step 1 (missed evidence): stat(16)>=999 not seen within 1 game tick";
+
+    let (early, error, _) = m0_failed_runner(Duration::from_secs(600), 1);
+    assert_eq!(error, step_error);
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &early, &error, &never_eligible),
+        ("FAIL", format!("ScenarioRunner failed: {step_error}")),
+        "a step failure read before the deadline is a FAIL"
+    );
+
+    let (expired, error, read_after) = m0_failed_runner(Duration::ZERO, 1);
+    assert_eq!(error, step_error);
+    assert!(read_after > expired.deadline(), "read after the deadline");
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &expired, &error, &never_eligible),
+        ("FAIL", format!("ScenarioRunner failed: {step_error}")),
+        "a step failure read after the deadline is still a FAIL with its own error"
+    );
+
+    let (timed_out, error, _) = m0_failed_runner(Duration::ZERO, 999);
+    assert_eq!(error, "m0-runner-failure: deadline 0ns exceeded");
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0Manual, &timed_out, &error, &never_eligible),
+        ("INVALID", M0_NOT_ELIGIBLE.to_owned()),
+        "the runner's deadline with no eligible moment is INVALID"
+    );
+
+    let mut took_over = m0_oracle_capture(true);
+    took_over
+        .random_events
+        .extend(never_eligible.random_events.iter().cloned());
+    assert_eq!(
+        m0_runner_failure_outcome(Case::M0ManualPaused, &timed_out, &error, &took_over),
+        (
+            "FAIL",
+            "M0-manual-paused live proof exceeded 600s".to_owned()
+        ),
+        "the runner's deadline after a takeover is a FAIL"
+    );
 }

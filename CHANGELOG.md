@@ -16,6 +16,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Banking now opens a closed chest before it tries the bank action. This
   lets ClueSolver open the Duel Arena reward bank.
 
+### Quester
+
+- If you move the bot yourself during a Quester fight, the Quester now stops
+  that fight step, as it already does for its other steps. With "Pause script
+  on manual movement" off, the Quester stops with "cancelled by user input"
+  and does not fight on. With the setting on (the default), the script pauses
+  instead; when you resume it, the Quester starts the fight step again.
+
 ### Panel
 
 - On Linux, the panel now follows the system's choice of graphics chip

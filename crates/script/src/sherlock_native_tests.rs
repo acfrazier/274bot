@@ -395,6 +395,7 @@ fn with_tick<R>(
         cx: crate::native::ActionContext {
             evidence,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             pin: &pin,
             snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
             retained: &mut retained,
