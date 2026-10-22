@@ -10,7 +10,7 @@ rounds the key was derived with, not the current constant. The file holds only
 the KDF salt, nonce, and ciphertext — passphrases and profile passwords
 never appear in plaintext. The AES key lives in RAM (zeroized on drop).
 Argon2 is not used: a change of KDF would be a format-version bump and a
-re-seal, which is out of scope for 0.2.4.
+re-seal, which is out of scope for 0.2.5.
 
 ## File format
 

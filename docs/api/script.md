@@ -320,7 +320,7 @@ maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
 
-The pair machinery below is Path-authoring reference (no bundled Beta 1 Path uses
+The pair machinery below is Path-authoring reference (no bundled Beta 2 Path uses
 `partner` yet): Shield of Arrav and Hero's Quest require two accounts explicitly
 running their own Quester in the same Play, with reciprocal partner settings and opposite
 effective gangs. A separate panel or TUI process is not the same Play. The owned
