@@ -368,6 +368,8 @@ fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
 /// loads its pack.
 #[test]
 fn pump_copies_nav_world_onto_the_app() {
+    let _network_driver =
+        host_play::PlayComposition::start().expect("TUI fixture starts its network composition");
     let home = upgrade_home::UpgradeHome::new();
     let profile = home.bind(None);
     let template = SharedClientTemplate::load(profile).unwrap();
