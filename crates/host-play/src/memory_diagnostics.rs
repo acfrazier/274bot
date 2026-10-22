@@ -11,9 +11,14 @@ use std::time::Instant;
 const GATHERER_RESOURCE_WAIT: &str = "waiting for a resource";
 const GATHERER_WOODCUTTING_STAT: usize = 8;
 const MAX_GATHERER_CHOP_RECEIPTS: usize = 300;
-// A warm Gatherer restart has two cooperative actions (Configure, Construct),
-// then host adoption: script/src/slot/compiled.rs::prepare_run / poll_compiled.
-// Allow one observed PLAYER_INFO tick per step, not an unbounded worker wait.
+// Warm restart: Load, Configure, Construct, Seal dispatches per slot on the
+// shared FIFO work-admission worker, each with a soft 10 ms wall-clock slice
+// (script/src/{preparation,work_admission}.rs and slot/compiled.rs). Lifecycle
+// queues every slot in one harness tick. Full admission defers submission;
+// poll_compiled adopts completed work at the next lifecycle observe.
+// N10 measurements put every slot Running 0.43-0.93 s after Start. Three
+// PLAYER_INFO ticks are an N10 qualification bound, not a scheduler guarantee.
+pub(crate) const GATHERER_RESTART_MEASURED_N: usize = 10;
 const GATHERER_RESTART_TICKS: u64 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +139,26 @@ impl GathererBot {
                 self.planned_restart = None;
             }
         }
+    }
+
+    fn record_missing_position(
+        &mut self,
+        tick: u64,
+        reason: &'static str,
+        c: &client::client::Client,
+        run_state: Option<RunState>,
+    ) {
+        self.missing_position_samples = self.missing_position_samples.saturating_add(1);
+        self.first_missing_position
+            .get_or_insert_with(|| MissingPositionSample {
+                tick,
+                reason,
+                run_state,
+                ingame: c.ingame,
+                scene_state: c.scene_state,
+                raw_tile: crate::player_here_tile(c),
+                planned_restart: self.planned_restart,
+            });
     }
 }
 
@@ -587,17 +612,7 @@ pub(crate) fn gatherer_frame(c: &client::client::Client, name: &str, run_state: 
     if let Some(sampled) = sampled {
         match sampled {
             SampledPosition::Missing(reason) => {
-                bot.missing_position_samples = bot.missing_position_samples.saturating_add(1);
-                bot.first_missing_position
-                    .get_or_insert(MissingPositionSample {
-                        tick,
-                        reason,
-                        run_state,
-                        ingame: c.ingame,
-                        scene_state: c.scene_state,
-                        raw_tile: crate::player_here_tile(c),
-                        planned_restart: bot.planned_restart,
-                    });
+                bot.record_missing_position(tick, reason, c, run_state);
             }
             SampledPosition::Allowed => {
                 bot.sampled_positions = bot.sampled_positions.saturating_add(1);
@@ -728,11 +743,26 @@ fn qualifying_chop<'a>(
 }
 
 fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
+    gatherer_verdict_at_boundary(fleet, false)
+}
+
+fn gatherer_verdict_at_boundary(
+    fleet: &GathererFleet,
+    observation_ended: bool,
+) -> GathererVerdict {
     if let Some(error) = &fleet.anchor_error {
         return GathererVerdict::Fail(error.clone());
     }
     if fleet.names.len() < 2 {
         return GathererVerdict::Fail("gatherer_fleet_requires_multiple_bots".to_owned());
+    }
+    if fleet.names.len() != GATHERER_RESTART_MEASURED_N
+        && fleet.bots.values().any(|bot| bot.planned_restart.is_some())
+    {
+        return GathererVerdict::Fail(format!(
+            "restart_bound_unmeasured:n={}:measured_n={GATHERER_RESTART_MEASURED_N}",
+            fleet.names.len()
+        ));
     }
     let (Some(anchor), Some(anchor_owner)) = (fleet.anchor, fleet.anchor_owner.as_deref()) else {
         return GathererVerdict::Pending;
@@ -860,7 +890,12 @@ fn gatherer_verdict(fleet: &GathererFleet) -> GathererVerdict {
             "gatherer_fleet_zero_xp:anchor_owner={anchor_owner}:delta={xp_delta}"
         ));
     }
-    if restarting {
+    if restarting
+        && !(observation_ended
+            && fleet.names.iter().all(|name| {
+                fleet.bots[name].planned_restart == Some(GathererRestart::Stopped)
+            }))
+    {
         return GathererVerdict::Pending;
     }
     GathererVerdict::Pass {
@@ -873,10 +908,14 @@ pub(crate) fn gatherer_verdict_current() -> Option<GathererVerdict> {
     all.as_ref().map(gatherer_verdict)
 }
 
-pub(crate) fn gatherer_verdict_json() -> Option<(GathererVerdict, Value)> {
+pub(crate) fn gatherer_verdict_json(observation_ended: bool) -> Option<(GathererVerdict, Value)> {
     let all = GATHERER_FLEET.lock().unwrap();
-    let fleet = all.as_ref()?;
-    let verdict = gatherer_verdict(fleet);
+    all.as_ref()
+        .map(|fleet| gatherer_summary(fleet, observation_ended))
+}
+
+fn gatherer_summary(fleet: &GathererFleet, observation_ended: bool) -> (GathererVerdict, Value) {
+    let verdict = gatherer_verdict_at_boundary(fleet, observation_ended);
     let bots: Vec<Value> = fleet
         .names
         .iter()
@@ -978,6 +1017,9 @@ pub(crate) fn gatherer_verdict_json() -> Option<(GathererVerdict, Value)> {
         "anchor": fleet.anchor.map(|tile| [tile.x, tile.z, tile.level]),
         "anchor_owner": fleet.anchor_owner.as_deref(),
         "anchor_error": fleet.anchor_error.as_deref(),
+        "lifecycle_state": if fleet.names.iter().all(|name| {
+            fleet.bots.get(name).is_some_and(|bot| bot.planned_restart == Some(GathererRestart::Stopped))
+        }) { Some("planned_stop") } else { None },
         "work_area_radius": fleet.radius,
         "tick_budget": fleet.budget_ticks,
         "fleet_xp_delta": match &verdict {
@@ -991,7 +1033,7 @@ pub(crate) fn gatherer_verdict_json() -> Option<(GathererVerdict, Value)> {
         },
         "bots": bots,
     });
-    Some((verdict, summary))
+    (verdict, summary)
 }
 
 pub(crate) fn enable(names: &[String]) {
@@ -1356,6 +1398,17 @@ mod tests {
             bot.last_tick = Some(start);
             bot.observe_run_state(RunState::Idle);
         }
+        fleet
+            .bots
+            .get_mut(name)
+            .unwrap()
+            .observe_run_state(RunState::Starting);
+        assert!(failure(&fleet).starts_with("gatherer_not_running:"));
+        fleet
+            .bots
+            .get_mut(name)
+            .unwrap()
+            .observe_run_state(RunState::Idle);
         fleet.bots.get_mut(name).unwrap().planned_start();
         for elapsed in 0..=GATHERER_RESTART_TICKS {
             let bot = fleet.bots.get_mut(name).unwrap();
@@ -1431,6 +1484,125 @@ mod tests {
             .unwrap()
             .observe_run_state(RunState::Running);
         assert!(failure(&fleet).starts_with("gatherer_restart_timeout:"));
+    }
+
+    #[test]
+    fn planned_restart_rejects_unmeasured_fleet_sizes_but_active_does_not() {
+        for n in [2, 9] {
+            let mut fleet = r2_fleet();
+            fleet.names.truncate(n);
+            fleet.bots.retain(|name, _| fleet.names.contains(name));
+            assert!(matches!(gatherer_verdict(&fleet), GathererVerdict::Pass { .. }));
+            fleet.bots.get_mut(&fleet.names[0]).unwrap().planned_stop();
+            assert_eq!(
+                failure(&fleet),
+                format!("restart_bound_unmeasured:n={n}:measured_n=10")
+            );
+        }
+    }
+
+    #[test]
+    fn observe_end_inside_planned_stop_records_pass_and_actual_slot_states() {
+        let mut fleet = r2_fleet();
+        for bot in fleet.bots.values_mut() {
+            bot.planned_stop();
+            bot.observe_run_state(RunState::Idle);
+        }
+        assert_eq!(gatherer_summary(&fleet, false).1["verdict"], "pending");
+        let (verdict, summary) = gatherer_summary(&fleet, true);
+        assert_eq!(verdict, GathererVerdict::Pass { fleet_xp_delta: 675 });
+        assert_eq!(summary["verdict"], "pass");
+        assert_eq!(summary["fleet_xp_delta"], 675);
+        assert_eq!(summary["lifecycle_state"], "planned_stop");
+        assert!(summary["bots"].as_array().unwrap().iter().all(|bot| bot["run_state"] == "Idle"));
+
+        let name = &fleet.names[0];
+        fleet.bots.get_mut(name).unwrap().missing_position_samples = 1;
+        assert!(matches!(gatherer_summary(&fleet, true).0, GathererVerdict::Fail(_)));
+        let bot = fleet.bots.get_mut(name).unwrap();
+        bot.missing_position_samples = 0;
+        bot.observe_run_state(RunState::Starting);
+        assert!(matches!(gatherer_summary(&fleet, true).0, GathererVerdict::Fail(_)));
+        let bot = fleet.bots.get_mut(name).unwrap();
+        bot.planned_start();
+        assert_eq!(gatherer_summary(&fleet, true).0, GathererVerdict::Pending);
+    }
+
+    #[test]
+    fn first_missing_position_records_first_context_without_changing_verdict() {
+        use api::selected::ClientRevision;
+        use client::client::{Client, ClientConfig, ClientPlayer};
+
+        let mut fleet = r2_fleet();
+        let name = fleet.names[0].clone();
+        let tile = fleet.anchor.unwrap();
+        let geometry_error = Err("test geometry error".to_owned());
+        for (geometry, position, expected) in [
+            (None, None, "coordinates_missing"),
+            (None, Some(tile), "geometry_missing"),
+            (Some(&geometry_error), Some(tile), "geometry_error"),
+            (fleet.geometries.get(&3), Some(tile), "zone_data_missing"),
+        ] {
+            assert!(matches!(
+                sample_position(geometry, 42, position),
+                SampledPosition::Missing(reason) if reason == expected
+            ));
+        }
+        let mut client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: "unused".into(),
+                members: true,
+                lowmem: false,
+            },
+            Arc::new(client::config::Cache::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            ClientRevision::R289,
+        );
+        client.ingame = true;
+        client.scene_state = 1;
+        client.map_build_base_x = 3104;
+        client.map_build_base_z = 3223;
+        client.local_player = Some(ClientPlayer::at(5, 5));
+        assert!(matches!(
+            sample_position(None, 42, current_tile(&client)),
+            SampledPosition::Missing("coordinates_missing")
+        ));
+        let bot = fleet.bots.get_mut(&name).unwrap();
+        bot.planned_stop();
+        bot.planned_start();
+        let restart = bot.planned_restart;
+        bot.record_missing_position(42, "coordinates_missing", &client, Some(RunState::Starting));
+        client.ingame = false;
+        client.scene_state = 0;
+        bot.record_missing_position(43, "geometry_missing", &client, Some(RunState::Idle));
+        assert_eq!(bot.missing_position_samples, 2);
+        assert_eq!(bot.planned_restart, restart);
+        // Diagnostic context is not verdict authority. Restore only the
+        // counter and restart state to compare the original passed receipt.
+        bot.missing_position_samples = 0;
+        bot.planned_restart = None;
+        let (verdict, summary) = gatherer_summary(&fleet, false);
+        assert_eq!(verdict, GathererVerdict::Pass { fleet_xp_delta: 675 });
+        assert_eq!(
+            summary["bots"][0]["first_missing_position"],
+            json!({
+                "tick": 42,
+                "reason": "coordinates_missing",
+                "run_state": "Starting",
+                "ingame": true,
+                "scene_state": 1,
+                "raw_tile": [3109, 3228, 0],
+                "planned_restart": restart.map(|state| format!("{state:?}")),
+            })
+        );
+        fleet.bots.get_mut(&name).unwrap().missing_position_samples = 1;
+        assert_eq!(
+            failure(&fleet),
+            format!("gatherer_position_evidence_missing:{name}:sampled=1:missing=1")
+        );
     }
 
     #[test]

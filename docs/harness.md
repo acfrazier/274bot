@@ -946,17 +946,44 @@ also show a genuine resource-exhaustion wait. Generic `Waiting`, idle and paused
 states do not supply that evidence. The qualifier collects its evidence even
 when the optional diagnostic sidecar is disabled.
 
-During a planned lifecycle restart, safety checks continue through the harness's
-Stop and Start. Only that Stop arms the restart allowance. The admitted Start
-allows `Starting` for at most three observed `PLAYER_INFO` ticks, then requires
-`Running`. The warm Gatherer start has two cooperative actions, Configure and
-Construct, followed by host adoption (`script/src/slot/compiled.rs`,
-`prepare_run` and `poll_compiled`). The harness allows one tick per step.
-This is a qualification bound, not a guarantee about worker scheduling.
-An unplanned `Starting`, a restart overrun or an unfinished restart at
-observation end fails the cell. The harness does not start another lifecycle
-cycle at observation end. A planned restart never resets the original
-300-tick proof window.
+During an N10 planned lifecycle restart, safety checks continue through the
+harness's Stop and Start. Only that Stop arms the restart allowance. The
+admitted Start allows `Starting` for at most three observed `PLAYER_INFO`
+ticks, then requires `Running`. Every slot reached `Running` 0.43-0.93 seconds
+after Start in the N10 measurements. This measured qualification bound is
+not a scheduler guarantee. Gatherer lifecycle cells with any other N fail
+at preparation with `restart_bound_unmeasured`. Active cells retain their
+existing fleet-size support.
+
+The warm start path has four worker dispatches per slot: Load, Configure,
+Construct and Seal (`script/src/preparation.rs` and `slot/compiled.rs`).
+All slots queue in the same harness tick on one shared FIFO `work-admission`
+worker. Each dispatch has a soft 10 ms wall-clock slice
+(`script/src/work_admission.rs::WORK_SLICE`), not one game tick.
+A yielded job returns to the queue's back. Full admission defers submission
+until `poll_compiled` retries it. The next lifecycle observe adopts completed
+work. These facts do not establish a three-tick bound for an unmeasured N.
+
+An unplanned `Starting`, including one between Stop and Start, fails the cell.
+A restart overrun or an unfinished restart at observation end also fails.
+The harness does not start another lifecycle cycle at observation end.
+A planned restart never resets the original 300-tick proof window.
+If observation ends inside a planned Stop, the `observe-end` row records
+`verdict: "pass"` only after all other qualification checks succeed.
+It also records `lifecycle_state: "planned_stop"` and each slot's actual
+`run_state`. During the Stop interval, the ongoing verdict remains `pending`.
+The test `observe_end_inside_planned_stop_records_pass_and_actual_slot_states`
+covers this boundary and rejects missing evidence and an unplanned Start.
+
+The diagnostic record
+`gatherer_fleet_qualification.bots[].first_missing_position` retains the first
+missing sample's tick, reason, run state, ingame flag, scene state, raw tile
+and planned-restart state. Its reason is `coordinates_missing`,
+`geometry_missing`, `geometry_error`, `zone_data_missing` or
+`zone_filter_missing`. The test
+`first_missing_position_records_first_context_without_changing_verdict`
+checks the retained context and unchanged missing-evidence verdict.
+This record is available without `BOT_MEMORY_DIAGNOSTICS=1`.
 
 The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
 Gatherer live cells retain their individual gates. They do not use this fleet's
