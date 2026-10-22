@@ -46,6 +46,10 @@ pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 26 + 77 + 
 /// Attack within two game ticks of the style in all eight live selections
 /// of `FIX-ARDY-STYLE-025/runs`.
 pub(crate) const ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS: u32 = 20 + 3 + 17 + 20;
+const _: () = assert!(
+    ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS < ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
+    "a fight window is shorter than a whole trip"
+);
 /// Native Strength mode of the worn Adamant scimitar: `combat_hacksword:hack1`
 /// (`interface.pack` 2432) runs `~set_attackstyle(1)`
 /// (`player_attackstyles.rs2:38`) on `com_mode` (varp 43).
@@ -323,9 +327,14 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
 /// 158.134 s (246) and 239.154 s (381). The largest is 239.154 s; the deadline
 /// is that plus 50% headroom, rounded up to a whole second (358.73 s ->
 /// 359 s). The other two runs failed the pre-existing 320-game-tick style
-/// watch, which this deadline does not replace. The seeded sibling keeps the
-/// short gold deadline and every post-Start watch keeps its game-tick budget.
-pub(crate) const ARDY_FIGHTER_BANK_DEADLINE: Duration = Duration::from_secs(359);
+/// watch, which this deadline does not replace. `FIX-ARDY-STYLE-025` then
+/// measured eight more passes on the same binary, at 95.354 s (142),
+/// 106.437 s (160), 124.373 s (191), 155.732 s (243), 191.284 s (302),
+/// 220.489 s (351), 228.680 s (364) and 243.907 s (388). The largest is now
+/// 243.907 s, so the same rule gives 365.86 s -> 366 s. The seeded sibling
+/// keeps the short gold deadline and every post-Start watch keeps its
+/// game-tick budget.
+pub(crate) const ARDY_FIGHTER_BANK_DEADLINE: Duration = Duration::from_secs(366);
 
 /// ArdyFighter startup PeriodicBank witness. One DEFAULT_LOOT Guard drop is
 /// seeded with one Cake so only PeriodicBank owns the first trip instead of

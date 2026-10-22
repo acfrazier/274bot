@@ -14645,7 +14645,7 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
     use crate::scenarios::quester::RUNE_MYST_DEADLINE;
 
     for (name, measured_ms, deadline) in [
-        ("ardy_fighter_bank", 239_154_u64, ARDY_FIGHTER_BANK_DEADLINE),
+        ("ardy_fighter_bank", 243_907_u64, ARDY_FIGHTER_BANK_DEADLINE),
         (
             "auto_fighter_targets",
             580_326,
@@ -14716,7 +14716,10 @@ fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
     );
     assert_eq!(style.wait.arm, ARDY_FIGHTER_STRENGTH_STYLE);
     assert_eq!(style.wait.arm, Proof::VarpExact { id: 43, value: 1 });
-    assert_eq!(style.wait.budget_ticks, ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS);
+    assert_eq!(
+        style.wait.budget_ticks,
+        ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS
+    );
     let fight = &scenario.steps[start + 2];
     assert_eq!(
         fight.name,
@@ -14730,10 +14733,6 @@ fn ardy_fighter_bank_watches_the_selected_style_across_pre_style_trips() {
         }
     );
     assert_eq!(fight.wait.budget_ticks, ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS);
-    assert!(
-        ARDY_FIGHTER_BANK_STYLE_FIGHT_TICKS < ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS,
-        "a fight window is shorter than a whole trip"
-    );
     let plain = get("ardy_fighter").unwrap();
     assert!(!plain
         .steps
