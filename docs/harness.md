@@ -1,5 +1,8 @@
 # Reusable live harness
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+
 The harness runs real revision clients against your local engine for the
 bound **server profile**. It keeps scenario preparation, proof predicates
 and failure exits in Rust so preservation projects can reuse the same
