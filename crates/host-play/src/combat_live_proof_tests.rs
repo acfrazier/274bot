@@ -4976,7 +4976,11 @@ fn m0_takeover_valid(takeover: &Value) -> bool {
         && takeover["first_imp_attack"].is_object()
 }
 
-fn m0_host_log_ok(capture: &CombatCapture, expected_failures: usize) -> bool {
+/// The kept host lines: the takeover line, the Quester's root failure line
+/// exactly `expected_roots` times, and no repeat summary for it. A terminal
+/// also writes child and park lines with the same message (live off-try1);
+/// with no terminal, no line carries the message at all.
+fn m0_host_log_ok(capture: &CombatCapture, expected_roots: usize) -> bool {
     let Some(log) = m0_event(capture, "M0HostLog") else {
         return false;
     };
@@ -4984,21 +4988,21 @@ fn m0_host_log_ok(capture: &CombatCapture, expected_failures: usize) -> bool {
         .as_array()
         .map(|lines| lines.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    let repeated = |line: &&str| line.contains("(repeated ");
     let roots = lines
         .iter()
-        .filter(|line| line.contains(M0_ROOT_FAILURE))
+        .filter(|line| line.contains(M0_ROOT_FAILURE) && !repeated(line))
         .count();
-    let repeated = lines
+    let repeats = lines
         .iter()
-        .any(|line| line.contains("cancelled by user input") && line.contains("(repeated "));
+        .any(|line| line.contains("cancelled by user input") && repeated(line));
+    let any_terminal = lines
+        .iter()
+        .any(|line| line.contains("cancelled by user input"));
     log["sink_installed"] == true
-        && roots == expected_failures
-        && lines
-            .iter()
-            .filter(|line| line.contains("failed: cancelled by user input"))
-            .count()
-            == expected_failures
-        && !repeated
+        && roots == expected_roots
+        && (expected_roots > 0 || !any_terminal)
+        && !repeats
         && lines.iter().any(|line| line.contains(M0_HOST_TAKEOVER))
 }
 
@@ -5026,7 +5030,9 @@ fn m0_manual_ready(capture: &CombatCapture) -> bool {
         .is_some_and(|(now, terminal)| now >= terminal + 10);
     m0_takeover_valid(takeover)
         && takeover["setting_pause_on_manual_movement"] == false
-        && takeover["state_after"] == "Running"
+        // A Blocked native card stops its slot (`slot.rs` `stop_blocked`),
+        // so the state after the takeover may already be Idle.
+        && takeover["state_after"] != "Paused"
         && m0_event(capture, "M0Paused").is_none()
         && after[first..]
             .iter()
@@ -8204,7 +8210,8 @@ fn run_case(case: Case) {
     if case == Case::M5Stop || case.is_m0() {
         assert_eq!(
             writer.outcome, "PASS",
-            "Stop live proof: {:?}",
+            "{} live proof: {:?}",
+            case.key(),
             writer.error
         );
     }
@@ -11606,7 +11613,8 @@ fn m0_oracle_capture(paused: bool) -> CombatCapture {
         "intent_seq": {"before": 0, "after": 1},
         "slot_live_walking_operation": true,
         "host_walk_in_flight": false,
-        "state_after": if paused { "Paused" } else { "Running" },
+        // A Blocked native card stops its slot: live off-try1 read Idle.
+        "state_after": if paused { "Paused" } else { "Idle" },
         "statuses_before": 1,
     }));
     let mut lines = vec![format!(
@@ -11633,7 +11641,14 @@ fn m0_oracle_capture(paused: bool) -> CombatCapture {
             "failure": "ScriptFailure { code: \"manual-movement\", message: \"cancelled by user input\" }",
             "observed_tick": 101,
         }));
+        // The order and texts of live off-try1's host log.
+        lines.push(
+            "quester imp: stage imp:0 recipe acquire:beads child farm-imps failed: \
+             cancelled by user input"
+                .to_owned(),
+        );
         lines.push(M0_ROOT_FAILURE.to_owned());
+        lines.push("quester imp: park: cancelled by user input".to_owned());
     }
     capture.random_events.push(json!({
         "kind": "M0HostLog", "sink_installed": true, "lines": lines,
@@ -11685,6 +11700,13 @@ fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
         .random_events
         .push(json!({"kind": "M0Paused", "tick": 100}));
     assert!(!m0_manual_ready(&paused), "Pause off must not pause");
+
+    let mut paused_state = m0_oracle_capture(false);
+    m0_event_mut(&mut paused_state, "M0Takeover")["state_after"] = json!("Paused");
+    assert!(
+        !m0_manual_ready(&paused_state),
+        "Pause off must not leave the script Paused"
+    );
 
     let mut early = m0_oracle_capture(false);
     early.frames.truncate(10);
@@ -11751,4 +11773,14 @@ fn m0_paused_oracle_accepts_a_restart_and_rejects_each_bad_behaviour() {
         .unwrap()
         .push(json!(M0_ROOT_FAILURE));
     assert!(!m0_paused_ready(&logged), "a terminal trace line");
+
+    let mut child = m0_oracle_capture(true);
+    m0_event_mut(&mut child, "M0HostLog")["lines"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(
+            "quester imp: stage imp:0 recipe acquire:beads child farm-imps failed: \
+             cancelled by user input"
+        ));
+    assert!(!m0_paused_ready(&child), "a child terminal trace line");
 }
