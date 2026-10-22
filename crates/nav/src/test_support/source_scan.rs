@@ -5,13 +5,26 @@
 //!
 //! # Known limits
 //!
-//! This scanner is a test-only guard over source text. The crate graph and the
-//! architecture check provide the main enforcement. The scanner handles every
-//! item kind that can introduce a public path by modelling it or failing closed.
-//! Unknown or unmodelled re-export forms fail closed. The scanner does not model
-//! trait projections (`<X as T>::A`), macro expansion beyond `include!`, or indirect
-//! use through functions or exported macros. Thus wrapper functions and
-//! `#[macro_export]` macros that expand to denied paths are outside its contract.
+//! This scanner is a test-only guard over source text. It does not implement
+//! Rust name resolution. The crate graph and the architecture check provide the
+//! main enforcement. The scanner models the re-export forms that the real
+//! `api` and `client` trees use (named and glob `use`, module and crate aliases,
+//! `pub extern crate`, `pub mod` children, plain-path `type` aliases, `include!`)
+//! and fails closed on the item kinds and macros it does not model.
+//!
+//! It can still miss a path that goes through these forms, which the real trees
+//! do not contain:
+//! - a path step through a non-public name (`pub(crate) use`, a private or
+//!   `pub(crate)` type alias, `self::X` where `X` came from a glob import);
+//! - a multi-segment path whose first segment came from a glob import;
+//! - a nested module whose name shadows a crate-root module of the same name;
+//! - raw identifiers (`r#client`, `r#thread_local`);
+//! - value items (`const`, `static`) whose type names a denied item;
+//! - trait projections (`<X as T>::A`), macro expansion beyond `include!`, and
+//!   indirect use through functions or `#[macro_export]` macros.
+//!
+//! Review catches these forms in planner code. A compiler-resolved lint replaces
+//! this scan in nav split slice S3 (NAV-SPLIT-S1 Main's final ruling).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
