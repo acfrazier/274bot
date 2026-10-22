@@ -493,12 +493,13 @@ const VARROCK_BEAR_UNICORN: WorldTile = WorldTile {
     z: 3350,
     level: 0,
 };
-/// Seed + Start ~25s, then per cycle two 25-HP kills with looting
-/// (~45s) and a Varrock East round trip (~150 tiles, ~100s). Two
-/// cycles plus resumed combat reach ~360s; the shared 420s pattern
-/// (herblore eggs) covers the second trip. 1050 dirties at the combat
-/// cells' ~2.5/second allowance keeps the wall deadline controlling.
-const AUTO_FIGHTER_TARGETS_DEADLINE: Duration = Duration::from_secs(420);
+/// Whole-cell wall deadline. Measured live on Engine A at the 289 engine's
+/// 600 ms game tick: six passes at 189.676 s (283 game ticks), 206.892 s
+/// (313), 188.062 s (279), 188.250 s (281), 580.326 s (901) and 420.234 s
+/// (655). The largest is 580.326 s; the deadline is that plus 50% headroom,
+/// rounded up to a whole second (870.49 s -> 871 s). The per-step
+/// 1050-game-tick budgets are unchanged.
+pub(crate) const AUTO_FIGHTER_TARGETS_DEADLINE: Duration = Duration::from_secs(871);
 const AUTO_FIGHTER_TARGETS_WATCH_TICKS: u32 = 1050;
 /// AutoFighter's schema carries the shared `loadout` setting, and Start
 /// resolves it before `onStart`; with no loadout rows the resolution

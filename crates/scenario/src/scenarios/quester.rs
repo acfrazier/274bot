@@ -19,6 +19,14 @@ const SHEEP_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "quests",
     value: ScriptInjectValue::StrList(&["sheep"]),
 }];
+/// Whole-cell wall deadline for the Rune Mysteries cell only; the shared
+/// `COOK_DEADLINE` still bounds the other quester cells. Measured live on
+/// Engine A at the 289 engine's 600 ms game tick: three passes at 1015.299 s
+/// (1561 game ticks), 1017.780 s (1565) and 1013.797 s (1557). The largest is
+/// 1017.780 s; the deadline is that plus 50% headroom, rounded up to a whole
+/// second (1526.67 s -> 1527 s). The 3600-game-tick completion watch is
+/// unchanged.
+pub(crate) const RUNE_MYST_DEADLINE: Duration = Duration::from_secs(1527);
 const RUNE_MYSTERIES_SETTINGS: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "quests",
     value: ScriptInjectValue::StrList(&["runemysteries"]),
@@ -336,6 +344,7 @@ pub(crate) fn quester_rune_mysteries_scenario() -> Scenario {
         },
     );
     scenario.settings.script_settings_inject = Some(RUNE_MYSTERIES_SETTINGS);
+    scenario.settings.deadline = RUNE_MYST_DEADLINE;
     // Same bearded-dark-wizard leg as Sheep: reset, then the combat-41
     // profile whose observed guards hold Start until the posted stats prove
     // combat 41. The stand is the Path's own `start-duke` anchor

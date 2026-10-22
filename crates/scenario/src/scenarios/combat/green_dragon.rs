@@ -900,11 +900,15 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
 const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(600);
-/// Default-table loot fills more pack slots than the explicit inject sibling;
-/// measured pressure trip + return needs a longer wall; earlier runs saw about
-/// 2.5 dirty snapshots per second, not game ticks.
-const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE: Duration =
-    Duration::from_secs(720);
+/// Whole-cell wall deadline for the default-loot bank cell. Measured live on
+/// Engine A at the 289 engine's 600 ms game tick: six passes (three lifted
+/// measurement runs, then three at the interim 1641 s deadline) at 1093.660 s
+/// (1677 game ticks), 570.909 s (869), 571.446 s (871), 1044.705 s (1597),
+/// 552.207 s (839) and 1610.792 s (2475). The largest is 1610.792 s; the
+/// deadline is that plus 50% headroom, rounded up to a whole second
+/// (2416.19 s -> 2417 s). The per-step 1800-game-tick budgets are unchanged.
+pub(crate) const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE: Duration =
+    Duration::from_secs(2417);
 const GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_WATCH_TICKS: u32 = 1800;
 /// The measured GreenDragon teleport/Edgeville/return path predicts 475.2s
 /// including fresh post-return XP and route margin.
