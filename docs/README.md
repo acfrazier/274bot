@@ -40,6 +40,8 @@ headings to jump to the part you need.
 | Build it, test it and send a change | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Build from source and run the live tests | [Build from source](dev/build-from-source.md) |
 | Run it against my own game server, or learn how the cache works | [Cache and local engine](dev/cache-and-local-engine.md) |
+| Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
+| Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
 | Learn the crates and who owns what | [Architecture](architecture.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
