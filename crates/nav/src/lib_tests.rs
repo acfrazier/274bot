@@ -594,7 +594,7 @@ fn reexport_r4_type_paths_deny_local_and_external_aliases() {
              use client::io::client_prot as wire;
              pub type Generic<T> = wire::ClientProt<T>;
          }"
-            .to_owned(),
+        .to_owned(),
     )]);
     let closure = compute_deny_closure_sources(
         &[("api", &api), ("client", &client)],
@@ -641,7 +641,8 @@ fn reexport_r4_non_path_aliases_of_denied_items_fail_closed() {
                  pub type Wrapped = {ty};"
             ),
         )]);
-        let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+        let closure =
+            compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
         assert_eq!(closure.findings.len(), 1, "{ty}: {closure:#?}");
         assert_eq!(closure.findings[0].kind, FindingKind::UnsupportedReexport);
         assert_eq!(closure.findings[0].path.as_deref(), Some("api::Wrapped"));
@@ -702,8 +703,7 @@ fn reexport_r4_include_reexports_share_the_including_module() {
             "pub type Prot = crate::io::client_prot::ClientProt;".to_owned(),
         ),
     ]);
-    let closure =
-        compute_deny_closure_sources(&[("client", &files)], &["client::io::client_prot"]);
+    let closure = compute_deny_closure_sources(&[("client", &files)], &["client::io::client_prot"]);
     assert!(closure.findings.is_empty(), "{closure:#?}");
     for alias in [
         "client::facade::wire::client_prot",
@@ -721,6 +721,34 @@ fn reexport_r4_include_reexports_share_the_including_module() {
 }
 
 #[test]
+fn reexport_r4_include_parent_paths_match_physical_source_paths() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    for target in ["../shared.inc", "../../shared.inc"] {
+        let files = SourceMap::from([
+            (
+                PathBuf::from("lib.rs"),
+                format!("pub mod facade {{ include!(\"{target}\"); }}"),
+            ),
+            (
+                PathBuf::from(target),
+                "pub use client::io::client_prot as wire;".to_owned(),
+            ),
+        ]);
+        let closure =
+            compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+        assert!(closure.findings.is_empty(), "{target}: {closure:#?}");
+        assert_reexported_seed_is_denied(
+            &closure,
+            "api::facade::wire",
+            "use api::facade::wire::ClientProt;",
+            (FindingKind::UsePath, Some("api::facade::wire::ClientProt")),
+        );
+    }
+}
+
+#[test]
 fn reexport_r4_invalid_includes_fail_closed() {
     use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
     use std::path::PathBuf;
@@ -731,8 +759,7 @@ fn reexport_r4_invalid_includes_fail_closed() {
         ("include!(\"extra.rs\");", Some("include!(\"lib.rs\");")),
         ("include!(concat!(\"extra\", \".rs\"));", None),
     ] {
-        let mut files =
-            SourceMap::from([(PathBuf::from("lib.rs"), invocation.to_owned())]);
+        let mut files = SourceMap::from([(PathBuf::from("lib.rs"), invocation.to_owned())]);
         if let Some(source) = extra {
             files.insert(PathBuf::from("extra.rs"), source.to_owned());
         }
