@@ -1,321 +1,207 @@
-# Contributing
+# Contributing to 274bot
 
-274bot is in **beta**: 0.2.4 is Beta 1 (host workspace crate versions
-`0.2.4`, no crates.io publish; public release tags such as `0.1.9.1` and `0.2.0`). The host, API,
-nav execute, random-event guardian, headless TUI, panel, script kernel
-(Browse / Start / Pause / Stop / Load / Reload, fleet Start / Stop,
-catalog refresh), revision profiles, the native Quester / Gatherer /
-Sherlock cards, and the shared panel+TUI Fleet are in-tree. Catalog
-compatibility remains **partial** — unsupported helpers fail closed; do not
-treat a green unit job as full script qualification. See
-[CHANGELOG.md](CHANGELOG.md).
+> **Audience:** anyone who wants to fix a bug, add a feature or improve a doc.
+> When you finish this page you can build 274bot, run the checks CI runs, and
+> send a pull request.
 
-Beta is not turnkey public-world automation: you run a **local** engine for
-the revision you care about and select a profile from `~/.274bot/servers.json`.
-The public built-in is `rs2b2t` (`--rs2b2t` or `--profile rs2b2t`):
-WSS/HTTPS on the configured rs2b2t roster, with served login keys and a baked
-fallback. Local is the tested path; Cargo `TARGET` is the rustc triple,
-not a world switch. This is **not** Jagex and not a hosted wall — there is
-**no public-world CI** and no asset server. PRs that read like unreviewed
-model output will be rejected; the product bar is a host that does not suck.
+274bot is a Rust bot host. It is in beta, and script compatibility is partial:
+see the [CHANGELOG](CHANGELOG.md) for what works. The repository ships no game
+assets. You bring your own local Lost City engine to run it.
 
-Product docs: [README.md](README.md), [NOTICE.md](NOTICE.md),
-[FIRST-START.md](FIRST-START.md), [docs/](docs/README.md),
-[docs/architecture.md](docs/architecture.md).
+## What you can contribute
 
-Build commands, live-test runs and navigation-pack notes are in
-[docs/dev/build-from-source.md](docs/dev/build-from-source.md).
+- Bug reports, with the steps that show the bug and the version you ran.
+- Fixes and small features.
+- Tests, including live tests against a local engine.
+- Documentation. Read [Writing 274bot docs](docs/dev/writing-docs.md) first.
 
-## Prerequisites
+Discuss a change in a [GitHub issue](https://github.com/acfrazier/274bot/issues)
+before you write a large one. Open pull requests against `dev`. Read and run
+your change before you send it: a pull request that looks like unchecked
+generated output is closed. Do not describe script compatibility as complete in
+a pull request or a doc.
 
-- A **local** Lost City engine for the profile under test:
-  - `local-274`: TCP `127.0.0.1:43594`, HTTP `/crc` on `:80`
-  - `local-289`: TCP `127.0.0.1:44594`, HTTP `/crc` on `:1080`
-  This repo does not ship Jagex assets.
-- Local profiles resolve the engine root from `--engine`, `ENGINE_DIR`, then
-  `login_key.engine_dir` in `~/.274bot/servers.json`. New built-ins leave the
-  path unset; choose a root explicitly. The pack cache is
-  `$ENGINE_DIR/data/pack/client` (`--cache` overrides).
-- RSA: stock LC Server uses the **Java default pair** — no bake. Rotated
-  `private.pem` is read at login from `$ENGINE_DIR/data/config/private.pem`
-  (or `LOGIN_RSAN` / `LOGIN_RSAE`).
-- Nav pack: an ordinary build bakes and stages the selected **build-time**
-  revision’s pack and flags next to the binary
-  (`target/<profile>/nav/<revision>/`, revision **289** by default,
-  `BOT_NAV_REVISION=274` for 274), so the app boots with a bound nav world
-  and no manual step. A normal bundled-nav build needs `ENGINE_DIR`, the
-  engine checkout's `engine/` folder (or set it once under `[env]` in
-  `~/.cargo/config.toml`); set `BOT_NAV_BUILD=skip` to build without bundling. The
-  `nav-pack` CLI stays for custom bakes (`$NAV_PACK` or
-  `~/.274bot/274bot.navpack`, magic `274V`, version byte **17**; v16 and older
-  are `BadVersion`). Details:
-  [docs/api/nav.md](docs/api/nav.md).
+## Build and run
 
-## Clone and run
+1. Install [Rust through rustup](https://rustup.rs). The repository pins Rust
+   **1.98.1** in `rust-toolchain.toml`, and rustup installs it for you.
+2. On Linux, install the audio and window headers CI uses:
 
-```bash
-git clone --recurse-submodules https://github.com/acfrazier/274bot.git
-cd 274bot
-git submodule update --init
+   ```bash
+   sudo apt-get install pkg-config libasound2-dev libwayland-dev \
+     libxkbcommon-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+   ```
 
-export ENGINE_DIR=/absolute/path/to/engine
+3. Clone with the client submodule:
 
-cargo run --release -p panel --bin panel-play -- --profile local-289
-```
+   ```bash
+   git clone --recurse-submodules https://github.com/acfrazier/274bot.git
+   cd 274bot
+   ```
 
-`--release` matters: a debug `cargo run` looks frozen. Headed default is
-the wgpu GPU renderer in the client submodule; `BOT_CPU=1` is CpuPix3D.
+4. Point `ENGINE_DIR` at your local engine and run the panel:
 
-**host-play** upserts named users (missing users, including the default
-`test` user, are created with a fresh random game password).
-**panel-play** does not: an empty first-run vault stays empty until you
-Save credentials.
+   ```bash
+   export ENGINE_DIR=/absolute/path/to/engine
+   cargo run --release -p panel --bin panel-play -- --profile local-289
+   ```
 
-The vault passphrase is **never** taken from the environment or the command
-line (other users can read both, and children inherit the environment). The
-panel asks in its unlock window; `host-play` and `tui-play` ask on the
-terminal (hidden; a new vault asks twice); all three read one line from a
-pipe with `--vault-pass-stdin`. A new vault needs a non-empty passphrase after
-trimming surrounding whitespace; strength is the user's choice. An existing
-one opens with whatever passphrase it was created with, however short.
-`BOT_VAULT_PASS` and `--vault-pass` are gone (`docs/api/vault.md`).
+Always use `--release`: a debug build looks frozen. Engine setup, navigation
+data, the other programs and the live-test commands are in
+[Build from source](docs/dev/build-from-source.md).
 
-**tui-play** (`cargo run --release -p tui --bin tui-play -- --profile local-289`)
-is the headless operator panel: ratatui + crossterm, same profile flags and
-vault layout as `panel-play`, slots spawn raster Off (no GPU).
-`--live script_<name>` runs the same scenario harness as
-`panel-play --live`.
-Paired capability gold uses disposable profiles minted by the local engine;
-never substitute public accounts. Run it headlessly with
-`tui-play --profile local-289 --live script_clue_duel_3554` or
-`script_jive_kq_four`. KQ uses disposable max-stat qualification fixtures at
-the normal 600 ms tick and intentionally continues through two kills, two bank
-returns and the second descent; do not accelerate it or stop the fleet in the
-lair. The headed twin is the `panel`
-`pair_watch` example.
+## Run the checks
 
-Shared profile flags (all three binaries):
-`--profile NAME`, `--rs2b2t`, `--revision 274|289`, `--engine`, `--cache`,
-`--vault`, `--catalog`, and related overrides. `--prod` and `BOT_TARGET` are
-removed. See [server-profiles.md](docs/reference/server-profiles.md) and [FIRST-START.md](FIRST-START.md).
+Run these before you push. CI runs the same commands on every pull request. The
+client submodule has its own manifest, so the format, lint and test commands
+run twice.
 
-## Toolchain
+| Check | What it catches | Command |
+| --- | --- | --- |
+| Format | Code that `rustfmt` would change | `cargo fmt --all -- --check` |
+| Format (client) | The same, in the client | `cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check` |
+| Lint suppressions | More `#[allow]` or `#[expect]` than the saved count | `python3 -B tools/lint-ratchet/lint_ratchet.py` |
+| Clippy | Warnings; any warning fails | `cargo clippy --workspace --all-targets --no-deps -- -D warnings` |
+| Clippy (client) | The same, in the client | `cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings` |
+| Tests | Failing tests | `cargo test --workspace` |
+| Tests (client) | The same, in the client | `cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace` |
+| Architecture | A crate dependency the rules do not allow | `tools/architecture/run.sh` (on `dev`; for a release branch see below) |
 
-Rust **1.98.1** (`rust-toolchain.toml` in this repo and in
-`vendor/fr-client-rust`). GitHub Actions uses the same number, not
-`@stable`. Bump both files and both workflows together — do not
-`rustup update` into a new clippy `-D` set mid-tag.
+CI runs with `BOT_NAV_BUILD=skip` and `SKIP_GPU=1`: no navigation pack is
+bundled into the build, and tests skip the graphics adapter. Set the same on a
+machine that has no engine or GPU.
 
-## Crate layout
+`tools/architecture/run.sh` uses the same checker rules as CI on `dev`, where
+pull requests go. A `release/<version>` branch is checked against its own
+`release-<version>` rules instead; to reproduce that,
+[Architecture check in detail](docs/dev/architecture-check.md) shows how to run
+`run.sh` against a local copy of the rules at that branch.
 
-Workspace members (`Cargo.toml` `[workspace] members`):
+Some tests need a local file, such as a navigation pack. On GitHub they skip and
+print the reason. On your machine they fail and name the environment variable
+to set.
 
-| Crate | Owns |
-| --- | --- |
-| `host` | Slot loops, login queue, session pump |
-| `vault` | Encrypted (AES-256-GCM) account profiles |
-| `api` | Agent surface (snapshot → query → interact → settle) plus selected game data |
-| `host-play` | Headless CLI and the shared `Play` session core the other front ends reuse |
-| `frontend-core` | Shared panel/TUI core: fleet marks, walk grants, operator session |
-| `panel` | `panel-play`: the ImGui operator window |
-| `tui` | `tui-play`: the headless ratatui operator panel |
-| `nav` | Baked collision + transport pack, router, `Traveller::follow` |
-| `script` | Script kernel: compiled cards (Quester, Gatherer, Sherlock) and the JS isolate compat surface |
-| `scenario` | Live scenario steps, proofs and fleet-start helpers |
-| `e2e` | Native suite runner and headed/headless live twins |
+### What else CI runs
 
-`vendor/fr-client-rust` is the client submodule: a path dependency, not a
-workspace member (see Client submodule below).
+- **Clippy and test lanes for features.** CI also lints every feature build the
+  Clippy job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) lists, and
+  tests these. Run the lane for the crate you changed:
 
-## Tests
+  ```bash
+  cargo test -p script --features load --tests
+  cargo test -p script --no-default-features
+  cargo test -p host-play --features live-harness,test-support --test grinch_live
+  cargo test -p host-play --features memory-profile
+  cargo test -p host-play --features memory-profile-no-alloc --lib
+  cargo test -p host --features performance-profile
+  cargo test -p panel --features memory-profile
+  cargo test -p panel --features render-diagnostics --lib
+  cargo test -p tui --features memory-profile
+  ```
 
-**Local CI** is this checkout: host workspace and the vendored client
-workspace, same bar. Client is a path dep (not a 274bot workspace member),
-so that is two cargo manifests — not a second product. Never sets
-`LIVE=1`.
+  On Linux the panel also has a test that needs a virtual display (install
+  `xvfb`):
+  `xvfb-run -a cargo test -p panel --features memory-profile --test ime_frame`.
+- **FlatBuffer bindings.** If you change `crates/script/schema/isolate.fbs`,
+  regenerate the bindings with the `flatc` version CI pins (see `ci.yml`):
+  `flatc --rust -o crates/script/schema/generated crates/script/schema/isolate.fbs`.
+- **Architecture check.** `tools/architecture/run.sh` needs Python 3.11 or newer
+  and a pinned `rust-analyzer` on your `PATH`. A new crate dependency, feature
+  link or checker change needs a change in the separate `274bot-arch` repository,
+  which a maintainer makes. Details are in
+  [Architecture check in detail](docs/dev/architecture-check.md); the crate
+  layout is in [Architecture](docs/architecture.md).
 
-```bash
-cargo fmt --all -- --check
-cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check
-
-cargo clippy --workspace --all-targets --no-deps -- -D warnings
-cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
-
-cargo test --workspace
-cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace
-
-# Crate-graph ownership (local Python 3.11+ minimum; CI pins 3.14.8). Does
-# not replace fmt/clippy/test. The checker and the graph-creating policy
-# live in operator-owned `274bot-arch` `main`; `run.sh` is a
-# local-convenience-only runner — CI does not use it and never executes a
-# candidate-tree script. Locally it fetches the rules into a bare-Git cache
-# (`ARCH_CACHE_DIR`, default
-# `${XDG_CACHE_HOME:-$HOME/.cache}/274bot-arch`) and runs them against a
-# tree (`--root`, default the product root), reading the fine data
-# (`tools/architecture/ownership.json`, `inventories.json`,
-# `foreign_types.json`) from the checked tree. `ARCH_REPO` is a local-only
-# override taking a URL (always `main`) or a local clone (its local `HEAD`,
-# for pre-push proof); CI has no `ARCH_REPO` override.
-tools/architecture/run.sh
-tools/architecture/run.sh --root /path/to/tree
-```
-
-Crate edges are an explicit allowlist: the protected
-[`policy.toml`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
-in the operator-owned [`274bot-arch`](https://github.com/acfrazier/274bot-arch)
-repo (workspace members, edges/kinds/migrations, configuration
-feature/activation — see [docs/architecture.md](docs/architecture.md)).
-An operator commit in protected `274bot-arch` is required for a new crate
-edge (including a new target cfg or cross-crate feature request), an edge kind,
-a migration, an optional-dependency activation, a vendored path package, or a checker change.
-The operator edits `policy.toml` where needed.
-First merge current `dev` into the branch being merged.
-In the same arch commit, regenerate `graph-provenance.json` from that merged branch tree:
-`python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json`.
-Review removed records. Retain records that other active branches still need.
-The operator publishes first. Propose the edit as a patch or branch bundle.
-Agents cannot push that repo.
-Purely local features with no optional dependency or cross-crate edge, and
-ownership/inventory/foreign-type rows, need no operator commit. These fine-data
-rows are ordinary product diffs, reviewed like code. New reverse
-or convenience dependencies, workspace aliases, target tables, and unknown
-workspace members fail closed. Optional-only allows do
-not accept a required target dependency. Membership is the explicit
-`workspace.members` paths plus a root `[package]` if present; globs are
-unsupported and fail closed. Lifecycle, FlatBuffer isolate/host wire,
-last-FBO, and JS-shim policy are review requirements, not this checker.
-
-GitHub Actions runs the same two manifests after installing ALSA + X11
-headers (`libasound2-dev` — panel pulls client `audio` / cpal), plus the
-feature-gated test lanes (script `load` and V8-free `--no-default-features`,
-host `performance-profile`, host-play/panel/tui `memory-profile`, host-play
-`memory-profile-no-alloc`, panel `render-diagnostics`) and the inline
-architecture check: the step itself runs `git clone --depth 1 --branch main
-https://github.com/acfrazier/274bot-arch.git "$RUNNER_TEMP/274bot-arch"`,
-verifies the rust-analyzer binary (SHA-256
-`fd89304c85f6c1996b036ea8f2c9ad9d3e25a197dbd713661c7fe51ec9dc8e49`,
-`rust-analyzer 0.3.3081-standalone`), then runs `python3 -B
-"$checker_root/check.py" --self-test` and `python3 -B
-"$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. It never executes a
-candidate-tree script (including `tools/architecture/run.sh`) and has no
-`ARCH_REPO` override. `path-schema`, `live-harness` and `test-support` are
-exercised through the workspace test lane's feature unification. The separate
-`grinch-oracles` lane explicitly enables `live-harness,test-support` and runs
-`cargo test -p host-play --features live-harness,test-support --test grinch_live`,
-so the offline Grinch oracles do not depend on workspace feature unification.
-No CI lane runs `LIVE=1` tests. Independent test commands run as parallel matrix lanes;
-the required `test` status aggregates every lane. It is still a **subset**:
-`SKIP_GPU=1` (no adapter on those VMs) and never `LIVE=1`. A green GH job is
-not a headed or engine pass.
+CI never sets `LIVE=1`. A green CI run does not show that a bot works in the
+game: run the live tests for any change that affects behavior in the game.
 
 ## Live-test rules
 
-Live harnesses need a local engine. `-p e2e`, `null_raster` and `rss_ladder`
-connect to a **local-274** engine on `127.0.0.1:43594`; the panel/TUI `--live`
-runs and the 289-gated host-play tests use the selected profile. Failures
-print `FAIL:` and `exit(1)`. Wait `ingame && scene_state == 2`. Quiet unless
-`BOT_DEBUG=1`.
-
-- `LIVE=1` gates every ignored live test; without it, `-- --ignored` still
-  skips them. Default `cargo test` stays green with no engine running.
-- Run live tests single-threaded (`--test-threads=1`) against a throwaway
-  `HOME` (for example `HOME="$(mktemp -d)"`), so live runs never touch your
-  operator vault, profiles or cache.
-- Live twins mint per-run usernames on disposable local-engine profiles (the
-  engine auto-registers unknown accounts). Never substitute public accounts.
-- Live runs target local profiles only: `-p e2e`, `null_raster` and
-  `rss_ladder` need `local-274`; the panel/TUI `--live` runs and the
-  289-gated host-play tests use the selected profile (`local-289` for the
-  production revision). Unit tests do not verify public login.
+Live tests run real clients against a local engine. They are marked `#[ignore]`
+and run only with `LIVE=1`:
 
 ```bash
-LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
-LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
-LIVE=1 cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_nav_door
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+HOME="$(mktemp -d)" LIVE=1 cargo test -p e2e -- --ignored --test-threads=1
+HOME="$(mktemp -d)" LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 ```
 
-Ordinary `cargo test` reads no content outside the repo. The nav real-map
-qualification tests are `#[ignore]`d and need the content tree and its
-client config jag named explicitly (colon-separated, one jag per root or one
-for all); a missing input fails, never skips:
+The rules for writing one:
 
-```bash
-: "${ENGINE_DIR:?set ENGINE_DIR to the 289 engine root}"
-NAV_CONTENT_ROOT="$ENGINE_DIR/../content" \
-NAV_CACHE="$ENGINE_DIR/data/pack/client/config" \
-cargo test -p nav --lib -- --ignored
-```
+1. **Use real game content.** Never spawn the thing the code under test acts
+   on: the tree, rock, fishing spot, NPC or door. Move the account next to a
+   real one with `::tele` and let the bot do the real work.
+2. **Seed only the account's own state:** inventory, bank, stats, position and
+   quest progress. Seed a drop you need; never wait for a chance drop or event.
+3. **Set a fixed deadline** for every test. A test that runs past it fails.
+4. **Use disposable accounts on a local engine,** never a public account.
+5. **Use a throwaway `HOME`** (as above), so a test never touches your own vault
+   or profiles.
 
-Nav / panel / scenario twins live in `crates/e2e`. Login / RSS / null-raster
-twins live in `crates/host-play`. Ordered multi-case native runs:
-[docs/e2e-suite.md](docs/e2e-suite.md). Memory fleet harness:
-[docs/harness.md](docs/harness.md).
+A failing live test prints `FAIL:` and exits with status 1. The harness, the
+suite runner and the other live commands are in
+[Build from source](docs/dev/build-from-source.md#live-tests-and-suite-runner)
+and the [live harness guide](docs/harness.md).
 
-`cargo test` here does not run Fairy-Ring client integration tests.
+## The client submodule
 
-## Selected-data generation
+`vendor/fr-client-rust` is the game client. It is the
+[FR-client-bothost](https://github.com/acfrazier/FR-client-bothost) repository,
+branch `multirev-bh-modular`, checked out as a Git submodule. If it is empty,
+run `git submodule update --init`.
 
-The one entry point is `tools/game-data/generate.ts`; its verifier can run a
-single revision without requiring the other source checkout to be clean.
-Every external source root is a required environment variable — an unset
-variable fails closed and names itself, with no machine default:
+- To change the client, change that repository, then commit the new submodule
+  pointer in a 274bot pull request.
+- Do not push to `Fairy-Ring/FR-client-rust`.
+- Do not add a bot action API inside the client, and do not put 274bot crates in
+  the client repository. Packet timing and `doAction` stay as the Java client has
+  them.
+- The client has its own `README.md` and `NOTICE.md`.
 
-```bash
-export GAME_DATA_274_ENGINE=/absolute/path/to/274-engine
-export GAME_DATA_274_CONTENT=/absolute/path/to/274-content
-export GAME_DATA_289_ENGINE=/absolute/path/to/289-engine
-export GAME_DATA_289_CONTENT=/absolute/path/to/289-content
-export RS2B0T=/absolute/path/to/rs2b0t
-export GAME_DATA_274_SNAPSHOTS=/absolute/path/to/274-snapshots
-export GAME_DATA_289_SNAPSHOTS=/absolute/path/to/289-snapshots
-```
+The Rust version is pinned in `rust-toolchain.toml` here and in the client, and
+in the CI workflows. Change them together in one pull request; do not run
+`rustup update` partway through a release.
 
-```bash
-cargo build -p nav --bin cache-content-id
-bun tools/game-data/generate.test.ts
-bun tools/game-data/verify.ts --revision 289
-bun tools/game-data/generate.ts --revision 289
-```
+## Code style
 
-Both commands accept `--revision 274` too. Without a flag they attempt both
-revisions: 289 is required, while unavailable/dirty 274 is reported as
-`REFUSED` without hiding 289's result. An explicitly requested revision fails
-on refusal. Cross-pin corroboration is reported as unchecked unless both
-revisions passed. Regenerating one revision preserves the other manifest row;
-it does not claim to repair or verify that row.
+- **Typed errors.** A function that other crates call returns a typed error
+  (a `thiserror` enum), not a `String`.
+- **No `unwrap` in library code.** Tests may use it. Use `.expect("why")` only
+  for a broken invariant.
+- **`#[expect]`, not `#[allow]`.** Write `#[expect(lint, reason = "why")]`. The
+  lint ratchet check fails if the number of suppressions grows.
+- **`host_log!`, not `println!` or `eprintln!`,** in product code. It adds the
+  category, level and bot, and hides passwords. Command-line output meant for
+  a person may print.
+- **One wire between JavaScript and Rust:** FlatBuffers. Do not add JSON.
+- **`unsafe`** is only for the V8 boundary and operating-system calls. Give each
+  block a `// SAFETY:` comment.
 
-Input identity covers tracked scripts/packs/maps and engine decoder/limit
-sources, plus the ignored generated files pinned by size and SHA-256 in
-`tools/game-data/generated-inputs.json`. Those generated-input pins are tied to
-the engine/content commits; changing them is a deliberate input-pin change,
-not an automatic blessing of local generated bytes. Unknown, missing or edited
-ignored inputs refuse. Platform metadata such as `.DS_Store` is not an input.
+## Write the CHANGELOG
 
-At the typed-family cutover, `generateSelected` stages families, core and
-manifest beside the live revision directory. Nav must bind the emitted quest
-digest **and** schema; sources are rechecked before publication. A refused build
-removes staging and leaves the previous assets intact. The final manifest's
-digest is computed externally, never embedded in its own bytes.
+Add an entry under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md), in the
+section for the area you changed. Write what changed for the person who runs
+the app: what they see and what they do differently. Do not name crates, types,
+tests or commits. [Writing 274bot docs](docs/dev/writing-docs.md#changelog-entries)
+has the rules.
 
-## Client submodule
+The "Known issues" and "Not in this release" lists are generated. Add or change
+an item in [`docs/known-issues.toml`](docs/known-issues.toml), then preview the
+lists with `python3 tools/known-issues/known_issues.py render --release <next>`,
+where `<next>` is the release being developed. The `check` command compares the
+lists with a release section of the CHANGELOG, so it only works once that
+section exists, when a release is cut.
+Never edit those lists by hand.
 
-`vendor/fr-client-rust` is [acfrazier/FR-client-bothost](https://github.com/acfrazier/FR-client-bothost)
-branch **`multirev-bh-modular`**. Public surface for that tree is its own
-`README.md` / `NOTICE.md` (this is a **bot product** client, not Fairy
-Ring). Do **not** push `Fairy-Ring/FR-client-rust`. Do not add a bot
-action API inside `client`. Do not put 274bot crates in the client repo.
-Packet timing and `doAction` stay Java-shaped.
+## More developer pages
 
-Wiring `client` compiles the **lib**. `r274-modular` is the same refactor
-without bot-host hooks; `r274-bothost` is the pre-modular fork.
-
-## Scope (do not invent)
-
-No dummy tick-end opcode. No deep-copy of the world every read. No extra
-JSON JS↔Rust host wire (FlatBuffers only). Nav, the MultiBox wall, the
-random-event guardian, revision profiles, and `tui-play` are in-tree.
-Do not claim full catalog parity in product docs or PR descriptions.
+- [Build from source](docs/dev/build-from-source.md)
+- [Generate the selected game data](docs/dev/selected-data-generation.md)
+- [Architecture check in detail](docs/dev/architecture-check.md)
+- [Architecture](docs/architecture.md) and [CONTEXT.md](CONTEXT.md), the terms
+  the code uses
+- [Docs index](docs/README.md)
 
 ## License
 
-MIT ([LICENSE](LICENSE)). Attribution in [NOTICE.md](NOTICE.md).
+MIT ([LICENSE](LICENSE)). Attribution is in [NOTICE.md](NOTICE.md).
