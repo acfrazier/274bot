@@ -8,9 +8,10 @@
 //! This scanner is a test-only guard over source text. The crate graph and the
 //! architecture check provide the main enforcement. The scanner handles every
 //! item kind that can introduce a public path by modelling it or failing closed.
-//! It does not model macro expansion beyond `include!`, or indirect use through
-//! functions or exported macros. Thus wrapper functions and `#[macro_export]`
-//! macros that expand to denied paths are outside this source scan's contract.
+//! Unknown or unmodelled re-export forms fail closed. The scanner does not model
+//! trait projections (`<X as T>::A`), macro expansion beyond `include!`, or indirect
+//! use through functions or exported macros. Thus wrapper functions and
+//! `#[macro_export]` macros that expand to denied paths are outside its contract.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -114,6 +115,7 @@ struct ModuleTree {
     findings: Vec<Finding>,
     modules: BTreeSet<Vec<String>>,
     reached: HashSet<PathBuf>,
+    macro_shadows: BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,7 @@ struct Reexport {
 struct ReexportContext<'a> {
     resolution: Resolution<'a>,
     denied: &'a BTreeSet<String>,
+    macro_shadows: &'a BTreeSet<String>,
 }
 
 /// Scan all assigned Rust roots in a crate directory.
@@ -270,10 +273,10 @@ pub fn compute_deny_closure_sources(
         let tree = load_units(files, &[entry]);
         report.findings.extend(tree.findings);
         all_modules.extend(tree.modules);
-        parsed.push((*package_name, tree.units));
+        parsed.push((*package_name, tree.units, tree.macro_shadows));
     }
 
-    for (package_name, units) in &parsed {
+    for (package_name, units, macro_shadows) in &parsed {
         let top_modules = top_level_modules(&all_modules, package_name);
         let aliases = file_aliases(units, package_name, &top_modules, &all_modules);
         for unit in units {
@@ -290,6 +293,7 @@ pub fn compute_deny_closure_sources(
                         aliases: &aliases[&unit.root_file],
                     },
                     denied: &report.denied,
+                    macro_shadows,
                 },
                 &mut all_exports,
                 &mut report.findings,
@@ -412,8 +416,18 @@ pub fn compute_deny_closure_sources(
                 continue;
             }
             if export.unsupported_type {
+                // Retain the diagnostic for non-path aliases, but also deny the
+                // alias itself so downstream aliases cannot hide the capability.
+                report.denied.insert(exported_name.clone());
+                pending.push((exported_path, route.clone()));
                 let key = format!("type|{}|{exported_name}", export.file.display());
-                if expanded.insert(key) {
+                if expanded.insert(key)
+                    && !report.findings.iter().any(|finding| {
+                        finding.kind == FindingKind::UnsupportedReexport
+                            && finding.file == export.file
+                            && finding.path.as_deref() == Some(exported_name.as_str())
+                    })
+                {
                     report.findings.push(Finding {
                         kind: FindingKind::UnsupportedReexport,
                         path: Some(exported_name),
@@ -475,7 +489,10 @@ fn scan_entries(
     denied_prefixes: &[&str],
     report_unattached: bool,
 ) -> ScanReport {
-    let tree = load_units(files, entries);
+    let mut tree = load_units(files, entries);
+    // The caller declares the external crate roots that this scan guards.
+    tree.modules
+        .extend(relevant_roots.iter().map(|root| vec![(*root).to_owned()]));
     let mut report = ScanReport::default();
     report.findings.extend(tree.findings);
     let mut paths = Vec::new();
@@ -683,6 +700,7 @@ fn load_units(files: &SourceMap, entries: &[Entry]) -> ModuleTree {
         findings: Vec::new(),
         modules: BTreeSet::new(),
         reached: HashSet::new(),
+        macro_shadows: macro_shadows(files),
     };
     let mut active = HashSet::new();
     for entry in entries {
@@ -794,6 +812,16 @@ fn load_items(
             }
         } else if let Item::Macro(invocation) = item {
             if scope == Scope::Production && is_include(invocation) {
+                if macro_is_shadowed(invocation, &tree.macro_shadows) {
+                    tree.findings.push(Finding {
+                        kind: FindingKind::UnsupportedReexport,
+                        path: Some(join_path(&parent.module_path)),
+                        scope,
+                        file: parent.file.clone(),
+                        detail: "crate-local macro shadows include!".to_owned(),
+                    });
+                    continue;
+                }
                 match include_file(invocation, &parent.file) {
                     Ok(file) => load_unit(
                         files,
@@ -872,6 +900,51 @@ fn collect_include_files(
             _ => {}
         }
     }
+}
+
+fn macro_shadows(files: &SourceMap) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct Shadows(BTreeSet<String>);
+
+    impl<'ast> Visit<'ast> for Shadows {
+        fn visit_item(&mut self, item: &'ast Item) {
+            if scope_after_attrs(item_attrs(item), Scope::Production) == Scope::Test {
+                return;
+            }
+            match item {
+                Item::Macro(definition) if definition.mac.path.is_ident("macro_rules") => {
+                    if let Some(name) = &definition.ident {
+                        self.0.insert(name.to_string());
+                    }
+                }
+                Item::Use(import) => {
+                    let mut leaves = Vec::new();
+                    flatten_use_tree(&import.tree, &mut Vec::new(), &mut leaves);
+                    self.0
+                        .extend(leaves.into_iter().filter_map(|leaf| leaf.local_name));
+                }
+                _ => {}
+            }
+            syn::visit::visit_item(self, item);
+        }
+    }
+
+    let mut shadows = Shadows::default();
+    for source in files.values() {
+        if let Ok(ast) = syn::parse_file(source) {
+            shadows.visit_file(&ast);
+        }
+    }
+    shadows.0
+}
+
+fn macro_is_shadowed(invocation: &syn::ItemMacro, shadows: &BTreeSet<String>) -> bool {
+    invocation
+        .mac
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| shadows.contains(&segment.ident.to_string()))
 }
 
 fn module_file(
@@ -1115,7 +1188,13 @@ fn collect_alias_specs(
                         .as_ref()
                         .map(|(_, name)| name.to_string())
                         .unwrap_or_else(|| item_extern.ident.to_string()),
-                    target: vec![item_extern.ident.to_string()],
+                    // The empty root marks an explicit extern-crate declaration.
+                    // It must not resolve back through its own local alias.
+                    target: if item_extern.ident == "self" {
+                        vec!["crate".to_owned()]
+                    } else {
+                        vec![String::new(), item_extern.ident.to_string()]
+                    },
                     module_path: module_path.to_vec(),
                     scope,
                 });
@@ -1127,13 +1206,37 @@ fn collect_alias_specs(
                     collect_alias_specs(nested, &child, scope, output);
                 }
             }
-            _ => {}
+            _ => {
+                let name = match item {
+                    Item::Const(item) => Some(&item.ident),
+                    Item::Enum(item) => Some(&item.ident),
+                    Item::Fn(item) => Some(&item.sig.ident),
+                    Item::Static(item) => Some(&item.ident),
+                    Item::Struct(item) => Some(&item.ident),
+                    Item::Trait(item) => Some(&item.ident),
+                    Item::TraitAlias(item) => Some(&item.ident),
+                    Item::Type(item) => Some(&item.ident),
+                    Item::Union(item) => Some(&item.ident),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let mut target = vec!["crate".to_owned()];
+                    target.extend(module_path.iter().skip(1).cloned());
+                    target.push(name.to_string());
+                    output.push(AliasSpec {
+                        local_name: name.to_string(),
+                        target,
+                        module_path: module_path.to_vec(),
+                        scope,
+                    });
+                }
+            }
         }
     }
 }
 
-// Included files share imports with their module. Keep independent Cargo roots
-// separate, even when they use the same package name and module path.
+// Included files share imports and declarations with their module. Keep
+// independent Cargo roots separate, even with the same package and module path.
 fn file_aliases(
     units: &[Unit],
     package_name: &str,
@@ -1169,6 +1272,7 @@ fn resolve_alias_specs(
     let mut aliases: AliasMap = HashMap::new();
     let passes = specs.len().saturating_add(1).max(1);
     for _ in 0..passes {
+        let mut changed = false;
         for spec in specs {
             for target in resolve_path(
                 &spec.target,
@@ -1182,7 +1286,7 @@ fn resolve_alias_specs(
                 },
                 0,
             ) {
-                aliases
+                changed |= aliases
                     .entry((
                         spec.module_path.clone(),
                         spec.local_name.clone(),
@@ -1191,6 +1295,9 @@ fn resolve_alias_specs(
                     .or_default()
                     .insert(target);
             }
+        }
+        if !changed {
+            break;
         }
     }
     aliases
@@ -1211,6 +1318,9 @@ fn resolve_path(
     } = resolution;
     if raw.is_empty() || depth > 16 {
         return Vec::new();
+    }
+    if raw[0].is_empty() {
+        return vec![raw[1..].to_vec()];
     }
     let mut first = 0;
     let mut base = module_path.to_vec();
@@ -1260,13 +1370,14 @@ fn resolve_path(
                 depth + 1,
             ));
         }
-        if !resolved.is_empty() {
-            return resolved;
-        }
+        return resolved;
     }
 
-    if leading == package_name || top_modules.contains(leading) {
-        let mut path = if leading == package_name {
+    if leading == package_name
+        || top_modules.contains(leading)
+        || modules.contains(&vec![leading.clone()])
+    {
+        let mut path = if leading == package_name || modules.contains(&vec![leading.clone()]) {
             raw.to_vec()
         } else {
             let mut path = vec![package_name.to_owned()];
@@ -1285,7 +1396,68 @@ fn resolve_path(
         }
     }
 
-    vec![raw.to_vec()]
+    if raw.len() > 1 || is_prelude_name(leading) {
+        vec![raw.to_vec()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn is_prelude_name(name: &str) -> bool {
+    matches!(
+        name,
+        "bool"
+            | "char"
+            | "str"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+            | "Box"
+            | "Vec"
+            | "String"
+            | "Option"
+            | "Result"
+            | "Send"
+            | "Sync"
+            | "Sized"
+            | "Unpin"
+            | "Copy"
+            | "Clone"
+            | "Drop"
+            | "Fn"
+            | "FnMut"
+            | "FnOnce"
+            | "IntoIterator"
+            | "Iterator"
+            | "DoubleEndedIterator"
+            | "ExactSizeIterator"
+            | "Extend"
+            | "FromIterator"
+            | "From"
+            | "Into"
+            | "TryFrom"
+            | "TryInto"
+            | "AsRef"
+            | "AsMut"
+            | "Default"
+            | "Eq"
+            | "PartialEq"
+            | "Ord"
+            | "PartialOrd"
+            | "ToOwned"
+            | "ToString"
+    )
 }
 
 struct PathCollector<'a> {
@@ -1314,6 +1486,15 @@ impl PathCollector<'_> {
 
     fn record_path(&mut self, raw: &[String], kind: PathKind, scope: Scope) {
         let paths = resolve_path(raw, &self.module_path, scope, self.resolution(), 0);
+        if paths.is_empty() && matches!(kind, PathKind::Use | PathKind::Glob) {
+            self.findings.push(Finding {
+                kind: FindingKind::UnsupportedReexport,
+                path: Some(join_path(raw)),
+                scope,
+                file: self.file.to_path_buf(),
+                detail: "import target does not resolve to a known item or extern crate".to_owned(),
+            });
+        }
         for path in paths {
             let rendered = join_path(&path);
             self.paths.push(SourcePath {
@@ -1350,6 +1531,15 @@ impl PathCollector<'_> {
 
     fn record_glob(&mut self, raw: &[String], scope: Scope) {
         let paths = resolve_path(raw, &self.module_path, scope, self.resolution(), 0);
+        if paths.is_empty() {
+            self.findings.push(Finding {
+                kind: FindingKind::UnsupportedReexportGlob,
+                path: Some(format!("{}::*", join_path(raw))),
+                scope,
+                file: self.file.to_path_buf(),
+                detail: "glob target does not resolve to a known item or extern crate".to_owned(),
+            });
+        }
         for path in paths {
             let rendered = join_path(&path);
             self.paths.push(SourcePath {
@@ -1840,25 +2030,89 @@ fn parse_grouped_use(prefix: &[String], group: &proc_macro2::Group) -> syn::Resu
 struct TypeAliasPaths {
     paths: Vec<Vec<String>>,
     opaque: bool,
+    parameters: BTreeSet<String>,
 }
 
 impl<'ast> Visit<'ast> for TypeAliasPaths {
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        self.paths.push(
-            path.segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect(),
-        );
+        let raw: Vec<_> = path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect();
+        if !raw
+            .first()
+            .is_some_and(|name| self.parameters.contains(name))
+        {
+            self.paths.push(raw);
+        }
         syn::visit::visit_path(self, path);
     }
 
     fn visit_type(&mut self, ty: &'ast syn::Type) {
         match ty {
-            syn::Type::Macro(_) | syn::Type::Verbatim(_) => self.opaque = true,
-            _ => syn::visit::visit_type(self, ty),
+            syn::Type::Array(_)
+            | syn::Type::BareFn(_)
+            | syn::Type::Group(_)
+            | syn::Type::ImplTrait(_)
+            | syn::Type::Never(_)
+            | syn::Type::Paren(_)
+            | syn::Type::Path(_)
+            | syn::Type::Ptr(_)
+            | syn::Type::Reference(_)
+            | syn::Type::Slice(_)
+            | syn::Type::TraitObject(_)
+            | syn::Type::Tuple(_) => syn::visit::visit_type(self, ty),
+            _ => self.opaque = true,
         }
     }
+
+    fn visit_generic_argument(&mut self, argument: &'ast syn::GenericArgument) {
+        match argument {
+            syn::GenericArgument::Lifetime(_)
+            | syn::GenericArgument::Type(_)
+            | syn::GenericArgument::Const(_)
+            | syn::GenericArgument::AssocType(_)
+            | syn::GenericArgument::AssocConst(_)
+            | syn::GenericArgument::Constraint(_) => {
+                syn::visit::visit_generic_argument(self, argument);
+            }
+            _ => self.opaque = true,
+        }
+    }
+
+    fn visit_type_param_bound(&mut self, bound: &'ast syn::TypeParamBound) {
+        match bound {
+            syn::TypeParamBound::Trait(_) | syn::TypeParamBound::Lifetime(_) => {
+                syn::visit::visit_type_param_bound(self, bound);
+            }
+            _ => self.opaque = true,
+        }
+    }
+
+    fn visit_macro(&mut self, _mac: &'ast syn::Macro) {
+        self.opaque = true;
+    }
+}
+
+fn reexport_targets(
+    raw: &[String],
+    module_path: &[String],
+    file: &Path,
+    resolution: Resolution<'_>,
+    findings: &mut Vec<Finding>,
+) -> Vec<Vec<String>> {
+    let targets = resolve_path(raw, module_path, Scope::Production, resolution, 0);
+    if targets.is_empty() {
+        findings.push(Finding {
+            kind: FindingKind::UnsupportedReexport,
+            path: Some(join_path(raw)),
+            scope: Scope::Production,
+            file: file.to_path_buf(),
+            detail: "public target does not resolve to a known item or extern crate".to_owned(),
+        });
+    }
+    targets
 }
 
 fn collect_reexports(
@@ -1880,9 +2134,13 @@ fn collect_reexports(
                 let mut leaves = Vec::new();
                 flatten_use_tree(&item_use.tree, &mut Vec::new(), &mut leaves);
                 for leaf in leaves {
-                    for target in
-                        resolve_path(&leaf.path, module_path, scope, context.resolution, 0)
-                    {
+                    for target in reexport_targets(
+                        &leaf.path,
+                        module_path,
+                        file,
+                        context.resolution,
+                        findings,
+                    ) {
                         let name = leaf.local_name.clone().or_else(|| target.last().cloned());
                         if let Some(name) = name {
                             output.push(Reexport {
@@ -1917,36 +2175,29 @@ fn collect_reexports(
                 });
             }
             Item::Type(alias) if matches!(&alias.vis, Visibility::Public(_)) => {
-                let mut paths = TypeAliasPaths::default();
+                let mut paths = TypeAliasPaths {
+                    parameters: alias
+                        .generics
+                        .params
+                        .iter()
+                        .filter_map(|parameter| match parameter {
+                            syn::GenericParam::Type(parameter) => Some(parameter.ident.to_string()),
+                            syn::GenericParam::Const(parameter) => {
+                                Some(parameter.ident.to_string())
+                            }
+                            syn::GenericParam::Lifetime(_) => None,
+                        })
+                        .collect(),
+                    ..TypeAliasPaths::default()
+                };
                 let plain = matches!(&*alias.ty, syn::Type::Path(path) if path.qself.is_none());
-                if let syn::Type::Path(path) = &*alias.ty {
-                    if plain {
-                        paths.paths.push(
-                            path.path
-                                .segments
-                                .iter()
-                                .map(|segment| segment.ident.to_string())
-                                .collect(),
-                        );
-                    } else {
-                        paths.visit_type(&alias.ty);
-                    }
-                } else {
-                    paths.visit_type(&alias.ty);
-                }
-                if paths.opaque {
-                    let mut path = module_path.to_vec();
-                    path.push(alias.ident.to_string());
-                    findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexport,
-                        path: Some(join_path(&path)),
-                        scope,
-                        file: file.to_path_buf(),
-                        detail: "public type alias contains an unmodelled type form".to_owned(),
-                    });
-                }
+                paths.visit_type(&alias.ty);
+                paths.visit_generics(&alias.generics);
+                let mut unresolved = paths.opaque;
                 for path in paths.paths {
-                    for target in resolve_path(&path, module_path, scope, context.resolution, 0) {
+                    let targets = resolve_path(&path, module_path, scope, context.resolution, 0);
+                    unresolved |= targets.is_empty();
+                    for target in targets {
                         output.push(Reexport {
                             owner: module_path.to_vec(),
                             name: alias.ident.to_string(),
@@ -1956,6 +2207,18 @@ fn collect_reexports(
                             file: file.to_path_buf(),
                         });
                     }
+                }
+                if unresolved {
+                    let mut path = module_path.to_vec();
+                    path.push(alias.ident.to_string());
+                    findings.push(Finding {
+                        kind: FindingKind::UnsupportedReexport,
+                        path: Some(join_path(&path)),
+                        scope,
+                        file: file.to_path_buf(),
+                        detail: "public type alias contains an unknown or unmodelled type"
+                            .to_owned(),
+                    });
                 }
             }
             Item::Macro(invocation) => {
@@ -1968,8 +2231,8 @@ fn collect_reexports(
                     .collect();
                 let thread_local = path == ["thread_local"] || path == ["std", "thread_local"];
                 if invocation.ident.is_none()
-                    && !is_include(invocation)
-                    && !thread_local
+                    && (!(is_include(invocation) || thread_local)
+                        || macro_is_shadowed(invocation, context.macro_shadows))
                     && !is_denied(&join_path(module_path), context.denied)
                 {
                     findings.push(Finding {
