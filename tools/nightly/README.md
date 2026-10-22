@@ -124,6 +124,10 @@ cache writes cannot race per-lane cleanup.
     session-logs/     logs tui-play wrote under its throwaway HOME
     evidence/         LIVE_EVIDENCE_DIR captures, when the cell writes any
   panel-cells/<cell>/ one panel-play cell; stdout.log replaces tty.log
+  cells-latency/<band>/<cell>/  one latency-lane cell, when the lane is on.
+                      The same files as a tui cell, plus latency.json
+  latency/<band>/     one band proxy: proxy-stats.jsonl (one record per
+                      connection), proxy.log and proxy-ready.txt
   lanes/<lane>/       one CI lane: result.json (exit code, summed test counts,
                       failed test names) and cargo.log
   SHA256SUMS          source hashes for run files, written before DONE
@@ -147,7 +151,9 @@ Results:
 
 Every row has `platform`, `branch`, `commit` and `job` in the summary metadata;
 cell rows also have `frontend` (`tui` or `panel`) and `renderer` (`cpu` for
-`BOT_CPU=1`, `gpu`). Every summary has `os` and `host` as well.
+`BOT_CPU=1`, `gpu`). Every summary has `os` and `host` as well. A latency row
+adds `latency_band`, `latency_rtt_ms` and `latency_class`. A zero-latency row
+never has those keys. See [Latency lane](#latency-lane).
 
 ## Run one night by hand
 
@@ -630,6 +636,104 @@ the guest stops the lane. `sudo systemctl stop
 274bot-nightly.service` stops tonight's run. On the review machine,
 `launchctl bootout gui/$(id -u)/local.274bot-nightly-274-pull`
 stops the pull.
+
+## Latency lane
+
+The latency lane runs 13 cells again behind a fixed network delay. It answers
+one question: does a cell that passes on a local engine still pass at a real
+round-trip time? The lane reports only. It never gates a merge or a release.
+
+The lane is off by default. A night with no latency settings writes the same
+summary files as a runner without the lane. Two switches turn it on:
+
+- `NIGHTLY_LATENCY_BANDS=50,100,150` in the host settings file, or
+- `--latency-bands 50,100,150` on a hand run. An empty value turns it off.
+
+Each band is a round-trip time in ms. The proxy delays each direction by one
+half of the band: 25, 50 and 75 ms. The lane has no jitter band.
+
+What runs:
+
+- Branch: `NIGHTLY_LATENCY_BRANCH`, default `dev`. Job: main only. Frontend:
+  `tui-play` only. The quest job never runs the lane.
+- Cells: [`cells-latency.conf`](cells-latency.conf), or the file in
+  `NIGHTLY_LATENCY_CELLS_FILE`. A name outside the catalog fails the run. A
+  `quester_*` name fails the run. `--cells` narrows the latency set too, so a
+  hand run keeps the same cells at zero and at each band.
+- Order: after the tui step, with the same build. The step deadline is
+  `NIGHTLY_LATENCY_DEADLINE_S`, default 3600 s. The night deadline and
+  `MAC-QUIET.lock` bind latency cells exactly as they bind main cells.
+- One [`latency_proxy.py`](latency_proxy.py) process per band. The proxy
+  binds a free loopback port. It needs no privilege. It changes no host
+  network setting. The runner stops it by its recorded PID at the band end.
+- Endpoint: the cell gets the proxy port as its game port and the real engine
+  HTTP port as its asset port. Remote mode uses the `--host`/`--port` flags.
+  Local mode writes the proxy endpoint into the cell HOME `servers.json`.
+  The HTTP cache path stays direct in both modes.
+- Accounts: one name prefix per band. The job prefix plus the band digits
+  fills the mint limit of 4 characters: `nt50` at rtt50, `n100` at rtt100.
+
+The proxy reads the first byte of each connection. Byte 14 is a game login.
+It takes the delayed path. Byte 15 is the OnDemand update socket, which
+shares the game port. It takes a direct path with no queue delay. Any other
+byte takes the delayed path. Each direction has one FIFO queue, so byte order
+cannot change. A full queue (4 MiB) closes that one connection. The proxy
+never drops bytes and continues.
+
+Fail closed: a band cell is `UNAVAILABLE` when the proxy does not start in
+10 s, when the proxy process exits, or when a probe connection through the
+proxy cannot reach the engine. After the cell, the runner checks the
+measured median queue delay from the proxy stats. A median more than 10 ms
+from the configured one-way delay rewrites the row to `UNAVAILABLE`. A PASS
+with no delayed connection in its stats gets the same rewrite. The row class
+for each such row is `proxy-unavailable`.
+
+Each band row gets a class from a script, never from prose:
+
+| Zero result | Band result | `latency_class` |
+|---|---|---|
+| `PASS` | `PASS` | `pass` |
+| `PASS` | `FAIL`, `TIMEOUT` or `ERROR` | `latency-defect` |
+| `FAIL`, `TIMEOUT` or `ERROR` | any | `also-fails-at-0` |
+| `UNAVAILABLE`, `NOT_RUN`, `SKIP` or absent | any | `no-baseline` |
+| any | proxy health failed | `proxy-unavailable` |
+| `PASS` | `NOT_RUN` or `SKIP` | `not-run` |
+| `PASS` | `UNAVAILABLE`, not from the proxy | `unavailable` |
+
+A `latency-defect` row goes through the normal classify-first step (product,
+oracle, fixture, interference). It gets no automatic rerun.
+
+Output: `summary.md` gains a cell-by-band matrix after the tui table. The
+main counts still describe the zero run only. `summary.json` gains
+`latency_counts` by class, `latency_cells` rows, and a `latency` object with
+the proxy hash, the bands and the per-band measurements. Each cell folder
+holds `latency.json`: the band, the configured delays, the proxy identity,
+the measured per-direction queue-delay p50 and p95 for that cell window, the
+median first-login response time, connection counts by first byte, the
+frontend hash and the account prefix. Proxy records that open before the
+band cells start (the health probe) never count toward a cell. Cells in one
+band share one proxy, so per-cell measurements hold the connections that
+opened inside that cell's wall window.
+
+Enable it on malbec (orchestrator only, never during a run):
+
+1. Update the runner checkout to a commit with this lane:
+   `git -C /srv/nightly/runner pull --ff-only`.
+2. Add `NIGHTLY_LATENCY_BANDS=50,100,150` to `/etc/274bot-nightly.env`. The
+   service reads that file through `EnvironmentFile`. Change no timer and no
+   service file.
+3. Dry-check the cell list first:
+   `python3 /srv/nightly/runner/tools/nightly/run_nightly.py --list --tree /srv/nightly/runner --latency-bands 50,100,150`.
+   The last lines name the 13 cells and the 3 bands. An unknown name makes
+   the command exit 1.
+4. Optional hand run of two cells at one band, as user `bot` outside the
+   unit (same shape as "Run one night by hand"), from `/srv/nightly`:
+   `PATH=$HOME/.cargo/bin:$PATH python3 runner/tools/nightly/run_nightly.py --branch dev --cells walk,bank_v2_ts --latency-bands 150`.
+   Read `measured` in each `latency.json`. The p50 values must sit within
+   10 ms of 75 ms.
+
+Tests: `python3 -B tools/nightly/test_latency_proxy.py` for the proxy,
+`python3 -B tools/nightly/test_run_nightly.py` for the runner.
 
 ## Windows nightly
 
