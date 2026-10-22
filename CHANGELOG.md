@@ -10,6 +10,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Scripts may pass an item ID to `Bank.withdrawLoad`.
 - `Bank.withdrawLoad` now returns false when the bank has no matching item,
   even when the pack is full. Release 0.2.4 returned true.
+- Script paint: scripts that use the standard paint-controls helper now show
+  working Pause/Resume and Stop buttons. Resume remains available while
+  paused. The panel and TUI use the same controls.
+- Starting a script now stops at once with a clear message when the saved
+  loadout list it needs is empty, or when a script file it depends on is
+  missing. Other start problems are still retried.
+- Ground-item interactions keep the selected item ID through dispatch. Items
+  with the same name on one tile, such as Halloween masks, no longer substitute
+  for the selected type. Requests without an ID retain name-and-tile lookup.
+  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
+  retain the selected row's ID.
+- Exact ground Take actions settle from inventory and ground evidence within
+  four later observed game ticks after dispatch. Lost races do not penalize
+  the item tile. Native scripts can report confirmed progress and wait for
+  relevant evidence without disabling scheduler or connection checks.
+- Native ground-item selections reject more than 32 IDs, so later items
+  cannot bypass the selected-ID exclusion bitset.
+- Grinch is a native Gathering card that collects selected visible holiday
+  items around its Start tile. All 18 base choices default on. Set a radius
+  from 1 through 16 tiles, use the nearest reachable or a named bank, and
+  deposit only selected items before returning to the exact Start tile.
+  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  item until the next Start. Saved settings apply on the next Start.
+- Grinch uses the player's network tile, not the rendered tile, for its Start
+  tile and return arrival. A confirmed walking arrival no longer fails while
+  the rendered player catches up.
+- Native script failures keep their stop reason visible in the TUI status
+  pane after the run stops. This includes Grinch stopping with a full pack
+  that contains no selected item to deposit.
 
 ### Banking
 
@@ -133,12 +162,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
   through the same command path as the panel.
 
-### Scripts
-
-- Script paint: scripts that use the standard paint-controls helper now show
-  working Pause/Resume and Stop buttons. Resume remains available while
-  paused. The panel and TUI use the same controls.
-
 ### Map baking
 
 - Resuming an interrupted local map bake on Windows now repairs a damaged
@@ -176,43 +199,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   If you use a map pack you baked yourself, rebake it before use with
   `cargo run -p nav --bin nav-pack`.
 
-### Navigation checks
-
 - The built-in Elkoy and rune-essence navigation checks start beside the
   transport NPC and seed only their required quest. They no longer start
   transport checks while unrelated quest rewards still run.
-
-### Scripts
-
-- Starting a script now stops at once with a clear message when the saved
-  loadout list it needs is empty, or when a script file it depends on is
-  missing. Other start problems are still retried.
-
-### Scripts
-
-- Ground-item interactions keep the selected item ID through dispatch. Items
-  with the same name on one tile, such as Halloween masks, no longer substitute
-  for the selected type. Requests without an ID retain name-and-tile lookup.
-  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
-  retain the selected row's ID.
-- Exact ground Take actions settle from inventory and ground evidence within
-  four later observed game ticks after dispatch. Lost races do not penalize
-  the item tile. Native scripts can report confirmed progress and wait for
-  relevant evidence without disabling scheduler or connection checks.
-- Native ground-item selections reject more than 32 IDs, so later items
-  cannot bypass the selected-ID exclusion bitset.
-- Grinch is a native Gathering card that collects selected visible holiday
-  items around its Start tile. All 18 base choices default on. Set a radius
-  from 1 through 16 tiles, use the nearest reachable or a named bank, and
-  deposit only selected items before returning to the exact Start tile.
-  Empty waits stay visible as Waiting; duplicate refusals exclude only that
-  item until the next Start. Saved settings apply on the next Start.
-- Grinch uses the player's network tile, not the rendered tile, for its Start
-  tile and return arrival. A confirmed walking arrival no longer fails while
-  the rendered player catches up.
-- Native script failures keep their stop reason visible in the TUI status
-  pane after the run stops. This includes Grinch stopping with a full pack
-  that contains no selected item to deposit.
 
 ### Fixed during development
 
@@ -275,7 +264,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Game-tick counts now advance only for applied `PLAYER_INFO` packets;
   unrelated player-family invalidations no longer inflate scenario receipts.
 - The Gatherer lifecycle check accepts planned restarts only at the measured
-  ten-bot size. Other sizes fail with `restart_bound_unmeasured`.
+  ten-bot size. Other sizes fail with a message that the restart limit was not measured for that size.
   An observation that ends during a planned Stop records the qualified
   stopped state instead of an unfinished qualification.
 
@@ -285,8 +274,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   The first is the last player tile before the event. The second is the tile
   from the first snapshot that shows the tool change or event message. This
   covers events that run before or after movement in the same tick. Distance
-  zero is valid because `MAP_FINDSQUARE` returns its input coordinate when no
-  ring tile qualifies (`ServerOps.ts:328-331`).
+  zero is valid because the tile search returns its input coordinate when no
+  ring tile qualifies.
   When adjacent inventory snapshots identify one removed tool, the Gatherer
   selects that tool's exact head. Otherwise, it selects only a new head of
   the same kind. It waits three observed game ticks for a delayed head.
