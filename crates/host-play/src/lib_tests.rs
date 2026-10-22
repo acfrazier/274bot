@@ -31134,6 +31134,22 @@ export default class T extends LoopingBot {
             quest_family: Some(family),
             ..TransportGraph::default()
         };
+        // Resource selection needs observed zone data. This synthetic world
+        // has no danger zones, rather than an unavailable zone table.
+        graph.zones = Some(
+            nav::zones::ZoneTable::from_parts(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                origin,
+                width as u32,
+                height as u32,
+                &graph.wilderness,
+            )
+            .expect("empty danger zones fit the synthetic Gatherer world"),
+        );
         graph.at.entry(from).or_default().push(0);
         graph.edges.push(edge);
         Arc::new(NavWorld::from_parts(
