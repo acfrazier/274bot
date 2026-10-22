@@ -189,20 +189,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   pane after the run stops. This includes Grinch stopping with a full pack
   that contains no selected item to deposit.
 
-### Not in this release
-
-- When Grinch banks, it uses the shared bank trip, which still waits up to a
-  fixed time for some bank steps. These waits are planned to become game-timed.
-- A bot can't get through a door that another player closes again on every
-  tick, when that player's moves are handled before the bot's. The bot tries
-  the door until its retries run out and then stops at the door. Finding
-  another way around, changing worlds when allowed, and a clear "door held
-  shut" result are planned for 0.2.6.
-- Sherlock was meant to be a native clue solver. In practice it runs on the
-  clue machine ported for rs2b0t clue scripts, so it is available only in
-  builds that include the JS script runtime (every release build does). A
-  native clue solver is planned.
-
 ### Fixed during development
 
 #### Startup and saved state
