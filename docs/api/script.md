@@ -22,7 +22,7 @@ Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
 written on the first successful catalog parse). Scripts run on whatever
-world the bound **server profile** logged into (see [README.md](../../README.md)).
+world the bound **server profile** logged into (see [server-profiles.md](../reference/server-profiles.md)).
 
 Compatibility is **partial**. Unsupported helpers and options fail
 explicitly. Do not treat runner PASS, a single live gold, or a historical
