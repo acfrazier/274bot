@@ -3004,20 +3004,16 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
     const FLAGS_SHA256: &str = "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a";
     const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
     use sha2::Digest as _;
-    let Some(pack) = script::ctx::test_support::local_asset_path(
+    let pack = script::ctx::test_support::local_asset_path(
         "WORLD_NAV_PACK",
         "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
         "reviewed real 289 navpack",
-    ) else {
-        return None;
-    };
-    let Some(snapshot_root) = script::ctx::test_support::local_asset_path(
+    )?;
+    let snapshot_root = script::ctx::test_support::local_asset_path(
         "BOT_NAV_SNAPSHOT_ROOT",
         "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
         "decoded 289 cache snapshot root",
-    ) else {
-        return None;
-    };
+    )?;
 
     let pack_manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),

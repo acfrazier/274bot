@@ -37,9 +37,6 @@ const COMPANION_LOGIN_OFFSET: Duration = Duration::from_millis(250);
 const COMPANION_ATTEMPT_MAX_DELAY: Duration = Duration::from_millis(750);
 const PRIMARY_LOGIN_IMMEDIATE_MAX_DELAY: Duration = Duration::from_millis(250);
 const PRIMARY_RELEASE_MIN_DELAY: Duration = Duration::from_millis(1_100);
-const ENGINE_A_DIR: &str = "/srv/dev/experiments/lostcity-289/engine";
-const ENGINE_A_NAV_PACK: &str =
-    "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
 
 #[derive(Debug, Clone)]
 struct Observation {
