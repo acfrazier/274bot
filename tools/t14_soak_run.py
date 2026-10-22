@@ -348,9 +348,20 @@ def main() -> int:
         features = "live-harness,test-support"
         if args.mode == "candidate":
             features += ",soak-observers"
-        test_command = ["cargo", "test", "--release", "--locked", "-p", "host-play",
-                        "--features", features, "--test", "t14_soak_live",
-                        "t14_local_wss_soak", "--", "--ignored", "--nocapture", "--test-threads=1"]
+        cargo_test = ["cargo", "test", "--release", "--locked", "-p", "host-play",
+                      "--features", features, "--test", "t14_soak_live"]
+        # The game trusts only this run's private CA. Build tools must still
+        # use the host trust store to fetch uncached release dependencies.
+        build_env = env.copy()
+        build_env.pop("SSL_CERT_FILE", None)
+        build_env.pop("SSL_CERT_DIR", None)
+        with (output / "prebuild.log").open("x", encoding="utf-8") as build_log:
+            build = subprocess.run([*cargo_test, "--no-run"], cwd=repo, env=build_env,
+                                   stdout=build_log, stderr=subprocess.STDOUT)
+        if build.returncode != 0:
+            raise RuntimeError(f"release harness prebuild exited {build.returncode}; see prebuild.log")
+        test_command = [*cargo_test, "t14_local_wss_soak", "--", "--ignored",
+                        "--nocapture", "--test-threads=1"]
         result = sample_cohort(test_command, repo, env, output,
                                config["run"]["sample_seconds"])
         nav_identity = {
