@@ -586,7 +586,8 @@ impl JsLibrary {
             }
             Err(
                 crate::StartLoadError::Waiting(diagnostic)
-                | crate::StartLoadError::Refused(diagnostic),
+                | crate::StartLoadError::Refused(diagnostic)
+                | crate::StartLoadError::NoLoadouts(diagnostic),
             ) => Err(diagnostic),
         }
     }

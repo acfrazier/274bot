@@ -1662,6 +1662,7 @@ mod tests {
                 snapshot: Some(&self.snapshot),
                 obj_names: self.names.as_ref(),
                 compiled: crate::CompiledTick {
+                    walk_danger: None,
                     selected,
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
@@ -1939,6 +1940,7 @@ mod tests {
         let snapshot = api::snapshot::SnapshotView::new(host.snapshot, evidence);
         let eligible = !host.compiled.hold;
         let mut native = NativeTick {
+            walk_danger: None,
             state: None,
             service_authority: None,
             prompt_port: None,
@@ -1953,6 +1955,7 @@ mod tests {
                 active_now: Duration::from_millis(tick.saturating_mul(600)),
                 wall_now: Instant::now(),
                 ledger,
+                pending_note_progress: None,
                 budget: &mut budget,
                 eligible,
             },
@@ -2265,6 +2268,7 @@ mod tests {
         for timed_out in [false, true] {
             let failure = clue_walk_receipt_failure(
                 crate::native::WalkReceipt {
+                    goal: None,
                     request_id: 1,
                     evidence: api::quest_progress::EvidenceStamp {
                         run: RunKey {
@@ -2666,6 +2670,7 @@ mod tests {
                 "x": 9,
                 "z": 8,
                 "level": 1,
+                "id": 995,
                 "name": "Reward casket (easy)",
                 "action": "Take",
             }),
@@ -2775,6 +2780,7 @@ mod tests {
                     x: 9,
                     z: 8,
                     level: 1,
+                    id: Some(995),
                     name: Some("Reward casket (easy)".into()),
                     action: "Take".into(),
                 },

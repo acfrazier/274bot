@@ -16,7 +16,7 @@
 //! requires no death, no failed-event teleport, a released hold and fresh
 //! activity XP after the event resolved (the run continues).
 //!
-//! The judgement is a pure function of per-tick [`Frame`]s, so the oracle is
+//! The judgement is a pure function of per-game-tick [`Frame`]s, so the oracle is
 //! unit-tested in both directions without a client.
 
 use api::obj_names::ObjNames;
@@ -42,32 +42,32 @@ const STRENGTH_STAT: i32 = 2;
 const HITPOINTS_STAT: i32 = 3;
 
 /// Game ticks an installed `::skill_macro_event` takes to answer. The
-/// debugproc answers on the tick it runs (a busy player gets the busy reply
+/// debugproc answers on the game tick it runs (a busy player gets the busy reply
 /// instead); silence means the engine has no such debugproc
 /// (`ClientCheatHandler.ts` returns without a reply).
 const ACK_TICKS: u32 = 10;
 /// Game ticks from an accepted send to the event's first observable sign.
-/// The general spawner adds the NPC on the same tick
+/// The general spawner adds the NPC on the same game tick
 /// (`macro_events.rs2` `~macro_event_general_spawn`); the old man's trap
-/// events teleport after `p_delay(1)`; the strange box arrives after two.
+/// events teleport after `p_delay(1)`; the strange box arrives after two game ticks.
 const ONSET_TICKS: u32 = 20;
 /// Busy replies tolerated before the fixture gives up.
 const MAX_SENDS: u32 = 20;
 /// Game ticks the Guardian has to raise its hold once it can see the event:
-/// it acts on the first fresh tick that detects it (`guardian.rs`
-/// `tick_with_live_policies`). Five allows for the NPC packet landing a tick
+/// it acts on the first fresh game tick that detects it (`guardian.rs`
+/// `tick_with_live_policies`). Five allows for the NPC packet landing a game tick
 /// after the targeting update.
 const HOLD_RISE_TICKS: u32 = 5;
 /// A dialogue event must be engaged (Talk-to, or the walk to range that
-/// precedes it) within this many ticks of the NPC appearing.
+/// precedes it) within this many game ticks of the NPC appearing.
 const DIALOG_ENGAGE_TICKS: u32 = 15;
 /// Tiles of path slack before a move toward the attacker's start counts as
 /// walking back: a flee route around an obstacle may bend briefly.
 const WALK_BACK_SLACK: i32 = 2;
-/// Consecutive ticks an event NPC must be absent before it counts as gone
+/// Consecutive game ticks an event NPC must be absent before it counts as gone
 /// (a view-edge flicker is not a despawn).
 const GONE_TICKS: u32 = 3;
-/// A tile jump larger than this between two observed ticks is a teleport.
+/// A tile jump larger than this between two observed game ticks is a teleport.
 /// The content's failed-event punishment (`[queue,macro_event_fail_teleport]`)
 /// moves the player to a far random location.
 const TELEPORT_TILES: i32 = 40;
@@ -190,7 +190,7 @@ pub(crate) struct FrameNpc {
     pub targets_local: bool,
 }
 
-/// The per-tick facts the oracle judges. Built from the live snapshot by
+/// The per-game-tick facts the oracle judges. Built from the live snapshot by
 /// [`Frame::from_snapshot`]; unit tests build them directly.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Frame {
@@ -610,7 +610,7 @@ impl RandomEventEpisode {
             || (self.send_tick.is_some() && frame.hp == Some(0))
         {
             return Verdict::Fail(format!(
-                "the bot died at tick {} at {:?} during the {} event",
+                "the bot died at game tick {} at {:?} during the {} event",
                 frame.tick, frame.tile, self.cell.event
             ));
         }
@@ -621,7 +621,7 @@ impl RandomEventEpisode {
                     || trapped_area(now.0, now.1, now.2).is_some());
             if jump && !trap_move && self.send_tick.is_some() {
                 return Verdict::Fail(format!(
-                    "teleported from {last:?} to {now:?} at tick {} (the content's failed-event \
+                    "teleported from {last:?} to {now:?} at game tick {} (the content's failed-event \
                      teleport, macro_event_fail_teleport): the {} event was not handled",
                     frame.tick, self.cell.event
                 ));
@@ -638,7 +638,7 @@ impl RandomEventEpisode {
                     let line = line.clone();
                     if line.contains("refused") {
                         return Verdict::Fail(format!(
-                            "fixture: the cheat refused the {} event at tick {}: {line}",
+                            "fixture: the cheat refused the {} event at game tick {}: {line}",
                             self.cell.event, frame.tick
                         ));
                     }
@@ -651,7 +651,7 @@ impl RandomEventEpisode {
                     if !busy && frame.tick.saturating_sub(sent) > ACK_TICKS {
                         return Verdict::Unavailable(format!(
                             "UNAVAILABLE: engine patch {SKILL_EVENT_PATCH} is not installed: \
-                             `{}` got no `{prefix}` answer within {ACK_TICKS} ticks",
+                             `{}` got no `{prefix}` answer within {ACK_TICKS} game ticks",
                             self.cell.trigger.command()
                         ));
                     }
@@ -725,8 +725,8 @@ impl RandomEventEpisode {
             .any(|(_, text)| text.contains(BUSY_REPLY));
         if !busy && frame.tick.saturating_sub(sent) > ONSET_TICKS {
             return Some(Verdict::Fail(format!(
-                "the {} event never appeared within {ONSET_TICKS} ticks of `{}` (sent at tick \
-                 {sent}, {} sends)",
+                "the {} event never appeared within {ONSET_TICKS} game ticks of `{}` (sent at game \
+                 tick {sent}, {} sends)",
                 self.cell.event,
                 self.cell.trigger.command(),
                 self.sends
@@ -838,19 +838,19 @@ impl RandomEventEpisode {
         }
     }
 
-    /// The Guardian must take the slot within `ticks` of the onset.
-    fn require_hold(&self, frame: &Frame, onset: u32, ticks: u32) -> Option<Verdict> {
-        (self.hold_rise.is_none() && frame.tick.saturating_sub(onset) > ticks).then(|| {
+    /// The Guardian must take the slot within `game_ticks` of the onset.
+    fn require_hold(&self, frame: &Frame, onset: u32, game_ticks: u32) -> Option<Verdict> {
+        (self.hold_rise.is_none() && frame.tick.saturating_sub(onset) > game_ticks).then(|| {
             Verdict::Fail(format!(
-                "the Guardian never held the slot within {ticks} ticks of the {} event (onset \
-                 tick {onset}, now {})",
+                "the Guardian never held the slot within {game_ticks} game ticks of the {} event \
+                 (onset game tick {onset}, now game tick {})",
                 self.cell.event, frame.tick
             ))
         })
     }
 
     /// Track the event NPC's presence; latches `npc_gone` after
-    /// [`GONE_TICKS`] consecutive absent ticks.
+    /// [`GONE_TICKS`] consecutive absent game ticks.
     fn track_npc(&mut self, frame: &Frame, fresh: bool) {
         let present = match self.attacker {
             Some(attacker) => frame.npcs.iter().any(|npc| npc.index == attacker.index),
@@ -910,8 +910,8 @@ impl RandomEventEpisode {
         let first = self.first_target.unwrap_or(frame.tick);
         if self.hold_rise.is_none() && frame.tick.saturating_sub(first) > HOLD_RISE_TICKS {
             return Some(Verdict::Fail(format!(
-                "the Guardian did not take the slot within {HOLD_RISE_TICKS} ticks of {npc} \
-                 targeting the bot (first targeted at tick {first}, start {:?})",
+                "the Guardian did not take the slot within {HOLD_RISE_TICKS} game ticks of {npc} \
+                 targeting the bot (first targeted at game tick {first}, start {:?})",
                 attacker.start
             )));
         }
@@ -928,7 +928,7 @@ impl RandomEventEpisode {
         if self.hold_rise.is_some() {
             if targeting && distance + WALK_BACK_SLACK < self.max_distance {
                 return Some(Verdict::Fail(format!(
-                    "walked back toward {npc} while it still targeted the bot: tick {} at \
+                    "walked back toward {npc} while it still targeted the bot: game tick {} at \
                      ({x},{z}) is {distance} tiles from its start {:?}, after reaching {} \
                      (hold {})",
                     frame.tick, attacker.start, self.max_distance, frame.hold
@@ -937,7 +937,7 @@ impl RandomEventEpisode {
             self.max_distance = self.max_distance.max(distance);
             if !frame.hold && self.escape.is_none() && targeting {
                 return Some(Verdict::Fail(format!(
-                    "the Guardian released the hold at tick {} while {npc} still targeted the \
+                    "the Guardian released the hold at game tick {} while {npc} still targeted the \
                      bot inside its chase range ({distance} tiles from start {:?}, maxrange \
                      {maxrange}): the flee gave up",
                     frame.tick, attacker.start
@@ -965,9 +965,9 @@ impl RandomEventEpisode {
             if let Some(last_hp) = self.last.as_ref().and_then(|last| last.hp) {
                 if frame.hp.is_some_and(|hp| hp < last_hp) {
                     return Some(Verdict::Fail(format!(
-                        "{npc} hit the bot at tick {} ({last_hp} -> {:?} HP, at ({x},{z}), {distance} \
-                         tiles from its start {:?}) after the Guardian released the hold at tick \
-                         {:?}: the attacker was still targeting the bot",
+                        "{npc} hit the bot at game tick {} ({last_hp} -> {:?} HP, at ({x},{z}), {distance} \
+                         tiles from its start {:?}) after the Guardian released the hold at game \
+                         tick {:?}: the attacker was still targeting the bot",
                         frame.tick, frame.hp, attacker.start, self.hold_fall
                     )));
                 }
@@ -992,8 +992,8 @@ impl RandomEventEpisode {
         self.track_npc(frame, fresh);
         if self.hold_rise.is_none() && frame.tick.saturating_sub(onset) > DIALOG_ENGAGE_TICKS {
             return Some(Verdict::Fail(format!(
-                "the Guardian never engaged the {npc} within {DIALOG_ENGAGE_TICKS} ticks of it \
-                 appearing (tick {onset})"
+                "the Guardian never engaged the {npc} within {DIALOG_ENGAGE_TICKS} game ticks of it \
+                 appearing (onset game tick {onset})"
             )));
         }
         let baseline = self.baseline.clone()?;

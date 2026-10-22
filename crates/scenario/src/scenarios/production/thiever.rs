@@ -159,10 +159,9 @@ const THIEVER_NO_BANK_INJECT: &[ScriptSettingInject] = &[
 /// 46.8 XP in `skill_thieving/configs/pickpocking/pickpocket.dbrow:74`)
 /// that is at least 45 successes: 44 pay 2059.2 XP, 45 pay 2106 XP.
 const THIEVER_NO_BANK_XP: i32 = 2084;
-/// Runner dirty-snapshot increments, not engine ticks or wall seconds.
-/// The same ~2.5 dirties/second allowance as the 300s/750 combat
-/// qualification arm: this 750-dirty budget is the 300 s rate window
-/// the 2084 XP gate is priced against.
+/// The 750-game-tick cap allows 450s at 600ms per game tick; the 2084 XP gate
+/// is priced against a 300s post-Start rate window. The 420s whole-run wall
+/// keeps seed/login time outside that window and can pre-empt the step cap.
 const THIEVER_NO_BANK_WATCH_TICKS: u32 = 750;
 /// 420 s = the 300 s post-Start rate window plus 120 s for seed, login
 /// and Start, so seeding time is not counted against a script that

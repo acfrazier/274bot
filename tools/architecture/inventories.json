@@ -58,6 +58,94 @@
       "reason": "F0 baseline seam classification."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetCard",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetCard",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the fleet card choice (a pinned card owns its lookup text); not Clone."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetMarkCounts",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetMarkCounts",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F1: Copy row and mark counts of the fleet model."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|FleetModel",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "FleetModel",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F1: the front end's one fleet model (profile universe, marks, filter, order), lent through Models::with_fleet."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|MarkOp",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "MarkOp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy mark operation over the shown rows."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|MarkPredicate",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "MarkPredicate",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy row status predicate."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet.rs|ShownMarks",
+      "path": "crates/frontend-core/src/fleet.rs",
+      "symbol": "ShownMarks",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy tri-state of the shown marks."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetAction",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetAction",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy fleet button action."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetPlan",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetPlan",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the frozen fleet plan held by the operator session; not Clone."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|FleetResult",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "FleetResult",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: the one result view of the latest fleet action; not Clone."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|PlanScope",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "PlanScope",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy plan scope."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/fleet_plan.rs|ResultCounts",
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "symbol": "ResultCounts",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F3: Copy result row counts."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/group_walk.rs|MarkedWalk",
       "path": "crates/frontend-core/src/group_walk.rs",
       "symbol": "MarkedWalk",
@@ -352,6 +440,30 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "F0 baseline seam classification."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|Placement",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "Placement",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: Copy placement of a reorder (before or after a profile identity)."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|ProfileOrder",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "ProfileOrder",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: the saved Load order (profile names), owned by the operator session."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_order.rs|ReorderOp",
+      "path": "crates/frontend-core/src/profile_order.rs",
+      "symbol": "ReorderOp",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Fleet/rail F2: Copy staged reorder operation by profile identity."
     },
     {
       "id": "seam_type|crates/frontend-core/src/profile_saves.rs|SaveRecord",
@@ -1408,6 +1520,14 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "T3.3 script vocabulary seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|PaintControl",
+      "path": "crates/frontend-core/src/scripts/paint.rs",
+      "symbol": "PaintControl",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "P1 host paint-control role is a Copy discriminator without a payload."
     },
     {
       "id": "seam_type|crates/frontend-core/src/scripts/paint.rs|ChromeBandView",
@@ -2697,6 +2817,17 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::named_banks::resolve|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::named_banks::resolve",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
       "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::FindOptions::default|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
@@ -2704,6 +2835,50 @@
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::BudgetExhausted|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError::BudgetExhausted",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::NoPath|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError::NoPath",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::RouteError",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::Route|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::router::Route",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },
@@ -2737,6 +2912,17 @@
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
+      "removal_endpoint": "T5.1",
+      "classification": "exact_test_fixture_oracle_import"
+    },
+    {
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::world_state::WorldState|exact_test_fixture_oracle_import",
+      "category": "test_import_exception",
+      "path": "crates/script/src/gatherer/select.rs",
+      "symbol": "nav::world_state::WorldState",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
       "removal_endpoint": "T5.1",
       "classification": "exact_test_fixture_oracle_import"
     },

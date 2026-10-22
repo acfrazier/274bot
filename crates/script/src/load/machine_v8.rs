@@ -257,6 +257,10 @@ impl machine::Js for ScopeJs<'_, '_> {
     fn claimed(&mut self) -> bool {
         false
     }
+
+    fn game_messages_mark(&mut self) -> f64 {
+        super::chatbox_v8::native_mark(self.scope)
+    }
 }
 
 /// The isolate runtime as the machine host's script side.
@@ -303,6 +307,11 @@ impl machine::Js for RuntimeJs<'_> {
 
     fn claimed(&mut self) -> bool {
         (self.claimed)()
+    }
+
+    fn game_messages_mark(&mut self) -> f64 {
+        let scope = &mut self.runtime.deno_runtime().handle_scope();
+        super::chatbox_v8::native_mark(scope)
     }
 }
 

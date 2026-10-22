@@ -212,6 +212,7 @@ impl HookCharacterization {
                         "dialog"
                             | "reach-npc-dialog"
                             | "reach-entity-op"
+                            | "reach-loc-op"
                             | "walk-resilient"
                             | "walk-opening"
                             | "walk-to"
@@ -294,6 +295,7 @@ const SUSTAIN_FAMILIES: &[&str] = &[
     "hunt-acquire",
     "walk-resilient",
     "reach-npc-dialog",
+    "reach-loc-op",
     "walk-to",
     "return-to-anchor",
     "walk-hops",
@@ -309,6 +311,7 @@ const SYNC_LOG_FAMILIES: &[&str] = &[
     "dialog",
     "reach-npc-dialog",
     "reach-entity-op",
+    "reach-loc-op",
     "walk-resilient",
     "walk-opening",
     "walk-to",
@@ -412,7 +415,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:1043-1048",
+        "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519",
     ),
     hook(
         &["bank_nearest", "periodic_bank"],
@@ -524,6 +527,24 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         "$S/reach_entity.rs:578,626",
     ),
     hook(
+        &["reach-loc-op"],
+        "expect",
+        "Reach loc expected-state predicate; `{}` is truthy",
+        HookPath::CallSync,
+        HookValue::Used,
+        NO_DISCREPANCY,
+        "$TS/api/walking/Reach.ts:182-187,252-265; $S/reach_entity.rs:1029-1046",
+    ),
+    hook(
+        &["reach-loc-op"],
+        "refused",
+        "Reach loc refusal predicate over the caller's game-message pattern; `{}` is truthy, so the op reads as refused",
+        HookPath::CallSync,
+        HookValue::Used,
+        NO_DISCREPANCY,
+        "$TS/api/walking/Reach.ts:183-192,264; $S/reach_entity.rs:1034-1075",
+    ),
+    hook(
         &["partner-trade"],
         "productNamesToOffer",
         "Partner trade offer-name projection reads `{}`",
@@ -621,7 +642,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,994-996,1027-1030; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
@@ -1254,6 +1275,7 @@ mod tests {
             "dialog",
             "reach-npc-dialog",
             "reach-entity-op",
+            "reach-loc-op",
             "walk-resilient",
             "walk-opening",
             "walk-to",

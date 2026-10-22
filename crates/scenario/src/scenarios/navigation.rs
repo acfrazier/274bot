@@ -1,6 +1,6 @@
 use super::combat::{BRASS_KEY_ID, RUNE_SCIMITAR_ID};
 use super::pair::{follow_step, nav_kit_steps, tele_step};
-use super::production::{COINS_ID, MAGIC_STAT};
+use super::production::{COINS_ID, HITPOINTS_STAT, MAGIC_STAT};
 use super::shop::{shop_buyout_open_npc_bank, GUNDAI_BANK_APPROACH};
 use crate::*;
 
@@ -68,7 +68,7 @@ pub(crate) fn walk_scenario() -> Scenario {
 /// route is one the client can actually walk — the baked pack's boolean
 /// walk grid can diverge from the live collision) plus the transport
 /// graph derived from the baked whole-world pack, and `Traveller::follow`
-/// drives the route one step per tick until arrival. The destination is a
+/// drives the route one step per game tick until arrival. The destination is a
 /// concrete Lumbridge tile from the pack — (3220, 3264, 0), 44 chebyshev
 /// tiles north of the tele landing — in mapsquare (50,51), which the
 /// pre-bake 2-square pack (m50_50 + m44_53) never covered, so the walk
@@ -109,7 +109,7 @@ pub fn nav_full_scenario() -> Scenario {
         settings: ScenarioSettings {
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_full terminal"),
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             ..Default::default()
         },
     }
@@ -120,12 +120,13 @@ pub fn nav_full_scenario() -> Scenario {
 /// cheat-teles to the Catherby range-house `OUTSIDE` stand, then `Follow`s
 /// a whole-world route through the door to `DEST` inside. Profile 1
 /// (`test2`) is the closer companion: it cheat-teles inside, then
-/// `op_loc`s the door shut on every player-info tick the instant the door
-/// reads open, so the walker's follow is stressed against a tick-perfect
-/// closer. The follow's terminal outcome at the door is the diagnostic
-/// target (the closer slams the door shut as the walker approaches, which
-/// surfaces as `Refused Unreachable` in the traveller's settle). The
-/// companion's gating mirrors the old harness: the first `scene_state ==
+/// `op_loc`s the door shut on each game tick observed through `PLAYER_INFO`
+/// as soon as the door reads open, so the walker's follow is stressed against
+/// a game-tick-perfect closer. The walker's terminal outcome at the door is
+/// the diagnostic target (the closer slams the door shut as the walker
+/// approaches, which surfaces as `Refused Unreachable` in the traveller's
+/// settle).
+/// The companion's gating mirrors the old harness: the first `scene_state ==
 /// 2` frame is skipped (host-play queues `mainland_hop` after the hook),
 /// and the Catherby tele waits until `here` is the mainland courtyard.
 pub(crate) fn nav_door_scenario() -> Scenario {
@@ -239,7 +240,7 @@ pub(crate) fn nav_diagonal_door_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             terminal_shot: Some("nav_diagonal_door terminal"),
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             ..Default::default()
         },
     }
@@ -325,7 +326,7 @@ pub(crate) fn nav_quest_door_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_quest_door terminal"),
             ..Default::default()
@@ -365,15 +366,15 @@ const CLOSER_TELE: &str = "tele 0,44,53,1,47";
 struct CloserSlot {
     /// First `scene_state == 2` was observed; that frame host-play still
     /// queues `mainland_hop` after `per_frame`, so the Catherby tele
-    /// waits a tick.
+    /// waits one client cycle.
     scene2_seen: bool,
     tele_sent: bool,
     last_gen: u64,
 }
 
 /// The closer companion's per-frame hook: gate the Catherby tele behind
-/// the mainland hop, then on every player-info tick `op_loc` the live
-/// open leaf (id 1531, often a tile off packed `at`) so it slams shut.
+/// the mainland hop, then on each observed game tick (`PLAYER_INFO`) `op_loc`
+/// the live open leaf (id 1531, often a tile off packed `at`) so it slams shut.
 fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
     let Some(lp) = &c.local_player else {
         if debug_enabled() {
@@ -575,7 +576,7 @@ pub(crate) fn nav_cart_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_cart terminal"),
             ..Default::default()
@@ -591,6 +592,13 @@ const AUBURY_ANCHOR: WorldTile = WorldTile {
     z: 3401,
     level: 0,
 };
+/// Shop-side setup beside Aubury's authored home (3253,3402), not the
+/// essence session's separate return anchor.
+const AUBURY_SHOP_STAND: WorldTile = WorldTile {
+    x: 3254,
+    z: 3402,
+    level: 0,
+};
 /// The Rune Essence mine pad (m45_75 local (32,33)): the packed entry
 /// edge's landing anchor (the real landing is randomised in the mine).
 const MINE_PAD: WorldTile = WorldTile {
@@ -600,19 +608,11 @@ const MINE_PAD: WorldTile = WorldTile {
 };
 
 /// The `nav_essence` scenario: the EssenceSession execute twin. Log in
-/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
-/// Rune Mysteries by painting the quest journal green: the
-/// `~completequests` debugproc completes every quest and calls
-/// `~update_questlist` (a bare `setvar runemysteries 6` leaves the
-/// client's journal colours stale, so `WorldState::from_snapshot` would
-/// still gate the packed entry edges closed), but it first opens two
-/// `p_choice` dialogs — a `ChatAnswer` janitor answers them as they
-/// appear and the step waits on the journal going green. Then cheat-tele
-/// to Aubury's shop, `Follow` into the mine (the entry hop latches the
-/// session on any mine landing), and `Follow` back out through the exit
-/// portal — the session-gated return may only land near Aubury, never
-/// another wizard. PASSes when the player stands within the exit landing
-/// radius of Aubury's anchor.
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, seed only
+/// Rune Mysteries, and relog to observe its completed journal state.
+/// Whole-world quest completion queues unrelated rewards and can still
+/// own the player when the transport fixture starts. Enter from beside
+/// Aubury, then follow the session-gated exit back to his return anchor.
 pub(crate) fn nav_essence_scenario() -> Scenario {
     Scenario {
         name: "nav_essence",
@@ -622,21 +622,25 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "complete Rune Mysteries",
-                kind: StepKind::Perform {
+                name: "seed Rune Mysteries without unrelated quest rewards",
+                kind: StepKind::Repeat {
                     send: Box::new(|c, _| {
-                        cheat(c, "~completequests");
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "setvar runemysteries 6");
+                        cheat(c, "getvar runemysteries");
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::ChatChoice,
-                    budget_ticks: 20,
+                    arm: Proof::Chat {
+                        needle: "get runemysteries: 6",
+                    },
+                    budget_ticks: 120,
                 },
             },
             Step {
-                name: "answer the quest-seed dialogs until the journal is green",
-                kind: StepKind::DrainDialogs { choice: 1 },
+                name: "relog so the Rune Mysteries journal refreshes",
+                kind: StepKind::Relog,
                 wait: Wait {
                     arm: Proof::QuestDone {
                         name: "Rune Mysteries Quest",
@@ -650,16 +654,20 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
                     send: Box::new(move |c, _| {
                         cheat(
                             c,
-                            &tele_args(AUBURY_ANCHOR.level, AUBURY_ANCHOR.x, AUBURY_ANCHOR.z),
+                            &tele_args(
+                                AUBURY_SHOP_STAND.level,
+                                AUBURY_SHOP_STAND.x,
+                                AUBURY_SHOP_STAND.z,
+                            ),
                         );
                         true
                     }),
                 },
                 wait: Wait {
                     arm: Proof::Arrived {
-                        x: AUBURY_ANCHOR.x,
-                        z: AUBURY_ANCHOR.z,
-                        level: AUBURY_ANCHOR.level,
+                        x: AUBURY_SHOP_STAND.x,
+                        z: AUBURY_SHOP_STAND.z,
+                        level: AUBURY_SHOP_STAND.level,
                     },
                     budget_ticks: 120,
                 },
@@ -697,7 +705,7 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_essence terminal"),
             ..Default::default()
@@ -705,12 +713,11 @@ pub(crate) fn nav_essence_scenario() -> Scenario {
     }
 }
 
-/// The maze-side Elkoy (npc 473, m39_49 local (8,55)): the `at` of the
-/// packed maze→village escort edge, one tile south of the entrance coord
-/// (2504,3192).
+/// Stand at the authored maze entrance, one tile north of Elkoy's home
+/// (npc 473 at m39_49 local (8,55)). Never set up on the NPC's own tile.
 const ELKOY_MAZE_SIDE: WorldTile = WorldTile {
     x: 2504,
-    z: 3191,
+    z: 3192,
     level: 0,
 };
 /// The village maze coord (`^elkoy_maze_coord = 0_39_49_19_23`): the
@@ -723,21 +730,10 @@ const ELKOY_MAZE_COORD: WorldTile = WorldTile {
 };
 
 /// The `nav_elkoy` scenario: the Elkoy OP_NPC execute twin. Log in
-/// `test`/`test`, mainland-hop into the Lumbridge courtyard, then seed
-/// Tree Gnome Village by painting the quest journal green: the
-/// `~completequests` debugproc completes every quest and calls
-/// `~update_questlist` (a bare `setvar treequest …` leaves the client's
-/// journal colours stale, so `WorldState::from_snapshot` would still gate
-/// the packed escort edges closed), but it first opens two `p_choice`
-/// dialogs — a `ChatAnswer` janitor answers them as they appear and the
-/// step waits on the journal going green. Then cheat-tele to the maze-side
-/// Elkoy, and `Follow` a whole-world route into the village — across the
-/// hedge maze, whose 1-tick escort hop beats the maze walk in the router,
-/// so the route executes the packed `TransportKind::Npc` edge. The
-/// traveller talks to Elkoy
-/// (`OpTarget::Npc` + option 1), answers the escort dialog's "Yes please."
-/// choice (the chat modal's first), and PASSes on `TravelOutcome::Arrived`
-/// at the packed `edge.to` (2515,3159).
+/// `test`/`test`, mainland-hop into the Lumbridge courtyard, seed only
+/// Tree Gnome Village and relog to observe its completed journal state.
+/// Follow from beside maze-side Elkoy through the real NPC escort and
+/// its "Yes please." choice to the exact content landing (2515,3159).
 pub(crate) fn nav_elkoy_scenario() -> Scenario {
     let driver = ELKOY_MAZE_SIDE;
     let dest = ELKOY_MAZE_COORD;
@@ -749,21 +745,25 @@ pub(crate) fn nav_elkoy_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "complete Tree Gnome Village",
-                kind: StepKind::Perform {
+                name: "seed Tree Gnome Village without unrelated quest rewards",
+                kind: StepKind::Repeat {
                     send: Box::new(|c, _| {
-                        cheat(c, "~completequests");
+                        cheat(c, "setvar tutorial 1000");
+                        cheat(c, "setvar treequest 9");
+                        cheat(c, "getvar treequest");
                         true
                     }),
                 },
                 wait: Wait {
-                    arm: Proof::ChatChoice,
-                    budget_ticks: 20,
+                    arm: Proof::Chat {
+                        needle: "get treequest: 9",
+                    },
+                    budget_ticks: 120,
                 },
             },
             Step {
-                name: "answer the quest-seed dialogs until the journal is green",
-                kind: StepKind::DrainDialogs { choice: 1 },
+                name: "relog so the Tree Gnome Village journal refreshes",
+                kind: StepKind::Relog,
                 wait: Wait {
                     arm: Proof::QuestDone {
                         name: "Tree Gnome Village",
@@ -809,7 +809,7 @@ pub(crate) fn nav_elkoy_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_elkoy terminal"),
             ..Default::default()
@@ -832,8 +832,8 @@ const DUEL_ARENA: WorldTile = WorldTile {
 /// persistent slot's backpack (`~clearinv`) and cheat-give a charged
 /// dueling ring (the packed jewellery rub edge's `item_req`), then
 /// `Follow` with `allow_teleports` on to the Al Kharid Duel Arena —
-/// a destination the 2-tick rub edge always beats (the walk is toll-
-/// gated and over a hundred ticks, so the packed leg only ever routes
+/// a destination the 2-game-tick rub edge always beats (the walk is toll-
+/// gated and over a hundred game ticks, so the packed leg only ever routes
 /// when the layer is on and the item is held). The traveller rubs the
 /// held ring (`OpTarget::Item` + option 4 — never the WalkTo `::tele`
 /// cheat), answers the destination choice the rub opens, and PASSes on
@@ -909,7 +909,7 @@ pub(crate) fn nav_tele_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(360),
             terminal_shot: Some("nav_tele terminal"),
             ..Default::default()
@@ -945,6 +945,9 @@ const SHANTAY_VARROCK: WorldTile = WorldTile {
     z: 3424,
     level: 0,
 };
+/// Melee and Hitpoints seeded to 99 before the toll tail: combat 113, above
+/// the 84 cap of the Ugthanki zones on the desert route.
+const SHANTAY_TOLL_COMBAT_SKILLS: [&str; 4] = ["attack", "strength", "defence", "hitpoints"];
 
 /// The `nav_shantay` scenario exercises both henge branches with exact
 /// WalkTo arrival: from Irena, it walks to the Shantay bank chest with no
@@ -1034,6 +1037,32 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                     budget_ticks: 600,
                 },
             },
+            // The default Danger routing refuses the desert walk for the new
+            // level-3 account: Ugthanki (L42) and Desert Wolves (L27) hunt
+            // (`desert.npc` `huntmode=cowardly`,
+            // `check_nottoostrong=outside_wilderness`) players up to combat
+            // 84 and 54. Seed the account's own melee stats to 99 (combat
+            // 113) so the route the cell exercises is the one the product
+            // admits by default, then drain the level-up dialogs.
+            Step {
+                name: "set melee stats to 99 so the desert hunters ignore the account",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        for skill in SHANTAY_TOLL_COMBAT_SKILLS {
+                            cheat(c, &format!("setstat {skill} 99"));
+                        }
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::Stat {
+                        id: HITPOINTS_STAT,
+                        min: 99,
+                    },
+                    budget_ticks: 60,
+                },
+            },
+            drain_setstat_levelups_before_hostile_tele(),
             // ported from rs2b0t e2e/shantay-pass-route-test.ts @2de6bb23:
             // upstream fixture is the desert start with 10 coins only, an empty
             // bank and no pass (`~clearbank` and `~clearinv worn` here). The walk
@@ -1160,12 +1189,15 @@ const BRASS_HUT_APPROACH: WorldTile = WorldTile {
     z: 3448,
     level: 0,
 };
-/// Inside the hut, ladder 1755's surface landing. North of 1804, so a
-/// follow from `BRASS_HUT_APPROACH` has to take the keyed door (not the
-/// cellar ladder).
+/// Inside the hut, the stand south of the cellar ladder. North of 1804, so a
+/// follow from `BRASS_HUT_APPROACH` has to take the keyed door. The ladder
+/// itself (`ladder_cellar` loc 1754, `m48_53.jm2` LOC `0 44 60: 1754 10 3`
+/// = (3116,3452), shape 10) blocks its own tile, so a walk can never end
+/// there; `ladders.rs2` `[oploc1,ladder_cellar]` climbs from the player's
+/// own stand.
 const BRASS_HUT_INSIDE: WorldTile = WorldTile {
     x: 3116,
-    z: 3452,
+    z: 3451,
     level: 0,
 };
 /// Varrock West bank stand HillGiant walks after the hut exit.
@@ -1281,7 +1313,7 @@ pub(crate) fn nav_brass_hut_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             deadline: Duration::from_secs(420),
             terminal_shot: Some("nav_brass_hut"),
             ..Default::default()
@@ -1441,6 +1473,10 @@ pub(crate) const NAV_ROUTES: &[(&str, WorldTile, WorldTile)] = &[
 /// (no `~completequests` dialog pile), then the rs2b0t item kit (knife,
 /// coins) and tele+Follow each borrowed OD pair. Proof is arrival at the
 /// last dest. Teleports off. Auto-run is the host bothost feature.
+/// The routes run with **Danger routing: Always**: Seers → Rock Crabs and
+/// Taverley → Rellekka cross Wolf (L64, `huntmode=cowardly`, aggressive up
+/// to combat 128) and Rock Crab (`check_nottoostrong=off`) zones, which the
+/// default setting refuses at every combat level.
 pub(crate) fn nav_routes_scenario() -> Scenario {
     let last = NAV_ROUTES[NAV_ROUTES.len() - 1].2;
     let mut steps = nav_kit_steps();
@@ -1463,7 +1499,10 @@ pub(crate) fn nav_routes_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: ScenarioNav {
+                allow_danger_zones: true,
+                ..nav_test_paints()
+            },
             require_mainland_base: true,
             deadline: Duration::from_secs(3600),
             sustains: nav_energy_sustains(),
@@ -1510,7 +1549,7 @@ pub(crate) fn nav_paint_path_scenario() -> Scenario {
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
-            nav: nav_test_paints().with_tick_ms(300),
+            nav: nav_test_paints(),
             require_mainland_base: true,
             terminal_shot: Some("nav_paint_path terminal"),
             ..Default::default()
@@ -1585,8 +1624,8 @@ fn wear_given_item_step(name: &'static str, id: i32) -> Step {
 // - upstream's walkResilient policy (useTeleports, lever edges are teleport
 //   kind) becomes the router's allow_teleports, so the lever is a route edge.
 // - upstream's fail gates are `banked` and the Wilderness-lever sighting;
-//   the sighting becomes a per-tick VisitedWithin latch on the walk step
-//   (box = lever +/-8, as upstream), so a route that skips the lever fails.
+//   the sighting becomes a per-step `VisitedWithin` latch over observed dirty
+//   snapshots (box = lever +/-8, as upstream), so a route that skips the lever fails.
 // - upstream's Ardougne-lever, webs, ladder and cellar sightings are log-only
 //   there; the cellar is gated here by ArrivedNear (radius 6, as upstream).
 // - the Gundai choose string is the repo's exact option text (shop_buyout_lundail),

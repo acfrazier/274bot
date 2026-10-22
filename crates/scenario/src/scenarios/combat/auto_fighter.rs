@@ -3,6 +3,9 @@ pub(crate) const BONES_ID: i32 = 526;
 pub(crate) const NOTED_BONES_ID: i32 = 527;
 pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
 const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
+// Engine content: drop tables/configs/lootdrop.constant:1 gives 200 ticks.
+// Two extra PLAYER_INFO observations cover the ordered ground-remove update.
+const AUTO_FIGHTER_FLOOR_CLEAR_TICKS: u32 = 200 + 2;
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
 const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -372,6 +375,7 @@ pub(crate) fn auto_fighter_mage_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("AutoFighter"),
             script_settings_inject: Some(AUTO_FIGHTER_MAGE_INJECT),
+            fixture_loadouts: combat_fixture_loadouts("AutoFighter"),
             terminal_shot: Some("auto_fighter_mage"),
             nav: gold_script_nav(),
             ..Default::default()
@@ -396,7 +400,7 @@ pub(crate) fn auto_fighter_range_scenario() -> Scenario {
 /// after a guaranteed Guard drop. No Bones are seeded: the script must loot
 /// them, deposit at East Ardougne, restock ten Trout, close, return and fight.
 pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
-    combat_bank_scenario(
+    let mut scenario = combat_bank_scenario(
         "auto_fighter_bank",
         "AutoFighter",
         ARDOUGNE_GUARD,
@@ -445,7 +449,37 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
                 },
             ),
         ],
-    )
+    );
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("combat bank fixture has Start");
+    scenario.steps.insert(
+        start,
+        Step {
+            name: "wait for the Guard field's public Bones to clear before Start",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait {
+                arm: Proof::GroundItemIdsAbsentNear {
+                    ids: &[BONES_ID],
+                    x: ARDOUGNE_GUARD.x,
+                    z: ARDOUGNE_GUARD.z,
+                    level: ARDOUGNE_GUARD.level,
+                    // AutoFighter LootDrops: default leash 8 + pickup margin 4.
+                    radius: 12,
+                },
+                budget_ticks: AUTO_FIGHTER_FLOOR_CLEAR_TICKS,
+            },
+        },
+    );
+    // Preserve the existing post-Start allowance. Only the content-derived
+    // pre-Start guard adds time, at Engine A's ordinary 600 ms game tick.
+    scenario.settings.deadline +=
+        Duration::from_millis(u64::from(AUTO_FIGHTER_FLOOR_CLEAR_TICKS) * 600);
+    scenario
 }
 
 pub(crate) const UNICORN_HORN_ID: i32 = 237;
@@ -459,12 +493,13 @@ const VARROCK_BEAR_UNICORN: WorldTile = WorldTile {
     z: 3350,
     level: 0,
 };
-/// Seed + Start ~25s, then per cycle two 25-HP kills with looting
-/// (~45s) and a Varrock East round trip (~150 tiles, ~100s). Two
-/// cycles plus resumed combat reach ~360s; the shared 420s pattern
-/// (herblore eggs) covers the second trip. 1050 dirties at the combat
-/// cells' ~2.5/second allowance keeps the wall deadline controlling.
-const AUTO_FIGHTER_TARGETS_DEADLINE: Duration = Duration::from_secs(420);
+/// Whole-cell wall deadline. Measured live on Engine A at the 289 engine's
+/// 600 ms game tick: six passes at 189.676 s (283 game ticks), 206.892 s
+/// (313), 188.062 s (279), 188.250 s (281), 580.326 s (901) and 420.234 s
+/// (655). The largest is 580.326 s; the deadline is that plus 50% headroom,
+/// rounded up to a whole second (870.49 s -> 871 s). The per-step
+/// 1050-game-tick budgets are unchanged.
+pub(crate) const AUTO_FIGHTER_TARGETS_DEADLINE: Duration = Duration::from_secs(871);
 const AUTO_FIGHTER_TARGETS_WATCH_TICKS: u32 = 1050;
 /// AutoFighter's schema carries the shared `loadout` setting, and Start
 /// resolves it before `onStart`; with no loadout rows the resolution

@@ -27,7 +27,7 @@ use frontend_core::scripts::{
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
 };
-use frontend_core::{FleetCounts, FleetRow, ResourceView, SlotDetail, WalkGlobalsView};
+use frontend_core::{FleetCounts, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
 use nav::map::poi::{PoiKind, PoiRecord};
 use nav::router::{FindOptions, Route};
@@ -91,11 +91,14 @@ pub enum WalkSendMode {
     Group,
 }
 
+/// One Walk-send checklist row: a loaded member and its host eligibility.
+/// Whether it is checked is not stored here: it is eligible and marked in
+/// the fleet model ([`WalkSendRow::checked`]).
 #[derive(Debug, Clone)]
 pub struct WalkSendRow {
     pub name: String,
+    identity: frontend_core::ProfileIdentity,
     pub status: WalkSlotStatus,
-    pub checked: bool,
 }
 
 impl WalkSendRow {
@@ -103,13 +106,28 @@ impl WalkSendRow {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// Marked and able to walk.
+    pub fn checked(&self, marks: &frontend_core::MarkedSelection) -> bool {
+        self.status.is_eligible() && marks.contains(self.identity)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct WalkSendState {
     pub mode: WalkSendMode,
     rows: Vec<WalkSendRow>,
-    walk_label: String,
+    /// Moves whenever `rows` is replaced, so the label knows the
+    /// eligibility changed.
+    rows_version: u64,
+    /// The Walk button label, rebuilt in place only when the mode, the
+    /// rows or the marks moved ([`Self::sync_label`]); a draw borrows it.
+    label: String,
+    /// The mode, rows version and marks generation `label` was built from.
+    label_key: Option<(WalkSendMode, u64, u64)>,
+    /// Label rebuilds, so a test can prove a steady draw does none.
+    #[cfg(test)]
+    label_builds: u64,
 }
 
 impl Default for WalkSendState {
@@ -117,7 +135,11 @@ impl Default for WalkSendState {
         Self {
             mode: WalkSendMode::Focused,
             rows: Vec::new(),
-            walk_label: "Walk".into(),
+            rows_version: 0,
+            label: String::new(),
+            label_key: None,
+            #[cfg(test)]
+            label_builds: 0,
         }
     }
 }
@@ -127,19 +149,45 @@ impl WalkSendState {
         &self.rows
     }
 
+    /// Replace the Group rows (their eligibility moved).
+    fn set_rows(&mut self, rows: Vec<WalkSendRow>) {
+        self.rows = rows;
+        self.rows_version = self.rows_version.wrapping_add(1);
+    }
+
+    /// Bring the Walk button label up to date: `Walk`, or `Walk N bots` in
+    /// Group mode with the fleet model's `marks`, whose changes move
+    /// `marks_generation`. Nothing is counted or written when the mode,
+    /// the rows and the marks are unchanged, and a rebuild reuses the
+    /// label's buffer.
+    pub fn sync_label(&mut self, marks: &frontend_core::MarkedSelection, marks_generation: u64) {
+        let key = (self.mode, self.rows_version, marks_generation);
+        if self.label_key == Some(key) {
+            return;
+        }
+        self.label_key = Some(key);
+        self.label.clear();
+        match self.mode {
+            WalkSendMode::Focused => self.label.push_str("Walk"),
+            WalkSendMode::Group => {
+                use std::fmt::Write as _;
+                let _ = write!(self.label, "Walk {} bots", self.checked_count(marks));
+            }
+        }
+        #[cfg(test)]
+        {
+            self.label_builds += 1;
+        }
+    }
+
+    /// The Walk button label as of the last [`Self::sync_label`].
     pub fn walk_label(&self) -> &str {
-        &self.walk_label
+        &self.label
     }
 
-    pub fn checked_count(&self) -> usize {
-        self.rows.iter().filter(|row| row.checked).count()
-    }
-
-    fn sync_walk_label(&mut self) {
-        self.walk_label = match self.mode {
-            WalkSendMode::Focused => "Walk".into(),
-            WalkSendMode::Group => format!("Walk {} bots", self.checked_count()),
-        };
+    /// Rows that are marked and eligible.
+    pub fn checked_count(&self, marks: &frontend_core::MarkedSelection) -> usize {
+        self.rows.iter().filter(|row| row.checked(marks)).count()
     }
 }
 
@@ -171,11 +219,32 @@ pub enum AppAction {
     /// Mark or unmark `name`'s fleet row (`SetMark`): the row selection and
     /// the Walk-send group checklist.
     SetMark(String, bool),
-    /// Mark these members' fleet rows (`MarkAll`): every shown row, or the
-    /// eligible Walk-send rows.
+    /// Mark these members' fleet rows (`MarkAll`): the eligible Walk-send
+    /// rows.
     MarkAll(Vec<frontend_core::ProfileIdentity>),
     /// Clear every row mark (`ClearMarks`).
     ClearMarks,
+    /// Mark, unmark or invert the shown rows, or mark the shown rows in a
+    /// status (`MarkFleet`).
+    MarkFleet(frontend_core::MarkOp),
+    /// Make this the card the fleet actions use (`SetFleetCard`). Changes
+    /// no Browse pick, form or run.
+    PickFleetCard(frontend_core::FleetCard),
+    /// Show this fleet order (`SetFleetSort`). The shown rows follow it and
+    /// the cursor stays on its profile.
+    SetFleetSort(frontend_core::FleetOrder),
+    /// Open the world picker: `Some(name)` for that profile (`W` over the
+    /// fleet row under the cursor), `None` for the marked rows (the
+    /// palette's Switch world of marked…). The dispatcher reads the worlds
+    /// from the core; a server with one world gets a message instead.
+    PickWorld(Option<String>),
+    /// Plan moving `profile` (`None`: the marked rows) to this public
+    /// world: the dispatcher stages the profile, then plans
+    /// `SwitchWorld` through the fleet plan flow.
+    PlanSwitchWorld(Option<String>, u16),
+    /// Move profiles in the saved Load order (`ReorderProfiles`): the
+    /// dispatcher stages the op and submits it with the fleet model lent.
+    ReorderProfiles(frontend_core::ReorderOp),
     /// Edit the fleet filter text and commit it (`SetFleetFilter`).
     FleetFilter(crate::fleet::FilterEdit),
     /// Save the rows the log view shows (`SaveLog`).
@@ -186,15 +255,10 @@ pub enum AppAction {
     MapWilderness(bool),
     /// Chat modal advance: Continue / Answer on the focused slot.
     Chat(ChatAction),
-    /// MultiBox: load every vault profile and log every member in (after
-    /// the scope confirmation).
-    SpawnAll,
     /// Log in the selected member (explicit handshake).
     Login,
     /// Log out the selected member (it stays loaded, latched).
     Logout,
-    /// Log out every member (after the scope confirmation).
-    LogoutAll,
     /// Relog the settings-bound member for a memory-mode switch (the
     /// settings popup's `r` key): the binary confirms first when a
     /// running script would be interrupted.
@@ -217,21 +281,14 @@ pub enum AppAction {
     ScriptBrowse,
     /// Open the script params popup for the selected card.
     ScriptParams,
-    /// Start every wall member on its last successful assignment.
-    ScriptStartAll,
-    /// Stop every member's script (queued replacement Starts included).
-    ScriptStopAll,
-    /// Save the selected script as the assignment of every marked bot.
-    ScriptAssignMarked,
-    /// Assign the selected script to every marked bot and start it there.
-    ScriptRestartMarked,
-    /// Freeze copying the focused bot's settings for the selected script to
-    /// the marked bots, then ask to confirm the frozen scope.
-    ScriptApplyMarkedPrepare,
-    /// Log in every marked bot (loading the ones not loaded yet).
-    LoginMarked,
-    /// Log out every marked bot.
-    LogoutMarked,
+    /// Freeze a fleet action into a core plan (`PlanFleetAction`): it runs
+    /// at once when it needs no confirmation, otherwise the confirm
+    /// overlay shows the plan's prompt.
+    PlanFleet(frontend_core::FleetAction),
+    /// Confirm: run the waiting fleet plan (`Targets::Plan`).
+    RunFleetPlan,
+    /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
+    CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
     ScriptReload,
     /// Discard a prepared reload without touching any run.
@@ -370,10 +427,11 @@ pub struct TuiApp {
     /// back to a deterministic synthetic identity in the fleet table.
     pub profile_ids: Vec<frontend_core::ProfileIdentity>,
     pub focused: Option<usize>,
-    /// The fleet rows (one per member) and their totals from the shared
-    /// `frontend-core` projection; the binary copies them when the core's
-    /// rows move.
-    pub fleet: Vec<FleetRow>,
+    /// The fleet model: every profile (loaded members, then vault profiles
+    /// that are not loaded), the marks, the filter and the shown rows. The
+    /// binary refreshes it from the core once per loop and lends it to the
+    /// command seam; the table and the inputs only read it.
+    pub fleet_model: frontend_core::FleetModel,
     /// Profile identities whose saved script settings still need a restart.
     pub restart_badges: HashSet<frontend_core::ProfileIdentity>,
     /// Core badge generation used to refresh this set only when state moves.
@@ -479,7 +537,8 @@ pub struct TuiApp {
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: ScriptRunState,
-    /// Focused member holds a Start-all permit place (Stop still applies).
+    /// Focused member has a Start still waiting (a paced place, a card
+    /// preparation or an Assign & restart); Stop still applies.
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,
@@ -490,6 +549,10 @@ pub struct TuiApp {
     pub reload_confirm: bool,
     /// Registry cards the Browse picker lists (copied from the session each pump).
     pub script_cards: Vec<BrowseCard>,
+    /// The core picker choice of each of `script_cards` (same order): what
+    /// the fleet-card picker pins. A card's choice names its identity, not
+    /// only its display name.
+    pub script_card_choices: Vec<ScriptChoice>,
     /// Persisted category order keys for Browse grouping.
     pub script_category_order: Vec<String>,
     /// The Browse picker is open.
@@ -528,7 +591,7 @@ pub struct TuiApp {
     pub screen: Screen,
     /// Where keys go: the fleet, the detail tab or the log drawer.
     pub key_focus: Pane,
-    /// Fleet table cursor, row selection and filter (renderer-local).
+    /// Fleet table cursor, scroll and filter-edit flag (renderer-local).
     pub table: FleetState,
     /// The open app overlay (help, palette, confirmation, menu, message,
     /// manual walk); it takes every key and click while open.
@@ -550,7 +613,7 @@ impl TuiApp {
             names: Vec::new(),
             profile_ids: Vec::new(),
             focused: None,
-            fleet: Vec::new(),
+            fleet_model: frontend_core::FleetModel::new(),
             counts: FleetCounts::default(),
             restart_badges: HashSet::new(),
             restart_badge_generation: 0,
@@ -609,6 +672,7 @@ impl TuiApp {
             browse_changed: false,
             reload_confirm: false,
             script_cards: Vec::new(),
+            script_card_choices: Vec::new(),
             script_category_order: Vec::new(),
             script_browse_open: false,
             rs2b0t_catalog_open: false,
@@ -725,21 +789,17 @@ impl TuiApp {
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
         frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
     }
+    /// Whether the profile called `name` (loaded or not) is marked.
     pub(crate) fn is_marked_name(&self, name: &str) -> bool {
-        self.table
-            .selection
-            .contains(self.profile_id_for_name(name))
+        self.fleet_model
+            .index_of_name(name)
+            .is_some_and(|index| self.fleet_model.is_marked(index))
     }
-    pub(crate) fn marked_names(&self) -> Vec<String> {
-        self.names
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| {
-                frontend_core::profile_id_at(&self.profile_ids, &self.names, *index)
-                    .is_some_and(|identity| self.table.selection.contains(identity))
-            })
-            .map(|(_, name)| name.clone())
-            .collect()
+
+    /// The identity of the focused member, for the table's `*` marker.
+    pub(crate) fn focused_identity(&self) -> Option<frontend_core::ProfileIdentity> {
+        self.focused
+            .and_then(|index| frontend_core::profile_id_at(&self.profile_ids, &self.names, index))
     }
 
     /// Re-sync the view from the fresh projection: the selected slot's
@@ -967,7 +1027,7 @@ impl TuiApp {
     pub(crate) fn map_enter(&mut self) -> AppAction {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
-                if self.walk_send.checked_count() == 0 {
+                if self.walk_send.checked_count(self.fleet_model.marks()) == 0 {
                     self.error = Some("no bots selected".into());
                     return AppAction::None;
                 }
@@ -1032,83 +1092,84 @@ impl TuiApp {
         self.map.plane = self.map_model.plane();
     }
 
-    /// Group-walk rows: every member with its host eligibility. The fleet's
-    /// row selection is the group checklist: a row is checked when its
-    /// member is selected in the fleet and eligible.
+    /// Group-walk rows: every member with its host eligibility. The fleet
+    /// model's marks are the group checklist: a row is checked when its
+    /// member is marked and eligible ([`WalkSendRow::checked`]).
     pub fn refresh_walk_send(&mut self, eligibility: impl Fn(&str) -> WalkSlotStatus) {
         let names: Vec<String> = if !self.names.is_empty() {
             self.names.clone()
         } else {
-            self.fleet.iter().map(|row| row.name().to_owned()).collect()
+            self.fleet_model
+                .rows()
+                .iter()
+                .filter(|row| row.loaded())
+                .map(|row| row.name().to_owned())
+                .collect()
         };
         let mut rows = Vec::with_capacity(names.len());
         for name in names {
             let status = eligibility(&name);
-            let checked = status.is_eligible()
-                && self
-                    .table
-                    .selection
-                    .contains(self.profile_id_for_name(&name));
+            let identity = self.profile_id_for_name(&name);
             rows.push(WalkSendRow {
                 name,
+                identity,
                 status,
-                checked,
             });
         }
-        self.walk_send.rows = rows;
-        self.walk_send.sync_walk_label();
+        self.walk_send.set_rows(rows);
     }
 
-    /// Focused ↔ Group. Entering Group with no eligible row selected
-    /// selects every eligible member (shown as `[x]` in the fleet): the
-    /// returned `MarkAll` marks them.
+    /// Bring the Walk button label up to date with the fleet model's
+    /// marks (nothing to do while they, the rows and the mode are
+    /// unchanged), then borrow it.
+    pub fn sync_walk_label(&mut self) -> &str {
+        self.walk_send
+            .sync_label(self.fleet_model.marks(), self.fleet_model.generation());
+        self.walk_send.walk_label()
+    }
+
+    /// Focused ↔ Group. Entering Group with no eligible row marked marks
+    /// the bots a fleet action covers while nothing is marked (the loaded,
+    /// shown members) that can walk, shown as `[x]` in the fleet: the
+    /// returned `MarkAll` marks them. A member the fleet filter hides is not
+    /// added.
     pub(crate) fn toggle_walk_send_mode(&mut self) -> AppAction {
         self.walk_send.mode = match self.walk_send.mode {
             WalkSendMode::Focused => WalkSendMode::Group,
             WalkSendMode::Group => WalkSendMode::Focused,
         };
-        let mut action = AppAction::None;
-        if self.walk_send.mode == WalkSendMode::Group && self.walk_send.checked_count() == 0 {
+        if self.walk_send.mode == WalkSendMode::Group
+            && self.walk_send.checked_count(self.fleet_model.marks()) == 0
+        {
             let eligible_ids = self
                 .walk_send
                 .rows
                 .iter()
-                .filter(|row| row.status.is_eligible())
-                .map(|row| self.profile_id_for_name(row.name()))
+                .filter(|row| {
+                    row.status.is_eligible() && self.fleet_model.in_unmarked_scope(row.identity)
+                })
+                .map(|row| row.identity)
                 .collect::<Vec<_>>();
-            for row in &mut self.walk_send.rows {
-                if row.status.is_eligible() {
-                    row.checked = true;
-                }
-            }
             if !eligible_ids.is_empty() {
-                action = AppAction::MarkAll(eligible_ids);
+                return AppAction::MarkAll(eligible_ids);
             }
         }
-        self.walk_send.sync_walk_label();
-        action
+        AppAction::None
     }
 
-    /// Space on the map: select / unselect the selected bot for the group:
-    /// the returned `SetMark` marks or unmarks it.
+    /// Space on the map: mark / unmark the selected bot for the group: the
+    /// returned `SetMark` marks or unmarks it.
     pub(crate) fn toggle_walk_send_focused(&mut self) -> AppAction {
         let Some(focused) = self.focused_name() else {
             return AppAction::None;
         };
-        let mut action = AppAction::None;
-        if let Some(row) = self
-            .walk_send
-            .rows
-            .iter_mut()
-            .find(|row| row.name() == focused)
-        {
-            if row.status.is_eligible() {
-                row.checked = !row.checked;
-                action = AppAction::SetMark(focused, row.checked);
+        match self.walk_send.rows.iter().find(|row| row.name() == focused) {
+            Some(row) if row.status.is_eligible() => {
+                let on = !self.fleet_model.marks().contains(row.identity);
+                AppAction::SetMark(focused, on)
             }
+            _ => AppAction::None,
         }
-        self.walk_send.sync_walk_label();
-        action
     }
 
     fn observed_marks(&self) -> Vec<ObservedMark> {
@@ -1734,6 +1795,7 @@ impl TuiApp {
             return;
         }
         self.refresh_walk_permissions();
+        self.sync_walk_label();
         let title = format!(
             "Map · plane {} · {:?} · {} · arrows/hjkl pan · +/- zoom · / search",
             self.map.plane,
@@ -1789,7 +1851,11 @@ impl TuiApp {
                     .rows
                     .iter()
                     .map(|row| {
-                        let mark = if row.checked { "*" } else { " " };
+                        let mark = if row.checked(self.fleet_model.marks()) {
+                            "*"
+                        } else {
+                            " "
+                        };
                         if row.status.is_eligible() {
                             format!("{mark}{}", row.name())
                         } else if let Some(reason) = row.status.exclusion() {

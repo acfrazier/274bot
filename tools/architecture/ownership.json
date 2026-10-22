@@ -87,6 +87,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/ground_take.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/hostlog.rs",
       "owner": "T1"
     },
@@ -259,6 +263,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/tests/shop_facts_alloc.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/tests/snapshot.rs",
       "owner": "T1"
     },
@@ -423,6 +431,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/fleet_plan.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/group_walk.rs",
       "owner": "T3"
     },
@@ -476,6 +488,10 @@
     },
     {
       "path": "crates/frontend-core/src/profile_form.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/profile_order.rs",
       "owner": "T3"
     },
     {
@@ -588,6 +604,14 @@
     },
     {
       "path": "crates/frontend-core/tests/capacity_smoke.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/fleet_model_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/fleet_plan_alloc.rs",
       "owner": "T3"
     },
     {
@@ -1327,6 +1351,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/grinch_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/loadout_provision_live.rs",
       "owner": "T1"
     },
@@ -1456,6 +1484,14 @@
     },
     {
       "path": "crates/host-play/tests/session_profile.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_driver.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/grinch_oracle.rs",
       "owner": "T1"
     },
     {
@@ -2191,6 +2227,18 @@
       "owner": "T3"
     },
     {
+      "path": "crates/panel/src/fleet_flow_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/fleet_toolbar.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/fleet_toolbar_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/focus.rs",
       "owner": "T3"
     },
@@ -2315,6 +2363,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/panel/src/test_alloc.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/panel/src/test_support.rs",
       "owner": "T3"
     },
@@ -2360,6 +2412,10 @@
     },
     {
       "path": "crates/panel/src/work_area.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/world_picker.rs",
       "owner": "T3"
     },
     {
@@ -2859,6 +2915,26 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/acquire/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/plan.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/plan_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/run.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/acquire/run_tests.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/anchor_return.rs",
       "owner": "T2"
     },
@@ -3268,6 +3344,18 @@
     },
     {
       "path": "crates/script/src/gatherer/widen.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/grinch.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/grinch_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/ground_take.rs",
       "owner": "T2"
     },
     {
@@ -3747,10 +3835,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/quester/bank_run.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/src/quester/card.rs",
       "owner": "T2"
     },
@@ -3796,6 +3880,10 @@
     },
     {
       "path": "crates/script/src/quester/families/extension_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/quester/families/ground_tests.rs",
       "owner": "T2"
     },
     {
@@ -4787,6 +4875,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/entity_row_shape.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/equipment_items_id.rs",
       "owner": "T2"
     },
@@ -4839,6 +4931,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/tests/ground_selected_identity.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/tests/herb_data.rs",
       "owner": "T2"
     },
@@ -4888,6 +4984,10 @@
     },
     {
       "path": "crates/script/tests/input_action_at.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/input_ground_identity.rs",
       "owner": "T2"
     },
     {
@@ -4984,6 +5084,10 @@
     },
     {
       "path": "crates/script/tests/paint_chrome.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/paint_controls_shape.rs",
       "owner": "T2"
     },
     {
@@ -5439,6 +5543,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/fleet_card.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/fleet_tests.rs",
       "owner": "T3"
     },
@@ -5531,7 +5639,15 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/world_picker.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/tests/settings_notice_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/tui/tests/world_picker_alloc.rs",
       "owner": "T3"
     },
     {
@@ -5647,6 +5763,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/harness/grinch_live.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/harness/run_write_player_fixture.sh",
       "owner": "T1"
     },
@@ -5679,6 +5799,14 @@
       "owner": "T1"
     },
     {
+      "path": "tools/known-issues/known_issues.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/known-issues/test_known_issues.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/lint-ratchet/lint_ratchet.py",
       "owner": "T1"
     },
@@ -5695,11 +5823,51 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/engine-274/start-274.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-274/status-274.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-274/stop-274.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-q/start-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-q/status-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/engine-q/stop-289q.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/malbec-mirror-pull.sh",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/mirror-pull.sh",
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/nightly-mac.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/pull-274.sh",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/run_nightly.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/systemd/run-quest-job.sh",
       "owner": "T1"
     },
     {
@@ -6911,6 +7079,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/session/fleet_plan.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/session/form.rs",
       "owner": "T3"
     },
@@ -6932,6 +7104,10 @@
     },
     {
       "path": "crates/frontend-core/src/session/vault_rows.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/session/world_switch.rs",
       "owner": "T3"
     }
   ]

@@ -22,6 +22,7 @@ pub mod bin;
 pub mod chat;
 pub mod commands;
 pub mod fleet;
+pub mod fleet_card;
 pub mod help;
 pub mod input;
 pub mod layout;
@@ -39,6 +40,7 @@ pub mod status;
 pub(crate) mod stderr_capture;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod world_picker;
 
 pub use app::{AppAction, TuiApp};
 pub use bin::RunMode;

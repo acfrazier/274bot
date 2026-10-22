@@ -6,6 +6,7 @@ pub mod debug_panel;
 pub mod fleet;
 mod fleet_actions;
 mod fleet_columns;
+mod fleet_toolbar;
 pub mod focus;
 pub mod game_view;
 pub mod grid;
@@ -29,6 +30,7 @@ pub mod ui_state;
 pub mod walk_map;
 pub mod wall;
 pub mod window;
+mod world_picker;
 
 pub use app::*;
 pub use chrome::*;
@@ -41,6 +43,9 @@ mod srgb_present;
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod test_alloc;
 
 #[cfg(test)]
 #[path = "manual_click_live_tests.rs"]

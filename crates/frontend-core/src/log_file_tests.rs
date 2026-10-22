@@ -39,7 +39,7 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
     assert!(!session_log_setting(&preferences), "no prefs file: off");
     std::fs::create_dir_all(&dir).unwrap();
     // A 0.1.8.1 prefs file has no such key.
-    std::fs::write(
+    vault::write_private_file(
         &prefs,
         br#"{"last_focus":"alice","collapsed":{},"background_bots_ack":true}"#,
     )
@@ -66,7 +66,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     std::fs::create_dir_all(&dir).unwrap();
     let preferences = preferences(&dir);
     let prefs = preferences.path();
-    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
+    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -87,7 +87,7 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     let premature = done_rx.recv_timeout(Duration::from_millis(100));
     // The lock represents the peer's transaction. Publish its grant before
     // releasing it, so the log writer must merge from this newer document.
-    std::fs::write(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
     lock.unlock().unwrap();
     writer.join().unwrap();
     assert!(

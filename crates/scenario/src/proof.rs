@@ -3,7 +3,10 @@
 //! JSON evidence can name exactly which predicate passed or failed.
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, ChatLineView, GameSnapshot, LocView, WorldTile};
+use api::snapshot::{
+    ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WidgetRoot, WidgetView,
+    WorldTile,
+};
 use nav::arrival::arrived;
 use nav::tile::{chebyshev, Tile};
 
@@ -39,7 +42,7 @@ pub enum Proof {
     ClueReplaced { seeded: i32 },
     /// Host-fed Sherlock guardian oracle: Protect from Magic acknowledgement,
     /// at most one bounded in-flight hit, held protect until the kill, prayers
-    /// off within three ticks of the kill, and the seeded clue replaced by a
+    /// off within three game ticks of the kill, and the seeded clue replaced by a
     /// casket. Snapshot-only checks fail closed.
     ClueProtectWindow { seeded: i32 },
 
@@ -76,7 +79,7 @@ pub enum Proof {
         radius: i32,
     },
     /// Latched per step by the runner: the player stood on the level inside
-    /// the inclusive rectangle at any observed tick of the current step. For
+    /// the inclusive rectangle at any observed dirty snapshot of the current step. For
     /// a walk whose route passes a landing or lever tile without stopping
     /// there, where [`Proof::ArrivedNear`] would only see the final tile. A
     /// Chebyshev radius `r` around a tile is the box `[x-r, x+r]×[z-r, z+r]`.
@@ -161,7 +164,7 @@ pub enum Proof {
     /// post-relog chat baseline the runner latched when this step began
     /// (or a post-relog chat-modal `tutorial 1000`, which login clears).
     /// A plain [`Proof::Chat`] `contains` can be satisfied by a chat line
-    /// latched before the relog in the same tick the reseed is sent; this
+    /// latched before the relog in the same game tick the reseed is sent; this
     /// arm cannot. The runner captures the baseline at step start and
     /// checks [`crate::tutorial::tutorial_confirmed`]; a bare
     /// [`Proof::check`] without that runner baseline fails closed.
@@ -173,6 +176,16 @@ pub enum Proof {
     /// `getvar` reply must come from this arm. The runner captures the baseline
     /// at step start; a bare [`Proof::check`] without it fails closed.
     FreshChat { needle: &'static str },
+    /// A fresh system-chat quest-completion line and the exact visible
+    /// completion-scroll text in the expected main-interface root/component.
+    /// The runner captures the chat baseline when the step begins; a bare
+    /// snapshot check fails closed.
+    FreshQuestCompletion {
+        chat_needle: &'static str,
+        main_root_component_id: i32,
+        component_id: i32,
+        text: &'static str,
+    },
     /// An exact system-chat confirmation from `::speed` that is newer than
     /// the runner's pre-send chat baseline. A confirmation already in the
     /// ring is stale; a bare [`Proof::check`] without the baseline fails
@@ -193,6 +206,17 @@ pub enum Proof {
     /// Requires an in-game player tile and therefore fails closed while
     /// loading or disconnected.
     NpcIdsAbsentNear { ids: &'static [usize], radius: i32 },
+    /// No listed public ground item remains in this bounded field.
+    /// Requires the player inside the loaded field and fails closed otherwise.
+    /// Its budget counts observed game ticks (one per `PLAYER_INFO`), not
+    /// other dirty snapshots.
+    GroundItemIdsAbsentNear {
+        ids: &'static [i32],
+        x: i32,
+        z: i32,
+        level: i32,
+        radius: i32,
+    },
     /// An NPC with exact `name` stands within a bounded world area.
     NpcNameNear {
         name: &'static str,
@@ -279,9 +303,34 @@ pub(crate) fn fresh_chat_contains(snap: &GameSnapshot, baseline: i32, needle: &s
         .any(|line| line.sequence > baseline && line.text.contains(needle))
 }
 
+/// Whether fresh completion chat and the named visible main-interface
+/// component are both present in the current observation.
+pub(crate) fn fresh_quest_completion_contains(
+    chat_lines: &[ChatLineView],
+    widgets: &[WidgetView],
+    baseline: i32,
+    chat_needle: &str,
+    main_root_component_id: i32,
+    component_id: i32,
+    text: &str,
+) -> bool {
+    chat_lines.iter().any(|line| {
+        line.type_ == 0
+            && line.username.is_none()
+            && line.sequence > baseline
+            && line.text.contains(chat_needle)
+    }) && widgets.iter().any(|widget| {
+        widget.root == WidgetRoot::Main
+            && widget.root_component_id == main_root_component_id
+            && widget.component_id == component_id
+            && !widget.hidden
+            && widget.text.as_deref() == Some(text)
+    })
+}
+
 /// Whether the snapshot's player tile stands inside the inclusive
 /// rectangle on `level`. Backs [`Proof::VisitedWithin`]; the runner
-/// latches it per step over observed ticks.
+/// latches it per step over observed dirty snapshots.
 pub(crate) fn visited_within_contains(
     snap: &GameSnapshot,
     min_x: i32,
@@ -371,6 +420,14 @@ impl Proof {
                 crate::tutorial::TUTORIAL_CHAT_NEEDLE
             ),
             Proof::FreshChat { needle } => format!("fresh_chat(contains \"{needle}\")"),
+            Proof::FreshQuestCompletion {
+                chat_needle,
+                main_root_component_id,
+                component_id,
+                text,
+            } => format!(
+                "fresh_quest_completion(chat contains \"{chat_needle}\",main={main_root_component_id}/{component_id}=\"{text}\")"
+            ),
             Proof::WorldSpeedChanged { ms } => format!("world_speed_changed({ms}ms)"),
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
             Proof::FreshStatXpGain { id, min } => {
@@ -386,6 +443,15 @@ impl Proof {
                         .collect::<Vec<_>>()
                         .join(",")
                 )
+            }
+            Proof::GroundItemIdsAbsentNear {
+                ids,
+                x,
+                z,
+                level,
+                radius,
+            } => {
+                format!("ground_item_ids_absent_near({ids:?},{x},{z},{level},r{radius})")
             }
             Proof::NpcNameNear {
                 name,
@@ -674,6 +740,9 @@ impl Proof {
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::FreshTutorial => false,
             Proof::FreshChat { .. } => false,
+            // Fresh chat plus an exact visible quest scroll needs the
+            // runner's step-start baseline and full widget observation.
+            Proof::FreshQuestCompletion { .. } => false,
             // Visited-latch needs the runner's per-step observation (see
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::VisitedWithin { .. } => false,
@@ -739,6 +808,23 @@ impl Proof {
                         ) <= *radius
                 })
             }),
+            Proof::GroundItemIdsAbsentNear {
+                x,
+                z,
+                level,
+                radius,
+                ..
+            } => {
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && snap.tile().is_some_and(|(px, pz, pl)| {
+                        pl == *level && (px - x).abs().max((pz - z).abs()) <= *radius
+                    })
+                    && !snap
+                        .ground_items()
+                        .iter()
+                        .any(|item| self.ground_guard_contains(item))
+            }
             Proof::NpcNameNear {
                 name,
                 x,
@@ -963,6 +1049,26 @@ fn stat_value(snap: &GameSnapshot, id: i32) -> Option<i32> {
             .iter()
             .find(|s| s.index == id)
             .map(|s| s.effective),
+    }
+}
+
+impl Proof {
+    pub(crate) fn ground_guard_contains(&self, item: &GroundItemView) -> bool {
+        match self {
+            Self::GroundItemIdsAbsentNear {
+                ids,
+                x,
+                z,
+                level,
+                radius,
+            } => {
+                item.count > 0
+                    && ids.contains(&item.def.id)
+                    && item.tile.level == *level
+                    && (item.tile.x - x).abs().max((item.tile.z - z).abs()) <= *radius
+            }
+            _ => false,
+        }
     }
 }
 
@@ -2355,6 +2461,171 @@ mod tests {
             Proof::FreshChat { needle }.name(),
             "fresh_chat(contains \"get murderquest: 1\")"
         );
+    }
+
+    #[test]
+    fn fresh_quest_completion_requires_fresh_chat_and_exact_visible_scroll() {
+        use api::snapshot::WidgetKind;
+
+        const CHAT: &str = "Congratulations! Quest complete!";
+        const TEXT: &str = "You have completed the Waterfall Quest!";
+        let line = ChatLineView {
+            type_: 0,
+            username: None,
+            text: CHAT.into(),
+            sequence: 10,
+        };
+        let widget =
+            |root, root_component_id, component_id, hidden, text: Option<&str>| WidgetView {
+                kind: WidgetKind::Widget,
+                component_id,
+                layer_id: 0,
+                parent_id: -1,
+                root_component_id,
+                root,
+                type_: 0,
+                button_type: 0,
+                client_code: 0,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                scroll_height: 0,
+                scroll_position: 0,
+                hidden,
+                text: text.map(str::to_owned),
+                alternate_text: None,
+                button_text: None,
+                target_verb: None,
+                target_base: None,
+                target_mask: 0,
+                model_type: 0,
+                model_id: 0,
+                alternate_model_type: 0,
+                alternate_model_id: 0,
+                scripts: None,
+                script_comparators: None,
+                script_operands: None,
+                varp_bindings: vec![],
+                colour: 0,
+                actions: vec![],
+                items: vec![],
+            };
+        let proof = Proof::FreshQuestCompletion {
+            chat_needle: CHAT,
+            main_root_component_id: 297,
+            component_id: 301,
+            text: TEXT,
+        };
+        let matching = widget(WidgetRoot::Main, 297, 301, false, Some(TEXT));
+        assert!(fresh_quest_completion_contains(
+            std::slice::from_ref(&line),
+            std::slice::from_ref(&matching),
+            9,
+            CHAT,
+            297,
+            301,
+            TEXT,
+        ));
+        assert!(!proof.check(&GameSnapshot::new(), None));
+        assert_eq!(
+            proof.name(),
+            "fresh_quest_completion(chat contains \"Congratulations! Quest complete!\",main=297/301=\"You have completed the Waterfall Quest!\")"
+        );
+
+        let fails = |lines: &[ChatLineView], widgets: &[WidgetView], baseline| {
+            !fresh_quest_completion_contains(lines, widgets, baseline, CHAT, 297, 301, TEXT)
+        };
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                std::slice::from_ref(&matching),
+                10,
+            ),
+            "stale chat"
+        );
+        assert!(
+            fails(&[], std::slice::from_ref(&matching), 9),
+            "missing chat"
+        );
+
+        assert!(
+            fails(
+                &[ChatLineView {
+                    type_: 1,
+                    ..line.clone()
+                }],
+                std::slice::from_ref(&matching),
+                9,
+            ),
+            "non-system chat"
+        );
+        assert!(
+            fails(
+                &[ChatLineView {
+                    username: Some("Other".into()),
+                    ..line.clone()
+                }],
+                std::slice::from_ref(&matching),
+                9,
+            ),
+            "attributed chat"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(
+                    WidgetRoot::Main,
+                    297,
+                    301,
+                    false,
+                    Some("Quest complete!")
+                )],
+                9,
+            ),
+            "wrong quest text"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Side, 297, 301, false, Some(TEXT))],
+                9,
+            ),
+            "wrong root kind"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 296, 301, false, Some(TEXT))],
+                9,
+            ),
+            "wrong root component"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 300, false, Some(TEXT))],
+                9,
+            ),
+            "wrong component"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 301, true, Some(TEXT))],
+                9,
+            ),
+            "hidden text"
+        );
+        assert!(
+            fails(
+                std::slice::from_ref(&line),
+                &[widget(WidgetRoot::Main, 297, 301, false, None)],
+                9,
+            ),
+            "missing text"
+        );
+        assert!(fails(&[line], &[], 9), "missing scroll");
     }
 
     #[test]

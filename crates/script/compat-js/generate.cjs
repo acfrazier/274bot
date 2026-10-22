@@ -17,7 +17,7 @@ const {
 const here = __dirname;
 const crate = path.resolve(here, '..');
 const frozen = process.env.RS2B0T;
-const frozenRevision = '2de6bb2397ceb9ffd05f2354f67dde328e324531';
+const frozenRevision = '90a69240a4617155f280f098958c3cd7f044f234';
 const frozenRepository = 'https://github.com/rs2b2t/rs2b0t.git';
 const frozenRevisionLabel = frozenRevision.slice(0, 10);
 if (!frozen) throw new Error(`Set RS2B0T to the frozen rs2b0t ${frozenRevisionLabel} source. Run npm ci in compat-js first.`);
@@ -316,7 +316,24 @@ function apply(module, text) {
                 const decl = variable ? s.declarationList.declarations[0] : s;
                 const type = variable ? decl.type : decl;
                 if (!type || (!ts.isTypeLiteralNode(type) && !ts.isClassDeclaration(type) && !ts.isInterfaceDeclaration(type))) throw new Error(`Not a member container: ${e.id}`);
-                const replacementMember = overlayDeclarations(`declare class X { ${e.declaration || ''} }`)[0].members;
+                const declaration = e.declaration || '';
+                const leadingDoc = declaration.match(/^\s*(\/\*\*[\s\S]*?\*\/)\s*/);
+                const memberDeclaration = leadingDoc ? declaration.slice(leadingDoc[0].length) : declaration;
+                const replacementMember = overlayDeclarations(
+                    `declare class X {\n${memberDeclaration}\n}`,
+                )[0].members;
+                if (leadingDoc) {
+                    const method = replacementMember.find(
+                        member => ts.isMethodDeclaration(member) || ts.isMethodSignature(member),
+                    );
+                    if (!method) throw new Error(`Method overlay has no method declaration: ${e.id}`);
+                    ts.addSyntheticLeadingComment(
+                        method,
+                        ts.SyntaxKind.MultiLineCommentTrivia,
+                        leadingDoc[1].slice(2, -2),
+                        true,
+                    );
+                }
                 const changed = type.members.flatMap(m => {
                     if ((ts.isConstructorDeclaration(m) ? 'constructor' : name(m)) !== member) return [m];
                     hits++;

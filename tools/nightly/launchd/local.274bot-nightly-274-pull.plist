@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Revision-274 nightly pull (hourly), NIGHTLY-274. Install: see
+     tools/nightly/README.md. In short:
+       clang -O2 -Wall -o ~/.local/libexec/274bot-nightly/nightly274-launch \
+         tools/nightly/launchd/nightly274-launch.c
+       mkdir -p ~/.local/state/274bot-nightly-274
+       sed "s#__HOME__#$HOME#g" \
+         tools/nightly/launchd/local.274bot-nightly-274-pull.plist \
+         > ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+       launchctl bootstrap gui/$(id -u) \
+         ~/Library/LaunchAgents/local.274bot-nightly-274-pull.plist
+     __HOME__ marks the operator's home directory. launchd does not expand
+     $HOME, and this repository carries no operator path, so the sed above
+     fills it in. The program is the nightly274-launch binary, not /bin/bash,
+     so the macOS removable-volume grant applies to the binary that owns the
+     pull (see nightly274-launch.c). The script is tools/nightly/pull-274.sh,
+     installed at ~/.local/lib/274bot-nightly/pull-274.sh. Host, key, pinned
+     host key and destination come from
+     ~/.config/274bot-nightly/pull-274.env. Output goes to
+     ~/.local/state/274bot-nightly-274/pull.log, which launchd opens before
+     the run, so the folder must exist first. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.274bot-nightly-274-pull</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/libexec/274bot-nightly/nightly274-launch</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.local/state/274bot-nightly-274/pull.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.local/state/274bot-nightly-274/pull.log</string>
+	<key>StartCalendarInterval</key>
+	<dict><key>Minute</key><integer>41</integer></dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>

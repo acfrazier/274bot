@@ -562,7 +562,8 @@ fn complete_entities_and_query_contract_on_served_isolates() {
                 z: 3202,
                 level: 0,
                 name: Some("Bones".into()),
-                action: "Take".into()
+                action: "Take".into(),
+                id: Some(200),
             },
         ]
     );

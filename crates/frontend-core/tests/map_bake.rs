@@ -498,11 +498,10 @@ fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
         "no prefs file"
     );
     let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     // A 0.1.8.1 prefs file has no `map_bake` key.
-    std::fs::write(
+    vault::write_private_file(
         &path,
-        r#"{"last_focus":"alice","background_bots_ack":true}"#,
+        br#"{"last_focus":"alice","background_bots_ack":true}"#,
     )
     .unwrap();
     preferences.reload().unwrap();
@@ -514,7 +513,7 @@ fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
     assert_eq!(prefs["last_focus"], "alice");
     assert_eq!(prefs["background_bots_ack"], true);
     assert_eq!(prefs["map_bake"], "always");
-    std::fs::write(&path, r#"{"map_bake":"sometimes"}"#).unwrap();
+    vault::write_private_file(&path, br#"{"map_bake":"sometimes"}"#).unwrap();
     preferences.reload().unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
 }

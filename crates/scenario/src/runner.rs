@@ -1,8 +1,7 @@
-//! The shared scenario runner: a state machine both runners pump from
-//! their own per-frame hooks. No sleeps inside — each `tick` is one
-//! observe of the client (the panel slot thread headed, the
-//! `run_with_io` hook headless), so "one scenario, two runners" shares
-//! the exact same seed/step/proof logic.
+//! The shared scenario runner: a state machine both frontends pump once
+//! per client cycle. It does not sleep. Each client-cycle observation
+//! reads the same client state, whether the panel thread or the headless
+//! `run_with_io` hook calls it. Both runners share seed, step and proof logic.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,7 +14,7 @@ use nav::router::{FindOptions, Route};
 use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 
-use crate::evidence::Evidence;
+use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
 use crate::proof::Proof;
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
@@ -128,6 +127,22 @@ enum StallCombatObservation {
     FirstBank,
     Returning,
     SecondSession { guard_ready: bool },
+}
+
+/// Pre-style trip evidence for [`StepKind::ObserveStyleAcrossLootTrips`].
+#[derive(Debug, Clone, Copy, Default)]
+struct LootTripObservation {
+    /// Most `deposit_id` seen in a fresh open bank during this step. The
+    /// cells that use the step start from an empty bank.
+    deposited: i32,
+    /// Completed trips: observed rises of `deposited`.
+    trips: u32,
+    /// Successful steals: observed rises of the progress stat's XP.
+    steals: u32,
+    /// Attack, Strength and Defence XP at the previous frame.
+    melee_xp: Option<[i32; 3]>,
+    /// The progress stat's XP at the previous frame.
+    progress_xp: Option<i32>,
 }
 
 const PROTECT_MAGIC_VARP: i32 = 95;
@@ -367,8 +382,8 @@ pub struct ScenarioRunner {
     traveller: Traveller,
     /// WORLD membership for routing. Default false (unknown).
     map_members: bool,
-    /// The armed nav route (re-passed each tick; the traveller consumes
-    /// it when a run starts).
+    /// The armed nav route (re-passed each client cycle; the traveller
+    /// consumes it when a run starts).
     route: Option<Route>,
     /// Whole-window shot label fired at the terminal state (PASS and
     /// FAIL); `None` for scenarios that only fire `Shot` steps.
@@ -376,11 +391,22 @@ pub struct ScenarioRunner {
     phase: Phase,
     step: usize,
     step_sent: bool,
-    /// Game ticks waited on the current step's arm (post-send observes
-    /// where any family gen moved).
-    ticks_waited: u32,
-    /// Ticks across the whole run (the evidence `ticks` field).
-    total_ticks: u32,
+    /// Observed game tick (`snapshot.tick()`, one per `PLAYER_INFO`) at
+    /// which the current `Repeat` step last sent. `None` until the step
+    /// sends; reset at every step boundary so a new `Repeat` step can
+    /// send at once. Client cycles and dirty snapshots never update it.
+    repeat_sent_game_tick: Option<u32>,
+    /// Last `snapshot.tick()` this runner observed. The difference on
+    /// the next poll is the number of observed game ticks (one per
+    /// `PLAYER_INFO`) to credit to the step budget and run total.
+    /// Client cycles and dirty snapshots do not advance it.
+    last_observed_game_tick: u32,
+    /// Observed game ticks waited on the current step's arm (one per
+    /// `PLAYER_INFO`). Client cycles and dirty snapshots do not count.
+    game_ticks_waited: u32,
+    /// Observed game ticks across the whole run (the evidence `ticks`
+    /// field). Client cycles and dirty snapshots do not count.
+    total_game_ticks: u32,
     started: Instant,
     deadline: Duration,
     /// Wall-clock settle before a step can start: the scene must have
@@ -415,22 +441,20 @@ pub struct ScenarioRunner {
     engine_speed_sent: bool,
     speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
+    ground_guard: Option<GroundGuardEvidence>,
     /// Cumulative skill XP baselines: captured at StartScript for its later
     /// watches, otherwise when the first XP watch for that skill begins.
     xp_baselines: Vec<(i32, i32)>,
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current [`Proof::FreshTutorial`] or
-    /// [`Proof::FreshChat`] step only. Latched when the step begins (the
-    /// post-relog snapshot, before the reseed or getvar send goes out) and
-    /// cleared at every step and session boundary, so a chat line latched
-    /// before the relog cannot satisfy the post-relog wait.
+    /// Chat-sequence baseline for the current FreshTutorial, FreshChat, or
+    /// FreshQuestCompletion wait. Latched when the step begins and cleared at
+    /// every step and session boundary, so a stale line cannot satisfy it.
     fresh_chat_baseline: Option<i32>,
-    /// Latched per step for [`Proof::VisitedWithin`]: set once the player
-    /// stands inside the proof's rectangle on an observed tick of the current
-    /// step. Cleared at every step and session boundary, like the chat
-    /// baseline above.
+    /// Latched per step for [`Proof::VisitedWithin`]: the first snapshot
+    /// that shows the player inside the proof rectangle sets it. Cleared
+    /// at every step and session boundary, like the chat baseline above.
     visited_within: bool,
     /// Native host-hold + snapshot facts for the current lamp witness step.
     /// This is deliberately not part of [`GameSnapshot`].
@@ -439,6 +463,8 @@ pub struct ScenarioRunner {
     maze_episode: Option<MazeEpisodeObservation>,
     /// At most one catch-less stall session may be followed by a bank retry.
     stall_combat: Option<StallCombatObservation>,
+    /// Pre-style Loot-count trips for the current style watch.
+    loot_trips: Option<LootTripObservation>,
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
@@ -454,7 +480,7 @@ pub struct ScenarioRunner {
     script_idle: bool,
     /// The prefixes the scenario's [`Proof::ScriptReceipt`] watches name,
     /// collected once at construction (empty, unallocated, for every
-    /// scenario without one), so the per-frame pump never walks the steps.
+    /// scenario without one), so the client-cycle pump never walks the steps.
     receipt_prefixes: Vec<&'static str>,
     /// File-card receipt rows those watches latched from the driven slot's
     /// published paint (first row per prefix). Host-fed through
@@ -529,8 +555,10 @@ impl ScenarioRunner {
             phase: Phase::Seeding,
             step: 0,
             step_sent: false,
-            ticks_waited: 0,
-            total_ticks: 0,
+            repeat_sent_game_tick: None,
+            last_observed_game_tick: 0,
+            game_ticks_waited: 0,
+            total_game_ticks: 0,
             started: Instant::now(),
             deadline,
             scene_settle: Duration::from_secs(2),
@@ -547,6 +575,7 @@ impl ScenarioRunner {
             speed_chat_baseline: None,
             engine_speed_sent: false,
             evidence: None,
+            ground_guard: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
@@ -554,6 +583,7 @@ impl ScenarioRunner {
             lamp_episode: None,
             maze_episode: None,
             stall_combat: None,
+            loot_trips: None,
             random_event: None,
             protect_window: None,
             death_chat_baseline: None,
@@ -612,11 +642,12 @@ impl ScenarioRunner {
         }
     }
 
-    /// Runner dirty-snapshot increments across the whole run (the evidence
-    /// `ticks` field); the recording sidecar lines each video timestamp
-    /// up with this count.
+    /// Observed game ticks across the whole run (the evidence `ticks`
+    /// field): one per `PLAYER_INFO`, counted while the run steps run.
+    /// Client cycles (frontend polls) and dirty snapshots do not count.
+    /// The recording sidecar lines each video timestamp up with this count.
     pub fn total_ticks(&self) -> u32 {
-        self.total_ticks
+        self.total_game_ticks
     }
 
     /// Existing isolate self-stop reason the headed/TUI live path waits for
@@ -677,7 +708,7 @@ impl ScenarioRunner {
     }
 
     /// The profile the runner drives (`seed.profiles[0]`, or the minted
-    /// live name when armed); per-frame hooks tick only this slot's client.
+    /// live name when armed); client-cycle hooks observe only this slot.
     pub fn profile_name(&self) -> &str {
         self.seed_name(0)
     }
@@ -720,10 +751,10 @@ impl ScenarioRunner {
         self.seed_name(profile)
     }
 
-    /// The companion slot whose profile name is `name`, `None` when no
-    /// companion carries it. The driven slot (profile 0) is never a
-    /// companion, so per-frame hooks dispatch: driven → [`ScenarioRunner::tick`],
-    /// else `companion_for` → [`ScenarioRunner::companion_tick`].
+    /// The companion slot whose profile name is `name`, or `None` when no
+    /// companion has it. The driven slot (profile 0) is never a companion.
+    /// Client-cycle hooks dispatch to [`ScenarioRunner::tick`] for the
+    /// driven slot, or [`ScenarioRunner::companion_tick`] for a companion.
     pub fn companion_for(&self, name: &str) -> Option<usize> {
         self.scenario
             .companions
@@ -731,8 +762,8 @@ impl ScenarioRunner {
             .position(|c| self.seed_name(c.profile) == name)
     }
 
-    /// Run companion `index`'s per-frame hook once on `client`. No sleeps;
-    /// the caller delivers one frame per call, exactly like [`tick`].
+    /// Run companion `index`'s hook once per client cycle on `client`. The
+    /// caller delivers one frame per call, exactly like [`tick`].
     pub fn companion_tick(&mut self, index: usize, client: &mut Client) {
         (self.scenario.companions[index].per_frame)(client);
     }
@@ -745,14 +776,16 @@ impl ScenarioRunner {
             && matches!(self.current_step().kind, StepKind::StartScript)
     }
 
-    /// True while the live pump must revoke the current script before ticking.
+    /// True while the live pump must revoke the current script before the
+    /// next client-cycle observation.
     pub fn on_stop_script(&self) -> bool {
         matches!(self.phase, Phase::Running)
             && self.step < self.scenario.steps.len()
             && matches!(self.current_step().kind, StepKind::StopScript)
     }
 
-    /// Observe Stop's actual script-slot result before this frame's tick.
+    /// Observe Stop's actual script-slot result before the next
+    /// client-cycle observation.
     pub fn observe_script_idle(&mut self, idle: bool) {
         if self.on_stop_script() {
             self.script_idle = idle;
@@ -796,8 +829,8 @@ impl ScenarioRunner {
 
     /// Latch the first published paint row that starts with each receipt
     /// prefix the scenario watches. The live pump calls this with the
-    /// driven slot's current paint frame before [`Self::tick_with_hold`];
-    /// paint published before StartScript is ignored.
+    /// driven slot's current paint frame before the next client-cycle
+    /// observation. Paint published before StartScript is ignored.
     pub fn observe_script_paint<'a>(&mut self, lines: impl IntoIterator<Item = &'a str>) {
         if !self.script_started || matches!(self.phase, Phase::Done) {
             return;
@@ -848,21 +881,21 @@ impl ScenarioRunner {
         }
     }
 
-    /// One observe of `client`: rebuild the snapshot, send the current
-    /// step's action if it has not gone out yet, hop the traveller, and
-    /// check the step arm / proof predicate. Never sleeps. A seeding-
-    /// completion tick falls through into the run logic, so the send goes
-    /// out the tick the seed completes.
+    /// One client-cycle observation of `client`: rebuild the snapshot, send
+    /// the current step's action if it has not gone out yet, hop the traveller,
+    /// and check the step arm / proof predicate. Never sleeps. A seed-completion
+    /// client cycle falls through into the run logic, so the send goes out in
+    /// the same cycle the seed completes.
     pub fn tick(&mut self, client: &mut Client) {
         self.tick_with_hold(client, false);
     }
 
-    /// Like [`ScenarioRunner::tick`], but skip `Traveller::follow` while
-    /// `hold` is set (guardian hold — the armed route stays latched).
+    /// Like [`ScenarioRunner::tick`], one client-cycle pump, but skip
+    /// `Traveller::follow` while `hold` is set (guardian hold — the armed route stays latched).
     pub fn tick_with_hold(&mut self, client: &mut Client, hold: bool) {
         self.tick_inner(client, hold);
         if matches!(self.phase, Phase::Done) {
-            // A follow failure may still be consumed by this tick's remaining
+            // A follow failure may still be consumed by this poll's remaining
             // checks. Release only after all existing callbacks and evidence.
             self.snapshot = GameSnapshot::new();
         }
@@ -873,6 +906,15 @@ impl ScenarioRunner {
             return;
         }
         let dirty = self.snapshot.rebuild(client);
+        // Observed game ticks since the last poll: `snapshot.tick()`
+        // advances once per `PLAYER_INFO` (the server's world cycle),
+        // never on a client cycle or a dirty snapshot alone. Step
+        // budgets and the run total credit this delta in the run block
+        // below; polls that return before it (cleaning, scene settle)
+        // do not count toward a step budget.
+        let observed_game_tick = self.snapshot.tick();
+        let game_tick_delta = observed_game_tick.wrapping_sub(self.last_observed_game_tick);
+        self.last_observed_game_tick = observed_game_tick;
         if matches!(self.phase, Phase::Cleaning) {
             self.tick_terminal_cleanup(client);
             return;
@@ -953,7 +995,15 @@ impl ScenarioRunner {
             if dirty && !hold {
                 self.step_route(client);
             }
-            if !self.step_sent {
+            // A `Repeat` step sends at most once per observed game tick
+            // (one `PLAYER_INFO`). Frontend polls run at the client-cycle
+            // rate, so an unguarded repeat floods the engine's per-tick
+            // input budget and delays the next step's command behind the
+            // repeats. The first send of a step goes out at once
+            // (`repeat_sent_game_tick` is `None`).
+            let repeat = matches!(self.current_step().kind, StepKind::Repeat { .. });
+            let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
+            if !self.step_sent && repeat_ready {
                 self.fire_nav_step_sustains(client);
                 if let Err(msg) = self.send_current(client) {
                     self.finish_fail(&format!(
@@ -963,22 +1013,28 @@ impl ScenarioRunner {
                     ));
                     return;
                 }
-                // A `DrainDialogs` janitor re-sends every tick: it answers
-                // whatever `p_choice` dialog is up (the quest-seed
+                if repeat {
+                    self.repeat_sent_game_tick = Some(self.snapshot.tick());
+                }
+                // A `DrainDialogs` janitor re-sends every client cycle: it
+                // answers whatever `p_choice` dialog is up (the quest-seed
                 // prompts) and closes the quest-scroll modals until its
                 // arm holds, so the send stays armed — and the step's
-                // tick budget keeps counting.
+                // game-tick budget keeps counting.
                 self.step_sent = !matches!(
                     self.current_step().kind,
                     StepKind::DrainDialogs { .. } | StepKind::Relog | StepKind::Repeat { .. }
                 );
                 if self.step_sent {
-                    self.ticks_waited = 0;
+                    self.game_ticks_waited = 0;
                 }
             }
+            // Budgets count observed game ticks only. Route polling above
+            // and the proof checks below still run on every poll; a burst
+            // of dirty snapshots inside one game tick does not use budget.
+            self.game_ticks_waited = self.game_ticks_waited.saturating_add(game_tick_delta);
+            self.total_game_ticks = self.total_game_ticks.saturating_add(game_tick_delta);
             if dirty {
-                self.ticks_waited += 1;
-                self.total_ticks += 1;
                 if let Some(window) = self.protect_window.as_mut() {
                     window.observe(&self.snapshot);
                 }
@@ -1014,6 +1070,22 @@ impl ScenarioRunner {
             let (arm, budget) = {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
+            };
+            self.observe_ground_guard(arm);
+            if let Err(message) = self.observe_loot_trips(arm) {
+                self.finish_fail(&format!(
+                    "step {} ({}): {message}",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
+            }
+            let waited_game_ticks = if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+                self.ground_guard
+                    .as_ref()
+                    .map_or(0, |guard| guard.ticks_waited)
+            } else {
+                self.game_ticks_waited
             };
             if matches!(self.current_step().kind, StepKind::Relog) {
                 self.relog_left_session |= !self.snapshot.ingame()
@@ -1084,7 +1156,20 @@ impl ScenarioRunner {
                     }
                     self.advance_step();
                 }
-            } else if self.ticks_waited >= budget {
+            } else if waited_game_ticks >= budget {
+                let tick_unit = if budget == 1 {
+                    "game tick"
+                } else {
+                    "game ticks"
+                };
+                if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+                    self.finish_fail(&format!(
+                        "fixture interference: step {} ({}): public loot field did not become clean within {budget} observed {tick_unit}",
+                        self.step + 1,
+                        self.current_step().name,
+                    ));
+                    return;
+                }
                 let missing = self
                     .lamp_episode
                     .as_ref()
@@ -1099,6 +1184,17 @@ impl ScenarioRunner {
                             .map(|state| format!("{} [stall_combat={state:?}]", arm.name()))
                     })
                     .or_else(|| {
+                        self.loot_trips.map(|trips| {
+                            format!(
+                                "{} [pre-style trips={} deposited={} steals={}]",
+                                arm.name(),
+                                trips.trips,
+                                trips.deposited,
+                                trips.steals
+                            )
+                        })
+                    })
+                    .or_else(|| {
                         matches!(
                             self.current_step().kind,
                             StepKind::ObserveRandomEvent { .. }
@@ -1108,11 +1204,12 @@ impl ScenarioRunner {
                     })
                     .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
-                    "step {} ({}): {} not seen within {} ticks",
+                    "step {} ({}): {} not seen within {} {}",
                     self.step + 1,
                     self.current_step().name,
                     missing,
-                    budget
+                    budget,
+                    tick_unit
                 ));
             }
         }
@@ -1169,16 +1266,28 @@ impl ScenarioRunner {
 
     fn begin_step(&mut self) {
         self.step_sent = false;
+        self.repeat_sent_game_tick = None;
         self.relog_logout_sent = false;
         self.relog_session = None;
         self.relog_left_session = false;
-        self.ticks_waited = 0;
+        self.game_ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
         self.fresh_chat_baseline = None;
         self.visited_within = false;
         self.capture_chat_baseline(self.current_step().wait.arm);
+        if matches!(
+            self.current_step().wait.arm,
+            Proof::GroundItemIdsAbsentNear { .. }
+        ) {
+            self.ground_guard = Some(GroundGuardEvidence {
+                start_tick: self.snapshot.tick(),
+                ticks_waited: 0,
+                budget_game_ticks: self.current_step().wait.budget_ticks,
+                items_seen: Vec::new(),
+            });
+        }
         self.lamp_episode = match self.current_step().kind {
             StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
                 reward_baseline: self.stat_xp(reward_stat),
@@ -1206,6 +1315,11 @@ impl ScenarioRunner {
             StepKind::ObserveStallCombat { .. }
         )
         .then_some(StallCombatObservation::FirstSession);
+        self.loot_trips = matches!(
+            self.current_step().kind,
+            StepKind::ObserveStyleAcrossLootTrips { .. }
+        )
+        .then(LootTripObservation::default);
         if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
             // The cells run on the 289 engine (`tools/engine-patches/289`);
             // missing content data leaves the evade range unknown, which the
@@ -1279,6 +1393,22 @@ impl ScenarioRunner {
                 }
                 None => false,
             },
+            Proof::FreshQuestCompletion {
+                chat_needle,
+                main_root_component_id,
+                component_id,
+                text,
+            } => self.fresh_chat_baseline.is_some_and(|baseline| {
+                crate::proof::fresh_quest_completion_contains(
+                    self.snapshot.chat_lines(),
+                    self.snapshot.widgets(),
+                    baseline,
+                    chat_needle,
+                    main_root_component_id,
+                    component_id,
+                    text,
+                )
+            }),
             Proof::VisitedWithin { .. } => self.visited_within,
             other => other.check_with_xp_context(
                 &self.snapshot,
@@ -1287,6 +1417,78 @@ impl ScenarioRunner {
                 self.fresh_xp_baseline,
             ),
         }
+    }
+
+    /// Restart the style watch's budget at each completed pre-style trip and
+    /// each progress-stat XP gain, and fail when the card fights without its
+    /// style while it holds food.
+    fn observe_loot_trips(&mut self, style: Proof) -> Result<(), String> {
+        let StepKind::ObserveStyleAcrossLootTrips {
+            deposit_id,
+            food,
+            progress_stat,
+        } = self.current_step().kind
+        else {
+            return Ok(());
+        };
+        let progress_xp = self.stat_xp(progress_stat);
+        let style_holds = self.holds(style);
+        let food_held = self
+            .snapshot
+            .inv()
+            .iter()
+            .any(|(id, count)| *count > 0 && food.contains(id));
+        let melee_xp = match (self.stat_xp(0), self.stat_xp(2), self.stat_xp(1)) {
+            (Some(attack), Some(strength), Some(defence)) => Some([attack, strength, defence]),
+            _ => None,
+        };
+        let fresh_bank = self.snapshot.ingame()
+            && self.snapshot.scene_state() == 2
+            && self.snapshot.bank_component_id() >= 0
+            && self.snapshot.bank_loaded();
+        let banked: i32 = if fresh_bank {
+            self.snapshot
+                .bank()
+                .iter()
+                .filter(|row| row.def.id == deposit_id)
+                .map(|row| row.count)
+                .sum()
+        } else {
+            0
+        };
+        let Some(state) = self.loot_trips.as_mut() else {
+            return Ok(());
+        };
+        let rose = match (state.melee_xp, melee_xp) {
+            (Some(before), Some(now)) => before.iter().zip(now).any(|(old, new)| new > *old),
+            _ => false,
+        };
+        if melee_xp.is_some() {
+            state.melee_xp = melee_xp;
+        }
+        let progressed = matches!(
+            (state.progress_xp, progress_xp),
+            (Some(before), Some(now)) if now > before
+        );
+        if progress_xp.is_some() {
+            state.progress_xp = progress_xp;
+        }
+        if rose && food_held && !style_holds {
+            return Err(format!(
+                "melee XP rose while stall food was held and {} did not hold",
+                style.name()
+            ));
+        }
+        if banked > state.deposited {
+            state.deposited = banked;
+            state.trips += 1;
+            self.game_ticks_waited = 0;
+        }
+        if progressed {
+            state.steals += 1;
+            self.game_ticks_waited = 0;
+        }
+        Ok(())
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
@@ -1542,12 +1744,14 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the post-relog chat baseline for a [`Proof::FreshTutorial`] or
-    /// [`Proof::FreshChat`] step: the newest chat `sequence` in the step-start
-    /// snapshot, before the reseed or getvar send goes out. A stale line at or
-    /// below this sequence cannot satisfy the wait.
+    /// Latch the step-start chat baseline for FreshTutorial, FreshChat and
+    /// FreshQuestCompletion. A stale line at or below this sequence cannot
+    /// satisfy the wait.
     fn capture_chat_baseline(&mut self, proof: Proof) {
-        if !matches!(proof, Proof::FreshTutorial | Proof::FreshChat { .. }) {
+        if !matches!(
+            proof,
+            Proof::FreshTutorial | Proof::FreshChat { .. } | Proof::FreshQuestCompletion { .. }
+        ) {
             return;
         }
         if self.fresh_chat_baseline.is_some() {
@@ -1556,9 +1760,9 @@ impl ScenarioRunner {
         self.fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
     }
 
-    /// Latch [`Proof::VisitedWithin`] for the current step: the first observed
-    /// tick on which the player stands inside the proof's rectangle sets it.
-    /// Runs on every dirty tick before the step's arm is evaluated.
+    /// Latch [`Proof::VisitedWithin`] when a dirty snapshot first shows the
+    /// player inside the current step's proof rectangle. The snapshot reader
+    /// checks this before it evaluates the step's arm.
     fn observe_visited(&mut self) {
         if self.visited_within {
             return;
@@ -1633,12 +1837,12 @@ impl ScenarioRunner {
     }
 
     /// Send the current step's action once. `Perform` runs its closure;
-    /// `Walk` and `Follow` both arm the whole-world route (`find_with`
-    /// over the collision + transport graph, default options) and drive
-    /// `Traveller::follow`; `DrainDialogs` answers the chat modal's
-    /// choice when one is up, else closes the open modal (re-sent every
-    /// tick by the runner — a refusal with nothing up is fine); `Shot`
-    /// sends nothing (the step only waits for its arm to capture it).
+    /// `Walk` and `Follow` arm the whole-world route (`find_with` over the
+    /// collision + transport graph) and drive `Traveller::follow`.
+    /// `DrainDialogs` answers the chat modal's choice when one is up, else
+    /// closes it (re-sent every client cycle — a refusal with nothing up is
+    /// fine); `Shot` sends nothing (the step only waits for its arm to capture
+    /// it).
     fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } | StepKind::Repeat { send } => {
@@ -1685,6 +1889,7 @@ impl ScenarioRunner {
             | StepKind::Await { .. }
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. }
+            | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
@@ -1711,6 +1916,11 @@ impl ScenarioRunner {
         FindOptions {
             allow_teleports: force_teleports || n.allow_teleports,
             allow_wilderness: n.allow_wilderness,
+            zones: if n.allow_danger_zones {
+                nav::zones::ZoneExempt::all()
+            } else {
+                nav::zones::ZoneExempt::NONE
+            },
             ..FindOptions::default()
         }
     }
@@ -1755,16 +1965,16 @@ impl ScenarioRunner {
         }
     }
 
-    /// Poll the armed nav route one leg per delivered frame (`dirty` —
-    /// any family gen moved). `find` already proved the route at arm
-    /// time; a terminal outcome other than `Arrived` is a
+    /// Poll the armed nav route one leg per delivered client-cycle frame
+    /// (`dirty` — any family generation moved). `find` already proved the
+    /// route at arm time; a terminal outcome other than `Arrived` is a
     /// stall/refusal/block and fails the step with the traveller's own
     /// message. `Arrived` leaves the arm predicate (`Proof::Arrived`) to
-    /// fire on the same tick's snapshot read.
+    /// fire on the same poll's snapshot read.
     ///
     /// The poll options are a fresh default each call — this runner never
-    /// sets an `on_leg` callback, so nothing needs to survive across ticks
-    /// (and a stored `TravelOptions<'static>` would make the runner
+    /// sets an `on_leg` callback, so nothing needs to survive across client
+    /// cycles (and a stored `TravelOptions<'static>` would make the runner
     /// non-`Send`, which the panel's shared runner slot requires).
     fn step_route(&mut self, client: &mut Client) {
         let Some(route) = self.route.clone() else {
@@ -1774,8 +1984,8 @@ impl ScenarioRunner {
             let lp = client.local_player.as_ref();
             let phys = lp.map(|p| ((p.x - 64) / 128, (p.z - 64) / 128));
             eprintln!(
-                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={} base=({},{}) route={:?} player_gen={} snapshot_tick={}",
-                self.total_ticks,
+                "[nav-runner] game_tick={} snap={:?} phys={:?} dest={:?} legs={} base=({},{}) route={:?} player_gen={} snapshot_game_tick={}",
+                self.total_game_ticks,
                 self.snapshot.tile(),
                 phys,
                 route.dest,
@@ -1811,7 +2021,7 @@ impl ScenarioRunner {
             eprintln!("[nav-runner] follow outcome={outcome:?}");
         }
         if let TravelOutcome::Arrived { .. } = outcome {
-            // Don't re-arm the original outside→door→dest legs next tick.
+            // Don't re-arm the original outside→door→dest legs next client cycle.
             self.route = None;
             return;
         }
@@ -1977,6 +2187,37 @@ impl ScenarioRunner {
         }
     }
 
+    fn observe_ground_guard(&mut self, arm: Proof) {
+        if !matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
+            return;
+        }
+        let Some(guard) = self.ground_guard.as_mut() else {
+            return;
+        };
+        guard.ticks_waited = self.snapshot.tick().wrapping_sub(guard.start_tick);
+        for item in self
+            .snapshot
+            .ground_items()
+            .iter()
+            .filter(|item| arm.ground_guard_contains(item))
+        {
+            let tile = [item.tile.x, item.tile.z, item.tile.level];
+            if let Some(seen) = guard
+                .items_seen
+                .iter_mut()
+                .find(|seen| seen.id == item.def.id && seen.tile == tile)
+            {
+                seen.count = seen.count.max(item.count);
+            } else {
+                guard.items_seen.push(GroundGuardItem {
+                    id: item.def.id,
+                    count: item.count,
+                    tile,
+                });
+            }
+        }
+    }
+
     fn record_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
@@ -1985,7 +2226,7 @@ impl ScenarioRunner {
             "PASS",
             self.scenario.proof.name(),
             None,
-            self.total_ticks,
+            self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
             self.started,
@@ -1996,6 +2237,7 @@ impl ScenarioRunner {
             .as_ref()
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
+        evidence.ground_guard = self.ground_guard.take();
         self.evidence = Some(evidence);
     }
 
@@ -2011,7 +2253,7 @@ impl ScenarioRunner {
             outcome,
             self.current_predicate_name(),
             Some(msg.to_string()),
-            self.total_ticks,
+            self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
             self.started,
@@ -2022,6 +2264,7 @@ impl ScenarioRunner {
             .as_ref()
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
+        evidence.ground_guard = self.ground_guard.take();
         self.evidence = Some(evidence);
     }
 }

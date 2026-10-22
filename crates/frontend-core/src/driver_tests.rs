@@ -210,11 +210,6 @@ fn targets_must_fit_the_row() {
         .expect_err("application row"),
         SubmitError::WrongTargets(OperatorCommand::SetRenderAll(true))
     );
-    assert_eq!(
-        d.submit(OperatorCommand::SwitchWorld(1), Targets::Profile("alice"))
-            .expect_err("no entry point"),
-        SubmitError::NoEntryPoint(OperatorCommand::SwitchWorld(1))
-    );
 }
 
 #[test]
@@ -667,17 +662,17 @@ fn marks_and_the_fleet_filter_change_only_through_their_rows() {
         .submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
         .expect("mark");
     assert_eq!(terminal(&d, mark.request(), "alice"), Some(done()));
-    assert!(d.models().marks().contains(alice));
+    assert!(d.models().fleet().marks().contains(alice));
     d.session_mut().stage_mark_all([alice, bob]);
     d.submit(OperatorCommand::MarkAll, Targets::Application)
         .expect("mark all");
-    assert_eq!(d.models().marks().len(), 2);
+    assert_eq!(d.models().fleet().marks().len(), 2);
     d.models_mut()
-        .fleet_filter_mut()
-        .staged_mut()
+        .fleet_mut()
+        .staged_filter_mut()
         .push_str("bob");
     assert_eq!(
-        d.models().fleet_filter().text(),
+        d.models().fleet().filter().text(),
         "",
         "a staged edit is not shown yet"
     );
@@ -685,10 +680,10 @@ fn marks_and_the_fleet_filter_change_only_through_their_rows() {
         .submit(OperatorCommand::SetFleetFilter, Targets::Application)
         .expect("filter");
     assert_eq!(terminal_app(&d, filter.request()), Some(done()));
-    assert_eq!(d.models().fleet_filter().text(), "bob");
+    assert_eq!(d.models().fleet().filter().text(), "bob");
     d.submit(OperatorCommand::ClearMarks, Targets::Application)
         .expect("clear");
-    assert!(d.models().marks().is_empty());
+    assert!(d.models().fleet().marks().is_empty());
 }
 
 #[test]
@@ -809,4 +804,3113 @@ fn start_script_with_nothing_assigned_is_refused_with_its_reason() {
         crate::scripts::ScriptRunState::Idle,
         "no script runs"
     );
+}
+
+/// The names of the fleet model's shown rows, in their order.
+fn shown_names(d: &HeadlessDriver) -> Vec<String> {
+    d.models()
+        .fleet()
+        .shown_rows()
+        .map(|(_, row)| row.name().to_string())
+        .collect()
+}
+
+/// Every vault profile and every loaded slot is one row, in the saved Load
+/// order (seeded in vault order), loaded or not. Loaded is its own flag,
+/// not the phase: a loaded bot that is offline is still loaded.
+#[test]
+fn the_fleet_universe_is_every_profile_once_with_an_explicit_loaded_flag() {
+    let mut d = driver("fleet-universe", &["alice", "bob", "carol"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("bob"))
+        .expect("load bob");
+    d.poll();
+    let fleet = d.models().fleet();
+    let rows: Vec<(&str, bool)> = fleet
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.loaded()))
+        .collect();
+    assert_eq!(rows, [("alice", false), ("bob", true), ("carol", false)]);
+    let bob = &fleet.rows()[1];
+    assert_eq!(bob.phase(), crate::Phase::Offline, "loaded, not logged in");
+    assert_eq!(
+        fleet.identities(),
+        [
+            d.session().profile_identity_or_synthetic("alice"),
+            d.session().profile_identity_or_synthetic("bob"),
+            d.session().profile_identity_or_synthetic("carol"),
+        ],
+        "one row per identity: the loaded vault profile is not listed twice"
+    );
+    assert_eq!(fleet.counts().shown_loaded(), 1);
+    assert_eq!(fleet.counts().shown_unloaded(), 2);
+}
+
+/// An empty vault has no rows; a loaded slot without a vault row (an
+/// orphan) is one row; with the vault locked, only loaded slots remain.
+#[test]
+fn empty_locked_and_orphan_universes_have_one_row_per_identity() {
+    let mut d = driver("fleet-empty", &[]);
+    d.poll();
+    assert!(d.models().fleet().rows().is_empty());
+
+    let mut d = driver("fleet-orphan", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load alice");
+    d.poll();
+    assert!(d
+        .session_mut()
+        .vault_mut()
+        .expect("vault")
+        .remove("alice")
+        .expect("remove alice's vault row"));
+    d.poll();
+    let names: Vec<(&str, bool)> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.loaded()))
+        .collect();
+    assert_eq!(
+        names,
+        [("bob", false), ("alice", true)],
+        "the orphan stays one row, after the ordered profiles"
+    );
+    assert_eq!(
+        d.models().fleet().identity(1),
+        Some(crate::ProfileIdentity::synthetic("alice"))
+    );
+
+    crate::test_support::session::clear_vault(d.session_mut());
+    d.poll();
+    let names: Vec<&str> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(
+        names,
+        ["alice"],
+        "a locked vault lists the loaded slots only"
+    );
+}
+
+/// A filter hides rows; it never drops a mark, and the counts say how many
+/// marks it hides. The order is shared by every surface that reads the
+/// model.
+#[test]
+fn a_filter_hides_rows_but_keeps_their_marks_and_counts_them() {
+    let mut d = driver("fleet-filter-marks", &["alice", "bob", "carol"]);
+    d.poll();
+    for name in ["alice", "carol"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    d.models_mut()
+        .fleet_mut()
+        .staged_filter_mut()
+        .push_str("bob");
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    assert_eq!(shown_names(&d), ["bob"]);
+    let counts = d.models().fleet().counts();
+    assert_eq!(counts.marked(), 2, "filtering drops no mark");
+    assert_eq!(counts.shown_marked(), 0);
+    assert_eq!(counts.hidden_marked(), 2);
+
+    d.models_mut().fleet_mut().staged_filter_mut().clear();
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("clear filter");
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::Name),
+        Targets::Application,
+    )
+    .expect("sort");
+    assert_eq!(shown_names(&d), ["alice", "bob", "carol"]);
+    assert_eq!(d.models().fleet().counts().shown_marked(), 2);
+}
+
+/// Unloading a marked profile keeps its mark (the row stays, not loaded);
+/// deleting the profile drops the row and the mark.
+#[test]
+fn unloading_keeps_a_mark_and_deleting_the_profile_drops_it() {
+    let mut d = driver("fleet-unload-delete", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load alice");
+    d.poll();
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    d.submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
+        .expect("mark");
+    let remove = d
+        .submit(OperatorCommand::Remove, Targets::Profile("alice"))
+        .expect("remove");
+    settle(&mut d, remove.request());
+    assert!(d.session().members().is_empty(), "alice left the fleet");
+    let fleet = d.models().fleet();
+    let index = fleet.index_of(alice).expect("alice keeps her row");
+    assert!(!fleet.rows()[index].loaded());
+    assert!(fleet.marks().contains(alice), "unloading keeps the mark");
+
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    let fleet = d.models().fleet();
+    assert_eq!(
+        fleet.index_of(alice),
+        None,
+        "the deleted profile has no row"
+    );
+    assert!(!fleet.marks().contains(alice), "deleting drops the mark");
+    assert_eq!(fleet.counts().marked(), 0);
+}
+
+/// A durable rename keeps the profile's identity, so its mark, and the
+/// universe is rebuilt once for it without any front end asking.
+#[test]
+fn a_rename_keeps_the_mark_and_rebuilds_the_universe_once() {
+    let mut d = driver("fleet-rename", &["alice", "bob"]);
+    d.poll();
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    d.submit(OperatorCommand::SetMark(true), Targets::Profile("alice"))
+        .expect("mark");
+    let before = d.models().fleet().rows_generation();
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    let fleet = d.models().fleet();
+    assert_eq!(
+        fleet.rows_generation(),
+        before + 1,
+        "one rebuild for one rename"
+    );
+    let index = fleet.index_of(alice).expect("same identity");
+    assert_eq!(fleet.rows()[index].name(), "alicia");
+    assert!(fleet.marks().contains(alice));
+}
+
+/// A steady frame recomputes nothing: refreshing with nothing changed
+/// neither rebuilds the universe nor moves the generation.
+#[test]
+fn a_steady_refresh_rebuilds_and_recounts_nothing() {
+    let mut d = driver("fleet-steady", &["alice", "bob"]);
+    d.submit(OperatorCommand::Load, Targets::Profile("alice"))
+        .expect("load");
+    d.poll();
+    let (rebuilds, generation) = (
+        d.models().fleet().rows_generation(),
+        d.models().fleet().generation(),
+    );
+    for _ in 0..10 {
+        d.poll();
+    }
+    assert_eq!(d.models().fleet().rows_generation(), rebuilds);
+    assert_eq!(d.models().fleet().generation(), generation);
+}
+
+/// A deleted profile's member settles from its vault write. Its name no
+/// longer resolves to its identity once the row is staged away, so the
+/// owner keeps the identity it had at dispatch.
+#[test]
+fn delete_profile_settles_done_when_its_write_lands() {
+    let mut d = driver("delete-settles", &["alice", "bob"]);
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    let terminal = d
+        .report(delete.request())
+        .and_then(|report| report.member(Subject::Profile(alice)))
+        .and_then(|member| member.terminal())
+        .cloned();
+    assert_eq!(terminal, Some(done()));
+}
+
+// ---- F2: the saved Load order -------------------------------------------
+
+/// The stored Load order (`"<uid>": <key>` members, by key), named
+/// through the vault: `None` until the file holds one.
+fn stored_order_now(d: &HeadlessDriver) -> Option<Vec<String>> {
+    let file = preferences_file_now(d)?;
+    let members = file.get(crate::PROFILE_ORDER_KEY)?.as_object()?.clone();
+    let vault = d.session().vault()?;
+    let mut keyed: Vec<(i64, String)> = members
+        .iter()
+        .filter_map(|(uid, key)| {
+            let uid: i32 = uid.parse().ok()?;
+            let name = vault.profiles().find(|p| p.uid == uid)?.username.clone();
+            Some((key.as_i64()?, name))
+        })
+        .collect();
+    keyed.sort();
+    Some(keyed.into_iter().map(|(_, name)| name).collect())
+}
+
+fn stored_order(d: &HeadlessDriver) -> Vec<String> {
+    stored_order_now(d).expect("a stored Load order")
+}
+
+fn order_names(d: &HeadlessDriver) -> Vec<String> {
+    d.session().profile_order().names().to_vec()
+}
+
+fn row_names(d: &HeadlessDriver) -> Vec<String> {
+    d.models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| row.name().to_string())
+        .collect()
+}
+
+fn id(d: &HeadlessDriver, name: &str) -> crate::ProfileIdentity {
+    d.session().profile_identity_or_synthetic(name)
+}
+
+/// Stage and submit one reorder; its settled terminal.
+fn reorder(d: &mut HeadlessDriver, op: crate::ReorderOp) -> Option<Terminal> {
+    d.session_mut().stage_reorder(op);
+    let submitted = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("admitted");
+    settled_app(d, submitted.request())
+}
+
+fn move_op(d: &HeadlessDriver, moving: &str, to: &str, after: bool) -> crate::ReorderOp {
+    let target = id(d, to);
+    crate::ReorderOp::Move {
+        moving: id(d, moving),
+        to: if after {
+            crate::Placement::After(target)
+        } else {
+            crate::Placement::Before(target)
+        },
+    }
+}
+
+/// With no saved order the order is the vault's (alphabetical). A drag
+/// saves the new order: the file, the fleet rows, the members and Load
+/// all follow it.
+#[test]
+fn a_reorder_saves_the_load_order_and_every_view_follows_it() {
+    let mut d = driver("order-move", &["alice", "bob", "carol"]);
+    d.poll();
+    assert_eq!(order_names(&d), ["alice", "bob", "carol"], "seeded");
+    assert!(
+        preferences_file_now(&d).is_none_or(|file| file.get(crate::PROFILE_ORDER_KEY).is_none()),
+        "seeding writes nothing"
+    );
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    d.poll();
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load all");
+    settle(&mut d, load.request());
+    assert_eq!(d.session().members(), ["carol", "alice", "bob"], "Load all");
+    let op = move_op(&d, "bob", "carol", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(
+        d.session().members(),
+        ["bob", "carol", "alice"],
+        "members follow"
+    );
+}
+
+/// Reorder only applies in Load order; Name and Status are view sorts and
+/// leave the saved order byte for byte.
+#[test]
+fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
+    let mut d = driver("order-sorts", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::read(&path).expect("file");
+    for order in [crate::FleetOrder::Name, crate::FleetOrder::Status] {
+        d.submit(OperatorCommand::SetFleetSort(order), Targets::Application)
+            .expect("sort");
+        let op = move_op(&d, "alice", "bob", true);
+        assert_eq!(
+            reorder(&mut d, op),
+            Some(rejected(crate::command::Rejection::NotApplicable)),
+            "{order:?}"
+        );
+    }
+    assert_eq!(std::fs::read(&path).expect("file"), before, "byte for byte");
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// A drag while a filter hides rows lands relative to its target in the
+/// full order; hidden profiles keep their relative order. Move marked to
+/// top keeps the marked profiles' order. Nothing moved: no write.
+#[test]
+fn filtered_moves_and_marked_to_top_keep_the_other_profiles_in_order() {
+    let mut d = driver("order-filtered", &["alice", "bob", "carol", "dave"]);
+    d.poll();
+    d.models_mut().fleet_mut().staged_filter_mut().push('c');
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    assert_eq!(shown_names(&d), ["alice", "carol"], "bob and dave hidden");
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "alice", "bob", "dave"]);
+    for name in ["dave", "alice"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    assert_eq!(order_names(&d), ["alice", "dave", "carol", "bob"]);
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::read(&path).expect("file");
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        before,
+        "no move, no write"
+    );
+}
+
+/// A new profile is appended, a rename keeps its place (and is saved), a
+/// deleted profile leaves the order, and a new session restores it.
+#[test]
+fn the_order_follows_create_rename_delete_and_survives_a_restart() {
+    let dir = scratch("order-lifecycle");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    d.session_mut()
+        .vault_mut()
+        .expect("vault")
+        .upsert(Profile {
+            username: "dave".into(),
+            password: "pw".into(),
+            uid: 40,
+            settings: ProfileSettings::default(),
+        })
+        .expect("dave");
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alice", "bob", "dave"],
+        "appended"
+    );
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alicia", "bob", "dave"],
+        "in place"
+    );
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("bob"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    d.poll();
+    assert_eq!(order_names(&d), ["carol", "alicia", "dave"]);
+    assert_eq!(row_names(&d), ["carol", "alicia", "dave"]);
+    // Let every quiet write land, then a new session over the same state
+    // and vault restores the order.
+    d.session_mut().flush_writes();
+    let start = std::time::Instant::now();
+    while stored_order_now(&d).as_deref()
+        != Some(&["carol", "alicia", "dave"].map(String::from)[..])
+    {
+        assert!(start.elapsed() < SETTLE_HANG_GUARD, "the order write hung");
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), ["carol", "alicia", "dave"]);
+    assert_eq!(row_names(&again), ["carol", "alicia", "dave"]);
+}
+
+/// A reorder the disk holds stays pending and settles Done when it lands.
+#[test]
+fn a_held_order_write_stays_pending_until_durable() {
+    let mut d = driver("order-held", &["alice", "bob"]);
+    d.poll();
+    let release = hold_first_write(&d);
+    let op = move_op(&d, "bob", "alice", false);
+    d.session_mut().stage_reorder(op);
+    let submitted = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("admitted");
+    assert_eq!(terminal_app(&d, submitted.request()), None, "pending");
+    d.poll();
+    assert_eq!(terminal_app(&d, submitted.request()), None);
+    release.send(()).unwrap();
+    assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
+    assert_eq!(stored_order(&d), ["bob", "alice"]);
+}
+
+/// A refused write fails the command and puts back the last durable
+/// order: a failure never shows as the saved order.
+#[test]
+fn a_failed_order_write_reports_failure_and_restores_the_durable_order() {
+    let mut d = driver("order-failed", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let path = d.session().preferences().expect("prefs").path();
+    std::fs::write(
+        &path,
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .expect("oversize the preferences file");
+    let _ = d.session().preferences().expect("prefs").reload();
+    let op = move_op(&d, "bob", "carol", false);
+    let terminal = reorder(&mut d, op);
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write is refused: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alice", "bob"],
+        "durable order back"
+    );
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// Removing a wall member keeps its place in the saved order; loading it
+/// again puts it back in that place among the members.
+#[test]
+fn removing_a_member_keeps_its_saved_place() {
+    let mut d = driver("order-remove", &["alice", "bob", "carol"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load all");
+    settle(&mut d, load.request());
+    let remove = d
+        .submit(OperatorCommand::Remove, Targets::Profile("bob"))
+        .expect("remove");
+    settle(&mut d, remove.request());
+    assert_eq!(order_names(&d), ["alice", "bob", "carol"]);
+    assert_eq!(row_names(&d), ["alice", "bob", "carol"]);
+    let load = d
+        .submit(OperatorCommand::Load, Targets::Profile("bob"))
+        .expect("load bob");
+    settle(&mut d, load.request());
+    assert_eq!(
+        d.session().members(),
+        ["alice", "bob", "carol"],
+        "back in place"
+    );
+}
+
+/// A second reorder while the first write is held supersedes it: both
+/// settle Done in order, the file and the shown order end at the second,
+/// and later polls write nothing more.
+#[test]
+fn a_superseded_order_write_settles_and_the_newest_order_wins() {
+    let mut d = driver("order-superseded", &["alice", "bob", "carol"]);
+    d.poll();
+    let release = hold_first_write(&d);
+    let op = move_op(&d, "carol", "alice", false);
+    d.session_mut().stage_reorder(op);
+    let first = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("first");
+    let op = move_op(&d, "alice", "bob", true);
+    d.session_mut().stage_reorder(op);
+    let second = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("second");
+    assert_eq!(order_names(&d), ["carol", "bob", "alice"], "shown at once");
+    assert_eq!(terminal_app(&d, first.request()), None, "first pending");
+    assert_eq!(terminal_app(&d, second.request()), None, "second pending");
+    release.send(()).unwrap();
+    assert_eq!(settled_app(&mut d, first.request()), Some(done()));
+    assert_eq!(settled_app(&mut d, second.request()), Some(done()));
+    assert_eq!(order_names(&d), ["carol", "bob", "alice"]);
+    assert_eq!(stored_order(&d), ["carol", "bob", "alice"]);
+    let path = d.session().preferences().expect("prefs").path();
+    let before = std::fs::metadata(&path).expect("file").modified().ok();
+    let bytes = std::fs::read(&path).expect("file");
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        bytes,
+        "no further write"
+    );
+    assert_eq!(
+        std::fs::metadata(&path).expect("file").modified().ok(),
+        before
+    );
+}
+
+// ---- F3: the fleet card, marks over the shown rows and frozen plans ----
+
+fn gatherer() -> crate::scripts::ScriptChoice {
+    crate::scripts::ScriptChoice::compiled(
+        crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
+    )
+}
+
+fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
+    d.models_mut().fleet_mut().stage_card(card);
+    let set = d
+        .submit(OperatorCommand::SetFleetCard, Targets::Application)
+        .expect("card");
+    assert_eq!(terminal_app(d, set.request()), Some(done()));
+}
+
+fn plan(d: &mut HeadlessDriver, action: crate::FleetAction) -> Option<Terminal> {
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(action),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    terminal_app(d, planned.request())
+}
+
+fn mark(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+}
+
+fn assignment(d: &HeadlessDriver, name: &str) -> Option<String> {
+    crate::scripts::Scripts::assignment_name(d.session(), name).map(str::to_owned)
+}
+
+fn plan_names(d: &HeadlessDriver) -> Vec<String> {
+    d.session()
+        .fleet_plan()
+        .expect("a plan waits")
+        .target_names()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Run the waiting plan (Confirm) and let its writes land.
+fn run_plan(d: &mut HeadlessDriver) -> RequestId {
+    let command = d.session().fleet_plan().expect("a plan waits").command();
+    let run = d.submit(command, Targets::Plan).expect("run admitted");
+    settle(d, run.request());
+    d.session_mut().flush_writes();
+    d.poll();
+    run.request()
+}
+
+fn load(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        let load = d
+            .submit(OperatorCommand::Load, Targets::Profile(name))
+            .expect("load");
+        settle(d, load.request());
+    }
+    d.poll();
+}
+
+/// Picking a fleet card changes which card the buttons use and nothing
+/// else: no Browse pick, no pending heading, no assignment.
+#[test]
+fn picking_a_fleet_card_changes_no_pick_assignment_or_run() {
+    let mut d = driver("f3-pick", &["alice", "bob"]);
+    d.poll();
+    assert_eq!(d.models().fleet().card(), &crate::FleetCard::OWN);
+    assert_eq!(d.sync_card_label(), crate::OWN_CARD_LABEL);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(d.sync_card_label(), "Gatherer");
+    assert!(d.models().scripts().browse_selection().is_none());
+    assert!(d.models().scripts().pending_browse("alice").is_none());
+    assert_eq!(assignment(&d, "alice"), None);
+    assert_eq!(assignment(&d, "bob"), None);
+    set_card(&mut d, crate::FleetCard::FOCUSED);
+    assert_eq!(d.sync_card_label(), "Focused bot's card: none");
+}
+
+/// The writing actions need a card: each bot's own card refuses them, and
+/// an own-card Start with no assignment has no bot to act on.
+#[test]
+fn own_card_refuses_assign_and_a_start_with_no_assignment() {
+    let mut d = driver("f3-own", &["alice"]);
+    d.poll();
+    mark(&mut d, &["alice"]);
+    for action in [
+        crate::FleetAction::Assign,
+        crate::FleetAction::AssignRestart,
+        crate::FleetAction::CopySettings,
+    ] {
+        assert!(
+            matches!(plan(&mut d, action), Some(Settlement::Failed(_))),
+            "{action:?} needs a card"
+        );
+    }
+    let start = plan(&mut d, crate::FleetAction::Start);
+    assert!(matches!(start, Some(Settlement::Failed(_))), "{start:?}");
+    assert!(d.session().fleet_plan().is_none());
+}
+
+/// A marked Assign runs at once over the frozen marks: a profile marked
+/// after the plan does not join it, and the one result settles with the
+/// targets done.
+#[test]
+fn a_marked_plan_freezes_its_targets_and_reports_once() {
+    let mut d = driver("f3-frozen", &["alice", "bob", "carol"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(
+        !waiting.needs_confirm(),
+        "a safe marked Assign is one click"
+    );
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Assign Gatherer to 2 marked bots: alice, bob."),
+        "{}",
+        waiting.prompt()
+    );
+    assert_eq!(plan_names(&d), ["alice", "bob"]);
+    // Marked after the plan, before it runs: not in it.
+    mark(&mut d, &["carol"]);
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "carol"), None, "a later mark never joins");
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 2, "{}", result.text());
+    assert!(
+        result.text().starts_with("Assign: done 2: alice, bob"),
+        "{}",
+        result.text()
+    );
+}
+
+/// With no marks the plan covers the loaded shown rows only and asks
+/// first; Cancel drops it and writes nothing.
+#[test]
+fn a_no_marks_plan_covers_loaded_shown_rows_and_cancel_writes_nothing() {
+    let mut d = driver("f3-all", &["alice", "bob", "carol"]);
+    load(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(waiting.needs_confirm(), "all asks first");
+    assert_eq!(waiting.scope(), crate::PlanScope::AllShown);
+    assert_eq!(plan_names(&d), ["alice", "bob"], "carol is not loaded");
+    let cancel = d
+        .submit(OperatorCommand::CancelFleetPlan, Targets::Application)
+        .expect("cancel");
+    assert_eq!(terminal_app(&d, cancel.request()), Some(done()));
+    assert!(d.session().fleet_plan().is_none());
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(assignment(&d, "alice"), None);
+    assert!(
+        d.submit(OperatorCommand::AssignScript, Targets::Plan)
+            .is_err(),
+        "no plan, nothing runs"
+    );
+}
+
+/// A newer plan replaces the waiting one, and its prompt says so.
+#[test]
+fn a_new_plan_supersedes_the_waiting_one_with_a_notice() {
+    let mut d = driver("f3-supersede", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Login), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert_eq!(waiting.action(), crate::FleetAction::Login);
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Replaces the waiting Assign plan. "),
+        "{}",
+        waiting.prompt()
+    );
+    assert!(
+        d.submit(OperatorCommand::AssignScript, Targets::Plan)
+            .is_err(),
+        "the replaced plan cannot run"
+    );
+}
+
+/// Delete and recreate a profile with the same name after the plan: the
+/// plan does not act on the new identity and names the old one as gone.
+#[test]
+fn a_recreated_profile_with_the_same_name_is_not_in_the_old_plan() {
+    let mut d = driver("f3-recreate", &["alice", "bob"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    settle(&mut d, delete.request());
+    d.session_mut()
+        .vault_mut()
+        .expect("vault")
+        .upsert(Profile {
+            username: "alice".into(),
+            password: "pw".into(),
+            uid: 99,
+            settings: ProfileSettings::default(),
+        })
+        .expect("new alice");
+    d.poll();
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice"), None, "the new alice is untouched");
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    let result = d.session().fleet_result().expect("result");
+    assert!(
+        result.text().contains("alice (profile no longer exists)"),
+        "{}",
+        result.text()
+    );
+}
+
+/// Mark operations act on the shown rows; a hidden mark stays.
+#[test]
+fn mark_operations_cover_the_shown_rows_and_keep_hidden_marks() {
+    use crate::{MarkOp, MarkPredicate, ShownMarks};
+    let mut d = driver("f3-marks", &["alice", "bob", "carol", "dave"]);
+    load(&mut d, &["alice", "bob"]);
+    let mark_op = |d: &mut HeadlessDriver, op: MarkOp| {
+        let s = d
+            .submit(OperatorCommand::MarkFleet(op), Targets::Application)
+            .expect("mark op");
+        assert_eq!(terminal_app(d, s.request()), Some(done()));
+    };
+    let marked = |d: &HeadlessDriver| -> Vec<String> {
+        let fleet = d.models().fleet();
+        fleet
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| fleet.is_marked(*index))
+            .map(|(_, row)| row.name().to_owned())
+            .collect()
+    };
+    mark_op(&mut d, MarkOp::Where(MarkPredicate::NotLoaded));
+    assert_eq!(marked(&d), ["carol", "dave"]);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::Some);
+    mark_op(&mut d, MarkOp::InvertShown);
+    assert_eq!(marked(&d), ["alice", "bob"]);
+    mark_op(&mut d, MarkOp::Shown);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::All);
+    d.models_mut().fleet_mut().staged_filter_mut().push('a');
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    mark_op(&mut d, MarkOp::UnmarkShown);
+    assert_eq!(marked(&d), ["bob"], "bob is hidden and keeps his mark");
+    assert_eq!(d.models().fleet().counts().hidden_marked(), 1);
+    assert_eq!(d.models().fleet().shown_marks(), ShownMarks::None);
+}
+
+/// Review R1: a 600-profile order fits the shared preferences service (a
+/// value is at most 4,096 bytes): reorders become durable through the real
+/// service, a restart restores them, and each profile costs one small
+/// stored member.
+#[test]
+fn a_600_profile_order_is_durable_and_restores_after_a_restart() {
+    let dir = scratch("order-600");
+    let names: Vec<String> = (0..600).map(|i| format!("bot{i:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver_in(&dir, &refs);
+    d.poll();
+    // Move the last profile to the top, then three marked ones to the top.
+    let op = move_op(&d, "bot599", "bot000", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    for name in ["bot300", "bot010", "bot500"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
+    let expected: Vec<String> = ["bot010", "bot300", "bot500", "bot599"]
+        .into_iter()
+        .map(String::from)
+        .chain(
+            names
+                .iter()
+                .filter(|n| !["bot010", "bot300", "bot500", "bot599"].contains(&n.as_str()))
+                .cloned(),
+        )
+        .collect();
+    assert_eq!(order_names(&d), expected);
+    assert_eq!(stored_order(&d), expected, "durable");
+    // The stored size per profile.
+    let stored = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    let members = stored.as_object().expect("an object");
+    assert_eq!(members.len(), 600);
+    let row_bytes: usize = members
+        .iter()
+        .map(|(uid, key)| crate::PROFILE_ORDER_KEY.len() + 1 + uid.len() + key.to_string().len())
+        .sum();
+    let per_profile = row_bytes as f64 / 600.0;
+    eprintln!(
+        "profile_order: 600 members, {row_bytes} key+value bytes, {per_profile:.1} per profile"
+    );
+    assert!(per_profile < 32.0, "{per_profile} bytes per profile");
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), expected, "restored after a restart");
+}
+
+/// Review R2: a rename keeps the profile's place whether it is held or
+/// fails, because the order is keyed by identity: the live order, the
+/// stored order and the order after a restart all keep it.
+#[test]
+fn a_held_or_failed_rename_keeps_the_saved_place() {
+    let dir = scratch("order-rename-fail");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let op = move_op(&d, "alice", "bob", true);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let saved = ["carol", "bob", "alice"].map(String::from);
+    assert_eq!(order_names(&d), saved);
+    assert_eq!(stored_order(&d), saved);
+    let stored_before = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    // Block the vault file so the rename's write fails.
+    let vault_path = dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).expect("aside");
+    std::fs::create_dir(&vault_path).expect("block");
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    renamed.username = "alicia".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    d.poll();
+    assert_eq!(
+        order_names(&d),
+        ["carol", "bob", "alicia"],
+        "held: the staged name in the same place"
+    );
+    d.session_mut().flush_writes();
+    std::fs::remove_dir(&vault_path).expect("unblock");
+    std::fs::rename(&aside, &vault_path).expect("restore");
+    d.poll();
+    assert_eq!(order_names(&d), saved, "failed: the old name in its place");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "the stored order never changed"
+    );
+    assert_eq!(stored_order(&d), saved);
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
+}
+
+/// A settings copy is planned from the focused bot with the fleet card:
+/// it asks first, names its source, holds the prepared scope until
+/// Confirm, and Cancel drops the scope and writes nothing.
+#[test]
+fn a_copy_settings_plan_asks_first_and_cancel_releases_its_scope() {
+    let mut d = driver("f3-copy", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    let copy = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::CopySettings),
+            Targets::Application,
+        )
+        .expect("plan");
+    let member = d
+        .report(copy.request())
+        .and_then(|report| report.member(Subject::Application))
+        .expect("member");
+    assert_eq!(member.terminal(), Some(&done()), "{:?}", member.detail());
+    let waiting = d.session().fleet_plan().expect("plan");
+    assert!(waiting.needs_confirm(), "a copy always asks");
+    assert!(
+        waiting
+            .prompt()
+            .starts_with("Copy alice's Gatherer settings to 1 marked bot: bob."),
+        "{}",
+        waiting.prompt()
+    );
+    let scope = d
+        .models()
+        .scripts()
+        .prepared_settings_sync()
+        .expect("the frozen scope waits");
+    assert_eq!(scope.source(), "alice");
+    let cancel = d
+        .submit(OperatorCommand::CancelFleetPlan, Targets::Application)
+        .expect("cancel");
+    assert_eq!(terminal_app(&d, cancel.request()), Some(done()));
+    assert!(
+        d.models().scripts().prepared_settings_sync().is_none(),
+        "Cancel releases the prepared scope"
+    );
+    assert!(d.session().fleet_plan().is_none());
+}
+
+/// The banner never carries a second copy of a planned action's report: a
+/// planned Start and a planned Copy settings report through the plan's one
+/// result line only.
+#[test]
+fn a_planned_start_or_copy_reports_only_through_its_result() {
+    let mut d = driver("f3-banner", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    let _ = d.models_mut().scripts.take_notice();
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    // Without a game data set the Starts fail: the result still settles,
+    // with the failures (a failed Start is a terminal, never Pending).
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("run");
+    let mut shown = Vec::new();
+    let drain = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
+        if let Some(notice) = d.models_mut().scripts.take_notice() {
+            shown.push(format!("{notice:?}"));
+        }
+        d.poll();
+    };
+    for _ in 0..400 {
+        drain(&mut d, &mut shown);
+        if d.session().fleet_result().is_some_and(|r| r.settled()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{} | shown {shown:?}", result.text());
+    assert!(
+        result.text().starts_with("Start: failed 2"),
+        "{}",
+        result.text()
+    );
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("copy");
+    for _ in 0..5 {
+        drain(&mut d, &mut shown);
+        d.session_mut().flush_writes();
+    }
+    drain(&mut d, &mut shown);
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.text().starts_with("Copy"), "{}", result.text());
+    // An ordinary error (a Start that failed without a game) may show; a
+    // bulk report never does.
+    for text in &shown {
+        assert!(
+            !["Start selected", "started", "Apply", "saved"]
+                .iter()
+                .any(|bulk| text.contains(bulk)),
+            "a planned report on the banner: {shown:?}"
+        );
+    }
+}
+
+/// A rename and a card change between the plan and its Confirm neither
+/// retarget nor re-card it: the renamed bot keeps its frozen identity and
+/// takes the frozen card.
+#[test]
+fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
+    let mut d = driver("f3-rename-card", &["alice", "bob", "carol"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    renamed.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    set_card(
+        &mut d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["carol"]);
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(
+        assignment(&d, "bobby").as_deref(),
+        Some("Gatherer"),
+        "same identity"
+    );
+    assert_eq!(assignment(&d, "carol"), None);
+}
+
+/// A bot whose profile is being saved (here, a held rename) is a named skip
+/// of the plan, never a competing write; a plan's queued writes keep its
+/// result Pending until they land.
+#[test]
+fn a_profile_being_saved_is_a_named_skip_and_queued_writes_keep_the_result_pending() {
+    let mut d = driver("f3-saving", &["alice", "bob"]);
+    d.poll();
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    renamed.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    d.poll();
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    assert_eq!(plan_names(&d), ["alice"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(prompt.contains("bobby: profile is being saved"), "{prompt}");
+    let command = d.session().fleet_plan().expect("plan").command();
+    let run = d.submit(command, Targets::Plan).expect("run");
+    for _ in 0..5 {
+        d.poll();
+    }
+    let result = d.session().fleet_result().expect("result");
+    assert!(
+        !result.settled(),
+        "a queued write is Pending: {}",
+        result.text()
+    );
+    drop(held);
+    settle(&mut d, run.request());
+    d.session_mut().flush_writes();
+    d.poll();
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 1, "{}", result.text());
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bobby"), None, "never a competing write");
+}
+
+/// Load `names`, give them Gatherer through a plan and run a planned Start
+/// with no frame between: the click admits [`START_ADMIT_PER_FRAME`] and
+/// every other Start waits in the paced queue. Returns the Start command
+/// and the names that wait, each still Pending.
+///
+/// [`START_ADMIT_PER_FRAME`]: crate::scripts::START_ADMIT_PER_FRAME
+fn queued_start(d: &mut HeadlessDriver, names: &[&str]) -> (RequestId, Vec<String>) {
+    load(d, names);
+    mark(d, names);
+    set_card(d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));
+    run_plan(d);
+    assert_eq!(plan(d, crate::FleetAction::Start), Some(done()));
+    let command = d.session().fleet_plan().expect("plan").command();
+    let start = d.submit(command, Targets::Plan).expect("start").request();
+    let queued: Vec<String> = names
+        .iter()
+        .filter(|name| d.models().scripts().start_queue_place(name).is_some())
+        .map(|name| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        queued.len(),
+        names.len() - crate::scripts::START_ADMIT_PER_FRAME,
+        "the click admits one Start; the rest wait: {queued:?}"
+    );
+    for name in &queued {
+        assert_eq!(terminal(d, start, name), None, "{name} is Pending");
+    }
+    let _ = d.models_mut().scripts.take_start_failures();
+    (start, queued)
+}
+
+/// Frames pass and none of `names` is admitted: no place, no preparation,
+/// and no Start attempt (without a game data set every attempt fails, so
+/// one would show as a Start failure).
+fn no_later_start(d: &mut HeadlessDriver, names: &[String]) {
+    for _ in 0..20 {
+        d.poll();
+    }
+    let failures = d.models_mut().scripts.take_start_failures();
+    for name in names {
+        let scripts = d.models().scripts();
+        assert!(scripts.start_queue_place(name).is_none(), "{name} queued");
+        assert!(!scripts.has_start_preparation(name), "{name} preparing");
+        assert!(
+            !failures.iter().any(|(failed, _)| failed == name),
+            "{name} was started later: {failures:?}"
+        );
+    }
+}
+
+fn operator_cancelled() -> Terminal {
+    Settlement::Cancelled(api::identity::Cancellation::Operator)
+}
+
+const FOUR: [&str; 4] = ["alice", "bob", "carol", "dave"];
+
+/// Review F3-2: a planned Stop cancels the frozen targets' queued Starts
+/// through the coordinator. The Stop members are done, the original Start
+/// members settle cancelled, and no queued Start runs later.
+#[test]
+fn a_planned_stop_cancels_queued_starts_and_both_commands_settle() {
+    let mut d = driver("f3-stop-queued", &FOUR);
+    let (start, queued) = queued_start(&mut d, &FOUR);
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    let planned = plan_names(&d);
+    for name in &queued {
+        assert!(planned.contains(name), "a queued Start is a Stop target");
+    }
+    let stop = run_plan(&mut d);
+    for name in &queued {
+        assert_eq!(terminal(&d, stop, name), Some(done()), "Stop {name}");
+        assert_eq!(
+            terminal(&d, start, name),
+            Some(operator_cancelled()),
+            "Start {name}"
+        );
+    }
+    assert!(
+        d.report(start).is_some_and(|report| report.is_settled()),
+        "the Start command is settled"
+    );
+    no_later_start(&mut d, &queued);
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+}
+
+/// Review F3-3: Cancel of a waiting plan touches no submitted Start; Stop
+/// Everyone then drains the queue and settles every original Start member.
+#[test]
+fn stop_everyone_settles_each_queued_start_command() {
+    let mut d = driver("f3-stop-everyone", &FOUR);
+    let (start, queued) = queued_start(&mut d, &FOUR);
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    let cancel = d
+        .submit(OperatorCommand::CancelFleetPlan, Targets::Application)
+        .expect("cancel");
+    assert_eq!(terminal_app(&d, cancel.request()), Some(done()));
+    for name in &queued {
+        assert!(
+            d.models().scripts().start_queue_place(name).is_some(),
+            "Cancel of the waiting plan leaves {name}'s submitted Start queued"
+        );
+        assert_eq!(terminal(&d, start, name), None, "{name}");
+    }
+    let stop = d
+        .submit(OperatorCommand::StopScript, Targets::Everyone)
+        .expect("stop everyone");
+    settle(&mut d, stop.request());
+    d.poll();
+    for name in &queued {
+        assert_eq!(
+            terminal(&d, start, name),
+            Some(operator_cancelled()),
+            "Start {name}"
+        );
+    }
+    assert!(
+        d.report(start).is_some_and(|report| report.is_settled()),
+        "the Start command is settled"
+    );
+    no_later_start(&mut d, &queued);
+}
+
+/// Review F3-3: an explicit queued Cancel, the cancel half of a confirmed
+/// relog (`logged out`) and a member removed while it waits each settle
+/// that member's original Start, and none of them starts later.
+#[test]
+fn explicit_cancel_relog_and_removal_settle_the_queued_start_command() {
+    let mut d = driver("f3-cancel-paths", &FOUR);
+    let (start, queued) = queued_start(&mut d, &FOUR);
+    let [relogged, cancelled, removed] = [&queued[0], &queued[1], &queued[2]];
+    d.models_mut().scripts.stage_cancel_queued("logged out");
+    let relog = d
+        .submit(
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(relogged),
+        )
+        .expect("relog cancel");
+    assert_eq!(terminal(&d, relog.request(), relogged), Some(done()));
+    let cancel = d
+        .submit(
+            OperatorCommand::CancelQueuedStart,
+            Targets::Profile(cancelled),
+        )
+        .expect("cancel");
+    assert_eq!(terminal(&d, cancel.request(), cancelled), Some(done()));
+    d.submit(OperatorCommand::Remove, Targets::Profile(removed))
+        .expect("remove");
+    settle(&mut d, start);
+    assert_eq!(
+        terminal(&d, start, relogged),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::NotLoggedIn
+        )))
+    );
+    assert_eq!(terminal(&d, start, cancelled), Some(operator_cancelled()));
+    assert_eq!(
+        terminal(&d, start, removed),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::NotLoaded
+        ))),
+        "{removed} left the wall while queued"
+    );
+    no_later_start(&mut d, &queued);
+}
+
+const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
+
+/// Load alice, bob and carol, give all a loaded JS card (its copy is a
+/// profile write, so it lands without a game data set), focus alice and
+/// plan a copy of her settings to bob and carol (marked).
+fn copy_plan(test: &str) -> HeadlessDriver {
+    let dir = scratch(test);
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    let path = dir.join("thiever.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let card = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let card = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        card.source,
+        card.identity_id(),
+    ));
+    load(&mut d, &["alice", "bob", "carol"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob", "carol"]);
+    set_card(&mut d, crate::FleetCard::pinned(card));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    assert!(assignment(&d, "bob").is_some());
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    assert_eq!(plan_names(&d), ["bob", "carol"]);
+    d
+}
+
+/// Review F3-1: a profile deleted and recreated under the same name
+/// between Plan and Confirm is not written by the copy; the old one is a
+/// named skip.
+#[test]
+fn a_copy_never_writes_a_recreated_profile_with_the_same_name() {
+    let mut d = copy_plan("f3-copy-recreate");
+    let vault = d.session_mut().vault_mut().expect("vault");
+    assert!(vault.remove("bob").expect("remove"));
+    vault
+        .upsert(Profile {
+            username: "bob".into(),
+            password: "pw".into(),
+            uid: 99,
+            settings: ProfileSettings::default(),
+        })
+        .expect("new bob");
+    d.poll();
+    let before = d.session().vault().and_then(|v| v.get("bob")).cloned();
+    let run = run_plan(&mut d);
+    assert_eq!(terminal(&d, run, "carol"), Some(done()));
+    assert_eq!(
+        d.session().vault().and_then(|v| v.get("bob")).cloned(),
+        before,
+        "the new bob is untouched"
+    );
+    assert_eq!(assignment(&d, "bob"), None);
+    let result = d.session().fleet_result().expect("result");
+    assert!(
+        result.text().contains("bob (profile no longer exists)"),
+        "{}",
+        result.text()
+    );
+}
+
+/// Review F3-1: a target renamed between Plan and Confirm keeps its frozen
+/// identity: the copy writes it under its new name and its member is done.
+#[test]
+fn a_copy_follows_a_renamed_target_by_identity() {
+    let mut d = copy_plan("f3-copy-rename");
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    renamed.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    d.session_mut().flush_writes();
+    d.poll();
+    let run = run_plan(&mut d);
+    assert_eq!(terminal(&d, run, "bobby"), Some(done()), "same identity");
+    assert_eq!(terminal(&d, run, "carol"), Some(done()));
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().failed, 0, "{}", result.text());
+    assert_eq!(result.counts().done, 2, "{}", result.text());
+}
+
+/// Review F3-1: a save of a target that starts between Plan and Confirm
+/// (here a rename the writer still holds) makes it a named skip at the
+/// copy's write; it is never a competing write.
+#[test]
+fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
+    let mut d = copy_plan("f3-copy-saving");
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let mut bob = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    bob.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", bob, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    let command = d.session().fleet_plan().expect("plan").command();
+    let run = d.submit(command, Targets::Plan).expect("copy").request();
+    assert_eq!(
+        terminal(&d, run, "bobby"),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::ProfileSaving
+        )))
+    );
+    drop(held);
+    settle(&mut d, run);
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(terminal(&d, run, "carol"), Some(done()));
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert!(
+        result.text().contains("bobby (profile is still saving)"),
+        "{}",
+        result.text()
+    );
+}
+
+/// Load alice, give her a loaded JS card through a plan, then submit her
+/// own single Start with no frame after it: the card's preparation is
+/// pending (an untallied preparation). Returns the Start command.
+fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
+    let dir = scratch(test);
+    let mut d = driver_in(&dir, &["alice", "bob"]);
+    let path = dir.join("looping.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let card = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let card = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        card.source,
+        card.identity_id(),
+    ));
+    load(&mut d, &["alice"]);
+    mark(&mut d, &["alice"]);
+    set_card(&mut d, crate::FleetCard::pinned(card));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    set_card(&mut d, crate::FleetCard::OWN);
+    let start = d
+        .submit(OperatorCommand::StartScript, Targets::Profile("alice"))
+        .expect("start")
+        .request();
+    assert!(
+        d.models().scripts().has_start_preparation("alice"),
+        "the single Start waits on its card's preparation"
+    );
+    assert_eq!(terminal(&d, start, "alice"), None, "Pending");
+    (d, start)
+}
+
+/// `count` bots on Gatherer, bot000 focused (the copy's source), every
+/// other bot marked and a planned native Copy settings waiting.
+fn copy_to_many(test: &str, count: usize) -> HeadlessDriver {
+    let names: Vec<String> = (0..count).map(|index| format!("bot{index:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver(test, &refs);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
+    load(&mut d, &refs);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("bot000"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &refs);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("bot000"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    assert_eq!(plan_names(&d).len(), count - 1);
+    d
+}
+
+/// Poll as front-end frames do until the fleet result settles (a paced
+/// copy takes several rounds of saves).
+fn settle_result(d: &mut HeadlessDriver) {
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    while !d
+        .session()
+        .fleet_result()
+        .is_some_and(crate::FleetResult::settled)
+    {
+        assert!(std::time::Instant::now() < deadline, "the result hung");
+        d.session_mut().flush_writes();
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+fn starts_held(d: &HeadlessDriver) -> bool {
+    d.session()
+        .play()
+        .expect("play")
+        .script_start_wait_reason()
+        .is_some()
+}
+
+/// Known issue `fleet-copy-settings-64-limit`, fixed in 0.2.6: a planned
+/// native copy to more bots than the bound of pending native saves (64)
+/// keeps a bounded number in flight, queues the rest and saves every
+/// target; new Starts wait until the last save is accepted.
+#[test]
+fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
+    for count in [67, 151] {
+        let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
+        let command = d.session().fleet_plan().expect("plan").command();
+        d.submit(command, Targets::Plan).expect("run");
+        assert!(starts_held(&d), "{count}: Starts wait for the copy");
+        let queued = d
+            .models()
+            .scripts()
+            .last_settings_sync()
+            .expect("copy report")
+            .pending();
+        assert_eq!(queued, count - 1, "{count}: every target waits its turn");
+        settle_result(&mut d);
+        let result = d.session().fleet_result().expect("result");
+        assert_eq!(result.counts().done, count - 1, "{}", result.text());
+        assert_eq!(result.counts().failed, 0, "{}", result.text());
+        assert_eq!(result.counts().skipped, 0, "{}", result.text());
+        assert!(
+            !starts_held(&d),
+            "{count}: the hold ends with the last save"
+        );
+    }
+}
+
+/// Cancel while targets still wait for room: no waiting target is written
+/// (each is reported skipped, "settings copy cancelled"), the saves
+/// already started settle, and new Starts are released.
+#[test]
+fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
+    let mut d = copy_to_many("f4-copy-cancel", 151);
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan).expect("run");
+    d.submit(OperatorCommand::CancelSettingsSync, Targets::Application)
+        .expect("cancel");
+    settle_result(&mut d);
+    let result = d.session().fleet_result().expect("result");
+    let counts = result.counts();
+    assert!(counts.skipped >= 150 - 48, "{}", result.text());
+    assert!(counts.done + counts.failed <= 48, "{}", result.text());
+    assert_eq!(counts.done + counts.failed + counts.skipped, 150);
+    assert!(
+        result.text().contains("(settings copy cancelled)"),
+        "{}",
+        result.text()
+    );
+    assert!(!starts_held(&d), "Cancel releases the start hold");
+}
+
+/// Review F3 r2-1: a fleet Start joins a single Start's untallied
+/// preparation; the assignment then changes while it waits. The
+/// preparation is withdrawn `reassigned`, and both Start commands settle
+/// (neither stays Pending), and nothing starts.
+#[test]
+fn a_withdrawn_shared_preparation_settles_the_single_and_the_fleet_start() {
+    let (mut d, single) = preparing_start("f3-shared-preparation");
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    let command = d.session().fleet_plan().expect("plan").command();
+    let fleet = d.submit(command, Targets::Plan).expect("fleet").request();
+    assert_eq!(terminal(&d, fleet, "alice"), None, "joined the preparation");
+    let vault = d.session_mut().vault_mut().expect("vault");
+    let mut alice = vault.get("alice").cloned().expect("alice");
+    alice.settings.script_assignment = None;
+    vault.upsert(alice).expect("reassign");
+    settle(&mut d, single);
+    settle(&mut d, fleet);
+    let reassigned = Some(Settlement::Completed(Completion::Skipped(
+        SkipReason::NotReady,
+    )));
+    assert_eq!(terminal(&d, single, "alice"), reassigned, "single Start");
+    assert_eq!(terminal(&d, fleet, "alice"), reassigned, "fleet Start");
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    no_later_start(&mut d, &["alice".to_owned()]);
+    assert_eq!(
+        d.session().script_state("alice"),
+        crate::scripts::ScriptRunState::Idle
+    );
+}
+
+/// Review F3 r2-1: a planned Stop on a bot whose single Start still waits
+/// on its loaded card's preparation cancels that preparation: the Stop
+/// member is done, the Start member cancelled, and nothing starts later.
+#[test]
+fn a_planned_stop_cancels_a_held_loaded_card_preparation() {
+    let (mut d, start) = preparing_start("f3-stop-preparation");
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(
+        plan_names(&d),
+        ["alice"],
+        "a preparing Start is a Stop target"
+    );
+    let stop = run_plan(&mut d);
+    assert_eq!(terminal(&d, stop, "alice"), Some(done()), "Stop");
+    assert_eq!(
+        terminal(&d, start, "alice"),
+        Some(operator_cancelled()),
+        "Start"
+    );
+    no_later_start(&mut d, &["alice".to_owned()]);
+    assert_eq!(
+        d.session().script_state("alice"),
+        crate::scripts::ScriptRunState::Idle
+    );
+}
+
+/// Review F3-4: a plan whose every target is gone at Confirm ends at once
+/// as a terminal result naming each skip; nothing waits.
+#[test]
+fn a_plan_whose_last_target_is_gone_ends_with_named_skips() {
+    let mut d = driver("f3-emptied", &["alice", "bob"]);
+    d.poll();
+    mark(&mut d, &["bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    delete_profile(&mut d, "bob");
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan)
+        .expect("an emptied plan ends");
+    assert!(d.session().fleet_plan().is_none(), "the plan ended");
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.request(), None, "no command record");
+    assert_eq!(
+        result.text(),
+        "Assign: skipped 1: bob (profile no longer exists)"
+    );
+}
+
+/// Review F3-4: an emptied copy plan gives back its prepared scope (and
+/// with it the start hold) and writes nothing.
+#[test]
+fn an_emptied_copy_plan_releases_its_scope() {
+    let mut d = copy_plan("f3-emptied-copy");
+    let vault = d.session_mut().vault_mut().expect("vault");
+    assert!(vault.remove("bob").expect("remove bob"));
+    assert!(vault.remove("carol").expect("remove carol"));
+    d.poll();
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan)
+        .expect("an emptied plan ends");
+    assert!(
+        d.models().scripts().prepared_settings_sync().is_none(),
+        "the prepared scope is released"
+    );
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().skipped, 2, "{}", result.text());
+}
+
+/// The stored Load order's members (`"<uid>"` keys, sorted), once every
+/// quiet write has landed: waits until they are exactly the vault's uids.
+fn stored_uids_settled(d: &mut HeadlessDriver) -> Vec<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        d.session_mut().flush_writes();
+        d.poll();
+        let mut vault: Vec<i32> = d
+            .session()
+            .vault()
+            .expect("vault")
+            .profiles()
+            .map(|profile| profile.uid)
+            .collect();
+        vault.sort_unstable();
+        let stored: Option<Vec<i32>> = preferences_file_now(d).and_then(|file| {
+            let members = file.get(crate::PROFILE_ORDER_KEY)?.as_object()?.clone();
+            let mut uids: Vec<i32> = members.keys().filter_map(|uid| uid.parse().ok()).collect();
+            uids.sort_unstable();
+            Some(uids)
+        });
+        if stored.as_ref() == Some(&vault) {
+            return vault;
+        }
+        assert!(
+            start.elapsed() < SETTLE_HANG_GUARD,
+            "the stored order never matched the vault: {stored:?} vs {vault:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn uid_of(d: &HeadlessDriver, name: &str) -> i32 {
+    d.session()
+        .vault()
+        .and_then(|vault| vault.get(name))
+        .map(|profile| profile.uid)
+        .expect("a vault row")
+}
+
+/// Create `name` the way the TUI does (a staged new profile, no form), so
+/// its uid is the session's fresh uid.
+fn create_profile(d: &mut HeadlessDriver, name: &str) {
+    d.session_mut().stage_new_profile(name, "pw");
+    let create = d
+        .session_mut()
+        .submit(
+            OperatorCommand::CreateProfile,
+            Targets::Application,
+            &mut crate::HeadlessSurface::new(),
+        )
+        .expect("create");
+    assert_eq!(settled_app(d, create.request()), Some(done()), "{name}");
+    d.session_mut().flush_writes();
+    d.poll();
+}
+
+fn delete_profile(d: &mut HeadlessDriver, name: &str) {
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile(name))
+        .expect("delete");
+    settle(d, delete.request());
+    d.session_mut().flush_writes();
+    d.poll();
+}
+
+/// Review R3: a durable deletion drops the profile's stored member, and a
+/// profile created next never reuses its uid (the highest one), so it is
+/// appended instead of taking the deleted profile's place; a restart
+/// keeps that.
+#[test]
+fn a_deleted_profiles_member_is_pruned_and_its_uid_never_reused() {
+    let dir = scratch("order-uid-reuse");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    let carol = uid_of(&d, "carol");
+    delete_profile(&mut d, "carol");
+    let stored = stored_uids_settled(&mut d);
+    assert_eq!(stored.len(), 2);
+    assert!(!stored.contains(&carol), "pruned: {stored:?}");
+    create_profile(&mut d, "dave");
+    assert!(
+        uid_of(&d, "dave") > carol,
+        "a fresh uid above every uid held"
+    );
+    assert_eq!(order_names(&d), ["alice", "bob", "dave"], "appended");
+    assert_eq!(stored_uids_settled(&mut d).len(), 3);
+    assert_eq!(stored_order(&d), ["alice", "bob", "dave"]);
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(
+        order_names(&again),
+        ["alice", "bob", "dave"],
+        "after a restart"
+    );
+}
+
+/// Review R3: repeated create and delete with a fixed number of profiles
+/// keeps the stored order to the vault's profiles: no deleted history is
+/// retained.
+#[test]
+fn repeated_create_and_delete_keeps_the_stored_order_to_the_vault() {
+    let mut d = driver("order-churn", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let mut previous = "bob".to_string();
+    for round in 0..8 {
+        let name = format!("churn{round}");
+        create_profile(&mut d, &name);
+        delete_profile(&mut d, &previous);
+        let stored = stored_uids_settled(&mut d);
+        assert_eq!(stored.len(), 3, "round {round}: {stored:?}");
+        assert_eq!(order_names(&d), ["carol", "alice", name.as_str()]);
+        previous = name;
+    }
+}
+
+/// Review R3: while a deletion is not durable its member stays stored, and
+/// a failed deletion puts the profile back in its saved place; the stored
+/// order never changes and a restart keeps it.
+#[test]
+fn a_pending_or_failed_deletion_keeps_the_saved_place() {
+    let dir = scratch("order-delete-fail");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    let saved = ["carol", "alice", "bob"].map(String::from);
+    let stored_before = preferences_file(&d)[crate::PROFILE_ORDER_KEY].clone();
+    // Pending: the vault write is held.
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let delete = d
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .expect("delete");
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(order_names(&d), ["carol", "bob"], "staged away");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "pending: the member stays stored"
+    );
+    // Failed: block the vault file, then let the write run.
+    let vault_path = dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).expect("aside");
+    std::fs::create_dir(&vault_path).expect("block");
+    drop(held);
+    settle(&mut d, delete.request());
+    d.session_mut().flush_writes();
+    std::fs::remove_dir(&vault_path).expect("unblock");
+    std::fs::rename(&aside, &vault_path).expect("restore");
+    d.poll();
+    assert_eq!(order_names(&d), saved, "failed: back in place");
+    assert_eq!(
+        preferences_file(&d)[crate::PROFILE_ORDER_KEY],
+        stored_before,
+        "the stored order never changed"
+    );
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
+}
+
+/// Review R4: a 600-profile marked move whose order write fails inside the
+/// file replacement (the state directory refuses the new file) fails the
+/// command, puts the durable order back, and leaves the stored order byte
+/// for byte as before: no member of the move lands, before or after a
+/// restart. A reorder is one file write.
+#[cfg(unix)]
+#[test]
+fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("order-600-fail");
+    let names: Vec<String> = (0..600).map(|i| format!("bot{i:03}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut d = driver_in(&dir, &refs);
+    d.poll();
+    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let refuse = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let path = d.session().preferences().expect("prefs").path();
+    let state_dir = path.parent().expect("a state directory").to_path_buf();
+    {
+        let writes = std::sync::Arc::clone(&writes);
+        let refuse = std::sync::Arc::clone(&refuse);
+        let state_dir = state_dir.clone();
+        d.session()
+            .local_state()
+            .expect("the driver binds the process service")
+            .set_write_stall_for_test(std::sync::Arc::new(move || {
+                writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if refuse.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = std::fs::set_permissions(
+                        &state_dir,
+                        std::fs::Permissions::from_mode(0o500),
+                    );
+                }
+            }));
+    }
+    let op = move_op(&d, "bot599", "bot000", false);
+    assert_eq!(reorder(&mut d, op), Some(done()));
+    assert_eq!(
+        writes.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "one reorder, one file write"
+    );
+    let saved = order_names(&d);
+    let bytes_before = std::fs::read(&path).expect("file");
+    for name in ["bot300", "bot010", "bot500"] {
+        d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
+            .expect("mark");
+    }
+    refuse.store(true, std::sync::atomic::Ordering::SeqCst);
+    let terminal = reorder(&mut d, crate::ReorderOp::MarkedToTop);
+    refuse.store(false, std::sync::atomic::Ordering::SeqCst);
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700)).expect("unblock");
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write fails: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(order_names(&d), saved, "the durable order back");
+    assert_eq!(
+        std::fs::read(&path).expect("file"),
+        bytes_before,
+        "byte for byte"
+    );
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir.join("state"));
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    again.poll();
+    assert_eq!(order_names(&again), saved, "after a restart");
+}
+
+// --- Script-paint host controls (PAINT-CONTROLS-025) ---
+
+use crate::scripts::{PaintControl, PaintFrame, ScriptRunState};
+use crate::test_support::paint::TestPaint;
+
+/// Hang guard for the script lifecycle waits below; the pass condition is
+/// the slot's own state.
+const PAINT_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The frame the standard paint-controls helper records (`gobank` is one
+/// ordinary script button beside it), stamped with `generation`.
+fn helper_paint(generation: u64) -> TestPaint {
+    TestPaint::new(Some("Helper"), &["status"])
+        .with_button("gobank", "Go bank")
+        .with_host_controls()
+        .with_generation(generation)
+}
+
+fn wait_state(d: &mut HeadlessDriver, name: &str, want: ScriptRunState) {
+    let guard = std::time::Instant::now() + PAINT_HANG_GUARD;
+    while d.session().script_state(name) != want {
+        assert!(std::time::Instant::now() < guard, "{name}: never {want:?}");
+        if let Some(play) = d.session().play() {
+            play.pump_script_lifecycle(name);
+        }
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Start a real Load script on `name` and publish the helper's frame on its
+/// status row, as the slot's observe does after a tick.
+fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
+    d.session()
+        .play()
+        .expect("play")
+        .script_start_load(
+            name,
+            "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start");
+    wait_state(d, name, ScriptRunState::Running);
+    helper_paint(generation).publish(d.session().play().expect("play"), name);
+    d.poll();
+}
+
+fn paint_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver(test, names);
+    d.submit(OperatorCommand::Load, Targets::Everyone)
+        .expect("load");
+    for (i, name) in names.iter().enumerate() {
+        run_helper(&mut d, name, 40 + i as u64);
+    }
+    d
+}
+
+/// `name`'s displayed frame, as a front end reads it each frame.
+fn shown(d: &HeadlessDriver, name: &str) -> PaintFrame {
+    d.session().script_paint(name).expect("displayed paint")
+}
+
+/// The labels the front ends draw for `frame`.
+fn labels(frame: &PaintFrame) -> Vec<(String, bool)> {
+    frame
+        .view()
+        .buttons()
+        .map(|button| (button.label().to_owned(), button.enabled()))
+        .collect()
+}
+
+/// Activate button `index` of `frame` and submit it for `target`, as the
+/// panel's overlay and the TUI's chat pane do.
+fn activate(
+    d: &mut HeadlessDriver,
+    frame: &PaintFrame,
+    index: usize,
+    target: &str,
+) -> Option<Submitted> {
+    let input = frame.view().activate(index)?;
+    d.models_mut().scripts_mut().stage_paint_input(input);
+    Some(
+        d.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(target))
+            .expect("paint input admitted"),
+    )
+}
+
+const PAUSE: usize = 1;
+const STOP: usize = 2;
+
+fn command_of(d: &HeadlessDriver, submitted: &Submitted) -> OperatorCommand {
+    d.report(submitted.request()).expect("report").command()
+}
+
+fn refused(d: &HeadlessDriver, submitted: &Submitted, name: &str) -> bool {
+    command_of(d, submitted) == OperatorCommand::ScriptPaintInput
+        && matches!(
+            terminal(d, submitted.request(), name),
+            Some(Settlement::Failed(CommandFailure::Rejected(
+                crate::command::Rejection::NotApplicable
+            )))
+        )
+}
+
+#[test]
+fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_rows() {
+    let mut d = paint_driver("paint-controls", &["alice"]);
+    let running = shown(&d, "alice");
+    assert_eq!(
+        labels(&running),
+        vec![
+            ("Go bank".to_string(), true),
+            ("Pause".to_string(), true),
+            ("Stop".to_string(), true),
+        ]
+    );
+    assert_eq!(
+        running
+            .view()
+            .buttons()
+            .nth(PAUSE)
+            .and_then(|b| b.control()),
+        Some(PaintControl::Pause)
+    );
+
+    let pause = activate(&mut d, &running, PAUSE, "alice").expect("pause applies");
+    assert_eq!(command_of(&d, &pause), OperatorCommand::PauseScript);
+    settle(&mut d, pause.request());
+    assert_eq!(terminal(&d, pause.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+
+    // The retained frame is not republished while paused; it shows Resume.
+    let paused = shown(&d, "alice");
+    assert_eq!(paused.view().generation(), running.view().generation());
+    assert_eq!(
+        labels(&paused)[PAUSE..],
+        [("Resume".to_string(), true), ("Stop".to_string(), true)]
+    );
+    let resume = activate(&mut d, &paused, PAUSE, "alice").expect("resume applies");
+    assert_eq!(command_of(&d, &resume), OperatorCommand::ResumeScript);
+    settle(&mut d, resume.request());
+    assert_eq!(terminal(&d, resume.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    // Stop from Paused reaches the normal terminal state.
+    let resumed = shown(&d, "alice");
+    let again = activate(&mut d, &resumed, PAUSE, "alice").expect("pause");
+    settle(&mut d, again.request());
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+    let stop_frame = shown(&d, "alice");
+    let stop = activate(&mut d, &stop_frame, STOP, "alice").expect("stop applies");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    assert!(
+        d.session().script_paint("alice").is_none(),
+        "Stop clears the published paint"
+    );
+    // A late control from the stopped run's frame controls nothing.
+    let late = activate(&mut d, &stop_frame, STOP, "alice").expect("staged");
+    assert!(refused(&d, &late, "alice"), "late Stop is refused");
+}
+
+#[test]
+fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
+    let mut d = paint_driver("paint-stop-running", &["alice"]);
+    let frame = shown(&d, "alice");
+    let stop = activate(&mut d, &frame, STOP, "alice").expect("stop applies");
+    let second = activate(&mut d, &frame, STOP, "alice").expect("staged");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    assert!(
+        refused(&d, &second, "alice"),
+        "a double Stop opens no second Stop report"
+    );
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+}
+
+#[test]
+fn a_double_pause_never_becomes_a_resume() {
+    let mut d = paint_driver("paint-double-pause", &["alice"]);
+    let frame = shown(&d, "alice");
+    let first = activate(&mut d, &frame, PAUSE, "alice").expect("pause");
+    let second = activate(&mut d, &frame, PAUSE, "alice").expect("staged");
+    settle(&mut d, first.request());
+    assert_eq!(command_of(&d, &first), OperatorCommand::PauseScript);
+    assert!(refused(&d, &second, "alice"), "the stale Pause is refused");
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+}
+
+#[test]
+fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
+    let mut d = paint_driver("paint-focus", &["alice", "bob"]);
+    let alice = shown(&d, "alice");
+    for index in [PAUSE, STOP] {
+        let submitted = activate(&mut d, &alice, index, "bob").expect("staged");
+        assert!(refused(&d, &submitted, "bob"), "control {index} refused");
+    }
+    assert_eq!(d.session().script_state("bob"), ScriptRunState::Running);
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn a_control_from_an_ended_run_never_controls_its_replacement() {
+    let mut d = paint_driver("paint-replacement", &["alice"]);
+    let old = shown(&d, "alice");
+    let generation = old.view().generation();
+    d.session().play().expect("play").script_stop("alice");
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    // The replacement advertises the same ids under the same (recycled)
+    // frame generation.
+    run_helper(&mut d, "alice", generation);
+    assert_eq!(shown(&d, "alice").view().generation(), generation);
+    for index in [PAUSE, STOP] {
+        let submitted = activate(&mut d, &old, index, "alice").expect("staged");
+        assert!(refused(&d, &submitted, "alice"), "control {index} refused");
+    }
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn a_stale_frame_generation_is_refused_before_dispatch() {
+    let mut d = paint_driver("paint-stale-frame", &["alice"]);
+    let old = shown(&d, "alice");
+    helper_paint(old.view().generation() + 1).publish(d.session().play().expect("play"), "alice");
+    d.poll();
+    let submitted = activate(&mut d, &old, PAUSE, "alice").expect("staged");
+    assert!(refused(&d, &submitted, "alice"));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+#[test]
+fn an_ordinary_paint_button_keeps_its_script_click_path() {
+    let mut d = paint_driver("paint-ordinary", &["alice"]);
+    let frame = shown(&d, "alice");
+    let click = activate(&mut d, &frame, 0, "alice").expect("script click");
+    assert_eq!(command_of(&d, &click), OperatorCommand::ScriptPaintInput);
+    assert_eq!(terminal(&d, click.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+    // A host id staged as a script click never reaches the mailbox.
+    d.models_mut()
+        .scripts_mut()
+        .stage_paint_input(crate::scripts::PaintInput::click(
+            script::shim::HOST_PAUSE_CONTROL_ID.into(),
+            frame.view().generation(),
+        ));
+    let forged = d
+        .submit(OperatorCommand::ScriptPaintInput, Targets::Profile("alice"))
+        .expect("admitted");
+    assert!(refused(&d, &forged, "alice"));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+}
+
+/// Rows 10 and 11 of the plan: the controls follow the run lifecycle, not a
+/// native status phase. A running card whose status reads Blocked keeps
+/// Pause and Stop; an idle slot that kept a terminal Blocked detail offers
+/// neither and activates nothing.
+#[test]
+fn paint_controls_follow_the_lifecycle_state() {
+    let paint =
+        TestPaint::new(Some("Gatherer — Blocked"), &["blocked: no supply"]).with_host_controls();
+    let expect = |state, pause: (&str, bool), stop: bool| {
+        let frame = paint.frame_for_run("alice", state);
+        assert_eq!(
+            labels(&frame),
+            vec![(pause.0.to_string(), pause.1), ("Stop".to_string(), stop)],
+            "{state:?}"
+        );
+        assert_eq!(frame.view().activate(0).is_some(), pause.1, "{state:?}");
+        assert_eq!(frame.view().activate(1).is_some(), stop, "{state:?}");
+    };
+    expect(ScriptRunState::Running, ("Pause", true), true);
+    expect(ScriptRunState::Starting, ("Pause", true), true);
+    expect(ScriptRunState::Paused, ("Resume", true), true);
+    expect(ScriptRunState::Stopping, ("Pause", false), false);
+    expect(ScriptRunState::Idle, ("Pause", false), false);
+    expect(ScriptRunState::Error, ("Pause", false), false);
+    // A frame read without a run (no host) offers no control.
+    assert!(paint.frame().view().activate(0).is_none());
+}
+
+/// Every place a Start can wait before its slot runs it.
+#[derive(Clone, Copy, Debug)]
+enum Waiting {
+    /// A paced place behind another bot's Start (fleet Start).
+    Paced,
+    /// A loaded card's preparation for a single Start (untallied).
+    Preparation,
+    /// A loaded card's preparation for a fleet Start (tallied).
+    FleetPreparation,
+    /// A fleet Assign & restart of a catalog card waiting for the catalog
+    /// scan (nothing written yet).
+    CatalogRestart,
+    /// A fleet Assign & restart waiting for its assignment write.
+    RestartAfterWrite,
+}
+
+/// The three ways an operator withdraws a waiting Start.
+#[derive(Clone, Copy, Debug)]
+enum Withdraw {
+    PlannedStop,
+    StopEveryone,
+    Cancel,
+}
+
+/// Review F3 r3 (shadow High and sol61 1): planned Stop, Stop Everyone and
+/// an explicit Cancel each reach every place a Start waits. The original
+/// command's member settles cancelled, the Stop or Cancel member is done,
+/// and nothing starts later. A catalog Assign & restart withdrawn before
+/// the scan writes nothing; one withdrawn behind its write keeps the
+/// assignment and drops only the Start.
+#[test]
+fn every_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
+    for waiting in [
+        Waiting::Paced,
+        Waiting::Preparation,
+        Waiting::FleetPreparation,
+        Waiting::CatalogRestart,
+        Waiting::RestartAfterWrite,
+    ] {
+        for withdraw in [
+            Withdraw::PlannedStop,
+            Withdraw::StopEveryone,
+            Withdraw::Cancel,
+        ] {
+            withdraw_case(waiting, withdraw);
+        }
+    }
+}
+
+fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
+    let case = format!("{waiting:?}/{withdraw:?}");
+    let dir = scratch(&format!("f3-withdraw-{waiting:?}-{withdraw:?}").to_lowercase());
+    let mut d = driver_in(&dir, &["alice", "bob"]);
+    let path = dir.join("looping.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let js = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        js.source,
+        js.identity_id(),
+    ));
+    let assign = |d: &mut HeadlessDriver, card: crate::scripts::ScriptChoice| {
+        set_card(d, crate::FleetCard::pinned(card));
+        assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));
+        run_plan(d);
+    };
+    let gate = d.session().write_gate();
+    let mut held = None;
+    let (target, original) = match waiting {
+        Waiting::Paced => {
+            let (start, queued) = queued_start(&mut d, &["alice", "bob"]);
+            (queued[0].clone(), start)
+        }
+        Waiting::Preparation => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            assign(&mut d, js);
+            let start = d
+                .submit(OperatorCommand::StartScript, Targets::Profile("alice"))
+                .expect("start")
+                .request();
+            ("alice".to_owned(), start)
+        }
+        Waiting::FleetPreparation => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            assign(&mut d, js);
+            set_card(&mut d, crate::FleetCard::OWN);
+            assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+            let command = d.session().fleet_plan().expect("plan").command();
+            let start = d.submit(command, Targets::Plan).expect("start").request();
+            ("alice".to_owned(), start)
+        }
+        Waiting::CatalogRestart => {
+            let root = dir.join("catalog-root");
+            let scripts = root.join("src/bot/scripts");
+            let card_dir = scripts.join("BoneBurier");
+            std::fs::create_dir_all(&card_dir).expect("catalog");
+            std::fs::write(
+                scripts.join("index.ts"),
+                "import BoneBurier from './BoneBurier/BoneBurier.js';\n\
+                 ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });\n",
+            )
+            .expect("index");
+            std::fs::write(card_dir.join("BoneBurier.ts"), SETTINGS_CARD).expect("card");
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            set_card(
+                &mut d,
+                crate::FleetCard::pinned(crate::scripts::ScriptChoice::from_script(
+                    script::ScriptSel::Loaded(script::ScriptSource::Catalog, "BoneBurier".into()),
+                )),
+            );
+            d.models_mut().scripts.stage_start_catalog_root(Some(root));
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::AssignRestart),
+                Some(done())
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let restart = d.submit(command, Targets::Plan).expect("restart").request();
+            ("alice".to_owned(), restart)
+        }
+        Waiting::RestartAfterWrite => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            set_card(&mut d, crate::FleetCard::pinned(js));
+            held = Some(gate.lock().expect("gate"));
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::AssignRestart),
+                Some(done())
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let restart = d.submit(command, Targets::Plan).expect("restart").request();
+            ("alice".to_owned(), restart)
+        }
+    };
+    assert!(
+        d.models().scripts().start_waiting(&target),
+        "{case}: {target}'s Start waits"
+    );
+    assert_eq!(terminal(&d, original, &target), None, "{case}: Pending");
+    let _ = d.models_mut().scripts.take_start_failures();
+    match withdraw {
+        Withdraw::PlannedStop => {
+            d.submit(OperatorCommand::ClearMarks, Targets::Application)
+                .expect("clear marks");
+            mark(&mut d, &[target.as_str()]);
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::Stop),
+                Some(done()),
+                "{case}: a waiting Start is a Stop target"
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let stop = d.submit(command, Targets::Plan).expect("stop").request();
+            assert_eq!(terminal(&d, stop, &target), Some(done()), "{case}: Stop");
+        }
+        Withdraw::StopEveryone => {
+            d.submit(OperatorCommand::StopScript, Targets::Everyone)
+                .expect("stop everyone");
+        }
+        Withdraw::Cancel => {
+            let cancel = d
+                .submit(
+                    OperatorCommand::CancelQueuedStart,
+                    Targets::Profile(&target),
+                )
+                .expect("cancel")
+                .request();
+            assert_eq!(
+                terminal(&d, cancel, &target),
+                Some(done()),
+                "{case}: Cancel"
+            );
+        }
+    }
+    assert!(
+        !d.models().scripts().start_waiting(&target),
+        "{case}: nothing waits after the withdrawal"
+    );
+    drop(held);
+    for _ in 0..400 {
+        d.poll();
+        if terminal(&d, original, &target).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        terminal(&d, original, &target),
+        Some(operator_cancelled()),
+        "{case}: the original command settles cancelled"
+    );
+    d.session_mut().flush_writes();
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    while d.models().scripts().catalog_work_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{case}: catalog scan hung"
+        );
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    no_later_start(&mut d, std::slice::from_ref(&target));
+    assert_eq!(
+        d.session().script_state(&target),
+        crate::scripts::ScriptRunState::Idle,
+        "{case}"
+    );
+    match waiting {
+        Waiting::CatalogRestart => {
+            assert_eq!(assignment(&d, &target), None, "{case}: nothing written")
+        }
+        Waiting::RestartAfterWrite => {
+            assert!(
+                assignment(&d, &target).is_some(),
+                "{case}: the write is kept"
+            )
+        }
+        _ => {}
+    }
+}
+
+// ---- F4: Switch world through the fleet plan ----
+
+fn arm_of(d: &HeadlessDriver, name: &str) -> std::sync::Arc<host_play::SlotArm> {
+    d.session()
+        .play()
+        .and_then(|play| play.arm(name))
+        .expect("live arm")
+}
+
+/// Publish `name`'s status row as its slot would, then two frames: the
+/// fleet result follows a member settled by the first on the next.
+fn publish(d: &mut HeadlessDriver, name: &str, edit: impl FnOnce(&mut host_play::SlotStatus)) {
+    {
+        let play = d.session().play().expect("play");
+        let mut rows = play.statuses.lock().unwrap();
+        if !rows.iter().any(|row| row.username == name) {
+            rows.push(host_play::SlotStatus {
+                username: name.into(),
+                ..host_play::SlotStatus::default()
+            });
+        }
+        edit(
+            rows.iter_mut()
+                .find(|row| row.username == name)
+                .expect("row"),
+        );
+    }
+    d.poll();
+    d.poll();
+}
+
+/// A finished login: a new owner session for `name` on `world`, its scene
+/// ready, and the status row the slot publishes for it.
+fn log_in_on(d: &mut HeadlessDriver, name: &str, world: u16) {
+    let arm = arm_of(d, name);
+    if !arm.login_wanted() {
+        arm.arm_explicit_login();
+    }
+    arm.configure_world_for_test(world);
+    arm.complete_login_for_test();
+    arm.scene_ready_for_test();
+    publish(d, name, |row| {
+        row.connected = true;
+        row.ingame = true;
+        row.scene_state = 2;
+        row.world = Some(world);
+        row.startup_phase = host_play::StartupPhase::Ready;
+        row.error = None;
+    });
+}
+
+/// A driver whose server lists public worlds 1-3, with `names` loaded and
+/// in game on world 1.
+fn world_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver(test, names);
+    d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
+    load(&mut d, names);
+    for name in names {
+        log_in_on(&mut d, name, 1);
+    }
+    d
+}
+
+/// Plan Switch world (for `target` alone when given): the plan command's
+/// terminal and its refusal text.
+fn plan_switch(
+    d: &mut HeadlessDriver,
+    world: u16,
+    target: Option<&str>,
+) -> (Option<Terminal>, Option<String>) {
+    if let Some(name) = target {
+        d.session_mut().stage_plan_target(name);
+    }
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::SwitchWorld(world)),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    (
+        terminal_app(d, planned.request()),
+        d.session()
+            .command_failure(planned.request())
+            .map(str::to_owned),
+    )
+}
+
+fn saved_world(d: &HeadlessDriver, name: &str) -> Option<u16> {
+    d.session()
+        .vault()
+        .and_then(|vault| vault.get(name))
+        .and_then(|profile| profile.settings.world)
+}
+
+fn member_detail(d: &HeadlessDriver, request: RequestId, name: &str) -> String {
+    let subject = Subject::Profile(d.session().profile_identity_or_synthetic(name));
+    d.report(request)
+        .and_then(|report| report.member(subject))
+        .and_then(|member| member.detail())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Confirm the waiting Switch world plan; its writes stay where they are.
+fn confirm_switch(d: &mut HeadlessDriver) -> RequestId {
+    let command = d.session().fleet_plan().expect("a plan waits").command();
+    d.submit(command, Targets::Plan).expect("run").request()
+}
+
+/// Let the world saves land and the relogs post.
+fn land_saves(d: &mut HeadlessDriver) {
+    d.session_mut().flush_writes();
+    d.poll();
+    d.poll();
+}
+
+/// The world bubble's switch: one bot, always asked; the world is saved
+/// before anything logs out; the intent post settles nothing; the member
+/// is done only when a new session is in game on the new world.
+#[test]
+fn a_world_switch_saves_first_then_relogs_and_settles_on_the_new_session() {
+    let mut d = world_driver("f4-switch", &["alice", "bob"]);
+    mark(&mut d, &["bob"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let plan = d.session().fleet_plan().expect("plan");
+    assert!(plan.needs_confirm(), "a world switch always asks");
+    assert_eq!(plan_names(&d), ["alice"], "the bubble's bot, not the marks");
+    assert_eq!(
+        d.session().fleet_plan().expect("plan").prompt(),
+        "Move 1 bot to world 2: alice. Each logs out and back in through the login \
+         queue; a running script continues after it reconnects."
+    );
+
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    d.poll();
+    let alice = arm_of(&d, "alice");
+    assert_eq!(terminal(&d, run, "alice"), None, "pending on its save");
+    assert!(
+        !alice.wants_logout(),
+        "nothing logs out while the world save is held"
+    );
+    drop(held);
+    land_saves(&mut d);
+    assert_eq!(saved_world(&d, "alice"), Some(2));
+    assert!(alice.wants_logout(), "the durable save posts the turnover");
+    assert!(alice.wants_login(), "the turnover logs back in");
+    assert_eq!(alice.world_choice(), Some(2));
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        None,
+        "posting the switch is not the relog"
+    );
+    assert!(!arm_of(&d, "bob").wants_logout(), "bob was not in the plan");
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: pending 1"
+    );
+
+    log_in_on(&mut d, "alice", 2);
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: alice"
+    );
+}
+
+/// A world switch keeps the bot a fleet member, both for a bot loaded with
+/// Load and for one whose slot a single-bot focus opened (the unlock's
+/// auto-login with MultiBox off, which now loads it): the logout and the
+/// relog through the same slot never drop it from the fleet.
+#[test]
+fn a_world_switch_keeps_the_bot_a_fleet_member() {
+    let mut d = driver("f4-al-member", &["alice", "bob"]);
+    d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
+    load(&mut d, &["bob"]);
+    // alice's slot is opened by a focus, as the single-mode unlock does.
+    d.session_mut().stage_select_opens_slot();
+    d.submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    d.poll();
+    for name in ["alice", "bob"] {
+        log_in_on(&mut d, name, 1);
+    }
+    let members = |d: &HeadlessDriver| {
+        let mut members = d.session().members().to_vec();
+        members.sort();
+        members
+    };
+    assert_eq!(members(&d), ["alice", "bob"], "both are members");
+    for name in ["alice", "bob"] {
+        assert_eq!(plan_switch(&mut d, 2, Some(name)).0, Some(done()));
+        let run = confirm_switch(&mut d);
+        land_saves(&mut d);
+        assert!(
+            arm_of(&d, name).wants_logout(),
+            "{name}: the relog is posted"
+        );
+        assert_eq!(
+            members(&d),
+            ["alice", "bob"],
+            "{name}: a member while it relogs"
+        );
+        log_in_on(&mut d, name, 2);
+        assert_eq!(terminal(&d, run, name), Some(done()), "{name}");
+        assert_eq!(members(&d), ["alice", "bob"], "{name}: a member on world 2");
+        let row = d
+            .session()
+            .fleet_view()
+            .rows()
+            .iter()
+            .find(|row| row.name() == name)
+            .map(|row| row.loaded());
+        assert_eq!(row, Some(true), "{name}: the Fleet row stays loaded");
+    }
+}
+
+/// Review F4-SOL-1: the frontend's status rows can still describe the old
+/// session, in game on world 1, when the slot's new session begins. The
+/// switch settles only from the new session's own readiness and world:
+/// a stale row never fails it, and a ready new session settles it even
+/// before its row is published.
+#[test]
+fn a_stale_status_row_never_settles_the_new_session() {
+    let mut d = world_driver("f4-stale-row", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    let alice = arm_of(&d, "alice");
+    assert!(alice.wants_logout(), "the relog is posted");
+    // The new session logs in on world 2; its scene is not ready yet and
+    // the row still reads the old session, in game on world 1.
+    alice.configure_world_for_test(2);
+    alice.complete_login_for_test();
+    for _ in 0..3 {
+        d.poll();
+    }
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        None,
+        "a new key with the old row settles nothing"
+    );
+    alice.scene_ready_for_test();
+    d.poll();
+    d.poll();
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: alice"
+    );
+}
+
+/// Review F4 Grok 2: a slot restarted between admission and the post is
+/// not the slot the command was for. The member is cancelled and the new
+/// slot's mailbox never receives the switch.
+#[test]
+fn a_switch_never_posts_to_a_slot_it_was_not_admitted_on() {
+    let mut d = world_driver("f4-restarted-slot", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    d.poll();
+    // The restarted slot logged in again on world 1 (a SwitchWorld posted
+    // to it would log it out).
+    let restarted = host_play::SlotArm::new(1, true);
+    restarted.configure_world_for_test(1);
+    restarted.complete_login_for_test();
+    restarted.scene_ready_for_test();
+    d.session_mut()
+        .play_mut_for_test()
+        .expect("play")
+        .attach_arm("alice", std::sync::Arc::clone(&restarted));
+    drop(held);
+    land_saves(&mut d);
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::ScopeInvalidated
+        ))
+    );
+    assert!(
+        !restarted.wants_logout(),
+        "nothing reached the restarted slot"
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (the bot's slot restarted)"
+    );
+}
+
+/// Picking the current world, a world off the server's list and a server
+/// with one world each write and relog nothing; the headless row is no
+/// longer refused for want of an entry point.
+#[test]
+fn switch_world_refusals_write_and_relog_nothing() {
+    let mut d = world_driver("f4-refusals", &["alice"]);
+    let (terminal_same, why) = plan_switch(&mut d, 1, Some("alice"));
+    assert!(matches!(terminal_same, Some(Settlement::Failed(_))));
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: no bot to act on (alice: already on this world)")
+    );
+    let (_, why) = plan_switch(&mut d, 9, None);
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: world 9 is not on this server's world list")
+    );
+    let direct = d
+        .submit(OperatorCommand::SwitchWorld(9), Targets::Profile("alice"))
+        .expect("the headless row is admitted")
+        .request();
+    assert_eq!(
+        terminal(&d, direct, "alice"),
+        Some(rejected(crate::command::Rejection::NotApplicable))
+    );
+    let same = d
+        .submit(OperatorCommand::SwitchWorld(1), Targets::Profile("alice"))
+        .expect("admitted")
+        .request();
+    assert_eq!(
+        terminal(&d, same, "alice"),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::AlreadyOnWorld
+        )))
+    );
+    land_saves(&mut d);
+    assert_eq!(saved_world(&d, "alice"), None, "nothing was saved");
+    assert!(!arm_of(&d, "alice").wants_logout(), "nothing relogged");
+
+    let mut local = driver("f4-one-world", &["alice"]);
+    load(&mut local, &["alice"]);
+    log_in_on(&mut local, "alice", 1);
+    let (_, why) = plan_switch(&mut local, 2, Some("alice"));
+    assert_eq!(
+        why.as_deref(),
+        Some("Switch world: this server has one world")
+    );
+    assert!(local.session().switch_world_choices().is_none());
+}
+
+/// A marked batch admits the bots in game elsewhere and names each
+/// refusal once: queued, logging in, already there, not logged in.
+#[test]
+fn a_mixed_switch_admits_ready_bots_and_names_each_refusal_once() {
+    let names = ["alice", "bob", "carol", "dave", "erin"];
+    let mut d = world_driver("f4-mixed", &names);
+    arm_of(&d, "bob").request_relog();
+    publish(&mut d, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Queueing;
+    });
+    publish(&mut d, "carol", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Connecting;
+    });
+    log_in_on(&mut d, "dave", 2);
+    let logout = d
+        .submit(OperatorCommand::Logout, Targets::Profile("erin"))
+        .expect("logout");
+    settle(&mut d, logout.request());
+    publish(&mut d, "erin", |row| {
+        row.connected = false;
+        row.ingame = false;
+    });
+    mark(&mut d, &names);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    assert_eq!(plan_names(&d), ["alice"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(
+        prompt.starts_with("Move 1 marked bot to world 2: alice.")
+            && prompt.ends_with(
+                " Skipped 4: bob: queued for login, carol: logging in, dave: already on \
+                 this world, erin: not logged in."
+            ),
+        "{prompt}"
+    );
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    log_in_on(&mut d, "alice", 2);
+    assert_eq!(terminal(&d, run, "alice"), Some(done()));
+    let result = d.session().fleet_result().expect("result");
+    assert_eq!(
+        result.text(),
+        "Switch world: skipped 4: bob (queued for login), carol (logging in), dave \
+         (already on this world), erin (not logged in); done 1: alice"
+    );
+    for name in ["bob", "carol", "dave", "erin"] {
+        assert_eq!(saved_world(&d, name), None, "{name} was not written");
+    }
+}
+
+/// A failed world save fails the member with the save's reason and never
+/// logs the bot out.
+#[test]
+fn a_failed_world_save_never_logs_the_bot_out() {
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-t33-driver-{}-f4-failed-save",
+        std::process::id()
+    ));
+    let mut d = world_driver("f4-failed-save", &["alice"]);
+    let session = arm_of(&d, "alice").session_key();
+    assert_eq!(plan_switch(&mut d, 3, Some("alice")).0, Some(done()));
+    // A directory where the vault file was: the next write cannot publish.
+    let vault = dir.join("vault");
+    std::fs::rename(&vault, dir.join("vault.aside")).expect("vault aside");
+    std::fs::create_dir(&vault).expect("block");
+    let run = confirm_switch(&mut d);
+    for _ in 0..400 {
+        land_saves(&mut d);
+        if terminal(&d, run, "alice").is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        matches!(terminal(&d, run, "alice"), Some(Settlement::Failed(_))),
+        "{:?}",
+        terminal(&d, run, "alice")
+    );
+    assert!(
+        member_detail(&d, run, "alice").starts_with("world not saved"),
+        "{}",
+        member_detail(&d, run, "alice")
+    );
+    let alice = arm_of(&d, "alice");
+    assert!(!alice.wants_logout(), "a failed save never logs out");
+    assert_eq!(alice.session_key(), session, "the connection is intact");
+}
+
+/// Several bots relog one each: every member waits for its own new
+/// session (the host's login queue paces the logins).
+#[test]
+fn each_switched_bot_settles_on_its_own_relog() {
+    let names = ["alice", "bob", "carol"];
+    let mut d = world_driver("f4-several", &names);
+    mark(&mut d, &names);
+    assert_eq!(plan_switch(&mut d, 3, None).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    for name in names {
+        assert!(arm_of(&d, name).wants_logout(), "{name} relogs");
+    }
+    log_in_on(&mut d, "bob", 3);
+    assert_eq!(terminal(&d, run, "bob"), Some(done()));
+    assert_eq!(terminal(&d, run, "alice"), None);
+    assert_eq!(terminal(&d, run, "carol"), None);
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: done 1: bob; pending 2"
+    );
+}
+
+/// Log out during the save or the relog cancels the switch: nothing
+/// posts after it and the bot stays logged out.
+#[test]
+fn a_logout_during_the_switch_cancels_it_and_nothing_logs_back_in() {
+    let mut d = world_driver("f4-logout", &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let run = confirm_switch(&mut d);
+    // alice: Log out while her world save is held.
+    d.submit(OperatorCommand::Logout, Targets::Profile("alice"))
+        .expect("logout");
+    drop(held);
+    land_saves(&mut d);
+    // bob: Log out after his relog was posted.
+    assert!(arm_of(&d, "bob").wants_logout());
+    d.submit(OperatorCommand::Logout, Targets::Profile("bob"))
+        .expect("logout");
+    d.poll();
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            terminal(&d, run, name),
+            Some(Settlement::Cancelled(
+                api::identity::Cancellation::Superseded
+            )),
+            "{name}"
+        );
+        let arm = arm_of(&d, name);
+        assert!(arm.login_latched(), "{name} stays logged out");
+        assert!(!arm.wants_login(), "{name}: nothing logs back in");
+    }
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 2: alice (a later Log out took over), \
+         bob (a later Log out took over)"
+    );
+}
+
+/// Review F4 Grok 1: a Log in after the relog was posted takes the slot
+/// over; the result names the switch cancelled, in words.
+#[test]
+fn a_log_in_during_the_switch_cancels_it_in_words() {
+    let mut d = world_driver("f4-login", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    assert!(arm_of(&d, "alice").wants_logout(), "the relog is posted");
+    d.submit(OperatorCommand::Login, Targets::Profile("alice"))
+        .expect("login");
+    d.poll();
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::Superseded
+        ))
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (a later Log in took over)"
+    );
+}
+
+/// Review F4 r3 (Sol 2): the old session drops and the repeat guard
+/// latches the switch's login off, with no second command: the result
+/// names the guard, not a command.
+#[test]
+fn a_switch_the_repeat_guard_stops_names_the_guard_not_a_command() {
+    let mut d = world_driver("f4-guard", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    let arm = arm_of(&d, "alice");
+    assert!(arm.wants_logout(), "the relog is posted");
+    arm.exit_and_trip_repeat_guard_for_test();
+    // One poll settles the member from the slot; the next refreshes the
+    // result, as the next frame does.
+    d.poll();
+    d.poll();
+    assert_eq!(
+        terminal(&d, run, "alice"),
+        Some(Settlement::Cancelled(
+            api::identity::Cancellation::Superseded
+        ))
+    );
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (the automatic login guard stopped repeated logins)"
+    );
+}
+
+/// Review F4 r2 (Sol): every command that can take a posted switch over
+/// is named for what it is, never as another command: Relog now and
+/// another Switch world supersede it and are named; Quit ends the slot,
+/// and the result says so.
+#[test]
+fn a_superseded_switch_names_the_command_that_took_it_over() {
+    use api::identity::Cancellation::{ScopeInvalidated, Superseded};
+    for (label, command, targets, cause, words) in [
+        (
+            "relog",
+            OperatorCommand::RelogNow,
+            Targets::Profile("alice"),
+            Superseded,
+            "a later Relog now took over",
+        ),
+        (
+            "switch",
+            OperatorCommand::SwitchWorld(3),
+            Targets::Profile("alice"),
+            Superseded,
+            "a later Switch world took over",
+        ),
+        (
+            "quit",
+            OperatorCommand::Quit,
+            Targets::Everyone,
+            ScopeInvalidated,
+            "the session or slot it was for ended",
+        ),
+    ] {
+        let mut d = world_driver(&format!("f4-r2-{label}"), &["alice"]);
+        assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+        let run = confirm_switch(&mut d);
+        land_saves(&mut d);
+        assert!(arm_of(&d, "alice").wants_logout(), "{label}: posted");
+        d.submit(command, targets).expect(label);
+        land_saves(&mut d);
+        assert_eq!(
+            terminal(&d, run, "alice"),
+            Some(Settlement::Cancelled(cause)),
+            "{label}"
+        );
+        assert_eq!(
+            d.session().fleet_result().expect("result").text(),
+            format!("Switch world: cancelled 1: alice ({words})"),
+            "{label}"
+        );
+    }
+}
+
+/// Removing a bot whose relog is posted cancels its member.
+#[test]
+fn removing_a_switching_bot_cancels_it() {
+    let mut d = world_driver("f4-remove", &["alice"]);
+    assert_eq!(plan_switch(&mut d, 2, Some("alice")).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    assert!(arm_of(&d, "alice").wants_logout(), "the relog is posted");
+    d.submit(OperatorCommand::Remove, Targets::Profile("alice"))
+        .expect("remove");
+    d.poll();
+    assert!(
+        matches!(terminal(&d, run, "alice"), Some(Settlement::Cancelled(_))),
+        "{:?}",
+        terminal(&d, run, "alice")
+    );
+    // Review F4 r3: the reason says only what is known when it settles.
+    // Remove logs the bot out first; that logout row, not a Log out
+    // command, withdrew the switch's login.
+    d.poll();
+    assert_eq!(
+        d.session().fleet_result().expect("result").text(),
+        "Switch world: cancelled 1: alice (a logout was requested)"
+    );
+}
+
+/// A relog that lands on another world, or a world the host refuses at
+/// login, fails the member with what happened.
+#[test]
+fn a_relog_elsewhere_or_a_refused_world_fails_the_member() {
+    let mut d = world_driver("f4-elsewhere", &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan_switch(&mut d, 2, None).0, Some(done()));
+    let run = confirm_switch(&mut d);
+    land_saves(&mut d);
+    log_in_on(&mut d, "alice", 1);
+    arm_of(&d, "bob").hold_login_on_error_for_test();
+    publish(&mut d, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Error;
+        row.error = Some("world 2 refused the login".into());
+    });
+    let rejected = Settlement::Failed(CommandFailure::Failed(
+        crate::command::FailureKind::WorldRejected,
+    ));
+    assert_eq!(terminal(&d, run, "alice"), Some(rejected.clone()));
+    assert_eq!(
+        member_detail(&d, run, "alice"),
+        "logged in on world 1 instead"
+    );
+    assert_eq!(terminal(&d, run, "bob"), Some(rejected));
+    assert_eq!(member_detail(&d, run, "bob"), "world 2 refused the login");
 }

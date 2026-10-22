@@ -617,6 +617,48 @@ fn preference_bounds_refuse_empty_overlong_and_hostile_keys() {
     );
 }
 
+/// F2 r3: one preferences edit carries a batch of sets and removals, each
+/// under the row contract; an empty batch, one past the change or byte
+/// bound, and a removal of a hostile key are refused.
+#[test]
+fn a_preference_batch_is_bounded_and_every_change_meets_the_row_contract() {
+    use crate::local_state::{PreferenceChange, MAX_PREF_EDIT_BYTES, MAX_PREF_EDIT_CHANGES};
+    let id = identity(LocalStateDomain::Preferences, "alice");
+    let set = PreferenceChange::set("order.1", "7").unwrap();
+    let remove = PreferenceChange::remove("order.2").unwrap();
+    assert_eq!(remove.value(), None);
+    let edit = PreferencesEdit::batch(id.clone(), None, vec![set.clone(), remove]).unwrap();
+    assert_eq!(edit.changes().len(), 2);
+    assert_eq!(edit.changes()[0].value(), Some("7"));
+    let refused = |changes| PreferencesEdit::batch(id.clone(), None, changes).unwrap_err();
+    assert!(matches!(
+        refused(Vec::new()),
+        ErrorCode::Validation {
+            reason: ValidationReason::Empty,
+            ..
+        }
+    ));
+    assert!(matches!(
+        refused(vec![set.clone(); MAX_PREF_EDIT_CHANGES + 1]),
+        ErrorCode::Validation {
+            reason: ValidationReason::TooLong,
+            ..
+        }
+    ));
+    let wide = PreferenceChange::set("wide", &"v".repeat(4096)).unwrap();
+    assert!(matches!(
+        refused(vec![wide; MAX_PREF_EDIT_BYTES / 4096 + 1]),
+        ErrorCode::Validation {
+            reason: ValidationReason::TooLong,
+            ..
+        }
+    ));
+    assert!(PreferenceChange::remove("../x").is_err());
+    assert!(PreferenceChange::remove("").is_err());
+    let bank_id = identity(LocalStateDomain::BankHints, "alice");
+    assert!(PreferencesEdit::batch(bank_id, None, vec![set]).is_err());
+}
+
 /// F0 amendment 2: a rename is one edit naming the row it replaces; it is
 /// refused for another domain, an empty or overlong source, an empty new
 /// name, and a new name equal to the source (that is an upsert).

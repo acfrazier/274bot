@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 use ratatui::Frame;
 
 use frontend_core::views::script_status_label;
-use frontend_core::{member_row, state_label, Phase};
+use frontend_core::{state_label, Phase};
 
 use crate::app::TuiApp;
 use crate::commands::{shortcut, Command};
@@ -29,7 +29,10 @@ const OVERVIEW_BUTTONS: [Command; 7] = [
     Command::ManualWalk,
     Command::DismissNotice,
 ];
-const FLEET_BUTTONS: [Command; 2] = [Command::LoadLoginAll, Command::LogoutAll];
+const FLEET_BUTTONS: [Command; 2] = [
+    Command::Fleet(frontend_core::FleetAction::Login),
+    Command::Fleet(frontend_core::FleetAction::Logout),
+];
 const MAP_BUTTONS: [Command; 5] = [
     Command::MapWalk,
     Command::MapTeleport,
@@ -211,7 +214,10 @@ impl TuiApp {
             return "BOT none: select one in the Fleet (F2, Enter)".into();
         };
         let name = &self.names[index];
-        let row = member_row(&self.names, &self.fleet, index);
+        let row = self
+            .fleet_model
+            .index_of_name(name)
+            .map(|index| &self.fleet_model.rows()[index]);
         let world = row
             .and_then(|row| row.world())
             .map_or("local".to_string(), |w| format!("w{w}"));
@@ -410,15 +416,15 @@ impl TuiApp {
         let rows = self
             .button_rows(inner.width, &FLEET_BUTTONS)
             .min(inner.height);
+        let selected = self.focused_identity();
         let hits = FleetTable {
-            names: &self.names,
-            ids: &self.profile_ids,
-            rows: &self.fleet,
+            model: &self.fleet_model,
             restart_badges: &self.restart_badges,
             state: &mut self.table,
-            selected: self.focused,
+            selected,
             keys,
             class,
+            header_parts: &mut self.regions.fleet_header,
         }
         .render(inner, buf, rows);
         self.regions.fleet_rows = hits.rows;

@@ -99,8 +99,14 @@ impl<Io> OperatorSession<Io> {
         }
 
         let names = self.admitted_names(request);
+        // A planned command runs over its plan's frozen marks and card.
+        let planned_marks = self.planned_marks();
+        let planned_card = self.planned_card();
         let mut models = surface.models();
-        let marks = models.marks.as_deref();
+        let marks = match planned_marks.as_ref() {
+            Some(marks) => Some(marks),
+            None => models.fleet.as_deref().map(crate::FleetModel::marks),
+        };
         let Some(scripts) = models.scripts.as_deref_mut() else {
             for name in names {
                 self.settle_member(
@@ -115,6 +121,10 @@ impl<Io> OperatorSession<Io> {
         };
 
         if let ScriptRow::ApplySettingsToMarked(kind) = row {
+            if planned_marks.is_some() {
+                // A planned copy applies the scope its plan prepared.
+                scripts.stage_settings_sync_apply();
+            }
             for (name, applied) in
                 dispatch_settings_sync(self, scripts, kind, targets, &names, marks)
             {
@@ -124,7 +134,8 @@ impl<Io> OperatorSession<Io> {
         }
 
         if row == ScriptRow::Start && matches!(targets, Targets::Everyone | Targets::Marked) {
-            let results = dispatch_start_group(self, scripts, targets, request, &names, marks);
+            let results =
+                dispatch_start_group(self, scripts, targets, request, &names, marks, planned_card);
             let marked_target = matches!(targets, Targets::Marked);
             let mut bulk_rows = Vec::new();
             for (name, applied) in results {
@@ -155,13 +166,19 @@ impl<Io> OperatorSession<Io> {
         };
         let assignment = marked_assignment_label(row).map(|_| {
             (
-                scripts.browse_selection().map(ScriptChoice::duplicate),
+                match &planned_card {
+                    Some(card) => card.as_ref().map(ScriptChoice::duplicate),
+                    None => scripts.browse_selection().map(ScriptChoice::duplicate),
+                },
                 scripts.take_staged_start_catalog_root(),
             )
         });
         let mut bulk_rows = Vec::new();
         for name in names {
-            let applied = if let Some((selection, root)) = &assignment {
+            let saving = planned_marks.is_some() && self.profile_write_pending(&name);
+            let applied = if saving {
+                Applied::Skipped(SkipReason::ProfileSaving)
+            } else if let Some((selection, root)) = &assignment {
                 match selection {
                     Some(selection) => assign_profile(
                         self,
@@ -501,6 +518,14 @@ fn dispatch_profile<Io>(
                 return Applied::Rejected(Rejection::NoHost, None);
             }
             match input.0 {
+                // A host control id is never a script click: it reaches the
+                // run only as its own lifecycle row.
+                PaintAction::Click { id, .. } if crate::scripts::is_host_control(&id) => {
+                    return Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("a host paint control is not a script click".into()),
+                    );
+                }
                 PaintAction::Click { id, generation } => {
                     core.script_paint_click(profile, &id, generation)
                 }
@@ -509,6 +534,17 @@ fn dispatch_profile<Io>(
                     name,
                     generation,
                 } => core.script_paint_select(profile, &key, &name, generation),
+                // The seam routes a holding binding to its own row before
+                // dispatch; one that reaches this row was refused.
+                PaintAction::Refused(reason) => {
+                    return Applied::Rejected(Rejection::NotApplicable, Some(reason.into()));
+                }
+                PaintAction::Control(_) => {
+                    return Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("the paint control names no single profile".into()),
+                    );
+                }
             }
             Applied::Done
         }
@@ -605,6 +641,7 @@ fn dispatch_start_group<Io>(
     request: RequestId,
     names: &[String],
     marks: Option<&MarkedSelection>,
+    planned_card: Option<Option<ScriptChoice>>,
 ) -> Vec<(String, Applied)> {
     let root = scripts.take_staged_start_catalog_root();
     let accepted = match targets {
@@ -616,7 +653,10 @@ fn dispatch_start_group<Io>(
                     .map(|name| (name.clone(), Applied::Rejected(Rejection::NoModel, None)))
                     .collect();
             };
-            let selection = scripts.browse_selection().map(ScriptChoice::duplicate);
+            let selection = match planned_card {
+                Some(card) => card,
+                None => scripts.browse_selection().map(ScriptChoice::duplicate),
+            };
             crate::selection::start_marked(
                 marks,
                 core,
@@ -625,7 +665,11 @@ fn dispatch_start_group<Io>(
                 root.as_deref(),
             )
         }
-        Targets::Application | Targets::Profile(_) | Targets::Profiles(_) | Targets::Selected => {
+        Targets::Application
+        | Targets::Profile(_)
+        | Targets::Profiles(_)
+        | Targets::Selected
+        | Targets::Plan => {
             return names
                 .iter()
                 .map(|name| {
@@ -735,27 +779,25 @@ fn dispatch_settings_sync<Io>(
             broadcast_script_result(names, applied)
         }
         SyncCommandInput::Apply => {
-            let prepared = scripts.prepared_settings_sync().map(|scope| {
-                (
-                    scope.source().to_owned(),
-                    scope
-                        .targets()
-                        .iter()
-                        .chain(scope.skipped().iter().map(|(profile, _)| profile))
-                        .cloned()
-                        .collect::<Vec<_>>(),
-                )
-            });
+            let source = scripts
+                .prepared_settings_sync()
+                .map(|scope| scope.source().to_owned());
             match scripts.apply_settings_sync(core) {
+                // A member settles from the copy's own outcome for it, under
+                // the name the copy wrote (a planned copy follows a rename).
                 Ok(operation) => names
                     .iter()
                     .map(|name| {
-                        let applied = match prepared.as_ref() {
-                            Some((source, _)) if source == name => Applied::Done,
-                            Some((_, targets)) if targets.iter().any(|target| target == name) => {
-                                Applied::Operation(operation)
-                            }
-                            _ => Applied::Skipped(SkipReason::NotReady),
+                        let copied = core
+                            .operations
+                            .get(operation)
+                            .is_some_and(|report| report.outcome(name).is_some());
+                        let applied = if source.as_deref() == Some(name.as_str()) {
+                            Applied::Done
+                        } else if copied {
+                            Applied::Operation(operation)
+                        } else {
+                            Applied::Skipped(SkipReason::NotReady)
                         };
                         (name.clone(), applied)
                     })
@@ -817,6 +859,7 @@ fn skip_label(reason: SkipReason) -> &'static str {
         SkipReason::WalkExcluded => "walk excluded",
         SkipReason::NothingSelected => "nothing selected",
         SkipReason::DecisionStaged => "decision staged",
+        SkipReason::AlreadyOnWorld => "already on this world",
     }
 }
 

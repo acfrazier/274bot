@@ -18,7 +18,7 @@ fn tcp_client(port: u16) -> Client {
         client::client::ClientConfig {
             host: "127.0.0.1".into(),
             port,
-            cache_dir: "/tmp".into(),
+            cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
             members: true,
             lowmem: false,
         },
@@ -35,6 +35,35 @@ fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> Granted
     );
     drop(q);
     GrantedReservation::new(queue, arm.queue_owner)
+}
+
+/// The ready session carries the key, the readiness and the world of one
+/// session: absent until that session's scene is ready, bound to the world
+/// configured for its handshake (not to a world configured later), and
+/// absent again once it ends.
+#[test]
+fn the_ready_session_binds_its_key_and_world_to_one_session() {
+    let arm = SlotArm::new(7, true);
+    arm.configure_world_for_test(1);
+    arm.complete_login_for_test();
+    let first = arm.session_key().expect("a session");
+    assert_eq!(arm.ready_session(), None, "not ready before its scene");
+    arm.scene_ready_for_test();
+    assert_eq!(arm.ready_session(), Some((first, Some(1))));
+    // The next login's world is configured while this session runs.
+    arm.configure_world_for_test(2);
+    assert_eq!(arm.ready_session(), Some((first, Some(1))));
+
+    arm.switch_world(2);
+    arm.complete_login_for_test();
+    let second = arm.session_key().expect("a new session");
+    assert_ne!(second, first);
+    assert_eq!(arm.ready_session(), None, "the new session is not ready");
+    arm.scene_ready_for_test();
+    assert_eq!(arm.ready_session(), Some((second, Some(2))));
+
+    arm.observe_session_exit(SessionEndCause::ServerLogout, false);
+    assert_eq!(arm.ready_session(), None, "no session");
 }
 
 #[test]
@@ -824,11 +853,15 @@ fn real_client_adopted_reset_socket_reports_write_transport_event() {
     client.set_login_deadline(Instant::now() + Duration::from_secs(1));
     let error = client.login("alice", "secret", true).unwrap_err();
     let transport = error.transport.as_ref().unwrap();
-    assert!(matches!(
-        transport.kind,
-        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-    ));
     let kind = transport.kind;
+    assert!(
+        matches!(
+            kind,
+            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+        ),
+        "reset write error kind on {}: {kind:?}",
+        std::env::consts::OS
+    );
     assert_transport_event(
         error,
         client::client::LoginStage::SendHello,

@@ -5944,6 +5944,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
     let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6037,6 +6038,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
 fn radius_route_job_keeps_first_connected_open_floor_approach() {
     let world = Arc::new(open_world(7, 7));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6093,6 +6095,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6154,6 +6157,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
     };
     world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6208,6 +6212,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         level: 0,
     };
     let make_request = |avoid| ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6307,6 +6312,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6366,6 +6372,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
             world.collision.blocked[0] |= 1 << (target.z as usize * 7 + target.x as usize);
         }
         ScriptRouteRequest {
+            candidate_goals: None,
             admission: crate::admission::Admission::manual(
                 FindOptions::default(),
                 Default::default(),
@@ -6428,6 +6435,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6492,6 +6500,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         level: 0,
     };
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -6550,6 +6559,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         .expect("actual 289 navpack"),
     );
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -7340,6 +7350,57 @@ fn compiled_catalog_start_pump_reaches_running() {
 }
 
 #[test]
+fn start_handle_reads_native_runtime_pair_atomically() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Barrier;
+
+    let play = compiled_start_play();
+    let handle = play.script_start_handle();
+    assert_eq!(handle.observe_native_runtime("missing"), None);
+    let mut pending = vec![live_start::PendingCatalogStart::compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    )];
+    assert_eq!(
+        fire_compiled_until_settled(&mut pending, &handle),
+        live_start::StartScriptPump::CompiledRunning
+    );
+    let running = handle.observe_native_runtime("alice").unwrap();
+    assert!(running.1.is_some());
+    let idle_slot = script::SlotScript::new();
+    let idle = (idle_slot.runtime_generation(), idle_slot.native_run());
+    assert_ne!(idle.0, running.0);
+    assert!(idle.1.is_none());
+    let slot = script_slot(&play.scripts, "alice").unwrap();
+    let finished = AtomicBool::new(false);
+    let ready = Barrier::new(2);
+    let mismatch = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut alternate = idle_slot;
+            ready.wait();
+            while !finished.load(Ordering::Acquire) {
+                std::mem::swap(&mut *slot.lock().unwrap(), &mut alternate);
+                std::thread::yield_now();
+                std::mem::swap(&mut *slot.lock().unwrap(), &mut alternate);
+            }
+        });
+        ready.wait();
+        let mut mismatch = None;
+        for _ in 0..4096 {
+            let observed = handle.observe_native_runtime("alice");
+            if observed != Some(running) && observed != Some(idle) {
+                mismatch = Some(observed);
+                break;
+            }
+        }
+        finished.store(true, Ordering::Release);
+        mismatch
+    });
+    assert_eq!(mismatch, None, "a read mixed two real slot runtimes");
+}
+
+#[test]
 fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     let play = compiled_start_play();
     let mut bag = serde_json::Map::new();
@@ -7351,7 +7412,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     )];
     let handle = play.script_start_handle();
     match fire_compiled_until_settled(&mut pending, &handle) {
-        live_start::StartScriptPump::CompiledFailed(error) => {
+        live_start::StartScriptPump::Failed(error) => {
             assert!(
                 error.contains("start rejected:"),
                 "rejection must name the outcome: {error}"
@@ -7361,7 +7422,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
                 "{error}"
             );
         }
-        other => panic!("expected CompiledFailed, got {other:?}"),
+        other => panic!("expected Failed, got {other:?}"),
     }
     assert_eq!(handle.run_state("alice"), script::RunState::Idle);
     assert!(handle.last_error("alice").is_some());
@@ -20107,6 +20168,7 @@ fn plant_positive_hit(c: &mut Client) {
 fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
     c.gens.npc = c.gens.npc.wrapping_add(1);
     c.gens.player = c.gens.player.wrapping_add(1);
+    c.gens.player_info = c.gens.player_info.wrapping_add(1);
     c.gens.inv = c.gens.inv.wrapping_add(1);
     c.gens.scene = c.gens.scene.wrapping_add(1);
     c.gens.iface = c.gens.iface.wrapping_add(1);
@@ -21992,7 +22054,11 @@ impl ReconnectRig {
             None,
         );
         crate::script_runtime::pump_route_work(&self.navs, "alice");
-        self.slot().lock().unwrap().probe("true").unwrap();
+        let slot = self.slot();
+        let slot = slot.lock().unwrap();
+        if slot.load_active() {
+            slot.probe("true").unwrap();
+        }
     }
     fn wait_for_route_work(&self, ms: u64, mut ready: impl FnMut() -> bool) -> bool {
         wait_until(ms, || {
@@ -22012,6 +22078,54 @@ impl ReconnectRig {
             &self.navs,
             &self.channels,
         );
+    }
+    /// Put the logged-in arm and script seat on a synthetic ready session.
+    fn login_session(&mut self, arm: &SlotArm) {
+        arm.set_script_active(true);
+        let command = arm
+            .login_command(false)
+            .expect("active script requests a login");
+        on_login_success(arm, command);
+        assert!(arm.update_session_readiness(true, false, false, false));
+        self.client.ingame = true;
+        let session = self.ready_session.get();
+        let slot = self.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        slot.align_seat_session(Some(session));
+    }
+
+    /// End the logged-in session as the clean server logout caused by a world
+    /// switch, then run the same host boundary reset as the reconnect rig.
+    fn exit_world_switch_session(&mut self, arm: &SlotArm) {
+        arm.observe_session_exit(api::lifecycle::SessionEndCause::ServerLogout, false);
+        self.client.ingame = false;
+        self.slot().lock().unwrap().on_is_up(false);
+        self.end_session(arm);
+    }
+
+    /// Complete the turnover's fresh login and align the script to its next
+    /// ready session.
+    fn ready_after_world_switch(&mut self, arm: &SlotArm) {
+        let command = arm
+            .login_command(false)
+            .expect("world switch owes a fresh login");
+        on_login_success(arm, command);
+        assert!(
+            arm.update_session_readiness(true, false, false, false),
+            "the new session is ready"
+        );
+        self.client.ingame = true;
+        let session = self
+            .ready_session
+            .get()
+            .next()
+            .expect("script seat session epoch");
+        self.ready_session.set(session);
+        let slot = self.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.on_is_up(true);
+        slot.align_seat_session(Some(session));
     }
 
     /// A frame that posts and ticks, then one that dispatches what the
@@ -23507,6 +23621,241 @@ fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
         "the original dispatch and its carried re-dispatch, nothing else"
     );
     rig.slot().lock().unwrap().stop();
+}
+
+const SWITCH_WORLD_COUNTER_SRC: &str = r#"
+export default class T extends LoopingBot {
+    onStart() { globalThis.__starts = (globalThis.__starts || 0) + 1; }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#;
+
+/// A clean SwitchWorld turnover keeps the same isolate and re-gates its
+/// running script when the new session becomes ready.
+#[test]
+fn a_world_switch_keeps_a_running_scripts_run() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    let old_session = arm.session_key().expect("initial session");
+    let run_generation = rig.slot().lock().unwrap().runtime_generation();
+    assert_eq!(
+        rig.slot()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__starts || 0")
+            .unwrap()
+            .as_i64(),
+        Some(1),
+        "the initial Start ran once"
+    );
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    assert!(arm.session_key().is_none(), "the old session exited");
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert_eq!(
+        rig.slot().lock().unwrap().runtime_generation(),
+        run_generation,
+        "the run remains installed while offline"
+    );
+
+    rig.ready_after_world_switch(&arm);
+    assert_ne!(
+        arm.session_key(),
+        Some(old_session),
+        "a fresh session began"
+    );
+    rig.wait_state(script::RunState::Running);
+    let loops_after_turnover = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    rig.frames(5);
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.runtime_generation(), run_generation);
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the same isolate resumes without a second Start"
+    );
+    let loops = slot
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    assert!(
+        loops > loops_after_turnover,
+        "loop() ticks in the new session: {loops_after_turnover} then {loops}"
+    );
+    slot.stop();
+}
+
+/// SwitchWorld must not override an operator Pause while it re-gates a run.
+#[test]
+fn a_world_switch_keeps_an_operator_paused_script_paused() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    arm.post_intent(api::lifecycle::Intent::PauseScript);
+    rig.operator_pause();
+    rig.wait_state(script::RunState::Paused);
+    let run_generation = rig.slot().lock().unwrap().runtime_generation();
+    let loops_before = rig
+        .slot()
+        .lock()
+        .unwrap()
+        .probe("globalThis.__loops || 0")
+        .unwrap()
+        .as_i64()
+        .unwrap();
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    rig.ready_after_world_switch(&arm);
+    rig.frames(2);
+    rig.frames(3);
+
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.state(), script::RunState::Paused);
+    assert_eq!(slot.runtime_generation(), run_generation);
+    assert_eq!(
+        slot.probe("globalThis.__loops || 0").unwrap().as_i64(),
+        Some(loops_before),
+        "the paused script does not tick in the new session"
+    );
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the paused run is not restarted"
+    );
+    slot.stop();
+}
+
+/// Stop during the offline half of SwitchWorld ends the run before the new
+/// session can dispatch any of its actions.
+#[test]
+fn a_stop_during_world_switch_does_not_resume_the_script() {
+    let mut rig = ReconnectRig::new(40, 40);
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+    let dispatched_before_switch = rig.walks();
+    assert!(
+        !dispatched_before_switch.is_empty(),
+        "the old session dispatched its script walk"
+    );
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.post_intent(api::lifecycle::Intent::StopScript);
+    rig.slot().lock().unwrap().stop();
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    arm.set_script_active(false);
+    rig.wait_state(script::RunState::Idle);
+
+    rig.ready_after_world_switch(&arm);
+    rig.frames(2);
+    rig.frames(3);
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
+    assert_eq!(
+        rig.walks(),
+        dispatched_before_switch,
+        "the stopped run dispatches no action in the new session"
+    );
+}
+
+/// Logout during SwitchWorld withdraws the owed fresh login and leaves the
+/// offline script paused.
+#[test]
+fn a_logout_during_world_switch_withdraws_the_new_session() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.request_logout();
+    play_slots::apply_offline_logout_reset(
+        "alice",
+        &arm,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.wires,
+        &rig.navs,
+        &rig.channels,
+    );
+
+    assert!(arm.session_key().is_none(), "no new session began");
+    assert!(arm.login_latched(), "Logout latches the slot");
+    assert!(!arm.wants_login(), "Logout withdraws login intent");
+    assert!(
+        !should_handshake(&arm, false),
+        "Logout withdraws the turnover"
+    );
+    let slot = rig.slot();
+    let mut slot = slot.lock().unwrap();
+    assert_eq!(slot.state(), script::RunState::Paused);
+    assert_eq!(
+        slot.probe("globalThis.__starts || 0").unwrap().as_i64(),
+        Some(1),
+        "the paused run remains installed but is not restarted"
+    );
+    slot.stop();
+}
+
+/// Removing a slot during SwitchWorld closes it before any replacement
+/// session or script run can start.
+#[test]
+fn removing_a_slot_during_world_switch_stops_the_slot() {
+    let mut rig = ReconnectRig::with_source(
+        SWITCH_WORLD_COUNTER_SRC.into(),
+        open_world(64, 64),
+        (3, 3, 0),
+    );
+    let arm = SlotArm::new(0, false);
+    rig.login_session(&arm);
+    rig.wait_state(script::RunState::Running);
+    rig.frames(1);
+
+    arm.switch_world(2);
+    rig.exit_world_switch_session(&arm);
+    arm.post_intent(api::lifecycle::Intent::RemoveSlot);
+    rig.slot().lock().unwrap().stop();
+    rig.wait_state(script::RunState::Idle);
+
+    assert!(arm.session_key().is_none(), "no replacement session began");
+    assert!(
+        !should_handshake(&arm, false),
+        "a removed slot cannot resume its turnover"
+    );
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Idle);
 }
 
 /// Stop then Start of another script before the relog: the old run's
@@ -26547,6 +26896,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                     z: 0,
                                     level: 0,
                                 },
+                                candidate_goals: None,
                                 radius: 1,
                                 arrival: nav::arrival::ArrivalKind::Reach,
                                 loc_id: None,
@@ -28150,6 +28500,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     let candidates = approach_tiles(&world, origin, target, 12, false);
     assert_eq!(candidates.first(), Some(&endpoint));
     let request = ScriptRouteRequest {
+        candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
             Default::default(),
@@ -30180,6 +30531,7 @@ fn direct_connection_has_no_world_type() {
     });
     assert_eq!(direct.world_members(), api::selected::Truth::Unknown);
 }
+
 #[cfg(test)]
 mod quest_route_evidence_tests {
     use super::*;
@@ -31025,8 +31377,150 @@ export default class T extends LoopingBot {
                 .expect("installed Quester")
                 .on_stop(reason);
         }
+
+mod ground_selected_identity_tests {
+    use super::*;
+    use script::isolate_fb::{decode_interact_batch, encode_interact_batch};
+    use script::shim::InteractReq;
+
+    fn fixture(ids: &[i32]) -> (GameSnapshot, api::obj_names::ObjNames) {
+        let client = guardian_client();
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        snapshot.seed_ground_items(
+            ids.iter()
+                .map(|&id| api::snapshot::GroundItemView {
+                    def: api::obj_names::ItemDefView {
+                        id,
+                        name: Some("Halloween mask".into()),
+                        stackable: false,
+                        members: false,
+                        base_value: 1,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    count: 1,
+                    actions: vec![None, None, Some("Take".into())],
+                    tile: WorldTile {
+                        x: 5,
+                        z: 6,
+                        level: 0,
+                    },
+                    distance: 6,
+                })
+                .collect(),
+        );
+        let mut objs = vec![client::config::ObjType::default(); 1058];
+        for id in [1053, 1055, 1057] {
+            objs[id].id = id as i32;
+            objs[id].name = "Halloween mask".into();
+        }
+        (snapshot, api::obj_names::ObjNames::from_objs(&objs))
     }
 
+    fn request(id: Option<i32>, name: Option<&str>) -> InteractReq {
+        InteractReq::Obj {
+            x: 5,
+            z: 6,
+            level: 0,
+            name: name.map(str::to_owned),
+            action: "Take".into(),
+            id,
+        }
+    }
+
+    fn dispatch(
+        snapshot: &GameSnapshot,
+        names: &api::obj_names::ObjNames,
+        request: InteractReq,
+    ) -> GuardRec {
+        let (navs, world) = empty_nav();
+        let bytes = encode_interact_batch(&[request]);
+        let requests = decode_interact_batch(&bytes).unwrap();
+        let mut rec = GuardRec::default();
+        let wrote = dispatch_script_interact(
+            &mut rec,
+            snapshot,
+            Some(names),
+            Some((4, 5, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            requests,
+        );
+        assert_eq!(wrote, !rec.menus.is_empty());
+        rec
+    }
+
+    #[test]
+    fn wire_to_dispatch_preserves_each_same_name_mask_id() {
+        let (snapshot, names) = fixture(&[1053, 1055, 1057]);
+        for id in [1053, 1055, 1057] {
+            for name in [Some("Halloween mask"), Some("diagnostic name"), None] {
+                let rec = dispatch(&snapshot, &names, request(Some(id), name));
+                assert_eq!(
+                    rec.menus,
+                    [(0, MiniMenuAction::OP_OBJ3, id, 5, 6)],
+                    "the exact ID is authoritative even when its name differs",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disappeared_selected_mask_never_falls_back_to_same_name() {
+        for selected in [1053, 1055, 1057] {
+            let remaining: Vec<_> = [1053, 1055, 1057]
+                .into_iter()
+                .filter(|&id| id != selected)
+                .collect();
+            let (snapshot, names) = fixture(&remaining);
+            let rec = dispatch(
+                &snapshot,
+                &names,
+                request(Some(selected), Some("Halloween mask")),
+            );
+            assert!(rec.menus.is_empty() && rec.walks.is_empty());
+        }
+    }
+    #[test]
+    fn exact_ground_id_does_not_override_tile_or_plane() {
+        let (snapshot, names) = fixture(&[1053, 1055, 1057]);
+        for (x, z, level) in [(6, 6, 0), (5, 7, 0), (5, 6, 1)] {
+            let mut request = request(Some(1055), Some("Halloween mask"));
+            if let InteractReq::Obj {
+                x: rx,
+                z: rz,
+                level: rl,
+                ..
+            } = &mut request
+            {
+                *rx = x;
+                *rz = z;
+                *rl = level;
+            }
+            let rec = dispatch(&snapshot, &names, request);
+            assert!(rec.menus.is_empty() && rec.walks.is_empty());
+        }
+    }
+
+    #[test]
+    fn external_ground_request_without_id_keeps_name_and_tile_lookup() {
+        let (snapshot, names) = fixture(&[1057, 1055, 1053]);
+        for name in [Some("hAlLoWeEn MaSk"), None] {
+            assert_eq!(
+                dispatch(&snapshot, &names, request(None, name)).menus,
+                [(0, MiniMenuAction::OP_OBJ3, 1057, 5, 6)],
+            );
+        }
+        assert!(dispatch(&snapshot, &names, request(None, Some("Missing")))
+            .menus
+            .is_empty());
+    }
+
+}
     #[test]
     fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
         let selected = selected_r289();

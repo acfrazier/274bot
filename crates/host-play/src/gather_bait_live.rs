@@ -384,7 +384,7 @@ fn run_cell(variant: Variant) {
         .to_string();
         let parent = hint_path.parent().expect("hint parent");
         std::fs::create_dir_all(parent).expect("create the hint directory");
-        std::fs::write(&hint_path, &contents).expect("write the stale hint");
+        vault::write_private_file(&hint_path, contents.as_bytes()).expect("write the stale hint");
         trace.lock().hint_written = Some(contents);
     }
     let _ = api::hostlog::install_sink(&SLOT_LOG);

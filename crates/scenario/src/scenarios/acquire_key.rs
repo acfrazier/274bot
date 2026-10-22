@@ -15,8 +15,15 @@ pub(crate) const TAVERLEY_DUNGEON_LANDING: WorldTile = WorldTile {
     level: 0,
 };
 /// Melee levels that end a Jailer fight well inside the key family's 90s
-/// kill bound.
-const JAIL_COMBAT_LEVEL: i32 = 70;
+/// kill bound and put combat (113 with the other rows at 1) above every
+/// aggression threshold on the corridor walk: the strongest cowardly
+/// hunter on it is the chaos dwarf (`vislevel=48`,
+/// `content/scripts/_unpack/225/all.npc:3031-3057`), whose danger zone
+/// stays active up to combat 96 (`2 * vislevel`, `nav/src/zones.rs:186`).
+/// At 70 (combat 80) that zone and the magic axes' (84) refuse the route
+/// outright under the release danger policy, so the card never left the
+/// landing.
+const JAIL_COMBAT_LEVEL: i32 = 99;
 const STRENGTH_STAT: i32 = 2;
 
 /// The dungeon walk, a fight of up to 90s and, if the Jailer is dead, his

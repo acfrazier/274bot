@@ -465,9 +465,9 @@ mod tests {
         assert_eq!(absent.danger_level(), DangerLevel::WhenSurvivable);
         assert!(!absent.survivable_routing_notice_ack);
 
-        std::fs::write(
+        vault::write_private_file(
             store.path(),
-            r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"survivable_routing":false,"script_scope_notice_ack":true,"survivable_routing_notice_ack":true}}"#,
+            br#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"survivable_routing":false,"script_scope_notice_ack":true,"survivable_routing_notice_ack":true}}"#,
         )
         .unwrap();
         let view = WalkGlobalsView::read(store.prefs());
@@ -494,9 +494,9 @@ mod tests {
         assert_eq!(view.permission_enabled("allowBankFetch"), None);
         assert_eq!(view.permission_enabled("unrelated"), None);
 
-        std::fs::write(
+        vault::write_private_file(
             store.path(),
-            r#"{"nav":{"allow_danger_zones":false,"script_scope_notice_ack":true}}"#,
+            br#"{"nav":{"allow_danger_zones":false,"script_scope_notice_ack":true}}"#,
         )
         .unwrap();
         let migrated = WalkGlobalsView::read(store.prefs());
@@ -509,7 +509,7 @@ mod tests {
         assert!(migrated.script_scope_notice_ack);
         assert!(!migrated.survivable_routing_notice_ack);
 
-        std::fs::write(store.path(), b"{truncated").unwrap();
+        vault::write_private_file(store.path(), b"{truncated").unwrap();
         let malformed = WalkGlobalsView::read(store.prefs());
         assert_eq!(malformed.globals, WalkGlobals::fail_closed());
         assert!(!malformed.globals.survivable_routing);
@@ -520,9 +520,9 @@ mod tests {
     #[test]
     fn manual_danger_uses_the_global_or_one_shot_but_global_consumes_one_shot() {
         let store = TempStore::new("manual");
-        std::fs::write(
+        vault::write_private_file(
             store.path(),
-            r#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":false}}"#,
+            br#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":false}}"#,
         )
         .unwrap();
         let view = WalkGlobalsView::read(store.prefs());
@@ -537,7 +537,7 @@ mod tests {
             .zones
             .is_all());
 
-        std::fs::write(store.path(), r#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+        vault::write_private_file(store.path(), br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
         let global = WalkGlobalsView::read(store.prefs());
         assert!(!global.danger_this_walk(true));
         assert_eq!(
@@ -549,9 +549,9 @@ mod tests {
     #[test]
     fn changed_projection_fields_merge_in_one_durable_update() {
         let store = TempStore::new("write");
-        std::fs::write(
+        vault::write_private_file(
             store.path(),
-            r#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
+            br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
         )
         .unwrap();
         let before = WalkGlobalsView::read(store.prefs());
@@ -560,7 +560,7 @@ mod tests {
                 .unwrap();
         external["nav"]["allow_wilderness"] = serde_json::Value::Bool(true);
         external["nav"]["show_nav_path"] = serde_json::Value::Bool(false);
-        std::fs::write(store.path(), serde_json::to_vec(&external).unwrap()).unwrap();
+        vault::write_private_file(store.path(), &serde_json::to_vec(&external).unwrap()).unwrap();
 
         let mut after = WalkGlobalsView {
             globals: WalkGlobals {

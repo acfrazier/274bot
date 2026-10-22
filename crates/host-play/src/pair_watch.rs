@@ -45,6 +45,7 @@ enum PairWatchState {
         b_account: String,
         witness: PairRuntimeWitness,
         duel_weapon_id: i32,
+        ready_for_retry: Option<(PairCase, Box<SlotReady>, Box<SlotReady>)>,
     },
     Qualified {
         evidence: Arc<Value>,
@@ -192,6 +193,7 @@ impl PairWatch {
                             b_account: account_b.to_string(),
                             witness,
                             duel_weapon_id: a.weapon_id,
+                            ready_for_retry: Some((case, a, b)),
                         };
                         Ok(())
                     }
@@ -213,6 +215,29 @@ impl PairWatch {
                 *state = other;
                 Err("pair core Start was armed more than once".into())
             }
+        }
+    }
+
+    /// Restore the prepared pair after a retryable first-slot Start refusal.
+    pub fn retry_start(&self) {
+        let mut state = self.inner.lock().unwrap();
+        let current = std::mem::take(&mut *state);
+        *state = match current {
+            PairWatchState::Running {
+                ready_for_retry: Some((case, a, b)),
+                ..
+            } => PairWatchState::Ready { case, a, b },
+            other => other,
+        };
+    }
+
+    /// Release the pre-Start pair snapshot after the first script is accepted.
+    pub fn accept_start(&self) {
+        if let PairWatchState::Running {
+            ready_for_retry, ..
+        } = &mut *self.inner.lock().unwrap()
+        {
+            *ready_for_retry = None;
         }
     }
 
@@ -283,6 +308,7 @@ impl PairWatch {
                 b_account,
                 witness,
                 duel_weapon_id,
+                ..
             } if a_account == account || b_account == account => {
                 let case = match witness {
                     PairRuntimeWitness::Air(_) => PairCase::Air,
@@ -374,6 +400,7 @@ impl PairWatch {
                 b_account,
                 witness,
                 duel_weapon_id,
+                ready_for_retry,
             } => match runtime_terminal_claim(&witness) {
                 Ok(()) => {
                     let evidence = Arc::new(runtime_evidence(&witness));
@@ -388,6 +415,7 @@ impl PairWatch {
                         b_account,
                         witness,
                         duel_weapon_id,
+                        ready_for_retry,
                     };
                     Err(error)
                 }
@@ -686,6 +714,7 @@ fn observe_air_locked(
             b_account,
             mut witness,
             duel_weapon_id,
+            ready_for_retry,
         } if a_account == account || b_account == account => {
             if session_boundary {
                 PairWatchState::Failed {
@@ -709,6 +738,7 @@ fn observe_air_locked(
                     b_account,
                     witness,
                     duel_weapon_id,
+                    ready_for_retry,
                 }
             }
         }
@@ -745,6 +775,7 @@ fn observe_flax_locked(
             b_account,
             mut witness,
             duel_weapon_id,
+            ready_for_retry,
         } if a_account == account || b_account == account => {
             if session_boundary {
                 PairWatchState::Failed {
@@ -764,6 +795,7 @@ fn observe_flax_locked(
                     b_account,
                     witness,
                     duel_weapon_id,
+                    ready_for_retry,
                 }
             }
         }
@@ -800,6 +832,7 @@ fn observe_duel_locked(
             b_account,
             mut witness,
             duel_weapon_id,
+            ready_for_retry,
         } if a_account == account || b_account == account => {
             if session_boundary {
                 PairWatchState::Failed {
@@ -819,6 +852,7 @@ fn observe_duel_locked(
                     b_account,
                     witness,
                     duel_weapon_id,
+                    ready_for_retry,
                 }
             }
         }

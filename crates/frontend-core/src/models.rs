@@ -2,17 +2,18 @@
 //! command (T3.3).
 //!
 //! The panel, the TUI and the headless driver each own their operator
-//! models (the script coordinator, the marks, the profile form, the loadout
-//! form, the map and preference models). Their changes are dispatch targets
-//! of [`crate::OperatorSession::submit`] only: the front end lends the
-//! models it has through [`crate::SlotSurface::models`], and the session
-//! changes them while it dispatches a command. A front end reads them
-//! through their own accessors; their mutators are crate-private.
+//! models (the script coordinator, the fleet model with its marks, the
+//! profile form, the loadout form, the map and preference models). Their
+//! changes are dispatch targets of [`crate::OperatorSession::submit`] only:
+//! the front end lends the models it has through
+//! [`crate::SlotSurface::models`], and the session changes them while it
+//! dispatches a command. A front end reads them through their own
+//! accessors; their mutators are crate-private.
 //!
 //! A model a front end does not hold stays `None`; a row that needs it is
 //! then refused with [`crate::command::Rejection::NoModel`].
 
-use crate::fleet::FleetFilter;
+use crate::fleet::FleetModel;
 use crate::profile_editor::ProfileEditor;
 use crate::profile_form::ProfileFormSave;
 use crate::quester_paths::QuesterPathsController;
@@ -28,8 +29,7 @@ use crate::walk_permissions::WalkGlobalsView;
 #[derive(Default)]
 pub struct Models<'a> {
     pub(crate) scripts: Option<&'a mut Scripts>,
-    pub(crate) marks: Option<&'a mut MarkedSelection>,
-    pub(crate) fleet_filter: Option<&'a mut FleetFilter>,
+    pub(crate) fleet: Option<&'a mut FleetModel>,
     pub(crate) editor: Option<&'a mut ProfileEditor>,
     pub(crate) import: Option<&'a mut ProfileImport>,
     pub(crate) form_save: Option<&'a mut ProfileFormSave>,
@@ -51,8 +51,7 @@ impl<'a> Models<'a> {
     pub fn reborrow(&mut self) -> Models<'_> {
         Models {
             scripts: self.scripts.as_deref_mut(),
-            marks: self.marks.as_deref_mut(),
-            fleet_filter: self.fleet_filter.as_deref_mut(),
+            fleet: self.fleet.as_deref_mut(),
             editor: self.editor.as_deref_mut(),
             import: self.import.as_deref_mut(),
             form_save: self.form_save.as_deref_mut(),
@@ -64,21 +63,20 @@ impl<'a> Models<'a> {
         }
     }
 
+    /// The lent fleet model's marks.
+    pub(crate) fn marks(&self) -> Option<&MarkedSelection> {
+        self.fleet.as_deref().map(FleetModel::marks)
+    }
+
     /// Lend the script coordinator.
     pub fn with_scripts(mut self, scripts: &'a mut Scripts) -> Self {
         self.scripts = Some(scripts);
         self
     }
 
-    /// Lend the fleet marks.
-    pub fn with_marks(mut self, marks: &'a mut MarkedSelection) -> Self {
-        self.marks = Some(marks);
-        self
-    }
-
-    /// Lend the fleet filter text and order.
-    pub fn with_fleet_filter(mut self, filter: &'a mut FleetFilter) -> Self {
-        self.fleet_filter = Some(filter);
+    /// Lend the fleet model (marks, filter, order).
+    pub fn with_fleet(mut self, fleet: &'a mut FleetModel) -> Self {
+        self.fleet = Some(fleet);
         self
     }
 

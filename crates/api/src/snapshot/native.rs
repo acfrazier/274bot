@@ -500,6 +500,19 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Change identity for the posted ground page and its live collision.
+    /// These client generations do not advance on an unchanged player-info
+    /// edge. Native evidence waits can compare them without copying or hashing
+    /// the ground page or the reach flood.
+    pub fn ground_collision_generations(&self) -> Option<(u64, u64, u64)> {
+        let snapshot = self.scene_ready()?;
+        Some((
+            snapshot.scene_generation(),
+            snapshot.loc_static_generation(),
+            snapshot.loc_model_stamp(),
+        ))
+    }
+
     /// Worn items. An in-game frame posts the worn table; disconnect is not
     /// an empty worn set.
     pub fn equipment(&self) -> Option<Observed<&'a [ItemView]>> {
@@ -692,6 +705,40 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn ground_collision_generations_follow_content_not_player_info_edges() {
+        let mut stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(1);
+        assert!(SnapshotView::new(Some(&snapshot), stamp)
+            .ground_collision_generations()
+            .is_none());
+        snapshot.seed_ingame(2);
+        let before = SnapshotView::new(Some(&snapshot), stamp).ground_collision_generations();
+        assert_eq!(before, Some((0, 0, snapshot.loc_model_stamp())));
+        stamp.tick += 1;
+        stamp.sequence += 1;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).ground_collision_generations(),
+            before
+        );
+        snapshot.gens.scene = 3;
+        snapshot.loc_static_gen = 4;
+        snapshot.loc_model_stamp = 5;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).ground_collision_generations(),
+            Some((3, 4, 5))
+        );
+    }
 
     #[test]
     fn raw_bank_rows_borrow_the_table_without_claiming_snapshot_readiness() {

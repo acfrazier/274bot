@@ -3037,3 +3037,135 @@ fn execution_owned_inspect_ack_uses_the_seat_lane() {
     ));
     isolate.join();
 }
+
+/// A wired Load runtime whose `globalThis.__frames(n)` records `n` paint
+/// frames. `body` is what each frame records after its title and status
+/// row.
+fn paint_runtime(body: &str) -> Runtime {
+    crate::load::platform::bootstrap_test_v8_platform();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    let source = format!(
+        r#"
+import {{ Paint }} from '../../paint/Paint.js';
+import {{ ScriptRunner }} from '../../runtime/ScriptRunner.js';
+globalThis.__frames = (n) => {{
+    for (let i = 0; i < n; i++) {{
+        const p = Paint.begin(null, {{}});
+        p.title('Helper');
+        p.row('status');
+        {body}
+        p.end();
+    }}
+}};
+export function tick() {{}}
+"#
+    );
+    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+        wire_runtime(
+            runtime,
+            &source,
+            LoadShape::NativeTick,
+            &[],
+            None,
+            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+        )
+    })
+    .unwrap();
+    runtime
+}
+
+/// V8 used and total heap after a full collection.
+fn collected_heap(runtime: &mut Runtime) -> (usize, usize) {
+    let isolate = runtime.deno_runtime().v8_isolate();
+    isolate.low_memory_notification();
+    let stats = isolate.get_heap_statistics();
+    (stats.used_heap_size(), stats.total_heap_size())
+}
+
+/// V8 used heap without a collection.
+fn uncollected_used_heap(runtime: &mut Runtime) -> usize {
+    let isolate = runtime.deno_runtime().v8_isolate();
+    isolate.get_heap_statistics().used_heap_size()
+}
+
+/// One paint frame per call in a wired Load runtime; returns the collected
+/// V8 used heap after one warm frame and after `frames` more, and the V8
+/// total heap at the end.
+fn collected_paint_heap(body: &str, frames: u32) -> (usize, usize, usize) {
+    let mut runtime = paint_runtime(body);
+    runtime.eval::<()>("globalThis.__frames(1)").unwrap();
+    let (warm, _) = collected_heap(&mut runtime);
+    runtime
+        .eval::<()>(&format!("globalThis.__frames({frames})"))
+        .unwrap();
+    let (after, total) = collected_heap(&mut runtime);
+    (warm, after, total)
+}
+
+/// PAINT-CONTROLS-025 round-2 receipt for the parent/candidate A/B: the V8
+/// heap of a BoneBurier-shaped frame that calls the real paint-controls
+/// helper, with each arm's own `ScriptRunner` and `Paint` shim. It prints
+/// the used and total heap after a full collection after the import (no
+/// frame), after 1 frame, after 1,000 and after 20,000 frames, and the
+/// used-heap growth over 100 warm frames without a collection (their
+/// transient allocation, unless a scavenge ran inside them: then the
+/// growth is smaller than the allocation, and `scavenged` says so).
+#[test]
+#[ignore = "measurement receipt for the PAINT-CONTROLS-025 A/B; run explicitly"]
+fn paint_controls_cold_heap_receipt() {
+    let mut runtime = paint_runtime("p.gap(); ScriptRunner.paintControls(p);");
+    let (import_used, import_total) = collected_heap(&mut runtime);
+    runtime.eval::<()>("globalThis.__frames(1)").unwrap();
+    let (one_used, one_total) = collected_heap(&mut runtime);
+    runtime.eval::<()>("globalThis.__frames(999)").unwrap();
+    let (thousand_used, thousand_total) = collected_heap(&mut runtime);
+    let before = uncollected_used_heap(&mut runtime);
+    runtime.eval::<()>("globalThis.__frames(100)").unwrap();
+    let after = uncollected_used_heap(&mut runtime);
+    runtime.eval::<()>("globalThis.__frames(18900)").unwrap();
+    let (final_used, final_total) = collected_heap(&mut runtime);
+    println!(
+        "paint-controls-cold-heap {}",
+        serde_json::json!({
+            "import": { "used": import_used, "total": import_total },
+            "frames_1": { "used": one_used, "total": one_total },
+            "frames_1000": { "used": thousand_used, "total": thousand_total },
+            "frames_20000": { "used": final_used, "total": final_total },
+            "uncollected_100_frames": {
+                "growth": after.saturating_sub(before),
+                "scavenged": after < before,
+            },
+        })
+    );
+}
+
+/// PAINT-CONTROLS-025 memory tripwire: the paint-controls helper records
+/// the one cached host-control pair into each frame and retains one frame.
+/// Over 20,000 frames, the collected V8 used heap of the helper frames may
+/// grow by at most 64 KiB more than that of the hint rows they replace
+/// (measured numbers are printed). The parent/candidate A/B is
+/// `paint_controls_cold_heap_receipt`.
+#[test]
+fn paint_controls_helper_keeps_collected_v8_heap_flat() {
+    const FRAMES: u32 = 20_000;
+    const SLACK: usize = 64 * 1024;
+    let (hint_warm, hint_after, hint_total) = collected_paint_heap(
+        "p.gap(); p.row('Pause/Resume: host \u{b7} Stop: ScriptRunner.stop()');",
+        FRAMES,
+    );
+    let (warm, after, total) =
+        collected_paint_heap("p.gap(); ScriptRunner.paintControls(p);", FRAMES);
+    let hint_growth = hint_after.saturating_sub(hint_warm);
+    let growth = after.saturating_sub(warm);
+    println!(
+        "paint-controls collected V8 used heap over {FRAMES} frames: \
+         hint rows warm={hint_warm} after={hint_after} growth={hint_growth} total={hint_total}; \
+         helper buttons warm={warm} after={after} growth={growth} total={total}"
+    );
+    assert!(
+        growth <= hint_growth + SLACK,
+        "helper frames grew the collected V8 heap by {growth} bytes \
+         (hint rows {hint_growth}, slack {SLACK})"
+    );
+}

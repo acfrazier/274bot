@@ -6,7 +6,7 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.0 is Beta 1. Revision 289 is the production revision: the harness cells
+0.2.4 is Beta 1. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 
@@ -120,6 +120,10 @@ copied into the cell's temp root before use; the run never writes the
 source cache.
 Windows uses `USERPROFILE` only when `HOME` is unavailable; an explicitly
 blank `HOME` remains explicit.
+Scenario PASS/FAIL receipts report a top-level `ticks` count in observed game
+ticks (one per `PLAYER_INFO`; about 600 ms each on 289 while run steps execute).
+It excludes seed waits. Client cycles, frontend polls and dirty snapshots do
+not count; `elapsed_ms` records wall time separately.
 
 ## Live-cell rules
 
@@ -189,10 +193,11 @@ content) is needed by:
 
 <!-- engine-patch-cells:0002 -->
 `guardian_skill_big_fish`, `guardian_skill_ent`, `guardian_skill_gas`,
-`guardian_skill_lost_axe`, `guardian_skill_lost_pickaxe`,
-`guardian_skill_river_troll`, `guardian_skill_rock_golem`,
-`guardian_skill_shade`, `guardian_skill_tree_spirit`,
-`guardian_skill_watchman`, `guardian_skill_whirlpool`, `guardian_skill_zombie`
+`guardian_skill_lost_axe`, `guardian_skill_lost_axe_same_kind_head`,
+`guardian_skill_lost_pickaxe`, `guardian_skill_river_troll`,
+`guardian_skill_rock_golem`, `guardian_skill_shade`,
+`guardian_skill_tree_spirit`, `guardian_skill_watchman`,
+`guardian_skill_whirlpool`, `guardian_skill_zombie`
 <!-- /engine-patch-cells -->
 
 The scenario crate's `every_engine_patch_user_is_documented` test keeps
@@ -207,9 +212,13 @@ account (combat level 3, 10 Hitpoints) does real work: the Gatherer fishing at
 Catherby (general events and the fishing events), mining at Varrock East,
 chopping west of Lumbridge (oaks at Draynor for the ent), and the catalog BoneBurier and Thiever cards at
 Lumbridge for the prayer and thieving events. Each cell seeds only the
-account's own skill and tool, waits for the activity's first XP, then sends
-the one trigger (again only after the content's busy reply). It never adds an
-NPC itself.
+account's own skill and required items, waits for the activity's first XP,
+then sends one trigger after the content's busy reply. It never adds an NPC
+itself.
+
+The `guardian_skill_lost_axe_same_kind_head` variant also seeds a Rune axe
+head and drops it with an inventory action before triggering the event. Its
+Bronze axe oracle checks that the Guardian recovers the event's own tier.
 
 The oracle (`crates/scenario/src/random_episode.rs`) judges the Guardian's
 documented behaviour for the event's class from the host hold and the
@@ -334,9 +343,11 @@ names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
 `loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
 `expect` and `mode` control the headless cell's settling; the headed scenario
 always watches native quest completion.
-Its `stand` must match the Path's authored not-started anchor. Without seeds,
-the fixture starts from a clean account and teleports to that anchor after
-relog. `QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
+When supplied, the seed file's `stand` selects the fixture's starting tile and
+may differ from the Path's authored not-started anchor (for example, it may
+start at a bank). Without a seed file, the fixture starts from a clean account
+and teleports to the authored anchor after relog.
+`QUESTER_PATH_DEADLINE_S` overrides the 45-minute deadline in seconds;
 zero and non-integer values are rejected. A terminal window shot is captured
 when the scenario completes.
 
@@ -421,7 +432,7 @@ UI/slot threads through a bounded queue: a slow encoder drops a frame
 1280 px-wide `veryfast`/`crf 23` encode stays well under 500 MB per hour.
 The file lands next to the terminal shot in the session's shot dir as
 `record.mp4`, with a `record.txt` sidecar mapping each video timestamp to
-its scenario step and runner tick (`t=<s> frame=<n> step=<i>/<total>
+its scenario step and runner game tick (`t=<s> frame=<n> step=<i>/<total>
 tick=<ticks> name="<step>"`), so the video lines up with the step trace.
 The mp4 is finalized on PASS, FAIL and window close, so it is always
 playable. Resizing the window mid-run drops the mismatched frames
@@ -451,7 +462,7 @@ the entire stall watch. A ready Guard can still wander away: the Strength
 watch tolerates one catch-less stall session, observes its bank visit,
 closure and return, then requires renewed Guard readiness at the stall.
 A second unqualified bank visit fails rather than admitting a third try.
-The scenario has a 360-second wall deadline and a 900-dirty-snapshot combat
+The scenario has a 360-second wall deadline and a 900-game-tick combat
 watch; the Thieving XP and exact Cake watches retain their original bounds.
 All three still require real post-Start evidence; no catch is forced.
 Script kill messages alone are not XP evidence:
@@ -902,7 +913,7 @@ load another copy.
 |---|---|
 | `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Catalog scenario for `active`/`lifecycle`; default `thiever`. Representative runner cells also use `moss_giant_bank_start` and `duel_arena`. |
+| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
@@ -912,8 +923,8 @@ load another copy.
 | `BOT_CPU=1` | CPU fallback for the panel's client renderer. |
 
 `idle` only logs clients in. `seeded-idle` performs the ordinary Thiever seed
-without starting the catalog script. `active` starts the selected real catalog
-script; `lifecycle` additionally alternates Stop and restart every 60
+without starting the catalog script. `active` starts the scenario's native or
+catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
 
@@ -925,6 +936,58 @@ requires seed/proof completion and running scripts for active workloads.
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
 fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
 scenario's final Strength-XP-since-Start proof remains mandatory.
+
+Multi-slot `gatherer` uses a fleet qualification for the contended Draynor
+normal trees. Every bot must reach a safe legal tree stand and send a real
+`Chop down` request within its unchanged post-Start tick budget. No sampled
+position may enter a denied zone. A death, native failure or final `Blocked`
+phase fails the cell. The fleet must gain Woodcutting XP. A bot with no XP must
+also show a genuine resource-exhaustion wait. Generic `Waiting`, idle and paused
+states do not supply that evidence. The qualifier collects its evidence even
+when the optional diagnostic sidecar is disabled.
+
+During an N10 planned lifecycle restart, safety checks continue through the
+harness's Stop and Start. Only that Stop arms the restart allowance. The
+admitted Start allows `Starting` for at most three observed `PLAYER_INFO`
+ticks, then requires `Running`. Every slot reached `Running` 0.43-0.93 seconds
+after Start in the N10 measurements. This measured qualification bound is
+not a scheduler guarantee. Gatherer lifecycle cells with any other N fail
+at preparation with `restart_bound_unmeasured`. Active cells retain their
+existing fleet-size support.
+
+The warm start path has four worker dispatches per slot: Load, Configure,
+Construct and Seal (`script/src/preparation.rs` and `slot/compiled.rs`).
+All slots queue in the same harness tick on one shared FIFO `work-admission`
+worker. Each dispatch has a soft 10 ms wall-clock slice
+(`script/src/work_admission.rs::WORK_SLICE`), not one game tick.
+A yielded job returns to the queue's back. Full admission defers submission
+until `poll_compiled` retries it. The next lifecycle observe adopts completed
+work. These facts do not establish a three-tick bound for an unmeasured N.
+
+An unplanned `Starting`, including one between Stop and Start, fails the cell.
+A restart overrun or an unfinished restart at observation end also fails.
+The harness does not start another lifecycle cycle at observation end.
+A planned restart never resets the original 300-tick proof window.
+If observation ends inside a planned Stop, the `observe-end` row records
+`verdict: "pass"` only after all other qualification checks succeed.
+It also records `lifecycle_state: "planned_stop"` and each slot's actual
+`run_state`. During the Stop interval, the ongoing verdict remains `pending`.
+The test `observe_end_inside_planned_stop_records_pass_and_actual_slot_states`
+covers this boundary and rejects missing evidence and an unplanned Start.
+
+The diagnostic record
+`gatherer_fleet_qualification.bots[].first_missing_position` retains the first
+missing sample's tick, reason, run state, ingame flag, scene state, raw tile
+and planned-restart state. Its reason is `coordinates_missing`,
+`geometry_missing`, `geometry_error`, `zone_data_missing` or
+`zone_filter_missing`. The test
+`first_missing_position_records_first_context_without_changing_verdict`
+checks the retained context and unchanged missing-evidence verdict.
+This record is available without `BOT_MEMORY_DIAGNOSTICS=1`.
+
+The single-bot `gatherer` cell still requires fresh Woodcutting XP. Other
+Gatherer live cells retain their individual gates. They do not use this fleet's
+shared-tree fixture.
 
 `duel_arena` is the pair-script cell: every slot runs the frozen Duel Arena
 Combat Trainer, so N=10 is five duels and N=50 is twenty-five, and an odd N is

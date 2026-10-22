@@ -226,10 +226,16 @@ impl fmt::Display for OpBrief {
     }
 }
 
-/// One slot's projected row: identifiers and scalar summaries only.
+/// One profile's projected row: identifiers and scalar summaries only.
+/// A fleet member's row is [`Self::loaded`]; a vault profile that is not
+/// loaded gets an unprojected row ([`Self::for_profile`]) in the fleet
+/// model's universe.
 #[derive(Debug, PartialEq)]
 pub struct FleetRow {
     name: String,
+    /// The profile is a fleet member (loaded), whatever its phase: an
+    /// offline member is still loaded. Never inferred from the phase.
+    loaded: bool,
     /// Active public world, `None` for a local profile.
     world: Option<u16>,
     phase: Phase,
@@ -264,6 +270,7 @@ impl Default for FleetRow {
     fn default() -> Self {
         Self {
             name: String::new(),
+            loaded: false,
             world: None,
             phase: Phase::Offline,
             queue: None,
@@ -284,6 +291,7 @@ impl FleetRow {
     /// do not implement it.
     pub fn copy_from(&mut self, source: &Self) {
         self.name.clone_from(&source.name);
+        self.loaded = source.loaded;
         self.world = source.world;
         self.phase = source.phase;
         self.queue = source.queue;
@@ -304,6 +312,7 @@ impl FleetRow {
     pub fn snapshot(&self) -> Self {
         let mut row = Self {
             name: String::new(),
+            loaded: false,
             world: None,
             phase: Phase::Offline,
             queue: None,
@@ -321,14 +330,17 @@ impl FleetRow {
 }
 
 impl FleetRow {
+    /// A member's row before its first projection: loaded, offline.
     fn named(name: &str) -> Self {
         Self {
             name: name.to_string(),
+            loaded: true,
             ..Self::default()
         }
     }
 
-    /// An unprojected row for `name` (offline, no host facts yet).
+    /// An unprojected row for `name`: a vault profile that is not loaded
+    /// (offline, no host facts).
     pub fn for_profile(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -336,9 +348,33 @@ impl FleetRow {
         }
     }
 
+    /// Make this row the unprojected row of `name` (see
+    /// [`Self::for_profile`]), reusing its buffers.
+    pub(crate) fn reset_unloaded(&mut self, name: &str) {
+        self.name.clear();
+        self.name.push_str(name);
+        self.loaded = false;
+        self.world = None;
+        self.phase = Phase::Offline;
+        self.queue = None;
+        self.retrying = false;
+        self.connected = false;
+        self.script = RunState::Idle;
+        self.walking = false;
+        self.error = None;
+        self.last_op = None;
+        self.brief.clear();
+        self.brief.push_str(Phase::Offline.label());
+    }
+
     /// Profile / slot name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The profile is a fleet member (loaded), whatever its phase.
+    pub fn loaded(&self) -> bool {
+        self.loaded
     }
 
     /// Active public world, `None` for a local profile.
@@ -421,7 +457,12 @@ impl FleetRow {
 
     /// World number (when on a public world) and login phase. This is not
     /// [`Self::brief`]: a logged-in bot with no script is `ready`, not `idle`.
+    /// A profile that is not loaded reads `not loaded`.
     pub fn write_world_login(&self, out: &mut String) {
+        if !self.loaded {
+            out.push_str(crate::fleet::NOT_LOADED);
+            return;
+        }
         if let Some(world) = self.world {
             let _ = write!(out, "w{world} ");
         }
@@ -475,6 +516,7 @@ impl FleetRow {
     ) -> Self {
         let mut row = Self {
             name: name.to_string(),
+            loaded: true,
             world,
             phase,
             queue,
@@ -495,6 +537,11 @@ impl FleetRow {
     pub fn set_script(&mut self, script: RunState) {
         self.script = script;
         self.write_brief();
+    }
+
+    /// Mark this row loaded or not (test fixtures).
+    pub fn set_loaded(&mut self, loaded: bool) {
+        self.loaded = loaded;
     }
 
     /// Set the retained lifetime error (test fixtures).

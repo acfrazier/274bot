@@ -89,6 +89,10 @@ pub struct PanelUiState {
     /// (see `fleet_columns`).
     #[serde(default)]
     pub fleet_columns: HashMap<String, bool>,
+    /// The fleet toolbar is open (not folded to its header) in the rail and
+    /// the strip's fleet section. Absent = open. Apart from the tile folds.
+    #[serde(default = "default_true")]
+    pub fleet_toolbar_open: bool,
     /// Debug command recents and favorites. Argument buffers stay ephemeral
     /// because the selected content pin may change command shapes.
     #[serde(default)]
@@ -99,6 +103,7 @@ pub struct PanelUiState {
 /// [`PanelUiState::show_parameters_rail`]).
 pub const PANEL_SECTION_IDS: &[&str] = &[
     "status",
+    "fleet",
     "resource",
     "profile",
     "script",
@@ -159,6 +164,7 @@ impl Default for PanelUiState {
             map_bake: frontend_core::MapBakeChoice::Ask,
             session_log_file: false,
             fleet_columns: HashMap::new(),
+            fleet_toolbar_open: true,
             debug_panel: crate::debug_panel::DebugPanelPrefs::default(),
         }
     }
@@ -428,7 +434,7 @@ mod tests {
         // `PanelUiState` (`load_from` falls back to `PanelUiState::default()`,
         // wiping focus / collapsed / colors).
         let (_dir, prefs) = scratch("ui-old-nav");
-        std::fs::write(
+        crate::test_support::write_private_fixture(
             prefs.path(),
             r##"{
   "last_focus": "alice",
@@ -733,7 +739,7 @@ mod tests {
     fn corrupt_prefs_are_moved_aside_and_the_save_lands_in_fresh_preferences() {
         let (dir, prefs) = scratch("ui-corrupt");
         let corrupt = b"{ not valid json";
-        std::fs::write(prefs.path(), corrupt).unwrap();
+        crate::test_support::write_private_fixture(prefs.path(), corrupt).unwrap();
         prefs
             .reload()
             .expect_err("a corrupt preferences file is refused by reads");
@@ -796,7 +802,7 @@ mod tests {
     fn save_refuses_a_document_that_does_not_read_as_panel_preferences() {
         let (dir, prefs) = scratch("ui-not-panel-prefs");
         let foreign = br#"{"last_focus":7,"peer_marker":"kept"}"#;
-        std::fs::write(prefs.path(), foreign).unwrap();
+        crate::test_support::write_private_fixture(prefs.path(), foreign).unwrap();
         prefs.reload().unwrap();
         let state = PanelUiState {
             last_focus: Some("alice".into()),

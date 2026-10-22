@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, MouseEventKind};
 
 use api::snapshot::ChatOptionView;
-use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice};
 
 use crate::app::{AppAction, TuiApp};
 use crate::bin::seam::Seam;
@@ -11,6 +11,7 @@ use crate::help::help_rows;
 use crate::layout::{Pane, Screen};
 use crate::overlay::{ConfirmKind, Modal};
 use crate::test_support::{ch, ctrl, draw, find, fleet_app, key, mouse, right_click, text};
+use frontend_core::{FleetAction, FleetCard};
 
 fn names(app: &TuiApp) -> Vec<&str> {
     app.names.iter().map(String::as_str).collect()
@@ -94,10 +95,10 @@ fn space_selects_rows_without_selecting_the_bot() {
     seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), true));
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
     let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("selected 2 of 3"), "{all}");
+    assert!(all.contains("marked 2"), "{all}");
     assert!(all.contains("[x]"), "{all}");
     seam.press(&mut app, ch(' '), AppAction::SetMark("carol".into(), false));
-    assert!(text(&draw(&mut app, 120, 40)).contains("selected 1 of 3"));
+    assert!(text(&draw(&mut app, 120, 40)).contains("marked 1"));
 }
 
 #[test]
@@ -106,12 +107,14 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
     // does: `SetMark` names a member and the core resolves its identity.
     let mut seam = Seam::with_profiles(&[("alice", 41), ("bob", 42), ("carol", 43)]);
     let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.profile_ids = [
-        frontend_core::ProfileIdentity::uid(41),
-        frontend_core::ProfileIdentity::uid(42),
-        frontend_core::ProfileIdentity::uid(43),
-    ]
-    .into();
+    crate::test_support::set_profile_ids(
+        &mut app,
+        &[
+            frontend_core::ProfileIdentity::uid(41),
+            frontend_core::ProfileIdentity::uid(42),
+            frontend_core::ProfileIdentity::uid(43),
+        ],
+    );
     draw(&mut app, 120, 40);
 
     // Space follows the production fleet_key path, including its identity
@@ -121,8 +124,8 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
     seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), true));
     let alice = frontend_core::ProfileIdentity::uid(41);
     let bob = frontend_core::ProfileIdentity::uid(42);
-    assert!(app.table.selection.contains(alice));
-    assert!(app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(app.fleet_model.marks().contains(bob));
 
     // A cursor move and a filter character both re-project the table.
     app.on_key(key(KeyCode::Down));
@@ -132,14 +135,14 @@ fn uid_marks_survive_cursor_moves_and_filter_keys() {
         ch('b'),
         AppAction::FleetFilter(FilterEdit::Push('b')),
     );
-    assert!(app.table.selection.contains(alice));
-    assert!(app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(app.fleet_model.marks().contains(bob));
 
     // The filtered, marked row still toggles off through fleet_key.
     app.on_key(key(KeyCode::Enter));
     seam.press(&mut app, ch(' '), AppAction::SetMark("bob".into(), false));
-    assert!(app.table.selection.contains(alice));
-    assert!(!app.table.selection.contains(bob));
+    assert!(app.fleet_model.marks().contains(alice));
+    assert!(!app.fleet_model.marks().contains(bob));
 }
 
 /// Tab only moves keyboard focus; it never selects another bot.
@@ -203,13 +206,13 @@ fn text_fields_take_typing_before_global_keys() {
     for c in "q?:".chars() {
         seam.press(&mut app, ch(c), AppAction::FleetFilter(FilterEdit::Push(c)));
     }
-    assert_eq!(app.table.filter.text(), "q?:");
+    assert_eq!(app.fleet_model.filter().text(), "q?:");
     assert!(!app.quit && app.modal.is_none(), "no quit, help or palette");
     assert!(text(&draw(&mut app, 120, 40)).contains("KEYS Fleet filter"));
     for _ in 0..2 {
         seam.send(&mut app, key(KeyCode::Backspace));
     }
-    assert_eq!(app.table.filter.text(), "q");
+    assert_eq!(app.fleet_model.filter().text(), "q");
     let all = text(&draw(&mut app, 120, 40));
     assert!(all.contains("1/2 shown"), "filter keeps quinn only: {all}");
     seam.press(
@@ -217,7 +220,7 @@ fn text_fields_take_typing_before_global_keys() {
         key(KeyCode::Esc),
         AppAction::FleetFilter(FilterEdit::Clear),
     );
-    assert!(app.table.filter.text().is_empty() && !app.table.editing);
+    assert!(app.fleet_model.filter().text().is_empty() && !app.table.editing);
 
     // Log search on the Logs tab.
     assert_eq!(app.on_key(key(KeyCode::F(7))), AppAction::None);
@@ -328,6 +331,32 @@ fn help_lists_the_focused_pane_first_and_filters() {
     assert!(app.modal.is_none());
 }
 
+/// Help lists the card picker and the shown-row mark keys, with the same
+/// labels the palette shows, and finds them by search.
+#[test]
+fn help_lists_the_card_picker_and_the_shown_row_mark_keys() {
+    let mut app = fleet_app(&["alice"]);
+    let rows = help_rows(&app);
+    let what = |keys: &str| {
+        rows.iter()
+            .find(|row| row.context == "Fleet" && row.keys == keys)
+            .map(|row| row.what.as_str())
+    };
+    assert_eq!(what("c"), Some("Pick fleet card…"));
+    assert_eq!(what("a"), Some("Mark shown rows"));
+    assert_eq!(what("A"), Some("Unmark shown rows"));
+    assert_eq!(what("s"), Some("Cycle fleet sort"));
+    assert_eq!(what("m"), Some("Load + log in fleet"));
+    assert_eq!(what("U"), Some("Log out fleet"));
+
+    app.on_key(key(KeyCode::F(1)));
+    for c in "fleet card".chars() {
+        app.on_key(ch(c));
+    }
+    let shown = text(&draw(&mut app, 120, 40));
+    assert!(shown.contains("Pick fleet card…"), "{shown}");
+}
+
 /// Remove asks first and removes the member it named, even if the
 /// selection changes before the operator confirms.
 #[test]
@@ -345,178 +374,320 @@ fn remove_confirms_a_frozen_target() {
     );
 }
 
-/// Fleet-wide commands confirm the frozen membership and refuse to run
-/// over a fleet that changed since.
+/// The fleet keys hand the action to core as a plan. The front end keeps
+/// no scope, membership snapshot or confirmation rule of its own: it opens
+/// no overlay until core says the plan asks first.
 #[test]
-fn bulk_commands_confirm_a_frozen_scope() {
+fn fleet_action_keys_ask_core_for_a_plan() {
     let mut app = fleet_app(&["alice", "bob"]);
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
+    assert_eq!(
+        app.on_key(ch('m')),
+        AppAction::PlanFleet(FleetAction::Login)
+    );
+    assert_eq!(
+        app.on_key(ch('U')),
+        AppAction::PlanFleet(FleetAction::Logout)
+    );
+    assert!(app.modal.is_none(), "core decides whether to ask");
+
+    // The Script tab's bulk keys are the same plans.
+    app.on_key(key(KeyCode::F(5)));
+    assert_eq!(
+        app.on_key(ch('T')),
+        AppAction::PlanFleet(FleetAction::Start)
+    );
+    assert_eq!(app.on_key(ch('E')), AppAction::PlanFleet(FleetAction::Stop));
+    assert!(app.modal.is_none());
+}
+
+/// The confirm overlay shows the plan's prompt as core wrote it. Enter or
+/// `y` runs the plan; Esc or `n` cancels it, with no overlay left behind.
+#[test]
+fn the_confirm_overlay_shows_the_plan_prompt_verbatim() {
+    let prompt = "Stop 2 running bots: alice, bob. 1 marked bot is idle and is skipped.";
+    for (press, expected) in [
+        (key(KeyCode::Enter), AppAction::RunFleetPlan),
+        (ch('y'), AppAction::RunFleetPlan),
+        (key(KeyCode::Esc), AppAction::CancelFleetPlan),
+        (ch('n'), AppAction::CancelFleetPlan),
+    ] {
+        let mut app = fleet_app(&["alice", "bob"]);
+        app.confirm(ConfirmKind::FleetPlan {
+            action: FleetAction::Stop,
+            prompt: prompt.into(),
+        });
+        let all = text(&draw(&mut app, 120, 40));
+        assert!(all.contains(prompt), "{all}");
+        assert!(all.contains("Stop"), "the action titles the overlay: {all}");
+        assert!(
+            all.contains("[Run y]") && all.contains("[Cancel n]"),
+            "{all}"
+        );
+        assert_eq!(app.on_key(press), expected);
+        assert!(app.modal.is_none());
+    }
+
+    // The buttons are the same two answers.
+    let mut app = fleet_app(&["alice"]);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::Logout,
+        prompt: prompt.into(),
+    });
+    let rows = draw(&mut app, 120, 40);
+    let (cancel_x, cancel_y) = find(&rows, "[Cancel n]").unwrap();
+    assert_eq!(app.on_click(cancel_x, cancel_y), AppAction::CancelFleetPlan);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::Logout,
+        prompt: prompt.into(),
+    });
+    let rows = draw(&mut app, 120, 40);
+    let (run_x, run_y) = find(&rows, "[Run y]").unwrap();
+    assert_eq!(app.on_click(run_x, run_y), AppAction::RunFleetPlan);
+}
+
+/// Assign, Assign & restart and Copy settings are unavailable while the
+/// fleet card is each bot's own, and say how to fix it; Start, Stop, Log in
+/// and Log out need no card. Picking a card makes them available.
+#[test]
+fn card_actions_are_unavailable_on_own_until_a_card_is_picked() {
+    let mut seam = Seam::new();
+    let mut app = fleet_app(&["alice", "bob"]);
+    for action in FleetAction::ALL {
+        let command = Command::Fleet(action);
+        if action.needs_card() {
+            assert_eq!(command.availability(&app), Err("pick a card first"));
+            assert_eq!(app.run_command(command), AppAction::None);
+            let shown = app.error.take().expect("the reason shows");
+            assert!(shown.ends_with("pick a card first"), "{shown}");
+        } else {
+            assert_eq!(command.availability(&app), Ok(()), "{action:?}");
+        }
+    }
+    seam.apply(&mut app, AppAction::PickFleetCard(FleetCard::FOCUSED));
+    for action in FleetAction::ALL {
+        let command = Command::Fleet(action);
+        assert_eq!(command.availability(&app), Ok(()), "{action:?}");
+        assert_eq!(app.run_command(command), AppAction::PlanFleet(action));
+    }
+}
+
+/// The palette lists the card picker, the shown-row marks and each status
+/// mark with their keys, and the card actions with the reason they cannot
+/// run on Own.
+#[test]
+fn the_palette_lists_the_fleet_card_marks_and_actions_with_keys() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    let palette = |app: &mut TuiApp, query: &str| {
+        app.on_key(ctrl('p'));
+        for c in query.chars() {
+            app.on_key(ch(c));
+        }
+        let shown = text(&draw(app, 120, 40));
+        app.on_key(key(KeyCode::Esc));
+        shown
+    };
+    let card = palette(&mut app, "pick fleet");
+    assert!(
+        card.contains("Pick fleet card…") && card.contains("fleet card"),
+        "{card}"
+    );
+    let marks = palette(&mut app, "mark");
+    for label in [
+        "Mark shown rows",
+        "Unmark shown rows",
+        "Mark by status: ready",
+        "Mark by status: idle",
+        "Mark by status: running",
+        "Mark by status: logged out",
+        "Mark by status: login error",
+        "Mark by status: not loaded",
+    ] {
+        assert!(marks.contains(label), "{label}: {marks}");
+    }
+    let invert = palette(&mut app, "invert");
+    assert!(invert.contains("Invert shown"), "{invert}");
+    for command in [
+        Command::PickFleetCard,
+        Command::MarkAllShown,
+        Command::UnmarkShown,
+    ] {
+        let keys = crate::palette::key_text(command);
+        assert_eq!(
+            keys,
+            match command {
+                Command::PickFleetCard => "c",
+                Command::MarkAllShown => "a",
+                _ => "A",
+            }
+        );
+    }
+    let actions = palette(&mut app, "assign");
+    assert!(
+        actions.contains("Assign & restart") && actions.contains("pick a card first"),
+        "{actions}"
+    );
+    let copy = palette(&mut app, "copy settings");
+    assert!(
+        copy.contains("Copy settings") && copy.contains("pick a card first"),
+        "{copy}"
+    );
+    // Every fleet action keeps its Script tab key in the palette.
+    let start = palette(&mut app, "start fleet");
+    assert!(start.contains("Start fleet"), "{start}");
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Start)),
+        "T"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Stop)),
+        "E"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Login)),
+        "m"
+    );
+    assert_eq!(
+        crate::palette::key_text(Command::Fleet(FleetAction::Logout)),
+        "U"
+    );
+}
+
+/// `a` marks the shown rows, `A` unmarks them, and the status marks and
+/// Invert shown are palette commands: each one is a core `MarkFleet` row.
+#[test]
+fn mark_keys_and_palette_entries_submit_core_mark_ops() {
+    let mut seam = Seam::with_profiles(&[("alice", 41), ("bob", 42)]);
+    let mut app = fleet_app(&["alice", "bob"]);
+    assert_eq!(
+        app.on_key(ch('a')),
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown)
+    );
+    // Nothing is marked yet in the model: `A` says so and sends nothing.
+    assert_eq!(app.on_key(ch('A')), AppAction::None);
+    assert!(app
+        .error
+        .take()
+        .unwrap()
+        .ends_with("no shown row is marked"));
+    seam.apply(&mut app, AppAction::MarkFleet(frontend_core::MarkOp::Shown));
+    assert_eq!(
+        app.on_key(ch('A')),
+        AppAction::MarkFleet(frontend_core::MarkOp::UnmarkShown)
+    );
+    assert_eq!(
+        app.run_command(Command::InvertShown),
+        AppAction::MarkFleet(frontend_core::MarkOp::InvertShown)
+    );
+    for predicate in frontend_core::MarkPredicate::ALL {
+        let command = Command::MarkWhere(predicate);
+        assert!(
+            command.label(&app).ends_with(predicate.label()),
+            "the palette label names the core label"
+        );
+        assert_eq!(
+            app.run_command(command),
+            AppAction::MarkFleet(frontend_core::MarkOp::Where(predicate))
+        );
+    }
+}
+
+/// `c` opens the picker over Own, Focused and the Browse cards, grouped by
+/// category. Enter pins the highlighted card; Esc and an outside click
+/// leave the fleet card alone. Neither touches the Browse pick.
+#[test]
+fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
+    use crate::script_shape::BrowseCard;
+    let card = |name: &str, category: &str| BrowseCard {
+        name: name.into(),
+        description: String::new(),
+        category: category.into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compat,
+        source: CardSource::File,
+        unloadable: None,
+    };
+    let mut app = fleet_app(&["alice", "bob"]);
+    crate::test_support::set_cards(
+        &mut app,
+        vec![
+            card("Gatherer", "Skilling"),
+            card("Fighter", "Combat"),
+            card("Miner", "Skilling"),
+        ],
+    );
+    let browse_pick = ScriptChoice::loaded(CardSource::File, "Thiever");
+    app.script_sel = Some(browse_pick.duplicate());
+
+    assert_eq!(app.on_key(ch('c')), AppAction::None);
+    assert!(matches!(&app.modal, Some(Modal::FleetCard(_))));
     let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Members now (2): alice, bob"), "{all}");
-    app.names.push("carol".into());
+    for want in [
+        "Each bot's own card",
+        "Focused bot's card",
+        "Gatherer",
+        "Fighter",
+        "Miner",
+        "Skilling",
+        "Combat",
+        "(current)",
+    ] {
+        assert!(all.contains(want), "{want}: {all}");
+    }
+    let at = |name: &str| all.find(name).unwrap();
+    assert!(
+        at("Each bot's own card") < at("Focused bot's card")
+            && at("Focused bot's card") < at("Gatherer"),
+        "Own, then Focused, then the cards: {all}"
+    );
+    assert!(
+        at("Gatherer") < at("Miner") && at("Miner") < at("Fighter"),
+        "cards stay grouped by category as Browse groups them: {all}"
+    );
+
+    // Down Down lands on the first card; Enter pins it.
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        AppAction::None,
-        "a changed fleet is shown again, not run"
-    );
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("alice, bob, carol"), "{all}");
-    assert!(all.contains("The fleet changed"), "{all}");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
-
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(
-        app.on_key(key(KeyCode::Esc)),
-        AppAction::None,
-        "Esc cancels"
+        AppAction::PickFleetCard(FleetCard::pinned(ScriptChoice::loaded(
+            CardSource::File,
+            "Gatherer"
+        )))
     );
     assert!(app.modal.is_none());
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
-}
 
-#[test]
-fn marked_bulk_confirms_marked_scope_without_unmarked_churn_loop() {
-    let mut app = fleet_app(&["alice", "bob"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("alice"), true);
-    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(
-        all.contains("Start 1 marked bot on their last successful script"),
-        "{all}"
-    );
-    assert!(!all.contains("Start all 1 member"), "{all}");
+    // Esc leaves the card as it was and sends nothing.
+    app.on_key(ch('c'));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.modal.is_none());
+    // A click outside does too.
+    app.on_key(ch('c'));
+    draw(&mut app, 120, 40);
+    assert_eq!(app.on_click(0, 0), AppAction::None);
+    assert!(app.modal.is_none());
 
-    // An unmarked member arriving does not change the frozen marked scope.
-    app.names.push("carol".into());
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::ScriptStartAll);
-}
-
-#[test]
-fn marked_start_confirm_names_the_selected_script_it_will_run() {
-    let mut app = fleet_app(&["alice", "bob"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("alice"), true);
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(app.run_command(Command::ScriptStartAll), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    let label = app.script_sel.as_ref().unwrap().label();
-    assert!(
-        all.contains(&format!("Start {label} on 1 marked bot")),
-        "{all}"
-    );
-    assert!(!all.contains("last successful script"), "{all}");
-}
-
-/// With rows marked, Log in and Log out confirm the marked scope and run the
-/// marked commands; with none marked they keep their whole-fleet meaning.
-#[test]
-fn marked_login_and_logout_confirm_the_marked_scope_and_run_marked_commands() {
-    let mut app = fleet_app(&["alice", "bob", "carol"]);
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), true);
-
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Log in 1 marked bot"), "{all}");
-    assert!(!all.contains("Load every vault profile"), "{all}");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::LoginMarked);
-
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Log out 1 marked bot"), "{all}");
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutMarked);
-
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), false);
-    assert_eq!(app.on_key(ch('m')), AppAction::None);
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::SpawnAll);
-    assert_eq!(app.on_key(ch('U')), AppAction::None);
-    assert_eq!(app.on_key(ch('y')), AppAction::LogoutAll);
-}
-
-/// Assign and Assign & restart need marked rows and a selected script, say
-/// which is missing, then confirm the marked scope and the script they use.
-#[test]
-fn marked_assign_commands_need_marks_and_a_script_and_name_both() {
-    for command in [Command::ScriptAssignMarked, Command::ScriptRestartMarked] {
-        let mut app = fleet_app(&["alice", "bob"]);
-        assert_eq!(
-            command.availability(&app),
-            Err("mark fleet rows first (Space)")
-        );
-        app.table
-            .selection
-            .set_for_test(app.profile_id_for_name("alice"), true);
-        assert_eq!(
-            command.availability(&app),
-            Err("browse to pick a script first")
-        );
-        app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-        assert_eq!(command.availability(&app), Ok(()));
-
-        assert_eq!(app.run_command(command), AppAction::None);
-        let all = text(&draw(&mut app, 120, 40));
-        let label = app.script_sel.as_ref().unwrap().label();
-        assert!(all.contains(label), "{all}");
-        if command == Command::ScriptRestartMarked {
-            assert!(
-                all.contains("Start the card on 1 idle bot: alice"),
-                "the restart confirmation names the starting bots: {all}"
-            );
-        } else {
-            assert!(all.contains("1 marked bot"), "{all}");
-        }
-        let expected = match command {
-            Command::ScriptAssignMarked => AppAction::ScriptAssignMarked,
-            _ => AppAction::ScriptRestartMarked,
-        };
-        assert_eq!(app.on_key(key(KeyCode::Enter)), expected);
-    }
-}
-
-/// Apply focused bot's settings to marked needs marks, a focused bot and a
-/// selected script (naming which is missing), and the 80x24 palette shows
-/// its whole label with its scope beside it instead of cutting either.
-#[test]
-fn apply_settings_to_marked_names_what_is_missing_and_fits_the_palette() {
-    let command = Command::ScriptApplyMarked;
-    let mut app = fleet_app(&["alice", "bob"]);
     assert_eq!(
-        command.availability(&app),
-        Err("mark fleet rows first (Space)")
+        app.script_sel.as_ref(),
+        Some(&browse_pick),
+        "the picker never changes the Browse pick"
     );
-    app.table
-        .selection
-        .set_for_test(app.profile_id_for_name("bob"), true);
-    assert_eq!(
-        command.availability(&app),
-        Err("browse to pick a script first")
-    );
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    app.focused = None;
-    assert_eq!(
-        command.availability(&app),
-        Err("no bot selected (Fleet: Enter or click a row)")
-    );
-    app.focused = Some(0);
-    assert_eq!(command.availability(&app), Ok(()));
+    assert!(!app.browse_changed, "and never reports a Browse pick");
+    assert!(!app.script_browse_open);
+}
 
-    app.on_key(ctrl('p'));
-    for c in "apply focused".chars() {
-        app.on_key(ch(c));
-    }
-    let all = text(&draw(&mut app, 80, 24));
-    assert!(
-        all.contains("Apply focused bot's settings to marked… alice to 1 marked"),
-        "{all}"
+/// The palette's *Pick fleet card…* opens the same picker.
+#[test]
+fn the_palette_opens_the_fleet_card_picker() {
+    let mut app = fleet_app(&["alice"]);
+    assert_eq!(app.run_command(Command::PickFleetCard), AppAction::None);
+    assert!(matches!(&app.modal, Some(Modal::FleetCard(_))));
+    // The picker is its own overlay: it takes keys and Enter on the
+    // current card (Own, the cursor's start) picks Own again.
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PickFleetCard(FleetCard::OWN)
     );
-    assert!(all.contains("1 commands"), "{all}");
 }
 
 /// An NPC dialogue is visible everywhere but only the Chat tab answers it.
@@ -567,8 +738,8 @@ fn clicks_select_rows_and_right_click_opens_a_menu() {
     seam.apply(&mut app, mark);
 
     assert!(app
-        .table
-        .selection
+        .fleet_model
+        .marks()
         .contains(app.profile_id_for_name("carol")));
     assert_eq!(app.focused_name().as_deref(), Some("bob"));
 
@@ -934,27 +1105,6 @@ fn script_popups_swallow_clicks_outside_themselves() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The restart confirmation for `count` marked bots, the first
-/// `running` of them running a script, with a card picked.
-fn restart_confirm_app(count: usize, running: usize) -> (TuiApp, Vec<String>) {
-    let names: Vec<String> = (0..count).map(|i| format!("bot{i:02}name")).collect();
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut app = fleet_app(&refs);
-    for row in app.fleet.iter_mut().take(running) {
-        row.set_script(ScriptRunState::Running);
-    }
-    for name in &names {
-        let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
-    }
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(
-        app.run_command(Command::ScriptRestartMarked),
-        AppAction::None
-    );
-    (app, names)
-}
-
 /// Screen text with every run of whitespace (including the row breaks
 /// a wrapped popup line spans) collapsed to one space, so a phrase is
 /// found wherever wrapping put it — but only if it was drawn at all.
@@ -962,48 +1112,35 @@ fn flattened(rows: &[String]) -> String {
     text(rows).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// H1: with 7 running and 7 idle marked bots, the Assign & restart
-/// confirmation shows both lists with their counts at 120x40 and
-/// 80x24; bots past the six named per list are counted, never hidden.
-#[test]
-fn restart_confirm_shows_both_counts_and_counts_unnamed_bots() {
-    let (mut app, _names) = restart_confirm_app(14, 7);
-    for (width, height) in [(120, 40), (80, 24)] {
-        let all = flattened(&draw(&mut app, width, height));
-        assert!(
-            all.contains("Stop and restart 7 running bots: bot00name,"),
-            "{width}x{height}: interrupted list and its count: {all}"
-        );
-        assert!(
-            all.contains("Start the card on 7 idle bots: bot07name,"),
-            "{width}x{height}: starting list and its count: {all}"
-        );
-        assert_eq!(
-            all.matches("+1 more").count(),
-            2,
-            "{width}x{height}: one bot past the cap in each list is counted: {all}"
-        );
-    }
+/// `s` without any whitespace: wrapping may break a line at a space or in a
+/// word, so the popup's text is compared without it.
+fn squashed(s: &str) -> String {
+    s.split_whitespace().collect()
 }
 
-/// H1: with 20 running marked bots the interrupted line alone would
-/// fill the old popup; the idle list and its count still show.
+/// A long plan prompt (core caps the names it spells out, then "+N
+/// more") is shown whole at 120x40 and 80x24: the popup sizes to the
+/// wrapped rows, so none of core's text is cut.
 #[test]
-fn restart_confirm_with_twenty_running_still_shows_the_idle_list() {
-    let (mut app, _names) = restart_confirm_app(23, 20);
+fn a_long_plan_prompt_is_shown_whole_at_both_sizes() {
+    let prompt =
+        "Assign thiever and restart it on 14 marked bots: bot00name, bot01name, bot02name, \
+                  bot03name, bot04name, bot05name, bot06name, bot07name +6 more. This stops the \
+                  running script of bot00name, bot01name, bot02name, bot03name, bot04name, \
+                  bot05name, bot06name, bot07name +2 more. Skipped 2: bot12name: profile is \
+                  being saved, bot13name: already active.";
     for (width, height) in [(120, 40), (80, 24)] {
-        let all = flattened(&draw(&mut app, width, height));
+        let mut app = fleet_app(&["alice"]);
+        app.confirm(ConfirmKind::FleetPlan {
+            action: FleetAction::AssignRestart,
+            prompt: prompt.into(),
+        });
+        let rows = draw(&mut app, width, height);
+        let all = squashed(&popup_rows(&app, &rows).join(" "));
+        assert!(all.contains(&squashed(prompt)), "{width}x{height}: {all}");
         assert!(
-            all.contains("Stop and restart 20 running bots: bot00name,"),
-            "{width}x{height}: interrupted list and its count: {all}"
-        );
-        assert!(
-            all.contains("+14 more"),
-            "{width}x{height}: running bots past the cap are counted: {all}"
-        );
-        assert!(
-            all.contains("Start the card on 3 idle bots: bot20name, bot21name, bot22name"),
-            "{width}x{height}: every idle bot is named: {all}"
+            flattened(&rows).contains("Assign & restart"),
+            "titled by the action"
         );
     }
 }
@@ -1022,69 +1159,36 @@ fn popup_rows(app: &TuiApp, rows: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The popup's text with wrapping undone: rows join with a space,
-/// except a row filled to its last cell whose next row starts
-/// mid-word (a word wider than the row, split by the wrap), which
-/// joins with nothing. Whitespace runs collapse to one space.
-fn popup_text(app: &TuiApp, rows: &[String]) -> String {
-    let popup = popup_rows(app, rows);
-    let mut joined = String::new();
-    for (index, row) in popup.iter().enumerate() {
-        if index > 0 {
-            let prev = &popup[index - 1];
-            let split_word = !prev.ends_with(' ') && !row.starts_with(' ');
-            if !split_word {
-                joined.push(' ');
-            }
-        }
-        joined.push_str(row);
-    }
-    joined.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// L1: at 40x20 the popup's text area is 38 cells, so an email-style
 /// name wider than that is split across rows by ratatui from a fresh
-/// row. The popup must be sized for those rows: both lists show in
-/// full and the slack row above the buttons stays blank.
+/// row. The popup must be sized for those rows: core's whole prompt shows
+/// and the slack row above the buttons stays blank.
 #[test]
-fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_popup() {
-    let names: Vec<String> = (0..6)
+fn plan_confirm_at_40_by_20_shows_the_whole_prompt_when_a_name_is_wider_than_the_popup() {
+    let names: Vec<String> = (0..4)
         .map(|i| format!("bot{i:02}-with-a-very-long-email-name@example.com"))
         .collect();
     assert!(
         names.iter().all(|name| name.len() > 38),
         "every name is wider than the 40-wide popup's 38-cell text area: {names:?}"
     );
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut app = fleet_app(&refs);
-    for row in app.fleet.iter_mut().take(3) {
-        row.set_script(ScriptRunState::Running);
-    }
-    for name in &names {
-        let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
-    }
-    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, "thiever"));
-    assert_eq!(
-        app.run_command(Command::ScriptRestartMarked),
-        AppAction::None
+    let prompt = format!(
+        "Assign thiever and restart it on 4 marked bots: {}. This stops the running script of {}, {}.",
+        names.join(", "),
+        names[0],
+        names[1]
     );
+    let mut app = fleet_app(&["alice"]);
+    app.confirm(ConfirmKind::FleetPlan {
+        action: FleetAction::AssignRestart,
+        prompt: prompt.clone(),
+    });
     let rows = draw(&mut app, 40, 20);
     let popup = popup_rows(&app, &rows);
-    let all = popup_text(&app, &rows);
+    let all = squashed(&popup.join(" "));
     assert!(
-        all.contains(&format!(
-            "Stop and restart 3 running bots: {}, {}, {}",
-            names[0], names[1], names[2]
-        )),
-        "the interrupted list shows in full: {all}"
-    );
-    assert!(
-        all.contains(&format!(
-            "Start the card on 3 idle bots: {}, {}, {}",
-            names[3], names[4], names[5]
-        )),
-        "the idle list shows in full: {all}"
+        all.contains(&squashed(&prompt)),
+        "the whole prompt shows: {all}"
     );
     let slack = &popup[popup.len() - 2];
     assert!(
@@ -1094,22 +1198,916 @@ fn restart_confirm_at_40_by_20_shows_both_lists_when_a_name_is_wider_than_the_po
     );
 }
 
-/// The palette scope text of the combined all/marked commands follows
-/// the core scope resolver: everyone with no marks, the marked bots
-/// once anything is marked.
+/// The palette scope text of the fleet actions follows the core model's
+/// counts: the loaded shown rows with no marks, the marked bots once
+/// anything is marked.
 #[test]
-fn palette_scope_text_follows_the_combined_bulk_scope() {
+fn palette_scope_text_follows_the_core_marks() {
     let mut app = fleet_app(&["alice", "bob", "carol"]);
-    assert_eq!(Command::LoadLoginAll.scope(&app), "every vault profile");
-    assert_eq!(Command::LogoutAll.scope(&app), "all 3 members");
-    assert_eq!(Command::ScriptStartAll.scope(&app), "all 3 members");
-    assert_eq!(Command::ScriptStopAll.scope(&app), "all 3 members");
+    for action in FleetAction::ALL {
+        if action != FleetAction::CopySettings {
+            assert_eq!(Command::Fleet(action).scope(&app), "all 3 shown");
+        }
+    }
     for name in ["alice", "bob"] {
         let id = app.profile_id_for_name(name);
-        app.table.selection.set_for_test(id, true);
+        app.fleet_model.set_mark_for_test(id, true);
     }
-    assert_eq!(Command::LoadLoginAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::LogoutAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::ScriptStartAll.scope(&app), "2 marked bots");
-    assert_eq!(Command::ScriptStopAll.scope(&app), "2 marked bots");
+    for action in FleetAction::ALL {
+        if action != FleetAction::CopySettings {
+            assert_eq!(Command::Fleet(action).scope(&app), "2 marked bots");
+        }
+    }
+    assert_eq!(
+        Command::Fleet(FleetAction::CopySettings).scope(&app),
+        "alice to 2 marked bots"
+    );
+}
+
+/// An app whose fleet is `loaded` (ready) followed by vault profiles that
+/// are not loaded, as the fleet model's universe orders them.
+fn universe_app(loaded: &[&str], unloaded: &[&str]) -> TuiApp {
+    let mut app = fleet_app(loaded);
+    let mut rows: Vec<frontend_core::FleetRow> = app
+        .fleet_model
+        .rows()
+        .iter()
+        .map(frontend_core::FleetRow::snapshot)
+        .collect();
+    rows.extend(
+        unloaded
+            .iter()
+            .map(|name| frontend_core::FleetRow::for_profile(*name)),
+    );
+    app.fleet_model.set_universe_for_test(rows, &[]);
+    app
+}
+
+/// The fleet table lists an unloaded vault profile after the loaded rows,
+/// as `not loaded`, and Space marks it like any other row.
+#[test]
+fn space_marks_an_unloaded_profile_row_the_table_lists() {
+    let mut seam = Seam::new();
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (_, alice_y) = find(&rows, "alice").expect("the loaded row");
+    let (_, zed_y) = find(&rows, "zed").expect("the unloaded profile is listed");
+    assert!(zed_y > alice_y, "after the loaded rows: {}", text(&rows));
+    assert!(
+        rows[usize::from(zed_y)].contains("not loaded"),
+        "{}",
+        text(&rows)
+    );
+    assert!(
+        !rows[usize::from(zed_y)].contains("[x]"),
+        "not marked yet: {}",
+        text(&rows)
+    );
+    app.on_key(key(KeyCode::Down));
+    seam.press(&mut app, ch(' '), AppAction::SetMark("zed".into(), true));
+    let rows = draw(&mut app, 120, 40);
+    let (_, zed_y) = find(&rows, "zed").unwrap();
+    assert!(
+        rows[usize::from(zed_y)].contains("[x] > zed"),
+        "{}",
+        text(&rows)
+    );
+    assert!(text(&rows).contains("marked 1"), "{}", text(&rows));
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+}
+
+/// A click on the `[x]` box of an unloaded row marks it; a click on the
+/// rest of the row focuses nothing.
+#[test]
+fn clicking_an_unloaded_row_marks_through_its_box_and_never_focuses() {
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "zed").unwrap();
+    let box_x = app.regions.fleet_rows.x;
+    assert_eq!(
+        app.on_click(box_x + 1, y),
+        AppAction::SetMark("zed".into(), true)
+    );
+    assert_eq!(app.on_click(x, y), AppAction::None);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("zed is not loaded: mark it and press m to log in")
+    );
+}
+
+/// Enter on an unloaded row keeps the focus where it was and says what to
+/// do instead.
+#[test]
+fn enter_on_an_unloaded_row_does_not_focus_and_says_why() {
+    let mut app = universe_app(&["alice", "bob"], &["zed"]);
+    draw(&mut app, 120, 40);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    app.on_key(key(KeyCode::End));
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.error.as_deref(),
+        Some("zed is not loaded: mark it and press m to log in")
+    );
+    // A loaded row still focuses.
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::Focus("bob".into())
+    );
+}
+
+/// `a` marks every shown row, loaded or not, through the core mark op, and
+/// nothing the filter hides.
+#[test]
+fn the_mark_shown_key_marks_only_the_shown_rows() {
+    let mut seam = Seam::new();
+    let mut app = universe_app(&["alice", "bob"], &["zed"]);
+    app.fleet_model.set_filter_for_test("z");
+    seam.press(
+        &mut app,
+        ch('a'),
+        AppAction::MarkFleet(frontend_core::MarkOp::Shown),
+    );
+    let id = frontend_core::ProfileIdentity::synthetic;
+    assert!(app.fleet_model.marks().contains(id("zed")));
+    assert!(!app.fleet_model.marks().contains(id("alice")));
+    assert!(!app.fleet_model.marks().contains(id("bob")));
+}
+
+/// The context menu of an unloaded row offers only the mark.
+#[test]
+fn the_context_menu_of_an_unloaded_row_offers_only_the_mark() {
+    let mut seam = Seam::new();
+    let mut app = universe_app(&["alice"], &["zed"]);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "zed").unwrap();
+    app.on_mouse(right_click(x, y));
+    let Some(Modal::Context(menu)) = &app.modal else {
+        panic!("a context menu opened");
+    };
+    assert_eq!(menu.items.len(), 1, "{:?}", menu.items);
+    let action = app.on_key(key(KeyCode::Enter));
+    assert_eq!(action, AppAction::SetMark("zed".into(), true));
+    seam.apply(&mut app, action);
+    assert!(app
+        .fleet_model
+        .marks()
+        .contains(frontend_core::ProfileIdentity::synthetic("zed")));
+}
+
+fn alt(code: KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::ALT)
+}
+
+fn reorder_ids() -> [frontend_core::ProfileIdentity; 3] {
+    [
+        frontend_core::ProfileIdentity::uid(41),
+        frontend_core::ProfileIdentity::uid(42),
+        frontend_core::ProfileIdentity::uid(43),
+    ]
+}
+
+/// Three profiles with vault identities, drawn once so the table has its
+/// regions.
+fn reorder_app() -> TuiApp {
+    let mut app = fleet_app(&["alice", "bob", "carol"]);
+    crate::test_support::set_profile_ids(&mut app, &reorder_ids());
+    draw(&mut app, 120, 40);
+    app
+}
+
+fn move_op(moving: frontend_core::ProfileIdentity, to: frontend_core::Placement) -> AppAction {
+    AppAction::ReorderProfiles(frontend_core::ReorderOp::Move { moving, to })
+}
+
+/// Alt+Up / Alt+Down move the cursor row; the action names the identities
+/// of the cursor row and its shown neighbour. At the first or last shown
+/// row nothing happens.
+#[test]
+fn alt_up_and_alt_down_return_the_reorder_action_for_the_cursor_row() {
+    use frontend_core::Placement::{After, Before};
+    let [alice, bob, carol] = reorder_ids();
+    let mut app = reorder_app();
+    assert_eq!(
+        app.on_key(alt(KeyCode::Up)),
+        AppAction::None,
+        "alice is on the first row"
+    );
+    assert_eq!(
+        app.on_key(alt(KeyCode::Down)),
+        move_op(alice, After(bob)),
+        "down: after the next shown row"
+    );
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(alt(KeyCode::Up)),
+        move_op(bob, Before(alice)),
+        "up: before the previous shown row"
+    );
+    assert_eq!(app.on_key(alt(KeyCode::Down)), move_op(bob, After(carol)));
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(alt(KeyCode::Down)),
+        AppAction::None,
+        "carol is on the last row"
+    );
+    assert_eq!(app.on_key(alt(KeyCode::Up)), move_op(carol, Before(bob)));
+}
+
+/// The keys act only while the fleet pane has the keyboard.
+#[test]
+fn alt_up_and_alt_down_are_scoped_to_the_fleet_pane() {
+    let mut app = reorder_app();
+    app.key_focus = Pane::Detail;
+    assert_eq!(app.on_key(alt(KeyCode::Down)), AppAction::None);
+    assert_eq!(app.on_key(alt(KeyCode::Up)), AppAction::None);
+    app.key_focus = Pane::Fleet;
+    assert!(matches!(
+        app.on_key(alt(KeyCode::Down)),
+        AppAction::ReorderProfiles(_)
+    ));
+}
+
+/// The palette commands return the same op as the keys, are listed with
+/// their reasons, and a sorted fleet makes all three unavailable.
+#[test]
+fn the_move_commands_match_the_keys_and_follow_their_availability() {
+    use frontend_core::Placement::{After, Before};
+    use frontend_core::{FleetOrder, ReorderOp};
+    let [alice, bob, _] = reorder_ids();
+    let mut app = reorder_app();
+    assert_eq!(
+        Command::MoveProfileUp.availability(&app),
+        Err("no shown row above the cursor")
+    );
+    assert_eq!(
+        Command::MoveMarkedToTop.availability(&app),
+        Err("mark fleet rows first (Space)")
+    );
+    assert_eq!(Command::MoveProfileDown.availability(&app), Ok(()));
+    assert_eq!(
+        app.run_command(Command::MoveProfileDown),
+        move_op(alice, After(bob))
+    );
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.run_command(Command::MoveProfileUp),
+        move_op(bob, Before(alice))
+    );
+    app.fleet_model.set_mark_for_test(bob, true);
+    assert_eq!(Command::MoveMarkedToTop.availability(&app), Ok(()));
+    assert_eq!(
+        app.run_command(Command::MoveMarkedToTop),
+        AppAction::ReorderProfiles(ReorderOp::MarkedToTop)
+    );
+
+    app.error = None;
+    app.fleet_model.set_order_for_test(FleetOrder::Name);
+    for command in [
+        Command::MoveProfileUp,
+        Command::MoveProfileDown,
+        Command::MoveMarkedToTop,
+    ] {
+        assert_eq!(
+            command.availability(&app),
+            Err("choose Load order to reorder"),
+            "{command:?}"
+        );
+        assert_eq!(app.run_command(command), AppAction::None, "{command:?}");
+        let message = app.error.take().expect("the reason is shown");
+        assert!(
+            message.contains("choose Load order to reorder"),
+            "{message}"
+        );
+    }
+    for code in [KeyCode::Up, KeyCode::Down] {
+        assert_eq!(app.on_key(alt(code)), AppAction::None);
+    }
+}
+
+/// The palette lists the commands with their keys and the reason a command
+/// cannot run.
+#[test]
+fn the_palette_lists_the_move_commands_with_keys_and_reasons() {
+    let mut app = reorder_app();
+    app.on_key(ctrl('p'));
+    for c in "move".chars() {
+        app.on_key(ch(c));
+    }
+    let screen = text(&draw(&mut app, 140, 40));
+    for wanted in [
+        "Move profile up",
+        "Alt-Up",
+        "Move profile down",
+        "Alt-Down",
+        "Move marked to top",
+        "mark fleet rows first",
+        "no shown row above the cursor",
+    ] {
+        assert!(screen.contains(wanted), "{wanted}: {screen}");
+    }
+}
+
+/// Help lists the keys and the palette-only command.
+#[test]
+fn help_lists_the_reorder_keys_and_move_marked_to_top() {
+    let app = reorder_app();
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.keys.contains("Alt-Up") && row.keys.contains("Alt-Down")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.what.contains("Move marked to top")),
+        "{rows:?}"
+    );
+}
+
+/// The fleet KEYS line names the keys while they work: the fleet pane has
+/// the keyboard and the order is Load order.
+#[test]
+fn the_fleet_keys_line_names_the_reorder_keys_only_while_they_work() {
+    let mut app = reorder_app();
+    let wanted = "Alt-Up/Down reorder";
+    assert!(app.key_hints().contains(wanted), "{}", app.key_hints());
+    let screen = text(&draw(&mut app, 120, 40));
+    assert!(screen.contains(wanted), "{screen}");
+    app.key_focus = Pane::Detail;
+    assert!(!app.key_hints().contains(wanted));
+    assert!(!text(&draw(&mut app, 120, 40)).contains(wanted));
+    app.key_focus = Pane::Fleet;
+    app.fleet_model
+        .set_order_for_test(frontend_core::FleetOrder::Status);
+    assert!(!app.key_hints().contains(wanted));
+    assert!(!text(&draw(&mut app, 120, 40)).contains(wanted));
+}
+
+/// An app with the world picker open for `alice`, who is on world 2 of
+/// worlds 1, 2 and 3.
+fn picker_app() -> TuiApp {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        Some("alice".into()),
+        Some(2),
+        [1, 2, 3].into_iter(),
+    )));
+    app
+}
+
+/// `W` names the fleet row under the cursor (not the selected bot), and the
+/// palette's Switch world of marked… names no profile: the marks. Neither
+/// opens the picker itself: the dispatcher reads the worlds from core.
+#[test]
+fn w_names_the_cursor_row_and_the_palette_entry_names_none() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    assert_eq!(
+        app.on_key(ch('W')),
+        AppAction::PickWorld(Some("alice".into()))
+    );
+    assert!(app.modal.is_none(), "the worlds are core's to list");
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(ch('W')),
+        AppAction::PickWorld(Some("bob".into())),
+        "the cursor row, whichever bot is selected"
+    );
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
+    assert_eq!(
+        app.run_command(Command::PickWorldMarked),
+        AppAction::PickWorld(None)
+    );
+
+    // With no row there is nothing for W to name; the reason shows.
+    let mut empty = fleet_app(&[]);
+    assert_eq!(empty.on_key(ch('W')), AppAction::None);
+    let shown = empty.error.take().expect("the reason shows");
+    assert!(shown.ends_with("no fleet row under the cursor"), "{shown}");
+    assert_eq!(empty.run_command(Command::PickWorldMarked), AppAction::None);
+    assert!(empty
+        .error
+        .take()
+        .expect("the reason shows")
+        .ends_with("no rows shown or marked"));
+}
+
+/// The palette lists both commands (the cursor one with its `W` key), help
+/// lists `W` and the palette entry, and the Fleet KEYS line names `W`.
+#[test]
+fn the_palette_help_and_footer_list_the_world_picker_commands() {
+    let mut app = fleet_app(&["alice"]);
+    app.on_key(ctrl('p'));
+    for c in "switch world".chars() {
+        app.on_key(ch(c));
+    }
+    let palette = text(&draw(&mut app, 120, 40));
+    for want in ["Switch world of cursor row…", "Switch world of marked…"] {
+        assert!(palette.contains(want), "{want}: {palette}");
+    }
+    assert_eq!(crate::palette::key_text(Command::PickWorld), "W");
+    assert_eq!(crate::palette::key_text(Command::PickWorldMarked), "");
+    app.on_key(key(KeyCode::Esc));
+
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.keys == "W" && row.what == "Switch world of cursor row…"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.what.contains("Switch world of marked…")),
+        "{rows:?}"
+    );
+    assert!(app.key_hints().contains("W world"), "{}", app.key_hints());
+}
+
+/// The picker lists every world, ticks the bot's own, and takes the keys of
+/// an overlay: Up/Down (and `j`/`k`, PgUp/PgDn, Home/End) move, Enter picks,
+/// Esc leaves everything as it was. Picking the world the bot is on closes
+/// it and asks for nothing.
+#[test]
+fn the_world_picker_ticks_the_current_world_and_enter_picks_another() {
+    let mut app = picker_app();
+    let shown = text(&draw(&mut app, 120, 40));
+    for want in [
+        "Switch world of alice",
+        "[ ] World 1",
+        "[x] World 2",
+        "[ ] World 3",
+    ] {
+        assert!(shown.contains(want), "{want}: {shown}");
+    }
+    assert_eq!(app.key_scope(), "World picker");
+    assert_eq!(app.key_hints(), "Up/Down · Enter pick · Esc cancel");
+
+    // The cursor starts on the bot's own world: Enter there asks for
+    // nothing, and the picker closes.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert!(app.modal.is_none());
+
+    // Down is the next world, Up the one before, j and k the same.
+    let mut app = picker_app();
+    assert_eq!(app.on_key(key(KeyCode::Down)), AppAction::None);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    assert!(app.modal.is_none(), "a pick closes the picker");
+    let mut app = picker_app();
+    app.on_key(ch('k'));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 1)
+    );
+    let mut app = picker_app();
+    app.on_key(key(KeyCode::End));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    let mut app = picker_app();
+    app.on_key(key(KeyCode::Home));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 1)
+    );
+    // The ends stop the highlight.
+    let mut app = picker_app();
+    for _ in 0..5 {
+        app.on_key(ch('j'));
+    }
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+
+    // Esc cancels and leaves every action unsent; other keys are
+    // swallowed.
+    let mut app = picker_app();
+    assert_eq!(app.on_key(ch('x')), AppAction::None);
+    assert!(matches!(app.modal, Some(Modal::WorldPicker(_))));
+    assert_eq!(app.on_key(ch('m')), AppAction::None, "no fleet key leaks");
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.modal.is_none());
+}
+
+/// A click on a world's row picks it; a click on the bot's own world closes
+/// the picker and asks for nothing; a click inside but off the rows keeps it
+/// open; a click outside leaves everything as it was, like Esc; the wheel
+/// moves the highlight.
+#[test]
+fn clicks_pick_a_world_and_a_click_outside_keeps_everything() {
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[ ] World 3").expect("world 3 is listed");
+    assert_eq!(
+        app.on_click(x, y),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3)
+    );
+    assert!(app.modal.is_none());
+
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[x] World 2").unwrap();
+    assert_eq!(app.on_click(x, y), AppAction::None, "its own world");
+    assert!(app.modal.is_none());
+
+    let mut app = picker_app();
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "Switch world of alice").unwrap();
+    assert_eq!(app.on_click(x + 2, y + 1), AppAction::None, "the note line");
+    assert!(
+        matches!(app.modal, Some(Modal::WorldPicker(_))),
+        "a click inside the box that hits no row keeps the picker"
+    );
+    assert_eq!(app.on_click(0, 0), AppAction::None);
+    assert!(app.modal.is_none(), "a click outside closes it");
+
+    let mut app = picker_app();
+    draw(&mut app, 120, 40);
+    app.on_scroll(60, 20, 1);
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(Some("alice".into()), 3),
+        "the wheel moved the highlight from World 2 to World 3"
+    );
+}
+
+/// The marked picker names no bot, so no world is ticked and its first row
+/// is under the cursor; a pick plans over the marks (no profile staged).
+#[test]
+fn the_marked_picker_ticks_nothing_and_plans_over_no_profile() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        None,
+        None,
+        [1, 2, 3].into_iter(),
+    )));
+    let shown = text(&draw(&mut app, 120, 40));
+    for want in [
+        "Switch world of marked",
+        "[ ] World 1",
+        "[ ] World 2",
+        "[ ] World 3",
+    ] {
+        assert!(shown.contains(want), "{want}: {shown}");
+    }
+    assert!(!shown.contains("[x]"), "{shown}");
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        AppAction::PlanSwitchWorld(None, 2)
+    );
+}
+
+/// The picker fits a small terminal and a long world list: the highlight
+/// stays on screen and the box never runs past the screen.
+#[test]
+fn the_world_picker_scrolls_a_long_list_inside_a_small_terminal() {
+    let mut app = fleet_app(&["alice"]);
+    app.open_modal(Modal::WorldPicker(crate::world_picker::WorldPicker::open(
+        Some("alice".into()),
+        Some(1),
+        (1..=40).collect::<Vec<u16>>().into_iter(),
+    )));
+    app.on_key(key(KeyCode::End));
+    let rows = draw(&mut app, 80, 24);
+    let shown = text(&rows);
+    assert!(shown.contains("> [ ] World 40"), "{shown}");
+    assert!(
+        !shown.contains("[x] World 1"),
+        "the first rows scrolled off"
+    );
+    assert_eq!(rows.len(), 24);
+}
+
+/// The picker keeps inside any area it is given, down to none at all: a
+/// terminal resized small must not panic the overlay, and no clickable row
+/// lies outside the screen.
+#[test]
+fn the_world_picker_draws_into_any_area_without_panicking() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    for (x, y) in [(0, 0), (5, 3)] {
+        for (w, h) in [
+            (0, 0),
+            (1, 1),
+            (3, 1),
+            (3, 2),
+            (8, 4),
+            (12, 3),
+            (20, 5),
+            (40, 2),
+            (80, 24),
+        ] {
+            let area = Rect::new(x, y, w, h);
+            let mut buf = Buffer::empty(area);
+            let mut hits = Vec::new();
+            let mut picker = crate::world_picker::WorldPicker::open(
+                Some("alice".into()),
+                Some(2),
+                [1, 2, 3].into_iter(),
+            );
+            let popup = picker.render(area, &mut buf, &mut hits);
+            assert!(
+                popup.x >= area.x
+                    && popup.y >= area.y
+                    && popup.right() <= area.right()
+                    && popup.bottom() <= area.bottom(),
+                "{w}x{h} at {x},{y}: {popup:?}"
+            );
+            for (rect, _) in &hits {
+                assert!(
+                    rect.x >= area.x
+                        && rect.y >= area.y
+                        && rect.right() <= area.right()
+                        && rect.bottom() <= area.bottom(),
+                    "{w}x{h} at {x},{y}: a clickable row off the screen: {rect:?}"
+                );
+            }
+        }
+    }
+}
+
+/// An app whose fleet is carol (ready), alice (ready) and bob (offline), in
+/// that Load order: Name gives alice, bob, carol; Status gives bob (offline
+/// before ready), alice, carol.
+fn sort_app() -> TuiApp {
+    let mut app = fleet_app(&["carol", "alice", "bob"]);
+    app.fleet_model.set_universe_for_test(
+        vec![
+            crate::test_support::ready("carol", 2),
+            crate::test_support::ready("alice", 2),
+            frontend_core::FleetRow::fixture("bob", frontend_core::Phase::Offline, None, None),
+        ],
+        &[],
+    );
+    app.refresh();
+    app
+}
+
+fn shown_names(app: &TuiApp) -> Vec<&str> {
+    app.fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name())
+        .collect()
+}
+
+fn left_click(column: u16, row: u16) -> crossterm::event::MouseEvent {
+    mouse(
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column,
+        row,
+    )
+}
+
+/// `s` in the Fleet pane cycles Load order, Name, Status and back, through
+/// the core command; the header and the shown rows follow, and the cursor
+/// stays on its profile.
+#[test]
+fn s_cycles_the_fleet_sort_and_the_cursor_keeps_its_profile() {
+    use frontend_core::FleetOrder;
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    assert_eq!(app.key_focus, Pane::Fleet);
+    assert_eq!(shown_names(&app), ["carol", "alice", "bob"]);
+    // The cursor goes to alice, the second row.
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.cursor_profile(), Some("alice"));
+
+    for (order, label, names) in [
+        (FleetOrder::Name, "sort: Name", ["alice", "bob", "carol"]),
+        (
+            FleetOrder::Status,
+            "sort: Status",
+            ["bob", "alice", "carol"],
+        ),
+        (
+            FleetOrder::LoadOrder,
+            "sort: Load order",
+            ["carol", "alice", "bob"],
+        ),
+    ] {
+        assert_eq!(app.on_key(ch('s')), AppAction::SetFleetSort(order));
+        // The key submits the command; the model is core's until it runs.
+        assert_eq!(shown_names(&app).len(), 3);
+        seam.apply(&mut app, AppAction::SetFleetSort(order));
+        assert_eq!(app.fleet_model.order(), order);
+        assert_eq!(shown_names(&app), names);
+        assert_eq!(app.cursor_profile(), Some("alice"), "{order:?}");
+        let screen = text(&draw(&mut app, 120, 40));
+        assert!(screen.contains(label), "{label}: {screen}");
+    }
+}
+
+/// The key goes through the real dispatcher: `s` returns the action, the
+/// dispatcher runs it, and the next `s` continues from the new order.
+#[test]
+fn s_through_the_dispatcher_walks_the_three_orders() {
+    use frontend_core::FleetOrder;
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    for order in [
+        FleetOrder::Name,
+        FleetOrder::Status,
+        FleetOrder::LoadOrder,
+        FleetOrder::Name,
+    ] {
+        seam.press(&mut app, ch('s'), AppAction::SetFleetSort(order));
+        assert_eq!(app.fleet_model.order(), order);
+    }
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+}
+
+/// While the filter field is edited, `s` is text; in another pane it is not
+/// the sort key.
+#[test]
+fn s_is_text_in_the_filter_and_does_nothing_in_other_panes() {
+    let mut app = sort_app();
+    draw(&mut app, 120, 40);
+    app.on_key(ch('/'));
+    assert!(app.table.editing);
+    assert_eq!(
+        app.on_key(ch('s')),
+        AppAction::FleetFilter(FilterEdit::Push('s'))
+    );
+    assert_eq!(
+        app.fleet_model.order(),
+        frontend_core::FleetOrder::LoadOrder
+    );
+    app.on_key(key(KeyCode::Esc));
+    app.table.editing = false;
+
+    for (pane, screen) in [
+        (Pane::Detail, Screen::Overview),
+        (Pane::Detail, Screen::Chat),
+        (Pane::Detail, Screen::Script),
+    ] {
+        app.show_screen(screen);
+        app.focus_pane(pane);
+        let action = app.on_key(ch('s'));
+        assert!(
+            !matches!(action, AppAction::SetFleetSort(_)),
+            "{screen:?}: {action:?}"
+        );
+        assert_eq!(
+            app.fleet_model.order(),
+            frontend_core::FleetOrder::LoadOrder
+        );
+    }
+}
+
+/// A click on the `sort:` part of the header cycles the sort; a click on
+/// the `card:` part opens the card picker; a click on the marked count
+/// does neither; a right click still opens the context menu.
+#[test]
+fn header_clicks_cycle_the_sort_and_open_the_card_picker() {
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    let rows = draw(&mut app, 120, 40);
+    let (sort_x, sort_y) = find(&rows, "sort: ").expect("the sort part");
+    let (card_x, card_y) = find(&rows, "card: ").expect("the card part");
+    let (marked_x, marked_y) = find(&rows, "0 marked").expect("the marked count");
+
+    // Off the parts: the separator and the marked count do nothing.
+    assert_eq!(
+        app.on_mouse(left_click(marked_x, marked_y)),
+        AppAction::None
+    );
+    assert!(app.modal.is_none());
+    assert_eq!(
+        app.on_mouse(left_click(marked_x.saturating_sub(1), marked_y)),
+        AppAction::None,
+        "the separator"
+    );
+    assert!(app.modal.is_none());
+
+    // The last cell of the part still counts; the cell after it does not.
+    let sort_end = sort_x + "sort: Load order".chars().count() as u16;
+    assert_eq!(
+        app.on_mouse(left_click(sort_end, sort_y)),
+        AppAction::None,
+        "one past the part"
+    );
+    let click = app.on_mouse(left_click(sort_end - 1, sort_y));
+    assert_eq!(
+        click,
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Name)
+    );
+    seam.apply(&mut app, click);
+    let rows = draw(&mut app, 120, 40);
+    assert!(text(&rows).contains("sort: Name"), "{}", text(&rows));
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+
+    // The card part opens the picker, as `c` does.
+    assert_eq!(app.on_mouse(left_click(card_x, card_y)), AppAction::None);
+    assert!(
+        matches!(app.modal, Some(Modal::FleetCard(_))),
+        "{:?}",
+        app.modal
+    );
+    app.on_key(key(KeyCode::Esc));
+    assert!(app.modal.is_none());
+
+    // The sort part also takes the click on its first cell.
+    let rows = draw(&mut app, 120, 40);
+    let (sort_x, sort_y) = find(&rows, "sort: ").expect("the sort part");
+    assert_eq!(
+        app.on_mouse(left_click(sort_x, sort_y)),
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Status)
+    );
+
+    // A right click on the header keeps opening the Fleet context menu.
+    assert_eq!(app.on_mouse(right_click(sort_x, sort_y)), AppAction::None);
+    assert!(
+        matches!(app.modal, Some(Modal::Context(_))),
+        "{:?}",
+        app.modal
+    );
+}
+
+/// The palette lists the sort command with its key `s`, and running it from
+/// the palette cycles the sort.
+#[test]
+fn the_palette_lists_the_sort_command_with_its_key_and_runs_it() {
+    let mut seam = Seam::new();
+    let mut app = sort_app();
+    assert_eq!(crate::palette::key_text(Command::CycleFleetSort), "s");
+    assert_eq!(Command::CycleFleetSort.availability(&app), Ok(()));
+    assert!(Command::ALL.contains(&Command::CycleFleetSort));
+    app.on_key(ctrl('p'));
+    for c in "fleet sort".chars() {
+        app.on_key(ch(c));
+    }
+    let shown = text(&draw(&mut app, 120, 40));
+    assert!(shown.contains("Cycle fleet sort"), "{shown}");
+    assert!(!shown.contains("Cycle fleet sort…"), "no ellipsis: {shown}");
+    seam.press(
+        &mut app,
+        key(KeyCode::Enter),
+        AppAction::SetFleetSort(frontend_core::FleetOrder::Name),
+    );
+    assert!(
+        app.modal.is_none(),
+        "running the command closes the palette"
+    );
+    assert_eq!(app.fleet_model.order(), frontend_core::FleetOrder::Name);
+    assert_eq!(shown_names(&app), ["alice", "bob", "carol"]);
+}
+
+/// Help and the footer hint name the sort key and the m / U scope.
+#[test]
+fn help_and_the_footer_name_the_sort_key_and_the_log_in_scope() {
+    let mut app = sort_app();
+    let rows = help_rows(&app);
+    assert!(
+        rows.iter()
+            .any(|row| row.context == "Fleet" && row.keys == "s" && row.what == "Cycle fleet sort"),
+        "{rows:?}"
+    );
+    let scope = rows
+        .iter()
+        .find(|row| row.context == "Fleet" && row.keys == "m U")
+        .expect("the m / U row");
+    assert!(
+        scope.what.contains("log in / log out")
+            && scope
+                .what
+                .contains("marked rows, else the loaded shown rows")
+            && scope.what.contains("asks first"),
+        "{scope:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.keys == "click fleet header" && row.what.contains("sort:")),
+        "{rows:?}"
+    );
+    // The rest of the fleet keys stay.
+    for keys in ["c", "a", "A", "W", "Alt-Up Alt-Down", "/"] {
+        assert!(
+            rows.iter()
+                .any(|row| row.context == "Fleet" && row.keys == keys),
+            "{keys}: {rows:?}"
+        );
+    }
+    for order in [
+        frontend_core::FleetOrder::LoadOrder,
+        frontend_core::FleetOrder::Name,
+        frontend_core::FleetOrder::Status,
+    ] {
+        app.fleet_model.set_order_for_test(order);
+        let hint = app.key_hints();
+        assert!(
+            hint.contains("s sort")
+                && hint.contains("m log in · U log out (marked, else loaded shown; asks first)"),
+            "{order:?}: {hint}"
+        );
+        assert!(!hint.contains("load all") && !hint.contains("logout all"));
+    }
 }
