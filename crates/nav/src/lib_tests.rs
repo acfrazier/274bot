@@ -240,6 +240,119 @@ fn glob_chain_exposes_and_tracks_reexports_from_denied_items() {
         ])
     );
 }
+
+fn assert_reexported_seed_is_denied(
+    closure: &crate::test_support::source_scan::ClosureReport,
+    seed_alias: &str,
+    source: &str,
+    expected: (crate::test_support::source_scan::FindingKind, Option<&str>),
+) {
+    use crate::test_support::source_scan::{scan_text, Scope};
+
+    assert!(
+        closure.denied.contains(seed_alias),
+        "missing re-exported seed {seed_alias}: {closure:#?}"
+    );
+    let denied: Vec<_> = closure.denied.iter().map(String::as_str).collect();
+    let report = scan_text(
+        source,
+        "src/lib.rs",
+        "nav",
+        Scope::Production,
+        &["api", "client"],
+        &denied,
+    );
+    assert_scanner_findings(seed_alias, &report, &[expected]);
+}
+
+#[test]
+fn ancestor_reexport_client_io_glob_denies_public_seed_module() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([
+        (
+            PathBuf::from("lib.rs"),
+            "pub mod io; pub use crate::io::*;".to_owned(),
+        ),
+        (
+            PathBuf::from("io.rs"),
+            "pub mod client_prot;".to_owned(),
+        ),
+        (
+            PathBuf::from("io/client_prot.rs"),
+            "pub enum ClientProt {}".to_owned(),
+        ),
+    ]);
+    let closure = compute_deny_closure_sources(&[("client", &files)], &["client::io::client_prot"]);
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "client::client_prot",
+        "use client::client_prot::ClientProt;",
+        (FindingKind::UsePath, Some("client::client_prot::ClientProt")),
+    );
+}
+
+#[test]
+fn ancestor_reexport_api_root_glob_denies_public_seed_module() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([
+        (
+            PathBuf::from("lib.rs"),
+            "pub mod interact; pub mod prelude { pub use crate::*; }".to_owned(),
+        ),
+        (
+            PathBuf::from("interact.rs"),
+            "pub fn walk() {}".to_owned(),
+        ),
+    ]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "api::prelude::interact",
+        "fn f() { api::prelude::interact::walk(); }",
+        (
+            FindingKind::QualifiedPath,
+            Some("api::prelude::interact::walk"),
+        ),
+    );
+}
+
+#[test]
+fn ancestor_reexport_client_io_alias_denies_public_seed_module() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([
+        (
+            PathBuf::from("lib.rs"),
+            "pub mod io; pub use crate::io as wire;".to_owned(),
+        ),
+        (
+            PathBuf::from("io.rs"),
+            "pub mod client_prot;".to_owned(),
+        ),
+        (
+            PathBuf::from("io/client_prot.rs"),
+            "pub enum ClientProt {}".to_owned(),
+        ),
+    ]);
+    let closure = compute_deny_closure_sources(&[("client", &files)], &["client::io::client_prot"]);
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_reexported_seed_is_denied(
+        &closure,
+        "client::wire::client_prot",
+        "use client::wire::client_prot::ClientProt;",
+        (
+            FindingKind::UsePath,
+            Some("client::wire::client_prot::ClientProt"),
+        ),
+    );
+}
+
 #[test]
 fn aliases_are_scoped_to_inline_modules() {
     let report = action_report(
