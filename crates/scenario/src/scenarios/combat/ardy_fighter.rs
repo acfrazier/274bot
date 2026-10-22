@@ -3,14 +3,18 @@ const STEEL_ARROW_ID: i32 = 886;
 const BODY_TALISMAN_ID: i32 = 1446;
 pub(crate) const BLOOD_RUNE_ID: i32 = 565;
 const CHAOS_RUNE_ID: i32 = 562;
-/// Style watch of the bank-Off `ardy_fighter` cell. ArdyFighter sets its
-/// combat style only when out of combat after the first cake restock, so the
-/// first Guard fight can come before it. Frozen rs2b0t at `00d39a17` on this
-/// fixture set Strength at 7.5 s and 45.3 s; strong accounts at 44.6 s and
-/// 76.6 s. Worst style time 76.6 s = 128 game ticks at 600 ms, + 30 game
-/// ticks for the first Strength hit, + 60 game ticks of margin = 218 game
-/// ticks; the retained cap is 320 game ticks (192s). `ardy_fighter_bank`
-/// does not use this bar: a catch there costs a whole bank trip (see
+/// ArdyFighter sets its combat style only when out of combat after the first
+/// cake restock, so the first Guard fight can come before it. Frozen rs2b0t
+/// at `00d39a17` on this cell's fixture (A/S/HP 40, Defence 1, Thieving 5,
+/// Adamant scimitar, foodTarget 1, empty food) set Strength at 7.5 s and
+/// 45.3 s; strong accounts at 44.6 s and 76.6 s. Worst style time 76.6 s =
+/// 128 game ticks at 600 ms, + 30 game ticks for the first Strength hit, + 60
+/// game ticks for one market↔East Ardougne booth round trip (~20 tiles each
+/// way at one tile per game tick, plus open and deposit) = 218 game ticks;
+/// the retained cap is 320 game ticks (192s). Used by the bank-Off
+/// `ardy_fighter` cell and the seeded sibling's post-return watch. The
+/// earned-kill bank cell does not use it: there a catch or a public pile
+/// costs a whole bank trip before the style (see
 /// `ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS`).
 const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 /// One pre-style Loot-count trip session of `ardy_fighter_bank`, from the
@@ -387,7 +391,7 @@ pub(crate) fn ardy_fighter_bank_seeded_scenario() -> Scenario {
                 step.wait.budget_ticks = ARDY_FIGHTER_BANK_SEEDED_RETURN_WATCH_TICKS;
             }
             "watch fresh Strength XP after the seeded bank return" => {
-                step.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+                step.wait.budget_ticks = ARDY_FIGHTER_STYLE_WATCH_TICKS;
             }
             _ => {}
         }
