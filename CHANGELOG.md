@@ -151,6 +151,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   zone. Without navigation data, bots can work or wait at a resource already
   in range, but cannot walk to another resource.
 
+### Navigation
+
+- Walks can now go through content-gated doors and entrances the game locks
+  behind an item: carry the needed key (or wear the needed gear) and the
+  route goes through; without it the walk stops and names what is missing.
+  Some entrances instead need you to travel light — carrying or wearing a
+  listed item stops the route until it is left behind. The bot never moves,
+  equips or bank-deposits your gear to pass such a gate; the refusal says
+  what to change. Quest-locked crossings use verified quest-list completion;
+  a missing or stale journal observation does not grant access.
+- The Gatherer now offers both Grand Tree mine sites, the Desert Mining
+  Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
+  routes check the quest, keys and worn slave kit that the content requires.
+- The bundled map pack now uses format 17. The app rebuilds it automatically.
+  If you use a map pack you baked yourself, rebake it before use with
+  `cargo run -p nav --bin nav-pack`.
+
 ### Navigation checks
 
 - The built-in Elkoy and rune-essence navigation checks start beside the
@@ -495,26 +512,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   Busy search capacity or result storage delays a valid inspection instead
   of refusing it. Reset cancels the current inspection and prevents stale
   output. Recent results remain available until acknowledged or replaced.
-- Walks can now go through content-gated doors and entrances the game locks
-  behind an item: carry the needed key (or wear the needed gear) and the
-  route goes through; without it the walk stops and names what is missing.
-  Some entrances instead need you to travel light — carrying or wearing a
-  listed item stops the route until it is left behind. The bot never moves,
-  equips or bank-deposits your gear to pass such a gate; the refusal says
-  what to change. Quest-locked crossings use verified quest-list completion;
-  a missing or stale journal observation does not grant access.
-- The Gatherer now offers both Grand Tree mine sites, the Desert Mining
-  Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
-  routes check the quest, keys and worn slave kit that the content requires.
-  The lower mine requires The Tourist Trap complete and supports Power mode
-  only. Bank mode refuses it because the bot cannot remove the kit to leave
-  the camp.
-  The northern Desert Mining Camp mine stays hidden: its intervening
-  minecart needs a dialogue and a chance-gated crossing that is not modelled
-  yet. The remaining hidden-site counts are 85 on 289 and 66 on 274.
-- The bundled map pack now uses format 17. The app rebuilds it automatically.
-  If you use a map pack you baked yourself, rebake it before use with
-  `cargo run -p nav --bin nav-pack`.
 - Fixed: walks through the Ardougne lever to the Wilderness (for example to
   the Mage Arena bank) no longer stop at the lever on an account that has
   not pulled it before. The walk now answers the lever's Wilderness warning

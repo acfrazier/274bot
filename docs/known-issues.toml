@@ -195,3 +195,27 @@ listed = "0.2.5"
 target = "none"
 severity = "medium"
 owner = "T2.rest thieving"
+
+[[item]]
+id = "gated-entrances-desert-north"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The northern Desert Mining Camp mine stays hidden. Its minecart needs
+  dialogue and a chance-gated crossing that the bot does not yet support.
+  There are still 85 hidden gathering sites on revision 289 and 66 on 274."""
+first = "0.2.5"
+target = "none"
+severity = "low"
+owner = "nav-gated-entrances"
+
+[[item]]
+id = "gated-entrances-lower-mine-bank"
+kind = "known-issue"
+area = "Gatherer"
+text = """The lower Desert Mining Camp mine supports Power mode only and requires
+  The Tourist Trap complete. Bank mode refuses this site because the bot
+  cannot remove the slave kit to leave the camp."""
+first = "0.2.5"
+target = "none"
+severity = "low"
+owner = "nav-gated-entrances"
