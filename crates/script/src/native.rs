@@ -49,6 +49,11 @@ pub enum WalkCancelReason {
     UserInput,
 }
 
+/// The largest host walk outcome sequence. The host counts outcomes from 1
+/// and wraps from this value back to 1, so a sequence never sets bit 63:
+/// the slot keeps its cancel reason there (`ledger::ObservedWalkOutcome`).
+pub const WALK_OUTCOME_SEQ_MAX: u64 = u64::MAX >> 1;
+
 /// A walk-local permission bit. Inherit uses the captured global and
 /// per-script settings; Allow can add permission and Forbid can narrow it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

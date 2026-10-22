@@ -4253,6 +4253,74 @@ fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_c
     );
 }
 
+/// Review probe F1 (M0ReviewSol), with the gate expression replaced by the
+/// live cell's gate: an admitted compact route (`route` is None) is walking
+/// work, so the M0 cell must not inject.
+#[test]
+fn m0_host_gate_must_reject_a_live_compact_route() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(
+        bot.compact_route.is_some() && bot.route.is_none(),
+        "exercise the actual admitted compact route"
+    );
+    assert!(bot.has_route(), "the native walk has not arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["compact_route"], true);
+    assert_eq!(host["walk_work_live"], true);
+    assert!(
+        !crate::combat_live_proof_tests::m0_host_gate_open(&host),
+        "M0 must not inject on a live compact route"
+    );
+}
+
+/// The allowed case: the route arrived and the native walk owner is still
+/// registered and live.
+#[test]
+fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    assert!(!bot.walk_work_live(), "the route arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["native_walk_live"], true);
+    assert!(crate::combat_live_proof_tests::m0_host_gate_open(&host));
+}
+
+/// The host sequence stays in `1..=WALK_OUTCOME_SEQ_MAX`, so it never sets
+/// the bit where the slot packs its cancel reason.
+#[test]
+fn walk_outcome_sequence_wraps_below_the_reason_bit() {
+    let mut bot = NavBot {
+        walk_outcome_seq: script::native::WALK_OUTCOME_SEQ_MAX - 1,
+        ..NavBot::default()
+    };
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, script::native::WALK_OUTCOME_SEQ_MAX);
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, 1, "wraps to 1, never to 0 or bit 63");
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, 2);
+}
+
 #[test]
 fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
     let mut rig = open_rig(false);

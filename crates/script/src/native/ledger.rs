@@ -39,8 +39,12 @@ impl Runtime {
 
 /// The host walk outcome the slot observed last: its sequence and its cancel
 /// reason, packed in one word so the per-slot runtime keeps its size
-/// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The host counts the
-/// sequence one per outcome from 1, so it never reaches the reason bit.
+/// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The sequence uses
+/// bits 0-62 and the reason uses bit 63. The host keeps its sequence in
+/// `1..=WALK_OUTCOME_SEQ_MAX` (it wraps from the maximum back to 1), so a
+/// sequence never reaches bit 63. A sequence above that range breaks the
+/// host contract: debug builds panic, and release builds drop bit 63, so the
+/// sequence never changes the reason.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObservedWalkOutcome(u64);
 
@@ -48,12 +52,15 @@ impl ObservedWalkOutcome {
     const USER_INPUT: u64 = 1 << 63;
 
     pub fn new(seq: u64, cancel_reason: super::WalkCancelReason) -> Self {
-        debug_assert_eq!(seq & Self::USER_INPUT, 0, "walk outcome sequence overflow");
+        debug_assert!(
+            seq <= super::WALK_OUTCOME_SEQ_MAX,
+            "walk outcome sequence above WALK_OUTCOME_SEQ_MAX"
+        );
         let reason = match cancel_reason {
             super::WalkCancelReason::None => 0,
             super::WalkCancelReason::UserInput => Self::USER_INPUT,
         };
-        Self((seq & !Self::USER_INPUT) | reason)
+        Self((seq & super::WALK_OUTCOME_SEQ_MAX) | reason)
     }
 
     pub fn seq(self) -> u64 {
@@ -829,7 +836,7 @@ mod tests {
 
 #[cfg(test)]
 mod observed_walk_outcome_tests {
-    use super::super::WalkCancelReason;
+    use super::super::{WalkCancelReason, WALK_OUTCOME_SEQ_MAX};
     use super::ObservedWalkOutcome;
 
     #[test]
@@ -839,11 +846,31 @@ mod observed_walk_outcome_tests {
             ObservedWalkOutcome::default().cancel_reason(),
             WalkCancelReason::None
         );
-        for seq in [1, 41, u64::MAX >> 1] {
+        for seq in [1, 41, WALK_OUTCOME_SEQ_MAX - 1, WALK_OUTCOME_SEQ_MAX] {
             for reason in [WalkCancelReason::None, WalkCancelReason::UserInput] {
                 let outcome = ObservedWalkOutcome::new(seq, reason);
                 assert_eq!((outcome.seq(), outcome.cancel_reason()), (seq, reason));
             }
         }
+    }
+
+    /// A sequence above the host range breaks the host contract: debug
+    /// builds stop at the producer boundary.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "walk outcome sequence above WALK_OUTCOME_SEQ_MAX")]
+    fn sequence_above_the_host_range_panics_in_debug() {
+        let _ = ObservedWalkOutcome::new(WALK_OUTCOME_SEQ_MAX + 1, WalkCancelReason::None);
+    }
+
+    /// Release builds drop bit 63: the sequence never sets the reason.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn sequence_above_the_host_range_never_sets_the_reason_in_release() {
+        let outcome = ObservedWalkOutcome::new(u64::MAX, WalkCancelReason::None);
+        assert_eq!(
+            (outcome.seq(), outcome.cancel_reason()),
+            (WALK_OUTCOME_SEQ_MAX, WalkCancelReason::None)
+        );
     }
 }
