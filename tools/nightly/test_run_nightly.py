@@ -944,5 +944,68 @@ class MacQuietLockTests(unittest.TestCase):
             self.assertFalse(work.exists())
 
 
+@unittest.skipUnless(os.name == "posix" and Path("/bin/bash").is_file(),
+                     "the Mac nightly launcher requires Bash")
+class NightlyMacEnvironmentTests(unittest.TestCase):
+    def test_launcher_adds_cargo_home_to_launchd_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            cargo_home = home / ".cargo"
+            cargo_bin = cargo_home / "bin"
+            cargo_bin.mkdir(parents=True)
+            cargo = cargo_bin / "cargo"
+            cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            cargo.chmod(0o755)
+
+            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
+            config.parent.mkdir(parents=True)
+            capture = root / "environment.txt"
+            python = root / "capture-python"
+            python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
+                "\"$PATH\" \"$(command -v cargo)\" >> \"$MAC_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            values = {
+                "NIGHTLY_MAC_RUNNER": root / "runner",
+                "NIGHTLY_MAC_ROOT": root / "nightly-root",
+                "NIGHTLY_MAC_RUNS": root / "runs",
+                "NIGHTLY_MAC_STATUS": root / "status",
+                "NIGHTLY_MAC_CATALOG": root / "catalog",
+                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
+                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
+                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
+                "NIGHTLY_MAC_ISOHOME": root / "isohome",
+                "NIGHTLY_MAC_PYTHON": python,
+            }
+            config.write_text(
+                "".join(f"{name}={value}\n" for name, value in values.items()),
+                encoding="utf-8",
+            )
+            launchd_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            result = subprocess.run(
+                ["/bin/bash", str(HERE / "nightly-mac.sh")],
+                capture_output=True,
+                check=False,
+                env={
+                    "HOME": str(home),
+                    "MAC_CAPTURE": str(capture),
+                    "PATH": launchd_path,
+                },
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
+
+            self.assertEqual([row[0] for row in rows], ["main", "quest"])
+            for row in rows:
+                self.assertEqual(row[1], str(cargo_home))
+                self.assertTrue(row[2].startswith(f"{cargo_bin}{os.pathsep}"))
+                self.assertEqual(row[3], str(cargo))
+
+
 if __name__ == "__main__":
     unittest.main()

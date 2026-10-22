@@ -9,6 +9,9 @@ fi
 set -a
 . "$CONFIG"
 set +a
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export PATH="$CARGO_HOME/bin:$PATH"
+
 
 : "${NIGHTLY_MAC_RUNNER:?set NIGHTLY_MAC_RUNNER in $CONFIG}"
 : "${NIGHTLY_MAC_ROOT:?set NIGHTLY_MAC_ROOT in $CONFIG}"

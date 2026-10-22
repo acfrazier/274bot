@@ -61,6 +61,8 @@ Jobs run sequentially and share the runner's lock and build tree:
   connection because Q's world sets `maxConnected=1`. It never starts, stops or
   changes either engine. `panel-play` is practical because the LaunchAgent runs
   in the logged-in Aqua session and can open its own windows overnight.
+  The launcher adds `$CARGO_HOME/bin` to `PATH` (`$HOME/.cargo` by default),
+  because launchd uses a fixed `PATH`.
   The Mac launcher checks `MAC-QUIET.lock` before starting; the runner records a
   lock that appears while active and starts no later cells. FLOOR can check
   `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
