@@ -1200,8 +1200,7 @@ impl CombatRun {
     /// observed at begin is an earlier takeover's and never ends this step.
     fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
         cx.tick.cx.observed_walk_outcome_seq != self.walk_outcome_seq_at_begin
-            && cx.tick.cx.observed_walk_cancel_reason
-                == crate::native::WalkCancelReason::UserInput
+            && cx.tick.cx.observed_walk_cancel_reason == crate::native::WalkCancelReason::UserInput
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {

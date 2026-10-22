@@ -968,9 +968,8 @@ fn manual_takeover_after_begin_ends_the_combat_step_on_the_next_poll() {
         imp_plan_run_for_runner(cx)
     });
     assert!(
-        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, at_begin, |cx| run
-            .poll(cx))
-        .is_pending(),
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, at_begin, |cx| run.poll(cx))
+            .is_pending(),
         "no takeover yet"
     );
     // The machine's own walk already arrived: the host moves only the
