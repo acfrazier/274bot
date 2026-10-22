@@ -155,6 +155,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
 - Shared axe and pick swing messages no longer start recovery.
+- The Guardian no longer gives up fleeing a hostile random event while a
+  thieving stun stops the bot from moving. Release 0.2.4 counted the
+  stunned ticks as failed fleeing and handed control back within the
+  event NPC's reach.
 
 ### TUI
 

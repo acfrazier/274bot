@@ -444,3 +444,181 @@ fn guardian_r3_only_new_furthest_distance_resets_engaged_budget() {
     assert!(!status.hold && !status.ours, "nine ticks without a new maximum releases");
     assert_eq!(driver.walks.len(), attempts, "give-up sends no walk");
 }
+
+#[test]
+fn guardian_evade_stunned_ticks_do_not_consume_the_stalled_budget() {
+    // FIX-025-F-WATCHMAN recorded sequence: the Watchman is summoned, the
+    // bot fails a pickpocket attempt on a Man and the content applies its
+    // 8-tick stun (`pickpocket.dbrow:10`). The `stunned` walktrigger then
+    // cancels every flee walk and answers "You're stunned!" per attempt
+    // (`movecheck.rs2:1-6`), so the tile cannot change until the stun ends.
+    // Those server-blocked ticks must not spend the 9-tick stalled budget
+    // (Watchman `flee_distance` 7 + 2).
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -1, 0);
+    plant_npc_typed_with_op(&mut c, 0, 431, "Watchman", 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    let mut walks = driver.walks.len();
+    for stunned_tick in 1..=12 {
+        let line = if stunned_tick == 1 {
+            "You've been stunned!"
+        } else {
+            "You're stunned!"
+        };
+        c.add_chat(0, line, "");
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert!(
+            status.hold && status.ours,
+            "a server-blocked flee must not give up at stunned tick {stunned_tick}"
+        );
+        assert!(
+            driver.walks.len() > walks,
+            "the flee keeps attempting walks while stunned at tick {stunned_tick}"
+        );
+        walks = driver.walks.len();
+    }
+    // The stun has ended and the bot still makes no progress: the normal
+    // 9-tick stalled bound applies from here, unspent and unwidened.
+    for stalled_tick in 1..=9 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(
+            status.hold,
+            stalled_tick < 9,
+            "post-stun stalled tick {stalled_tick}"
+        );
+    }
+}
+
+#[test]
+fn guardian_evade_player_chat_stun_text_does_not_stop_the_stalled_count() {
+    // Only the server game message proves a blocked walk. The content
+    // sends both stun texts with `mes`. The client stores that message
+    // as chat type 0 with no sender. Another player can type the same
+    // text in public chat (type 2) or send it in a private message
+    // (type 3). Those lines must not stop the stalled count. The
+    // normal 9-tick bound (flee distance 7 + 2) still applies.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -1, 0);
+    plant_npc_typed_with_op(&mut c, 0, 431, "Watchman", 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    for tick_no in 1..=9 {
+        // Alternate public chat and private messages from another player.
+        let type_ = if tick_no % 2 == 1 { 2 } else { 3 };
+        c.add_chat(type_, "You're stunned!", "Mallory");
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(
+            status.hold,
+            tick_no < 9,
+            "player chat must not stop the stalled count at tick {tick_no}"
+        );
+    }
+}
+
+#[test]
+fn lost_tool_refit_player_chat_rejection_text_does_not_stop_the_repair() {
+    // Only the server game message proves a rejected refit. The lost
+    // tool handle sends "Nothing interesting happens." with `mes` for
+    // a wrong head (`macro_event_lost_axe.rs2:41-45`), and the client
+    // stores that message as chat type 0 with no sender. Another
+    // player can type the same text in public chat (type 2) or send
+    // it in a private message (type 3). Those lines must not stop
+    // the repair. The server line still does. The setup follows
+    // `lost_tool_refit_rejection_releases_the_gatherer`.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    g.tick(&mut drv, &snap, &settings, 0, None);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 1_200, None).hold);
+    assert_eq!(drv.menus.len(), 1);
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+    assert_eq!(drv.menus[0].2, 508);
+
+    c.ground_obj[0][1][0] = None;
+    plant_inv_named(&mut c, 508, Some("Axe head"));
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![493, 509, 0]),
+            link_obj_number: Some(vec![1, 1, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    drv.menus.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 1_800, None);
+    assert!(status.hold);
+    assert_eq!(
+        drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+        vec![
+            MiniMenuAction::USEHELD_START,
+            MiniMenuAction::USEHELD_ONHELD
+        ]
+    );
+
+    // One public line and one private line from another player, each
+    // with the exact rejection text. The repair must continue: the
+    // hold stays and the refit goes out again on each tick.
+    for (type_, at_ms) in [(2, 2_400), (3, 3_000)] {
+        drv.menus.clear();
+        c.add_chat(type_, "Nothing interesting happens.", "Mallory");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, at_ms, None);
+        assert_eq!(status.kind, Some(RandomKind::LostTool));
+        assert!(
+            status.hold && status.ours,
+            "player chat type {type_} must not stop the refit"
+        );
+        assert_eq!(
+            drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+            vec![
+                MiniMenuAction::USEHELD_START,
+                MiniMenuAction::USEHELD_ONHELD
+            ],
+            "the refit goes out again after player chat type {type_}"
+        );
+    }
+
+    // The server line (type 0, no sender) still ends the repair.
+    drv.menus.clear();
+    c.add_chat(0, "Nothing interesting happens.", "");
+    tick_at(&mut c, &mut snap);
+    let rejected = g.tick(&mut drv, &snap, &settings, 3_600, None);
+    assert_eq!(rejected.kind, Some(RandomKind::LostTool));
+    assert!(!rejected.hold && !rejected.ours);
+    assert!(
+        drv.menus.is_empty(),
+        "do not repeat a refit the game rejected"
+    );
+}
