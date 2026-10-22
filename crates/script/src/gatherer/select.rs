@@ -1721,11 +1721,7 @@ pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWo
         std::sync::LazyLock::new(|| {
             let pack = std::env::var_os("NAV_PACK")
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::path::PathBuf::from(
-                        "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-                    )
-                });
+                .expect("NAV_PACK must name the reviewed real 289 nav pack");
             std::sync::Arc::new(
                 nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
                     panic!(
@@ -4593,11 +4589,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();
@@ -4689,11 +4683,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();
@@ -4845,11 +4837,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         use api::obj_names::ItemDefView;
@@ -5025,11 +5015,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
-        let Some(_pack) = crate::ctx::test_support::local_asset_path(
-            "NAV_PACK",
-            "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            "real 289 nav pack",
-        ) else {
+        let Some(_pack) =
+            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        else {
             return;
         };
         let catalog = real_catalog();

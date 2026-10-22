@@ -1249,9 +1249,7 @@ mod bank_pick_capture {
         let pack = std::env::var_os("NAV_PACK")
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(
-                "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            ));
+            .expect("set NAV_PACK to the reviewed real 289 navpack");
         let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
@@ -1392,9 +1390,7 @@ mod bank_pick_capture {
         let pack = std::env::var_os("NAV_PACK")
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(
-                "/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-            ));
+            .expect("set NAV_PACK to the reviewed real 289 navpack");
         let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
