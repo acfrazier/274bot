@@ -4965,12 +4965,59 @@ fn m0_frame_tick(capture: &CombatCapture) -> Option<i64> {
         .and_then(|frame| frame["tick"].as_i64())
 }
 
+/// The host walk facts that the M0 takeover gate reads, as the receipt
+/// records them.
+pub(crate) fn m0_host_state(bot: &crate::script_runtime::NavBot) -> Value {
+    json!({
+        "route": bot.route.is_some(),
+        "compact_route": bot.compact_route.is_some(),
+        "has_route": bot.has_route(),
+        "pending_route": bot.pending_route.is_some(),
+        "route_ticket": bot.route_ticket.is_some(),
+        "route_work_pending": bot.route_work_pending(),
+        "bank_fetch": bot.bank_fetch.is_some(),
+        "carried_walk": bot.carried_walk.is_some(),
+        "walk_work_live": bot.walk_work_live(),
+        "native_walk_live": bot.native_walk.as_ref().is_some_and(|owner| owner.live()),
+        "walk_outcome_seq": bot.walk_outcome_seq,
+        "walk_outcome_request_id": bot.walk_outcome_request_id,
+        "manual_takeover_watermark": bot.manual_takeover_watermark,
+        "posted_cancel_reason": format!("{:?}", bot.walk_outcome_cancel_reason),
+        "compiled_cancel_reason": format!("{:?}", bot.compiled_walk_cancel_reason()),
+        "user_move_intent_seq": bot.user_move_intent_seq,
+    })
+}
+
+/// Every recorded fact that means host walking work is live
+/// (`NavBot::walk_work_live` and its parts).
+const M0_HOST_WALK_WORK: [&str; 9] = [
+    "route",
+    "compact_route",
+    "has_route",
+    "pending_route",
+    "route_ticket",
+    "route_work_pending",
+    "bank_fetch",
+    "carried_walk",
+    "walk_work_live",
+];
+
+/// The M0 takeover gate: the recorded host state shows no walking work. A
+/// walk still in flight ends the fight by the machine's own walk receipt, so
+/// M0 injects only after the walk arrived. The registered native walk owner
+/// may stay live (`native_walk_live`): that is the arrived case. A missing
+/// host entry keeps the gate closed.
+pub(crate) fn m0_host_gate_open(host: &Value) -> bool {
+    M0_HOST_WALK_WORK.iter().all(|fact| host[*fact] == false)
+}
+
 /// The common takeover facts both cells require: injected once on an active
-/// step after an accepted Imp attack, with live walking work, and the intent
-/// counter moved.
+/// step after an accepted Imp attack, with live walking work in the slot, no
+/// host walking work in flight, and the intent counter moved.
 fn m0_takeover_valid(takeover: &Value) -> bool {
     takeover["slot_live_walking_operation"] == true
         && takeover["host_walk_in_flight"] == false
+        && m0_host_gate_open(&takeover["host_before"])
         && takeover["intent_seq"]["after"].as_u64() > takeover["intent_seq"]["before"].as_u64()
         && m0_step_active(&takeover["active_status"])
         && takeover["first_imp_attack"].is_object()
@@ -5191,25 +5238,9 @@ impl M0Drive {
         let (Some(active), Some(attack), Some((x, z, level))) = (active, attack, here) else {
             return Ok(());
         };
-        let host = |play: &super::Play| {
-            play.navs.lock().unwrap().get(account).map(|bot| {
-                json!({
-                    "route": bot.route.is_some(),
-                    "pending_route": bot.pending_route.is_some(),
-                    "native_walk_live": bot.native_walk.as_ref().is_some_and(|owner| owner.live()),
-                    "walk_outcome_seq": bot.walk_outcome_seq,
-                    "walk_outcome_request_id": bot.walk_outcome_request_id,
-                    "manual_takeover_watermark": bot.manual_takeover_watermark,
-                    "posted_cancel_reason": format!("{:?}", bot.walk_outcome_cancel_reason),
-                    "compiled_cancel_reason": format!("{:?}", bot.compiled_walk_cancel_reason()),
-                    "user_move_intent_seq": bot.user_move_intent_seq,
-                })
-            })
-        };
+        let host = |play: &super::Play| play.navs.lock().unwrap().get(account).map(m0_host_state);
         let before_host = host(play).unwrap_or(Value::Null);
-        // A route still being followed is a walk in flight: the machine's own
-        // walk then ends the fight by its receipt. M0 is the arrived case.
-        if before_host["route"] == true || before_host["pending_route"] == true {
+        if !m0_host_gate_open(&before_host) {
             return Ok(());
         }
         let slot_live = super::script_slot(&play.scripts, account)
@@ -5279,7 +5310,7 @@ impl M0Drive {
                 "step_to": step_to,
                 "intent_seq": {"before": before, "after": after},
                 "slot_live_walking_operation": slot_live,
-                "host_walk_in_flight": false,
+                "host_walk_in_flight": !m0_host_gate_open(&before_host),
                 "host_before": before_host,
                 "host_after": host(play).unwrap_or(Value::Null),
                 "state_after": format!("{state_after:?}"),
@@ -11621,6 +11652,9 @@ fn m0_oracle_capture(paused: bool) -> CombatCapture {
         "request": {"op": "npc", "name": "Imp", "action": "Attack", "index": 42},
     });
     let mut capture = CombatCapture::default();
+    // The arrived case: no host walking work, the native owner still live.
+    let mut host_before = m0_host_state(&crate::script_runtime::NavBot::default());
+    host_before["native_walk_live"] = json!(true);
     capture.statuses.push(active.clone());
     capture.actions.push(attack.clone());
     capture.frames = (95..=115)
@@ -11636,6 +11670,7 @@ fn m0_oracle_capture(paused: bool) -> CombatCapture {
         "intent_seq": {"before": 0, "after": 1},
         "slot_live_walking_operation": true,
         "host_walk_in_flight": false,
+        "host_before": host_before,
         // A Blocked native card stops its slot: live off-try1 read Idle.
         "state_after": if paused { "Paused" } else { "Idle" },
         "statuses_before": 1,
@@ -11742,6 +11777,22 @@ fn m0_manual_oracle_accepts_one_terminal_and_rejects_each_bad_behaviour() {
     m0_event_mut(&mut ineligible, "M0Takeover")["slot_live_walking_operation"] = json!(false);
     assert!(!m0_manual_ready(&ineligible), "an ineligible takeover");
 
+    for fact in M0_HOST_WALK_WORK {
+        let mut in_flight = m0_oracle_capture(false);
+        m0_event_mut(&mut in_flight, "M0Takeover")["host_before"][fact] = json!(true);
+        assert!(
+            !m0_manual_ready(&in_flight),
+            "a takeover with host walking work ({fact})"
+        );
+    }
+
+    let mut unrecorded = m0_oracle_capture(false);
+    m0_event_mut(&mut unrecorded, "M0Takeover")["host_before"] = Value::Null;
+    assert!(
+        !m0_manual_ready(&unrecorded),
+        "a takeover without recorded host state"
+    );
+
     let mut twice = m0_oracle_capture(false);
     m0_event_mut(&mut twice, "M0HostLog")["lines"]
         .as_array_mut()
@@ -11770,6 +11821,15 @@ fn m0_paused_oracle_accepts_a_restart_and_rejects_each_bad_behaviour() {
         "observed_tick": 105,
     }));
     assert!(!m0_paused_ready(&terminal), "a terminal after Resume");
+
+    for fact in ["compact_route", "route_ticket"] {
+        let mut in_flight = m0_oracle_capture(true);
+        m0_event_mut(&mut in_flight, "M0Takeover")["host_before"][fact] = json!(true);
+        assert!(
+            !m0_paused_ready(&in_flight),
+            "a takeover with host walking work ({fact})"
+        );
+    }
 
     let mut no_attack = m0_oracle_capture(true);
     no_attack.actions.pop();

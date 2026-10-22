@@ -6034,6 +6034,17 @@ impl NavBot {
         self.route_ticket.is_some() || self.pending_route.is_some()
     }
 
+    /// Host walking work still in progress: a route being followed (legacy
+    /// or compact), route work waiting for a pump turn or a worker, a bank
+    /// fetch, or a carried walk. A registered native walk owner is not part
+    /// of it, because the owner stays live after its route arrives.
+    pub(crate) fn walk_work_live(&self) -> bool {
+        self.has_route()
+            || self.route_work_pending()
+            || self.bank_fetch.is_some()
+            || self.carried_walk.is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn set_route_work_preparing_for_test(&mut self) {
         self.pending_route = Some(Box::new(RouteDemand::Preparing {
@@ -6188,12 +6199,15 @@ impl NavBot {
         self.compact_route = None;
     }
 
+    /// Counts in `1..=WALK_OUTCOME_SEQ_MAX` and wraps back to 1: the slot
+    /// packs its cancel reason in bit 63 (`script::native::WALK_OUTCOME_SEQ_MAX`).
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
-        self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
-        if self.walk_outcome_seq == 0 {
-            self.walk_outcome_seq = 1;
-        }
+        self.walk_outcome_seq = if self.walk_outcome_seq >= script::native::WALK_OUTCOME_SEQ_MAX {
+            1
+        } else {
+            self.walk_outcome_seq + 1
+        };
     }
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
