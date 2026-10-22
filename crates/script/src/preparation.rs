@@ -16,7 +16,7 @@ use api::work::{
 };
 use parking_lot::Mutex;
 
-use crate::work_admission::{QualifiedUnit, WorkService, WorkStartError};
+use crate::work_admission::{QualifiedUnit, WorkService, WorkStartError, WorkWaitError};
 
 /// The three complete preparation families admitted by I-work-prep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +419,8 @@ pub enum PreparationError {
     Unavailable(String),
     #[error("preparation ledger: {0}")]
     Ledger(#[from] LedgerError),
+    #[error("preparation wait: {0}")]
+    Wait(#[from] WorkWaitError),
     #[error("preparation job: {0}")]
     Job(#[from] JobError<Infallible>),
     #[error("preparation cancelled: {0:?}")]
@@ -510,7 +512,8 @@ impl<R: Send + 'static> PreparedTask<R> {
 
     /// Wait for and take a terminal. Only callers that are already off-pump
     /// or have checked `is_finished()` may block here. In a pump or tick, use
-    /// `is_finished()` first; the wait releases the service mutex.
+    /// `is_finished()` first; the wait releases the service mutex. Pending
+    /// work on the caller's own background worker returns a typed error.
     pub fn join(mut self) -> Result<R, PreparationError> {
         // Leave the ticket in `self` until terminal custody transfers. If
         // waiting or consuming fails, Drop still abandons this exact job.
@@ -712,6 +715,72 @@ mod tests {
         MAX_RETAINED_FOLDER_DOCUMENT_BYTES,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn nested_background_joins_fail_fast_without_latching_an_outage() {
+        use super::{submit, PreparationError, PreparationKind};
+        use crate::work_admission::{WorkService, WorkWaitError};
+        use api::identity::Scope;
+        use std::time::{Duration, Instant};
+
+        let input = PreparationInput::new(1, 0, 0, 0).unwrap();
+        for kind in [
+            PreparationKind::Card,
+            PreparationKind::Catalogue,
+            PreparationKind::Profile,
+        ] {
+            let started = Instant::now();
+            let outer = submit(PreparationKind::Profile, Scope::Process, input, move |_| {
+                submit(kind, Scope::Process, input, |_| 7).unwrap().join()
+            })
+            .unwrap();
+            while !outer.is_finished() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "a nested join must not wait for the worker stall latch"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(matches!(
+                outer.join().unwrap(),
+                Err(PreparationError::Wait(WorkWaitError::WouldDeadlock))
+            ));
+            assert!(WorkService::shared().unwrap().lock().worker_available());
+            assert_eq!(
+                submit(kind, Scope::Process, input, |_| 11)
+                    .unwrap()
+                    .join()
+                    .unwrap(),
+                11,
+                "the worker continues after the rejected nested join"
+            );
+        }
+    }
+
+    #[test]
+    fn worker_can_consume_an_already_finished_background_task() {
+        use super::{submit, PreparationKind};
+        use api::identity::Scope;
+        use std::time::{Duration, Instant};
+
+        let input = PreparationInput::new(1, 0, 0, 0).unwrap();
+        let finished = submit(PreparationKind::Profile, Scope::Process, input, |_| 13).unwrap();
+        let started = Instant::now();
+        while !finished.is_finished() {
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            submit(PreparationKind::Profile, Scope::Process, input, move |_| {
+                finished.join()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap(),
+            13
+        );
+    }
 
     #[test]
     fn folder_reserves_fixed_declared_maxima_plus_measured_settings_and_path() {

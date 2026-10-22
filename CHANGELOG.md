@@ -219,6 +219,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   changes to one of these settings wait for the disk, the later change
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
+- The panel no longer stops during startup with "Background work is
+  unavailable" after one minute.
 
 #### Profiles
 

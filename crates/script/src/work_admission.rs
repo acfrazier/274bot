@@ -115,6 +115,16 @@ pub enum WorkStartError {
     OsRandom,
 }
 
+/// Failure to wait for an admitted job's terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WorkWaitError {
+    #[error("work terminal ledger: {0}")]
+    Ledger(#[from] LedgerError),
+    /// The sole background worker cannot run queued work while it waits.
+    #[error("the WorkAdmission worker cannot wait for its own pending background work")]
+    WouldDeadlock,
+}
+
 /// Failure to complete an orderly worker shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WorkShutdownError {
@@ -497,11 +507,12 @@ impl WorkService {
     }
 
     /// Wait for a ticket's terminal from a non-pump context. The service
-    /// mutex is released before each condition-variable wait.
+    /// mutex is released before each condition-variable wait. A wait for
+    /// pending background work from this service's worker fails immediately.
     pub fn wait_terminal<F: WorkFamilySpec>(
         shared: &Arc<parking_lot::Mutex<Self>>,
         ticket: &WorkTicket<F>,
-    ) -> Result<(), LedgerError> {
+    ) -> Result<(), WorkWaitError> {
         loop {
             let (notifier, epoch) = {
                 let service = shared.lock();
@@ -513,10 +524,18 @@ impl WorkService {
                     .filter(|entry| entry.matches(ticket))
                     .ok_or(LedgerError::StaleIdentity)?;
                 if entry.terminal.is_consumed() {
-                    return Err(LedgerError::AlreadyConsumed);
+                    return Err(LedgerError::AlreadyConsumed.into());
                 }
                 if !entry.terminal.is_pending() {
                     return Ok(());
+                }
+                if entry.family.policy().execution() == WorkExecution::BackgroundWorker
+                    && service
+                        ._worker
+                        .as_ref()
+                        .is_some_and(|worker| worker.thread().id() == thread::current().id())
+                {
+                    return Err(WorkWaitError::WouldDeadlock);
                 }
                 (Arc::clone(&service.shared.notifier), epoch)
             };

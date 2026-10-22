@@ -701,7 +701,10 @@ impl ProfileError {
 }
 
 /// One capped process-profile reservation for captured inputs, decode
-/// scratch, and the prepared shared-client template.
+/// scratch, and the prepared shared-client template. Inline quest preparation
+/// shares the profile's 32 MiB scratch and 32 MiB result caps. Its former
+/// 8 MiB scratch / 2 MiB result charge is not reserved separately.
+/// The combined peak is unmeasured.
 const PROFILE_PREPARATION_INPUT_BYTES: usize = 64 * 1024 * 1024;
 const PROFILE_PREPARATION_SCRATCH_BYTES: usize = 32 * 1024 * 1024;
 const PROFILE_PREPARATION_RESULT_BYTES: usize = 32 * 1024 * 1024;
@@ -730,6 +733,9 @@ pub struct ProfilePreparation {
     inputs: Arc<PreparationInputs>,
     observer: Box<host_play::progress::ProfileProgressObserver>,
     latest: LatestProgress,
+    /// Start at the real Load stage with embedded game data, without local assets.
+    #[cfg(test)]
+    load_fixture: Option<host_play::ProfileSelection>,
 }
 
 impl ProfilePreparation {
@@ -753,11 +759,19 @@ impl ProfilePreparation {
         )
         .map_err(|error| SubmitError::refused(error.to_string()))?;
         let mut steps = PreparationSteps::new(Arc::clone(&self.inputs), (*self.observer).clone());
+        #[cfg(test)]
+        if let Some(selection) = &self.load_fixture {
+            steps.template = Some(
+                selection
+                    .begin_template_load_for_test()
+                    .map_err(SubmitError::refused)?,
+            );
+        }
         let task = script::preparation::submit_cooperative(
             script::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
-            move |_| steps.step(),
+            move |worker| steps.step(worker),
         )
         .map_err(submit_error)?;
         Ok(PreparationJob {
@@ -767,20 +781,12 @@ impl ProfilePreparation {
         })
     }
 
-    /// Run the whole preparation on this thread (tests).
+    /// Submit the whole preparation and wait outside the worker (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_blocking(&self) -> Result<ProfileTemplate, ProfileError> {
-        let mut steps = PreparationSteps::new(
-            Arc::clone(&self.inputs),
-            host_play::progress::ProfileProgressObserver::default(),
-        );
-        loop {
-            if let script::preparation::CooperativePreparationStep::Complete { output, .. } =
-                steps.step()
-            {
-                return output.map(ProfileTemplate);
-            }
-        }
+        self.submit()
+            .map_err(|error| ProfileError(ProfileFault::Worker(error.to_string())))?
+            .join()
     }
 }
 
@@ -968,6 +974,7 @@ impl PreparationSteps {
 
     fn step(
         &mut self,
+        worker: &mut api::selected::FamilyPreparation,
     ) -> script::preparation::CooperativePreparationStep<
         Result<Arc<SharedClientTemplate>, ProfileError>,
     > {
@@ -1003,9 +1010,10 @@ impl PreparationSteps {
                 },
             };
         };
-        match template.step(
+        match template.step_on_worker(
             std::time::Instant::now() + host_play::TEMPLATE_STEP_WAIT,
             &self.observer,
+            worker,
         ) {
             host_play::TemplateStep::Continue { completed, total } => {
                 Step::Continue { completed, total }
@@ -1118,6 +1126,8 @@ impl ProfileLauncher {
             }),
             observer: Box::new(observer),
             latest,
+            #[cfg(test)]
+            load_fixture: None,
         })
     }
 
