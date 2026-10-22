@@ -926,7 +926,8 @@ fn reexport_r5_unknown_bare_name_fails_closed() {
 
     for source in ["pub use Unknown as Export;", "pub type Export = Unknown;"] {
         let files = SourceMap::from([(PathBuf::from("lib.rs"), source.to_owned())]);
-        let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+        let closure =
+            compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
         assert!(
             closure
                 .findings
