@@ -209,6 +209,7 @@ fn with_tick_output_reach<R>(
         cx: crate::native::ActionContext {
             evidence,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
                 .with_reach(reach)

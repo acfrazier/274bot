@@ -1122,23 +1122,6 @@ struct CombatRun {
     trace_event: Option<StepTraceEvent>,
 }
 
-/// Whether walk outcome `seq` was cancelled by user input. The cancel reason
-/// lives in the isolate's observed scene, which exists only with `load`.
-#[cfg(feature = "load")]
-fn user_walk_cancelled(seq: u64) -> bool {
-    crate::observed::with(|scene| {
-        let latest = scene.latest();
-        latest.walk_outcome_seq() == Some(seq)
-            && latest.walk_outcome_cancel_reason()
-                == Some(crate::isolate_fb::WalkCancelReason::UserInput)
-    })
-}
-
-#[cfg(not(feature = "load"))]
-fn user_walk_cancelled(_seq: u64) -> bool {
-    false
-}
-
 impl CombatRun {
     fn capture_prayer_cleanup(&mut self) {
         match self.action.as_ref() {
@@ -1212,12 +1195,13 @@ impl CombatRun {
         }
     }
 
+    /// A manual takeover after this step began. The host publishes the
+    /// takeover's own walk outcome sequence with `UserInput`; an outcome
+    /// observed at begin is an earlier takeover's and never ends this step.
     fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
-        let current_seq = cx.tick.cx.observed_walk_outcome_seq;
-        if current_seq == self.walk_outcome_seq_at_begin {
-            return false;
-        }
-        user_walk_cancelled(current_seq)
+        cx.tick.cx.observed_walk_outcome_seq != self.walk_outcome_seq_at_begin
+            && cx.tick.cx.observed_walk_cancel_reason
+                == crate::native::WalkCancelReason::UserInput
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {

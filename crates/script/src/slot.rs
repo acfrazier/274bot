@@ -2539,11 +2539,18 @@ impl SlotScript {
         }
     }
 
-    /// Only observations update the walk stamp. A matching physical terminal
-    /// retires its seat walk-release slot once; guardian hold defers that edge.
-    pub fn observe_walk_outcome(&mut self, seq: u64, terminal: Option<SeatWalkTerminal>) -> bool {
+    /// Only observations update the walk stamp and its cancel reason. A
+    /// matching physical terminal retires its seat walk-release slot once;
+    /// guardian hold defers that edge.
+    pub fn observe_walk_outcome(
+        &mut self,
+        seq: u64,
+        cancel_reason: crate::native::WalkCancelReason,
+        terminal: Option<SeatWalkTerminal>,
+    ) -> bool {
         let changed = self.native_runtime.observed_walk_outcome_seq != seq;
         self.native_runtime.observed_walk_outcome_seq = seq;
+        self.native_runtime.observed_walk_cancel_reason = cancel_reason;
         if changed {
             let id = match terminal {
                 Some(SeatWalkTerminal::Native(raw)) => native_walk_id(raw.get()),
