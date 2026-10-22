@@ -1,7 +1,7 @@
 # 274bot
 
 **Run a whole fleet of game bots from one window.** 274bot is a bot host for a
-2005-era online game (revision 289, with revision 274 on a best-effort basis).
+2005-era online game (revision 289; revision 274 may work but is not tested).
 You add your accounts, pick a script, and 274bot plays them for you: gathering,
 quests, clue trails and walking across the map. It runs on macOS, Windows and
 Linux. It is in **beta**.
@@ -37,11 +37,11 @@ These steps use the public server, **rs2b2t**. You need your own account on it.
 1. **Unpack the package.** Keep its folders together: the app looks for `nav/`
    and `map/` next to it.
 2. **Open the app.** On macOS, open `274bot.app`. On Windows and Linux, open a
-   terminal in the folder and run `panel-play --profile rs2b2t`
+   terminal in the folder and run `./panel-play --profile rs2b2t`
    (`.\panel-play.exe --profile rs2b2t` on Windows). The first start downloads the
    game files and shows a loading bar. Later starts reuse them.
 3. **Create your vault.** The vault is the encrypted file that holds your
-   accounts. In the side panel, type a passphrase into **new vault passphrase**
+   accounts. In the panel on the right, type a passphrase into **new vault passphrase**
    and click **Create vault**. Keep the passphrase safe. If you lose it, the only
    way back in is **Reset vault**, which deletes your saved accounts.
 4. **Add an account.** Click **Profiles**, then **New profile**. Type your game
@@ -90,7 +90,9 @@ you choose.
 
 ## Built on rs2b0t
 
-274bot exists because of **[rs2b0t](https://github.com/rs2b2t/rs2b0t)**. If you've botted on rs2b2t, you already know what it gets right: a whole fleet of bots running from one window, a typed script API that makes writing a bot genuinely pleasant, walking that takes your bots across the map on its own, and quest and clue engines that grind through the tedious parts for you. 274bot is an attempt at the best version of that experience: rebuilt in Rust so every bot is lighter and faster, while keeping rs2b0t's script API so its scripts can run here (see [What works and what does not](#what-works-and-what-does-not)).
+274bot exists because of **[rs2b0t](https://github.com/rs2b2t/rs2b0t)**. If you've botted on rs2b2t, you already know what it gets right: a whole fleet of bots running from one window, a typed script API that makes writing a bot genuinely pleasant, walking that takes your bots across the map on its own, and quest and clue engines that grind through the tedious parts for you. 
+
+274bot is an attempt at the best version of that experience: rebuilt in Rust so every bot is lighter and faster, while keeping rs2b0t's script API so its scripts can run here (see [What works and what does not](#what-works-and-what-does-not)).
 
 A lot of 274bot comes straight from that work. The interface is modelled on rs2b0t's, drawn with ImGui instead of Electron; our quest Paths started from its AIOQuester; and parts of our game data come from it (MIT, © 2026 N64Jive; details in [NOTICE.md](NOTICE.md)). Thank you to **[everyone who has contributed to rs2b0t](https://github.com/rs2b2t/rs2b0t/graphs/contributors)**.
 

@@ -46,8 +46,9 @@ Each rule ends with a test you can apply when you review a page.
     give the message and the fix, or link to a row of the troubleshooting table.
 12. **Plain tables.** At most six columns, no lists inside cells, no table that
     needs sideways scrolling.
-13. **Size.** A how-to page has 800 words or fewer. A reference section has 400
-    words or fewer. Split a file that grows past 1,000 lines.
+13. **Size.** A how-to page has 800 words or fewer. A page that also holds a
+    requirements list or a troubleshooting table may be longer. A reference
+    section has 400 words or fewer. Split a file that grows past 1,000 lines.
 14. **Use the glossary words.** Do not swap in a synonym. If a word is missing
     from the glossary, add it in the same change.
 
