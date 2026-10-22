@@ -236,3 +236,49 @@ listed = "0.2.5"
 target = "none"
 severity = "medium"
 owner = "host lifecycle"
+
+[[item]]
+id = "flaxrunner-spinner-bank-checks"
+kind = "known-issue"
+area = "Scripts"
+text = """In the FlaxRunner script, the Spinner banking step does not check whether
+  the walk to the Seers' Village bank or the bank opening succeeded before it
+  tries to deposit. If either step fails once, the deposit does nothing for
+  that trip and the trip counter still increases. The script retries on the
+  next loop, so work continues, but a trip can be wasted. The fix belongs to
+  the upstream script."""
+first = "0.2.5"
+target = "none"
+severity = "low"
+owner = "upstream rs2b0t FlaxRunner"
+
+[[item]]
+id = "herblore-secondaries-low-hp-starve"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t HerbloreSecondaries script does not eat while it walks, and its
+  eat rule refuses a lobster above 5 hitpoints because the 12-point heal does
+  not fit a low-Hitpoints account. On a low-level account the red spiders'
+  eggs trip through Edgeville dungeon can kill the bot with food still in its
+  pack. Run this script on an account with mid-level combat stats (the
+  script's own tests use level 40) until the script is fixed upstream."""
+first = "0.2.5"
+target = "none"
+severity = "medium"
+owner = "scripts-misc"
+
+[[item]]
+id = "gnome-magic-chopper-north-bank-stair"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t GnomeMagicChopper script looks for the Gnome Stronghold
+  bank's north staircase in the wrong place, a few tiles from the real
+  stairs. If its first walk to the bank fails and it switches to the north
+  staircase, that bank trip can fail. The south staircase works, and the
+  script usually recovers on a later trip. If a fletching bank trip gets
+  stuck, move the bot beside the south staircase and restart the script.
+  The fix belongs to the upstream script."""
+first = "0.2.5"
+target = "none"
+severity = "low"
+owner = "scripts-misc"

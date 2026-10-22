@@ -1357,11 +1357,19 @@ fn pair_fleet_seed() -> Seed {
 }
 
 fn pair_watch_settings(name: &'static str, start_script: &'static str) -> ScenarioSettings {
+    pair_watch_settings_with_deadline(name, start_script, SCRIPT_GOLD_DEADLINE)
+}
+
+fn pair_watch_settings_with_deadline(
+    name: &'static str,
+    start_script: &'static str,
+    deadline: Duration,
+) -> ScenarioSettings {
     ScenarioSettings {
         full_rate: true,
         only_render_selected: false,
         require_mainland_base: true,
-        deadline: SCRIPT_GOLD_DEADLINE,
+        deadline,
         start_script: Some(start_script),
         terminal_shot: Some(name),
         nav: gold_script_nav(),
@@ -1664,7 +1672,11 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
             PairCompanionKind::FlaxSpinner,
             prep_barrier,
         )],
-        settings: pair_watch_settings("flax_runner", "FlaxRunner"),
+        settings: pair_watch_settings_with_deadline(
+            "flax_runner",
+            "FlaxRunner",
+            FLAX_RUNNER_DEADLINE,
+        ),
     }
 }
 
