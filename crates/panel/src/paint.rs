@@ -568,15 +568,28 @@ impl PaintOverlay {
                     }
                 }
             }
+            // Reserve the host controls before the text rows. The rows
+            // stop at rows_bottom. A later button draws only when it
+            // leaves room for every host control after it. Pause and
+            // Stop stay drawn when the rows fill the dock.
+            let mut host_left = paint
+                .buttons()
+                .filter(|btn| btn.control().is_some())
+                .count();
+            let rows_bottom = (content_bottom - host_left as f32 * row_h).max(content_top);
             let mut ty = content_top;
             for row in paint.lines() {
                 self.lines.push(row.clone());
-                if ty + line_step <= content_bottom {
+                if ty + line_step <= rows_bottom {
                     dl.add_text_with_font(font, font_sz, [body_left, ty], TEXT, row, 0.0, None);
                     ty += line_step;
                 }
             }
-            let _font = ui.push_font_with_size(None, font_sz);
+            // The rows take a physical font size on the draw list. A
+            // pushed font size is logical. Dear ImGui multiplies it by
+            // FontScaleDpi. Divide by the display scale so that the
+            // label glyphs match the body glyphs at every scale.
+            let _font = ui.push_font_with_size(None, font_sz / scale);
             let fp = ui.clone_style().frame_padding();
             let _pad = ui.push_style_var(StyleVar::FramePadding([
                 (fp[0] / scale * s).max(0.0),
@@ -585,7 +598,15 @@ impl PaintOverlay {
             for (index, btn) in paint.buttons().enumerate() {
                 #[cfg(test)]
                 self.button_labels.push(btn.label().to_owned());
-                if ty + row_h <= content_bottom {
+                let is_host = btn.control().is_some();
+                if is_host {
+                    host_left = host_left.saturating_sub(1);
+                }
+                let limit = content_bottom - host_left as f32 * row_h;
+                if is_host && ty + row_h > limit {
+                    ty = (limit - row_h).max(y);
+                }
+                if ty + row_h <= limit {
                     ui.set_cursor_screen_pos([body_left, ty]);
                     let hit = [body_left, ty, body_left + body_w, ty + row_h];
                     self.button_hits.push(hit);
@@ -1300,6 +1321,92 @@ mod tests {
         assert!(half_hit[3] <= half_chat[1] + half_chat[3] + 0.5);
     }
 
+    /// Button labels must match the body text size at every display
+    /// scale. The body rows take a physical size on the draw list. A
+    /// pushed font size takes a logical size because Dear ImGui
+    /// multiplies it by FontScaleDpi. This test reads the glyph
+    /// triangles that the frame emitted and compares their heights.
+    #[test]
+    fn paint_button_labels_match_body_text_at_display_scale_2() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0_f32, 1.5, 2.0] {
+            let mut ctx = crate::test_support::imgui_context();
+            crate::app::apply_ui_scale(ctx.style_mut(), scale);
+            let mut overlay = PaintOverlay::new();
+            let p = paint_with_button(Some("H"), &["HHH"], "go", "HHH");
+            let display = [900.0 * scale, 700.0 * scale];
+            let size = [765.0 * scale, 503.0 * scale];
+            ctx.prepare_frame(
+                FramePrepareOptions::new(display, 1.0 / 60.0).renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                let _ = ui
+                    .window("Game")
+                    .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                    .size(display, dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let paint_frame = p.frame();
+                        overlay.frame(ui, None, Some(paint_frame.view()), [0.0, 0.0], size);
+                    });
+            }
+            let button = overlay
+                .button_hits
+                .first()
+                .copied()
+                .expect("the button was laid out");
+            let chat = chatbox_rect([0.0, 0.0], size);
+            let inside = |rect: [f32; 4], cx: f32, cy: f32| {
+                cx >= rect[0] && cx <= rect[2] && cy >= rect[1] && cy <= rect[3]
+            };
+            let chat_rect = [chat[0], chat[1], chat[0] + chat[2], chat[1] + chat[3]];
+            let draw_data = ctx.render();
+            let (mut body_h, mut label_h) = (0.0_f32, 0.0_f32);
+            for list in draw_data.draw_lists() {
+                let verts = list.vtx_buffer();
+                for tri in list.idx_buffer().as_chunks::<3>().0 {
+                    let vs = [
+                        &verts[tri[0] as usize],
+                        &verts[tri[1] as usize],
+                        &verts[tri[2] as usize],
+                    ];
+                    let u_range = vs.iter().map(|v| v.uv[0]).fold(f32::NEG_INFINITY, f32::max)
+                        - vs.iter().map(|v| v.uv[0]).fold(f32::INFINITY, f32::min);
+                    let v_range = vs.iter().map(|v| v.uv[1]).fold(f32::NEG_INFINITY, f32::max)
+                        - vs.iter().map(|v| v.uv[1]).fold(f32::INFINITY, f32::min);
+                    if u_range <= 0.0 || v_range <= 0.0 {
+                        continue;
+                    }
+                    let min_x = vs.iter().map(|v| v.pos[0]).fold(f32::INFINITY, f32::min);
+                    let max_x = vs
+                        .iter()
+                        .map(|v| v.pos[0])
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let min_y = vs.iter().map(|v| v.pos[1]).fold(f32::INFINITY, f32::min);
+                    let max_y = vs
+                        .iter()
+                        .map(|v| v.pos[1])
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let (cx, cy) = ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+                    let h = max_y - min_y;
+                    if inside(button, cx, cy) {
+                        label_h = label_h.max(h);
+                    } else if inside(chat_rect, cx, cy) {
+                        body_h = body_h.max(h);
+                    }
+                }
+            }
+            assert!(
+                body_h > 5.0 * scale,
+                "body glyphs appear in the draw list at scale {scale}"
+            );
+            assert!(
+                (label_h - body_h).abs() <= 1.5,
+                "at scale {scale} the label glyph height {label_h} differs from the body glyph height {body_h}"
+            );
+        }
+    }
+
     fn jive_strip_paint(status: &str) -> TestPaint {
         TestPaint::new(Some("JiveCrafting"), &["Overview row"])
             .with_generation(3)
@@ -1682,6 +1789,73 @@ mod tests {
         assert_eq!(press(&mut ctx, &mut overlay, &frame, 0), None);
         assert_eq!(press(&mut ctx, &mut overlay, &frame, 1), None);
         assert_eq!(overlay.button_labels, vec!["Pause", "Stop"]);
+    }
+
+    /// Pause and Stop stay drawn when text rows fill the dock. The
+    /// rows stop early to leave room for the host controls.
+    #[test]
+    fn host_controls_stay_visible_when_rows_fill_the_dock() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = TestPaint::new(
+            Some("JiveCrafting"),
+            &[
+                "Crafting level 40",
+                "XP gained 1200",
+                "Items made 36",
+                "Runtime 0:05:01",
+                "Status walking to the bank",
+                "Supplies 12",
+                "Trips 3",
+                "Level up in 400 XP",
+                "Current item leather body",
+                "Bank trips left 2",
+                "Overflow row one",
+                "Overflow row two",
+            ],
+        )
+        .with_strip(
+            "k",
+            &["Statistics", "Options"],
+            "Statistics",
+            Some("ok"),
+            Some("JiveCrafting"),
+        )
+        .with_rail("r", &["Overview", "Supplies"], "Overview")
+        .with_footer("by Jive")
+        .with_host_controls()
+        .frame_for_run("alice", ScriptRunState::Running);
+        let _ = frame_click(&mut ctx, &mut overlay, &frame, [890.0, 690.0], false);
+        assert_eq!(overlay.button_labels, vec!["Pause", "Stop"]);
+        assert_eq!(
+            overlay.button_hits.len(),
+            2,
+            "Pause and Stop are both drawn with a full dock. Hits {:?}",
+            overlay.button_hits
+        );
+        let chat = chatbox_rect([10.0, 20.0], [765.0, 503.0]);
+        let footer_top = chat[1] + chat[3] - super::FOOTER_LINE_1X;
+        for hit in &overlay.button_hits {
+            assert!(
+                hit[0] >= chat[0] && hit[2] <= chat[0] + chat[2] && hit[1] >= chat[1],
+                "the control stays inside the dock. Hit {hit:?} dock {chat:?}"
+            );
+            assert!(
+                hit[3] <= footer_top + 0.5,
+                "the control stays above the footer row. Hit {hit:?} footer top {footer_top}"
+            );
+        }
+        assert!(
+            overlay.button_hits[1][1] >= overlay.button_hits[0][3] - 0.5,
+            "Stop keeps its place below Pause"
+        );
+        let hit = press(&mut ctx, &mut overlay, &frame, 1);
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Button(1)),
+            "the drawn Stop control reports its click"
+        );
     }
 
     /// A click captured on alice's paint never controls bob once the
