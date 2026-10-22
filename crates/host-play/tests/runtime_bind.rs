@@ -688,7 +688,11 @@ fn cancelled_template_preparation_ends_promptly_and_the_next_one_binds() {
         script::preparation::PreparationKind::Profile,
         api::identity::Scope::Process,
         script::preparation::PreparationInput::new(1, 0, 0, 0).unwrap(),
-        move |_| match preparation.step(Instant::now() + host_play::TEMPLATE_STEP_WAIT, &observer) {
+        move |worker| match preparation.step_on_worker(
+            Instant::now() + host_play::TEMPLATE_STEP_WAIT,
+            &observer,
+            worker,
+        ) {
             host_play::TemplateStep::Continue { completed, total } => {
                 Step::Continue { completed, total }
             }
