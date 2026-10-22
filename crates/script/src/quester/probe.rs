@@ -134,6 +134,7 @@ impl Probe<'_> {
             budget: &mut budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
         };
         f(&PredicateContext {
             cx: &cx,

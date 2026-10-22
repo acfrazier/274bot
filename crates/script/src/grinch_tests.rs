@@ -188,6 +188,7 @@ impl Driver {
                 budget: &mut budget,
                 eligible: true,
                 observed_walk_outcome_seq: 0,
+                observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             };
             let mut native = NativeTick {
                 walk_danger: None,

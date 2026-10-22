@@ -546,7 +546,11 @@ pub(crate) fn script_observe_cached_with_channels(
                         SeatWalkTerminal::Load(request)
                     }
                 });
-            host_results_dirty |= slot.observe_walk_outcome(bot.walk_outcome_seq, terminal_request);
+            host_results_dirty |= slot.observe_walk_outcome(
+                bot.walk_outcome_seq,
+                bot.compiled_walk_cancel_reason(),
+                terminal_request,
+            );
         }
         slot_work_epoch = Some(slot.work_epoch());
         channel_generation = slot.runtime_generation();

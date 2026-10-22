@@ -4188,6 +4188,212 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     assert_eq!(rig.shared.lock().results.len(), 1);
 }
 
+/// A compiled fight keeps its walk request registered after the walk arrives
+/// (`script/src/slot.rs` `live_walking_operation`), so a later manual step is
+/// an eligible takeover. The host then has no correlated request: the posted
+/// reason stays `None` and only the sequence and the watermark move. The
+/// compiled side still reads that takeover outcome as `UserInput`, and the
+/// next ordinary outcome clears it.
+#[test]
+fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_compiled() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").unwrap();
+    let (seq, request, generation) = (
+        bot.walk_outcome_seq,
+        bot.walk_outcome_request_id,
+        bot.walk_outcome_generation,
+    );
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+
+    bot.cancel_for_manual_input();
+    assert_eq!(
+        bot.walk_outcome_cancel_reason,
+        script::isolate_fb::WalkCancelReason::None,
+        "no correlated request: the posted Load reason stays None"
+    );
+    assert_eq!(bot.walk_outcome_request_id, request);
+    assert_eq!(bot.walk_outcome_generation, generation);
+    assert!(!bot.walk_outcome_failed);
+    assert_eq!(bot.walk_outcome_seq, seq + 1, "the sequence moves");
+    assert_eq!(
+        bot.manual_takeover_watermark,
+        seq + 1,
+        "the watermark moves"
+    );
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, seq + 2);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a later ordinary outcome is not a takeover"
+    );
+}
+
+/// Review probe F1 (M0ReviewSol), with the gate expression replaced by the
+/// live cell's gate: an admitted compact route (`route` is None) is walking
+/// work, so the M0 cell must not inject.
+#[test]
+fn m0_host_gate_must_reject_a_live_compact_route() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(
+        bot.compact_route.is_some() && bot.route.is_none(),
+        "exercise the actual admitted compact route"
+    );
+    assert!(bot.has_route(), "the native walk has not arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["compact_route"], true);
+    assert_eq!(host["walk_work_live"], true);
+    assert!(
+        !crate::combat_live_proof_tests::m0_host_gate_open(&host),
+        "M0 must not inject on a live compact route"
+    );
+}
+
+/// The allowed case: the route arrived and the native walk owner is still
+/// registered and live.
+#[test]
+fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    assert!(!bot.walk_work_live(), "the route arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["native_walk_live"], true);
+    assert!(crate::combat_live_proof_tests::m0_host_gate_open(&host));
+}
+
+/// After a manual takeover, later ordinary outcomes (an arrival, a failure
+/// and a navigation reset) move the sequence past the watermark and leave
+/// the watermark unchanged, so the compiled side never reuses the old
+/// `UserInput` reason.
+#[test]
+fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    bot.cancel_for_manual_input();
+    let watermark = bot.manual_takeover_watermark;
+    assert_ne!(watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+    let goal = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    bot.walk_request_id = 997;
+    bot.route_request_id = 997;
+    bot.requested_route = Some(native_requested(goal, 0, false));
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived { at: goal }),
+        false,
+    );
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "an arrival after the takeover is not a takeover"
+    );
+    bot.note_failure(bot.route_generation, 998, goal, 0, false);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a failure after the takeover is not a takeover"
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a navigation reset after the takeover is not a takeover"
+    );
+}
+
+/// A reconnect holds navigation and later resets it. Neither step is a
+/// manual takeover: the watermark stays 0 and the compiled reason stays
+/// `None`.
+#[test]
+fn reconnect_hold_and_reset_do_not_create_a_manual_cancel_reason() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    let generation = rig.slot().lock().unwrap().runtime_generation();
+    crate::script_runtime::hold_script_nav(&rig.navs, "alice", Some(generation));
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.walk_outcome_seq, seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(bot.walk_outcome_seq > seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+}
+
 #[test]
 fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
     let mut rig = open_rig(false);
