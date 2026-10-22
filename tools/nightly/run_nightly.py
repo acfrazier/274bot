@@ -2,8 +2,8 @@
 """274bot nightly live run: build the frontends and run the selected cells.
 
 The runner fetches each branch anonymously, builds with `--locked`, runs the
-selected catalog cells, and writes `summary.json`, `summary.md` and per-cell
-receipts. `DONE` is written last.
+selected catalog cells, and writes `summary.json`, `summary.md`, per-cell
+receipts and a source-side `SHA256SUMS`. `DONE` is written last.
 
 Linux (malbec) runs two sequential jobs: the main job runs non-quest cells on
 its private Engine A copy; the quest job runs only `quester_*` cells on its
@@ -12,7 +12,8 @@ separate local Engine Q copy. Both use `tui-play`.
 macOS (merlot) runs main cells through `lanes,panel,tui` against already-running
 Engine A, then `quester_*` cells through `panel,tui` against Engine Q. Remote
 engines are checked but never started, stopped, or changed. `MAC-QUIET.lock`
-prevents startup and stops new work at the next cell boundary.
+prevents startup, stops active live cells promptly, and marks those cells
+UNAVAILABLE.
 
 Windows runs the main job's CI lanes and cells through `panel-play` and
 `tui-play` on ConPTY, then a separate quest job on Engine B. Engine B remains
@@ -272,7 +273,7 @@ def note_quiet_lock() -> str | None:
     global _quiet_lock_reason
     if QUIET_LOCK is not None and QUIET_LOCK.exists() and _quiet_lock_reason is None:
         _quiet_lock_reason = f"MAC-QUIET.lock appeared at {QUIET_LOCK}"
-        log(f"{_quiet_lock_reason}; no new cells will start")
+        log(f"{_quiet_lock_reason}; no new cells will start and active cells will stop")
     return _quiet_lock_reason
 
 
@@ -348,6 +349,33 @@ def kill_tree(pid: int, proc: subprocess.Popen | None = None) -> None:
             proc.wait()
     except ProcessLookupError:
         pass
+
+
+
+def stop_cell_process(pid: int, proc: subprocess.Popen | None = None) -> None:
+    """Stop only a recorded live-cell process group after MAC-QUIET appears."""
+    with _children_lock:
+        recorded = pid in _children
+    if not recorded:
+        return
+    if IS_WINDOWS:
+        kill_tree(pid, proc)
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    if proc is not None:
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if proc is not None:
+        proc.wait()
 
 
 def popen_group(cmd: list[str], **kwargs) -> subprocess.Popen:
@@ -787,6 +815,7 @@ def update_tree(branch: str, tree: Path, build_log: Path) -> tuple[str, str]:
         tree.parent.mkdir(parents=True, exist_ok=True)
         run(git_cmd("clone", "--no-checkout", REPO_URL, str(tree)), env=env, log_to=build_log)
     git = git_cmd("-C", str(tree))
+    run(git + ["remote", "set-url", "origin", REPO_URL], env=env, log_to=build_log)
     run(git + ["fetch", "--prune", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
         env=env, log_to=build_log)
     run(git + ["checkout", "--force", "--detach", f"origin/{branch}"], env=env, log_to=build_log)
@@ -986,6 +1015,17 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_source_manifest(run_dir: Path) -> None:
+    """Write hashes for every regular run file before publishing DONE."""
+    files = sorted(
+        (path for path in run_dir.rglob("*") if path.is_file() and not path.is_symlink()
+         and path.name != "SHA256SUMS"),
+        key=lambda path: path.relative_to(run_dir).as_posix(),
+    )
+    rows = [f"{sha256(path)}  {path.relative_to(run_dir).as_posix()}" for path in files]
+    wtext(run_dir / "SHA256SUMS", "\n".join(rows) + "\n")
 
 
 # ---------------------------------------------------------------- engine and session
@@ -1241,10 +1281,11 @@ def tui_cmd(binary: Path, cell: str, gate: str | None = None) -> list[str]:
     return cmd + [gate] if gate else cmd
 
 
-def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: float) -> tuple[int, bool, str]:
-    """Run tui-play on a pseudo-terminal (it draws a terminal UI) with stderr kept apart.
+def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: float
+            ) -> tuple[int, bool, str, bool]:
+    """Run tui-play on a pseudo-terminal and keep stderr apart.
 
-    Returns (exit code, hit the cap, terminal transcript without escape codes).
+    Returns the exit code, cap status, cleaned terminal transcript, and quiet-lock status.
     """
     if IS_WINDOWS:
         return run_tui_conpty(cmd, env, cwd, stderr_path, cap_s)
@@ -1265,6 +1306,7 @@ def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: floa
 
     started = time.monotonic()
     timed_out = False
+    quiet_stopped = False
     with stderr_path.open("wb") as stderr:
         proc = popen_group(cmd, env=env, cwd=cwd, stdin=slave, stdout=slave, stderr=stderr)
         os.close(slave)
@@ -1274,13 +1316,19 @@ def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: floa
         try:
             while True:
                 try:
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=0.25)
+                    if note_quiet_lock():
+                        quiet_stopped = True
+                        stop_cell_process(proc.pid, proc)
                     break
                 except subprocess.TimeoutExpired:
                     if _stop.is_set():
                         kill_tree(proc.pid, proc)
                         break
-                    note_quiet_lock()
+                    if note_quiet_lock():
+                        quiet_stopped = True
+                        stop_cell_process(proc.pid, proc)
+                        break
                     if time.monotonic() - started > cap_s:
                         timed_out = True
                         kill_tree(proc.pid, proc)
@@ -1291,12 +1339,12 @@ def run_tui(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: floa
         reader.join(timeout=10)
         os.close(master)
     tty_text = ANSI.sub("", tty_raw.decode("utf-8", "replace")).replace("\r", "")
-    return proc.returncode, timed_out, tty_text
+    return proc.returncode, timed_out, tty_text, quiet_stopped
 
 
-def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: float) -> tuple[int, bool, str]:
-    """Windows: the same on ConPTY (pywinpty). A `cmd /c` shim inside the console
-    sends stderr to its file; the console carries stdin, stdout and the screen."""
+def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_s: float
+                   ) -> tuple[int, bool, str, bool]:
+    """Run the Windows TUI on ConPTY and keep stderr in its own file."""
     from winpty import PTY, Backend
 
     comspec = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
@@ -1311,6 +1359,7 @@ def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_
     size = 0
     started = time.monotonic()
     timed_out = False
+    quiet_stopped = False
     try:
         while True:
             chunk = console.read(blocking=False)
@@ -1329,6 +1378,10 @@ def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_
             if _stop.is_set():
                 kill_tree(pid)
                 break
+            if note_quiet_lock():
+                quiet_stopped = True
+                stop_cell_process(pid)
+                break
             if time.monotonic() - started > cap_s:
                 timed_out = True
                 kill_tree(pid)
@@ -1338,7 +1391,7 @@ def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_
         untrack(pid)
     code = console.get_exitstatus()
     tty_text = ANSI.sub("", "".join(chunks)).replace("\r", "")
-    return (code if code is not None else -1), timed_out, tty_text
+    return (code if code is not None else -1), timed_out, tty_text, quiet_stopped
 
 
 def panel_cmd(binary: Path, cell: str) -> list[str]:
@@ -1347,23 +1400,30 @@ def panel_cmd(binary: Path, cell: str) -> list[str]:
 
 
 def run_panel(cmd: list[str], env: dict, cwd: Path, stdout_path: Path, stderr_path: Path,
-              cap_s: float) -> tuple[int, bool]:
-    """Run panel-play as a windowed process in this (console) session."""
+              cap_s: float) -> tuple[int, bool, bool]:
+    """Run panel-play and return the exit code, cap status, and quiet-lock status."""
     started = time.monotonic()
     timed_out = False
+    quiet_stopped = False
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         proc = popen_group(cmd, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
         track(proc.pid, lambda: kill_tree(proc.pid, proc))
         try:
             while True:
                 try:
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=0.25)
+                    if note_quiet_lock():
+                        quiet_stopped = True
+                        stop_cell_process(proc.pid, proc)
                     break
                 except subprocess.TimeoutExpired:
                     if _stop.is_set():
                         kill_tree(proc.pid, proc)
                         break
-                    note_quiet_lock()
+                    if note_quiet_lock():
+                        quiet_stopped = True
+                        stop_cell_process(proc.pid, proc)
+                        break
                     if time.monotonic() - started > cap_s:
                         timed_out = True
                         kill_tree(proc.pid, proc)
@@ -1371,7 +1431,7 @@ def run_panel(cmd: list[str], env: dict, cwd: Path, stdout_path: Path, stderr_pa
         finally:
             untrack(proc.pid)
         proc.wait()
-    return proc.returncode, timed_out
+    return proc.returncode, timed_out, quiet_stopped
 
 
 def cells_root(run_dir: Path, frontend: str) -> Path:
@@ -1384,11 +1444,8 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
                            "renderer": "gpu" if GPU_CELLS.search(cell) else "cpu"})
     cell_dir = cells_root(run_dir, frontend) / cell
     cell_dir.mkdir(parents=True, exist_ok=True)
-    if _stop.is_set():
-        result.result, result.reason = "NOT_RUN", "run interrupted before this cell started"
-        return write_cell(cell_dir, result)
     if note_quiet_lock():
-        result.result, result.reason = "NOT_RUN", _quiet_lock_reason
+        result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
         return write_cell(cell_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
@@ -1402,6 +1459,7 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     result.started = now_iso()
     gate = None
     stdout_name = "tty.log" if frontend == "tui" else "stdout.log"
+    quiet_stopped = False
     while True:
         rmtree(scratch)
         home.mkdir(parents=True)
@@ -1412,17 +1470,17 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         if frontend == "tui":
             cmd = isolated_command(tui_cmd(binary, cell, gate))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
-            exit_code, timed_out, out_text = run_tui(cmd, env, scratch, cell_dir / "stderr.log", cap)
+            exit_code, timed_out, out_text, quiet_stopped = run_tui(
+                cmd, env, scratch, cell_dir / "stderr.log", cap)
         else:
             cmd = isolated_command(panel_cmd(binary, cell))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
-            exit_code, timed_out = run_panel(cmd, env, scratch, cell_dir / stdout_name,
-                                             cell_dir / "stderr.log", cap)
+            exit_code, timed_out, quiet_stopped = run_panel(
+                cmd, env, scratch, cell_dir / stdout_name, cell_dir / "stderr.log", cap)
             out_text = rtext(cell_dir / stdout_name)
         stderr_text = rtext(cell_dir / "stderr.log")
-        # A paired proof refuses to start without the pair witness and says so;
-        # run it again under that gate (the same flag a person would pass).
-        if frontend == "tui" and gate is None and exit_code != 0 and PAIR_GATE_REFUSAL in stderr_text:
+        if (not quiet_stopped and frontend == "tui" and gate is None and exit_code != 0
+                and PAIR_GATE_REFUSAL in stderr_text):
             gate = "--pair-core"
             continue
         break
@@ -1441,32 +1499,35 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
             shutil.copyfile(path, target)
             session_text += rtext(target) + "\n"
     combined = stderr_text + "\n" + session_text + "\n" + out_text
-    receipt = find_receipt(combined, cell)
-    verdict = re.search(rf"\b(PASS|FAIL): live {re.escape(cell)}\b", combined)
-    if receipt is not None:
-        record_receipt(result, receipt)
-        wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
-    elif verdict is not None:
-        # The verdict line printed but its JSON record did not parse.
-        result.result = verdict.group(1)
-        result.reason = "verdict line without a parsable JSON record"
-        if result.result == "FAIL":
-            result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
-    elif timed_out:
-        result.result = "TIMEOUT"
-        bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {CELL_CAP_S}s reached"
-        result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
-                                f"last: {first_failure_line(stderr_text) or '-'}")[:400]
-    elif _stop.is_set():
-        result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
-    elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
-        result.result = "UNAVAILABLE"
-        result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
-                         "--pair-core")
-        result.first_failure = first_failure_line(stderr_text)
+    if quiet_stopped:
+        result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
     else:
-        result.result = "ERROR"
-        result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
+        receipt = find_receipt(combined, cell)
+        verdict = re.search(rf"\b(PASS|FAIL): live {re.escape(cell)}\b", combined)
+        if receipt is not None:
+            record_receipt(result, receipt)
+            wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
+        elif verdict is not None:
+            # The verdict line printed but its JSON record did not parse.
+            result.result = verdict.group(1)
+            result.reason = "verdict line without a parsable JSON record"
+            if result.result == "FAIL":
+                result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
+        elif timed_out:
+            result.result = "TIMEOUT"
+            bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {CELL_CAP_S}s reached"
+            result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
+                                    f"last: {first_failure_line(stderr_text) or '-'}")[:400]
+        elif _stop.is_set():
+            result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
+        elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
+            result.result = "UNAVAILABLE"
+            result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
+                             "--pair-core")
+            result.first_failure = first_failure_line(stderr_text)
+        else:
+            result.result = "ERROR"
+            result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
     rmtree(scratch)
     return write_cell(cell_dir, result)
 
@@ -1921,9 +1982,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         reason_unavailable, reason_not_run = unavailable, None
         binary = binaries.get(f"{frontend}-play")
         if note_quiet_lock():
-            reason_not_run = _quiet_lock_reason
-        elif not reason_unavailable and (not build_ok or binary is None):
-            reason_not_run = "build failed; see build.log"
+            reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
         if not reason_unavailable and not reason_not_run and REQUIRE_CONSOLE:
             ok, detail, _ = console_session()
             if not ok:
@@ -1936,7 +1995,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             engine_status = detail
             if not ok:
                 if note_quiet_lock():
-                    reason_not_run = _quiet_lock_reason
+                    reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
                 elif ENGINE_MODE == "remote":
                     reason_unavailable = f"{ENGINE_LABEL} not reachable: {detail}"
                 else:
@@ -1983,6 +2042,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         tree=str(tree) if tree else None,
     )
     write_summary(run_dir, meta, lanes, panel, results)
+    write_source_manifest(run_dir)
     wtext(run_dir / "DONE", meta["finished"] + "\n")
     sections = {"lanes": lanes, "panel": panel, "tui": results}
     if STEPS == ["tui"]:

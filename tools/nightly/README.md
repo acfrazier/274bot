@@ -38,13 +38,14 @@ run of the same branch and commit on the same date gets `-r2`, `-r3`, ….
 
 ## What runs
 
-[`run_nightly.py`](run_nightly.py) (Python 3 standard library only; on Windows also
-`pywinpty`) fetches each branch from the public repository, checks it out detached
-with its submodule, builds the frontends and writes a complete summary for the
-selected job. The catalog comes from `crates/scenario/src/catalog.rs`. The main
-job runs every catalog cell except names beginning `quester_`; the quest job
-runs only those names. `--cells` and `NIGHTLY_CELLS_FILE` are intersected with
-the job's cells, so an explicit list cannot move a quest cell onto Engine A.
+[`run_nightly.py`](run_nightly.py) uses Python 3 standard library, plus `pywinpty`
+on Windows. It fetches each branch from `NIGHTLY_REPO`, which defaults to the
+public repository. It checks out the branch detached with its submodule. It
+builds the frontends and writes a summary for the selected job.
+The catalog comes from `crates/scenario/src/catalog.rs`. The main job runs
+every catalog cell except names beginning `quester_`. The quest job runs only
+those names. `--cells` and `NIGHTLY_CELLS_FILE` intersect with the job's cells.
+An explicit list cannot move a quest cell onto Engine A.
 
 Jobs run sequentially and share the runner's lock and build tree:
 
@@ -58,15 +59,18 @@ Jobs run sequentially and share the runner's lock and build tree:
   Non-Windows quest cells write `local-289q` into each isolated HOME, so they
   do not use the operator's `~/.274bot/servers.json`.
 - **macOS, merlot:** the `local.274bot-nightly-mac` user LaunchAgent runs main
-  with `lanes,panel,tui` on already-running Engine A (`44594/1080`), then quest
-  with `panel,tui` on already-running Engine Q (`44694/1180`), serialized to one
-  connection because Q's world sets `maxConnected=1`. It never starts, stops or
-  changes either engine. `panel-play` is practical because the LaunchAgent runs
-  in the logged-in Aqua session and can open its own windows overnight.
+  with `lanes,panel,tui` against already-running Engine A (`44594/1080`). It
+  then runs quest with `panel,tui` against Engine Q (`44694/1180`). Quest cells
+  use one connection because Q sets `maxConnected=1`. The launcher never starts,
+  stops or changes either engine. `panel-play` runs in the logged-in Aqua session.
   The launcher adds `$CARGO_HOME/bin` to `PATH` (`$HOME/.cargo` by default),
   because launchd uses a fixed `PATH`.
-  The Mac launcher checks `MAC-QUIET.lock` before starting; the runner records a
-  lock that appears while active and starts no later cells. FLOOR can check
+  Before either job starts, the launcher fetches `dev` once into
+  `NIGHTLY_MAC_ROOT/dev-pin.git`. Both jobs read that local pin. The status file
+  records its commit as `dev_commit`.
+  The runner checks `MAC-QUIET.lock` every 250 ms while a live cell runs. It
+  stops only that cell's recorded process group. It records a stopped cell as
+  `UNAVAILABLE` with a `MAC-QUIET` reason. FLOOR can check
   `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
 - **Windows, BotTest:** the task runs main with `lanes,panel,tui`, then quest
   with `panel,tui`, both against existing Engine B (`47594/3080`). Engine Q is
@@ -75,12 +79,15 @@ Jobs run sequentially and share the runner's lock and build tree:
   set `QUESTER_TICK_MS`.
 
 Each cell gets an isolated `HOME` and evidence directory, `BOT_CPU=1` unless
-its name matches `NIGHTLY_GPU_CELLS`, and its job's distinct name prefix. The
-outer cap (`NIGHTLY_CELL_CAP_S`, default 3600 s) only stops a process that
-never reaches a terminal state. A paired proof refuses to start without the
-pair witness; the runner retries it with `--pair-core` and records the gate.
-Each job writes its own `summary.json`, `summary.md` and per-cell receipts, then
-`DONE`.
+its name matches `NIGHTLY_GPU_CELLS`, and its job's distinct name prefix.
+The outer cap (`NIGHTLY_CELL_CAP_S`, default 3600 s) stops a process if it does
+not reach a terminal state. A paired proof refuses to start without the pair
+witness. The runner retries it with `--pair-core` and records the gate.
+
+The runner writes `SHA256SUMS` from the completed run files before it writes
+`DONE`. A read-only malbec mirror checks each transferred file against that
+source manifest. It leaves older malbec runs without a source manifest in place.
+Each job writes its summary and per-cell receipts. It writes `DONE` last.
 
 Cells listed in [`skip.conf`](skip.conf) still appear as `SKIP`. Quest cells do
 not belong in that file; the job filter routes them to Engine Q.
@@ -114,11 +121,13 @@ cache writes cannot race per-lane cleanup.
   panel-cells/<cell>/ one panel-play cell; stdout.log replaces tty.log
   lanes/<lane>/       one CI lane: result.json (exit code, summed test counts,
                       failed test names) and cargo.log
+  SHA256SUMS          source hashes for run files, written before DONE
   DONE                finish time; written last
 ```
 
-The malbec mirror adds `SHA256SUMS` to each newly copied run and verifies it
-before the atomic move into `NIGHTLY/`. It never rewrites an existing run.
+The malbec runner writes `SHA256SUMS` before `DONE`. The merlot mirror checks
+the copied files against that source manifest before it moves the run into
+`NIGHTLY/`. The mirror never rewrites an existing run.
 
 Results:
 
@@ -127,9 +136,9 @@ Results:
 | `PASS` / `FAIL` | the scenario printed its JSON record with that outcome; `first_failure` is its `message`. A lane: `cargo` exited 0 / nonzero |
 | `TIMEOUT` | no record before the outer cap or the step deadline; the process tree was killed |
 | `ERROR` | the frontend exited without a record (startup error, panic); `first_failure` is the first error-looking stderr line |
-| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (for example Engine A/B/Q not reachable, not enough free disk space, or a paired proof that panel-play has no gate for) |
+| `UNAVAILABLE` | the cell or lane could not run on this host tonight: `reason` says why (for example Engine A/B/Q not reachable, not enough free disk space, or a MAC-QUIET lock stopped a live cell) |
 | `SKIP` | listed in `skip.conf`; `reason` says why |
-| `NOT_RUN` | the build failed, a step deadline passed, the run was interrupted, or `MAC-QUIET.lock` stopped later cells; `reason` says which |
+| `NOT_RUN` | the build failed, a step deadline passed, the run was interrupted, or a non-cell lane stopped on a MAC-QUIET lock; `reason` says which |
 
 Every row has `platform`, `branch`, `commit` and `job` in the summary metadata;
 cell rows also have `frontend` (`tui` or `panel`) and `renderer` (`cpu` for
@@ -177,29 +186,25 @@ Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
 guard's cap and floor (`NIGHTLY_TARGET_CAP_GB`, `NIGHTLY_MIN_FREE_GB`) can be set
 there too.
 
-On merlot, the user LaunchAgent and the hand-run command both execute the main
-and quest jobs through `nightly-mac.sh`; it reads
-`~/.config/274bot-nightly/mac-nightly.env`, checks `MAC-QUIET.lock`, and updates
-the FLOOR status file. To pin a hand run to the just-fetched `origin/dev`:
+On merlot, the user LaunchAgent and hand runs both use `nightly-mac.sh`. It
+reads `~/.config/274bot-nightly/mac-nightly.env`, checks `MAC-QUIET.lock`, and
+updates the FLOOR status file. Before either job starts, it fetches `dev` once
+from `NIGHTLY_MAC_SOURCE_REPO` or the public repository default. It records the
+commit in the status file and points both jobs at the local pin.
+
+Run a hand night through the granted launcher:
 
 ```sh
-set -e
-runner="/Volumes/dev-scratch/274bot-worktrees/nightly-mac-quest"
-git -C "$runner" fetch origin +refs/heads/dev:refs/remotes/origin/dev
-sha=$(git -C "$runner" rev-parse --verify origin/dev)
-pinned="/Volumes/dev-scratch/274bot-nightly-mac/origin-dev-$sha.git"
-mkdir -p /Volumes/dev-scratch/274bot-nightly-mac
-git init --bare "$pinned"
-git -C "$runner" push "$pinned" refs/remotes/origin/dev:refs/heads/dev
 test ! -e /Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
-NIGHTLY_REPO="$pinned" NIGHTLY274_ACTION=nightly-mac \
+NIGHTLY274_ACTION=nightly-mac \
   "$HOME/.local/libexec/274bot-nightly/nightly274-launch"
 ```
 
 The two job summaries land directly in `NIGHTLY/` with `-mac` and
-`-mac-quest`. `NIGHTLY/.mac-nightly-running` exists while either job is active;
-if a measurement creates `MAC-QUIET.lock`, current cells finish, later cells
-are `NOT_RUN` with the lock path recorded, and the next job is skipped.
+`-mac-quest`. `NIGHTLY/.mac-nightly-running` exists while either job is active.
+If a measurement creates `MAC-QUIET.lock`, the runner stops active live cells
+and records them as `UNAVAILABLE (MAC-QUIET)`. It records later cells the same
+way and skips the next job.
 
 Pull at once instead of waiting for the hour:
 `systemctl start 274bot-nightly-pull.service` (Windows runs:
@@ -256,8 +261,12 @@ reads the new list. No unit changes are needed.
    branches expect.
 5. Runner: `git clone https://github.com/acfrazier/274bot /srv/nightly/runner` and check
    out the branch that carries `tools/nightly/`.
-6. Units: copy `systemd/274bot-nightly.service` and `systemd/274bot-nightly.timer` into
-   `/etc/systemd/system/`, then run `sudo systemctl daemon-reload && sudo systemctl enable --now 274bot-nightly.timer`.
+6. Update the runner checkout on malbec and zinfandel to this branch. Confirm
+   that each checkout contains `systemd/run-quest-job.sh`. Keep malbec's
+   `274bot-nightly.timer` unchanged. Keep zinfandel's
+   `274bot-nightly-274.timer` unchanged. Both timers start the shared service.
+   Set `NIGHTLY_ENABLE_QUEST=1` only in malbec's `/etc/274bot-nightly.env`.
+   Leave that variable unset on zinfandel.
 7. Pull key: append the archive host's public key to `~bot/.ssh/authorized_keys` as
    `restrict,from="<archive host IP>",command="/usr/bin/rrsync -ro /srv/nightly/runs/" ssh-ed25519 … 274bot-nightly-pull`.
    The VM holds no push credentials and no key for any other machine.
@@ -279,27 +288,29 @@ reads the new list. No unit changes are needed.
      /srv/nightly/engine-q-pristine/status-289q.sh
    sudo -u bot sh -c 'cd /srv/nightly/engine-q-pristine/engine && npm run sqlite:migrate'
    ```
-   Its independent runtime copy is `/srv/nightly/engine-q-run`; Engine Q listens
-   only on `127.0.0.1:44694` (game), `1180` (HTTP), and `9988` (management).
-   `world.json` selects the dedicated Q SQLite database; the runner sets
-   `QUESTER_TICK_MS=300` only in quest-cell environments so the
-   harness's world-wide `::speed` command cannot affect Engine A. Both trees use
-   289 content but the quest database and engine process are separate.
-   `/etc/274bot-nightly.env` remains main-job-only: **do not add** global
-   `NIGHTLY_GAME_PORT`, `NIGHTLY_HTTP_PORT`, `NIGHTLY_PROFILE`, `NIGHTLY_RUN_SUFFIX`, or
-   `QUESTER_TICK_MS` entries. The scoped `ExecStartPost` in the updated service
-   sets `NIGHTLY_JOB=quest`, `NIGHTLY_ENGINE=local`, `NIGHTLY_PROFILE=local-289q`,
-   the Q ports, `-quest` suffix, `nq`/`nqp` name prefixes and parallel limit 1;
-   the runner sets `QUESTER_TICK_MS=300` for those quest cells only.
-9. Install the updated service (no timer change):
+   The Engine Q process works in `/srv/nightly/engine-q-run/engine`. Its
+   `db.sqlite` stays separate from Engine A's database. The engine reads
+   `world.json` for database settings, but SQLite always opens `db.sqlite` from
+   the process working directory. The engine uses `db.name` only for MySQL.
+   This engine does not support a `world.json` SQLite filename selector. Do not
+   use `db.name` as that selector.
+   The runner sets `QUESTER_TICK_MS=300` only in quest-cell environments, so
+   the harness's world-wide `::speed` command cannot affect Engine A.
+   Keep global quest ports, profile, run suffix and tick variables out of
+   `/etc/274bot-nightly.env`. Set `NIGHTLY_ENABLE_QUEST=1` there on malbec only.
+   The shared service helper skips the quest job when the switch is absent. It
+   also refuses to run that job when `NIGHTLY_REVISION` is not `289`.
+9. Install the updated service and reload systemd on both hosts. Run these
+   commands on malbec and zinfandel:
    ```sh
    sudo install -m 0644 /srv/nightly/runner/tools/nightly/systemd/274bot-nightly.service \
      /etc/systemd/system/274bot-nightly.service
    sudo systemctl daemon-reload
    ```
-   The service runs main first, then quest as a second `ExecStartPost` invocation.
-   Both summaries share the systemd deadline; check each `<run>/DONE` after the
-   timer fires. The quest starts/stops its own engine around its cells.
+   Do not change either timer. Zinfandel's revision-274 timer still starts the
+   shared service, but its unset quest switch makes the helper skip Engine Q.
+   Malbec's switch enables the quest run after the main run. Check each
+   `<run>/DONE` file after the timer fires.
 
 ### Archive host (Proxmox, root)
 
