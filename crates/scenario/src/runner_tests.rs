@@ -3413,6 +3413,9 @@ struct OracleCell {
     visit_step: &'static str,
     return_step: &'static str,
     xp_step: &'static str,
+    /// The card selects the native Strength mode (varp 43 = 1) before its
+    /// first Strength XP, and the cell watches that selection.
+    selects_style: bool,
 }
 
 const HILL_ORACLE: OracleCell = OracleCell {
@@ -3436,6 +3439,7 @@ const HILL_ORACLE: OracleCell = OracleCell {
     visit_step: "watch the trip's looted drop enter a fresh Varrock West bank",
     return_step: "watch return to the giant pit after banking",
     xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: false,
 };
 
 /// The same trip when the card takes the Giant's Limpwurt root first: it is
@@ -3465,6 +3469,7 @@ const ARDY_ORACLE: OracleCell = OracleCell {
     visit_step: "watch a Guard drop enter a fresh East Ardougne bank",
     return_step: "watch return to the market anchor after banking",
     xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: true,
 };
 
 const GREEN_ORACLE: OracleCell = OracleCell {
@@ -3488,6 +3493,7 @@ const GREEN_ORACLE: OracleCell = OracleCell {
     visit_step: "watch the restock of Lobster to the card's foodWithdraw 20",
     return_step: "watch return to the dragon field after banking",
     xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: false,
 };
 
 const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
@@ -3511,6 +3517,7 @@ const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
     visit_step: "watch seeded Sapphire enter a fresh Seers bank",
     return_step: "watch return toward the nearest RockCrab spot after seeded banking",
     xp_step: "watch fresh Strength XP after the seeded bank return",
+    selects_style: false,
 };
 
 #[test]
@@ -3638,12 +3645,19 @@ fn oracle_finish(runner: &mut ScenarioRunner, c: &mut Client) -> RunnerStatus {
 fn oracle_drive(cell: &OracleCell, flaw: Flaw) -> RunnerStatus {
     let (mut runner, mut c) = from_start(cell.name);
     set_inv(&mut c, cell.carried);
+    if cell.selects_style {
+        with_combat_style_varp(&mut c);
+    }
     if flaw == Flaw::DeathLineBeforeStart {
         push_system_chat(&mut c, crate::random_episode::DEATH_MESSAGE);
     }
     oracle_settle(&mut runner, &mut c, 2);
     if flaw == Flaw::DiedAfterStart {
         push_system_chat(&mut c, crate::random_episode::DEATH_MESSAGE);
+    }
+    if cell.selects_style {
+        set_combat_style(&mut c, 1);
+        oracle_settle(&mut runner, &mut c, 1);
     }
     oracle_gain_strength(&mut c);
     oracle_settle(&mut runner, &mut c, 2);
@@ -3792,6 +3806,195 @@ fn ardy_fighter_bank_oracle_rejects_a_stalled_return_route() {
 #[test]
 fn ardy_fighter_bank_oracle_rejects_xp_gained_only_before_the_return() {
     oracle_assert_fails_at(&ARDY_ORACLE, Flaw::StaleXp, ARDY_ORACLE.xp_step);
+}
+
+/// The transmitted `com_mode` varp table of the seeded account: mode 0
+/// (Accurate) until the card presses its style.
+fn with_combat_style_varp(c: &mut Client) {
+    use client::config::{Cache, VarpType};
+    c.cache = Arc::new(Cache {
+        varps: (0..44).map(|_| VarpType::default()).collect(),
+        ..Default::default()
+    });
+    c.var = vec![0; 44];
+    c.bump_gens(ServerProt::VARP_SYNC);
+}
+
+fn set_combat_style(c: &mut Client, mode: i32) {
+    c.var[43] = mode;
+    c.bump_gens(ServerProt::VARP_SYNC);
+}
+
+const ARDY_STYLE_STEP: &str =
+    "watch the card select its Strength style across pre-style Loot-count trips";
+const ARDY_FIGHT_STEP: &str = "watch Strength XP from the selected melee style after Start";
+const ARDY_ATTACK_STAT: usize = 0;
+const ARDY_BONES: i32 = 526;
+const ARDY_CAKE: i32 = 1891;
+
+fn ardy_bank_after_start() -> (ScenarioRunner, Client) {
+    let (mut runner, mut c) = from_start(ARDY_ORACLE.name);
+    set_inv(&mut c, &[]);
+    with_combat_style_varp(&mut c);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    (runner, c)
+}
+
+fn ardy_budget(step: &str) -> u32 {
+    from_start(ARDY_ORACLE.name)
+        .0
+        .scenario
+        .steps
+        .iter()
+        .find(|candidate| candidate.name == step)
+        .unwrap_or_else(|| panic!("no step named {step:?}"))
+        .wait
+        .budget_ticks
+}
+
+/// One pre-style trip as the live receipts show it: a caught fight in the
+/// card's unselected Accurate mode with no food in the pack, the Guard's
+/// Bones, then the booth, where the deposit raises the banked Bones to
+/// `banked`. `spend` game ticks pass before the deposit.
+fn ardy_pre_style_trip(runner: &mut ScenarioRunner, c: &mut Client, banked: i32, spend: usize) {
+    set_world_tile(c, ARDY_ORACLE.field);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    oracle_settle(runner, c, 1);
+    set_inv(c, &[(ARDY_BONES, 1)]);
+    oracle_settle(runner, c, spend);
+    set_world_tile(c, ARDY_ORACLE.bank);
+    oracle_open_bank(c, &[(ARDY_BONES, banked - 1)]);
+    oracle_settle(runner, c, 1);
+    set_inv(c, &[]);
+    oracle_open_bank(c, &[(ARDY_BONES, banked)]);
+    oracle_settle(runner, c, 1);
+    oracle_close_bank(c);
+    oracle_settle(runner, c, 1);
+}
+
+fn assert_ardy_running(runner: &ScenarioRunner, context: &str) {
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "{context}: {:?}",
+        runner.status()
+    );
+}
+
+/// The `base-d7` receipt (two catches and one public pile before the style),
+/// carried on to the style and the fight. Every pre-style session uses most
+/// of its budget, so the style comes far beyond the old 320-game-tick bar.
+#[test]
+fn ardy_fighter_bank_style_watch_accepts_any_number_of_content_trips() {
+    let session = ardy_budget(ARDY_STYLE_STEP) as usize;
+    let (mut runner, mut c) = ardy_bank_after_start();
+    for banked in 1..=3 {
+        ardy_pre_style_trip(&mut runner, &mut c, banked, session - 10);
+        assert_ardy_running(&runner, &format!("pre-style trip {banked}"));
+    }
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, session - 10);
+    assert!(4 * (session - 10) > 320, "the receipt outlasts the old bar");
+    set_inv(&mut c, &[(ARDY_CAKE, 1)]);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 4)]);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+fn assert_ardy_fails(runner: &mut ScenarioRunner, c: &mut Client, step: &str, needle: &str) {
+    match oracle_finish(runner, c) {
+        RunnerStatus::Failed(msg) => {
+            assert!(msg.contains(step), "must fail at {step:?}: {msg}");
+            assert!(msg.contains(needle), "must name {needle:?}: {msg}");
+        }
+        other => panic!("must fail at {step:?}, got {other:?}"),
+    }
+}
+
+/// A card that neither banks nor selects its style fails at one session.
+#[test]
+fn ardy_fighter_bank_style_watch_rejects_an_idle_card() {
+    let session = ardy_budget(ARDY_STYLE_STEP);
+    let (mut runner, mut c) = ardy_bank_after_start();
+    assert_ardy_fails(
+        &mut runner,
+        &mut c,
+        ARDY_STYLE_STEP,
+        &format!("not seen within {session} game ticks"),
+    );
+}
+
+/// A trip session longer than content allows fails, even after an earlier
+/// trip restarted the budget.
+#[test]
+fn ardy_fighter_bank_style_watch_rejects_a_session_beyond_one_content_trip() {
+    let session = ardy_budget(ARDY_STYLE_STEP);
+    let (mut runner, mut c) = ardy_bank_after_start();
+    ardy_pre_style_trip(&mut runner, &mut c, 1, 20);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    assert_ardy_fails(
+        &mut runner,
+        &mut c,
+        ARDY_STYLE_STEP,
+        &format!("not seen within {session} game ticks [pre-style trips=1 deposited=1]"),
+    );
+}
+
+/// Melee XP while the card holds stall food and has not selected Strength
+/// (Accurate mode 0, or the wrong Controlled mode 2) fails at once.
+#[test]
+fn ardy_fighter_bank_style_watch_rejects_a_fight_without_the_selected_style() {
+    for (mode, stat) in [(0, ARDY_ATTACK_STAT), (2, ORACLE_STRENGTH_STAT)] {
+        let (mut runner, mut c) = ardy_bank_after_start();
+        set_inv(&mut c, &[(1893, 1)]);
+        set_combat_style(&mut c, mode);
+        oracle_settle(&mut runner, &mut c, 3);
+        c.stat_xp[stat] += 40;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        oracle_settle(&mut runner, &mut c, 1);
+        match runner.status() {
+            RunnerStatus::Failed(msg) => assert!(
+                msg.contains(ARDY_STYLE_STEP)
+                    && msg.contains("melee XP rose while stall food was held"),
+                "mode {mode}: {msg}"
+            ),
+            other => panic!("mode {mode} must fail at once, got {other:?}"),
+        }
+    }
+}
+
+/// After the style, a card that waits instead of fighting fails at the
+/// fight window.
+#[test]
+fn ardy_fighter_bank_style_watch_rejects_a_card_that_does_not_fight() {
+    let fight = ardy_budget(ARDY_FIGHT_STEP);
+    let (mut runner, mut c) = ardy_bank_after_start();
+    set_inv(&mut c, &[(ARDY_CAKE, 1)]);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 2);
+    assert_ardy_fails(
+        &mut runner,
+        &mut c,
+        ARDY_FIGHT_STEP,
+        &format!("not seen within {fight} game ticks"),
+    );
 }
 
 #[test]

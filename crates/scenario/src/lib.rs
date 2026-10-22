@@ -523,6 +523,21 @@ pub enum StepKind {
         stand: WorldTile,
         guard_ready: Proof,
     },
+    /// Wait for the card's selected combat style (`wait.arm`, a varp proof)
+    /// across the Loot-count bank trips that may come before it. A card that
+    /// selects its style only out of combat, after its restock and its bank
+    /// task, can first fight a catch or loot a public drop; each such item
+    /// sends it on a whole bank trip. Every fresh open bank that shows more
+    /// `deposit_id` than this step has seen completes one trip and restarts
+    /// the step's game-tick budget, so the budget bounds one trip session and
+    /// not the number of trips. Melee XP (Attack, Strength or Defence) that
+    /// rises while the pack holds an item in `food` and the arm does not hold
+    /// fails at once: the card fought without its selected style although it
+    /// was free to select it. Sends no actions.
+    ObserveStyleAcrossLootTrips {
+        deposit_id: i32,
+        food: &'static [i32],
+    },
     /// Summon one random event through the engine's own random-event
     /// machinery and judge the host Guardian's handling of it
     /// ([`random_episode`]). The runner sends only the cell's trigger (and
