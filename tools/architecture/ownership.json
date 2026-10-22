@@ -5903,6 +5903,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/latency_proxy.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/malbec-mirror-pull.sh",
       "owner": "T1"
     },
@@ -5924,6 +5928,10 @@
     },
     {
       "path": "tools/nightly/systemd/run-quest-job.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/test_latency_proxy.py",
       "owner": "T1"
     },
     {
