@@ -206,9 +206,9 @@ pub fn scan_text(
 /// Compute the seed closure over public re-exports in the supplied crate sources.
 ///
 /// Each tuple contains a crate name and its `src` directory. The source scanner
-/// follows only `lib.rs` and modules attached to it. Public module aliases and
-/// globs include seeds reached through public descendants. Unresolved targets
-/// and recursive aliases outside denied namespaces fail closed.
+/// follows only `lib.rs` and modules attached to it. Public module aliases,
+/// crate aliases and globs include seeds reached through public descendants.
+/// Unresolved targets, recursive aliases and unclassified item kinds fail closed.
 pub fn compute_deny_closure(crates: &[(&str, &Path)], seeds: &[&str]) -> ClosureReport {
     let mut owned_sources = Vec::new();
     let mut read_findings = Vec::new();
@@ -276,6 +276,7 @@ pub fn compute_deny_closure_sources(
                     aliases: &aliases,
                 },
                 &mut all_exports,
+                &mut report.findings,
             );
         }
     }
@@ -1678,6 +1679,7 @@ fn collect_reexports(
     inherited_scope: Scope,
     resolution: Resolution<'_>,
     output: &mut Vec<Reexport>,
+    findings: &mut Vec<Finding>,
 ) {
     for item in items {
         let scope = scope_after_attrs(item_attrs(item), inherited_scope);
@@ -1703,6 +1705,24 @@ fn collect_reexports(
                     }
                 }
             }
+            Item::ExternCrate(item_extern) if matches!(&item_extern.vis, Visibility::Public(_)) => {
+                let target = if item_extern.ident == "self" {
+                    resolution.package_name.to_owned()
+                } else {
+                    item_extern.ident.to_string()
+                };
+                output.push(Reexport {
+                    owner: module_path.to_vec(),
+                    name: item_extern
+                        .rename
+                        .as_ref()
+                        .map(|(_, name)| name.to_string())
+                        .unwrap_or_else(|| item_extern.ident.to_string()),
+                    target: vec![target],
+                    glob: false,
+                    file: file.to_path_buf(),
+                });
+            }
             Item::Mod(module) => {
                 let mut child_path = module_path.to_vec();
                 let name = module.ident.to_string();
@@ -1717,10 +1737,55 @@ fn collect_reexports(
                     });
                 }
                 if let Some((_, nested)) = &module.content {
-                    collect_reexports(nested, &child_path, file, scope, resolution, output);
+                    collect_reexports(
+                        nested,
+                        &child_path,
+                        file,
+                        scope,
+                        resolution,
+                        output,
+                        findings,
+                    );
                 }
             }
-            _ => {}
+            Item::TraitAlias(alias) if matches!(&alias.vis, Visibility::Public(_)) => {
+                let mut path = module_path.to_vec();
+                path.push(alias.ident.to_string());
+                findings.push(Finding {
+                    kind: FindingKind::UnsupportedReexport,
+                    path: Some(join_path(&path)),
+                    scope,
+                    file: file.to_path_buf(),
+                    detail: "public trait alias is not modelled by the re-export collector"
+                        .to_owned(),
+                });
+            }
+            // These known forms cannot alias a Rust module. Type aliases bind
+            // types, not modules. Macros have no public item visibility here.
+            // Public macro 2.0 syntax is opaque Item::Verbatim and fails below.
+            Item::Const(_)
+            | Item::Enum(_)
+            | Item::Fn(_)
+            | Item::ForeignMod(_)
+            | Item::Impl(_)
+            | Item::Macro(_)
+            | Item::Static(_)
+            | Item::Struct(_)
+            | Item::Trait(_)
+            | Item::Type(_)
+            | Item::Union(_)
+            | Item::Use(_)
+            | Item::ExternCrate(_)
+            | Item::TraitAlias(_) => {}
+            // syn::Item is non-exhaustive. Reject Item::Verbatim and all future
+            // variants that could introduce another public namespace.
+            _ => findings.push(Finding {
+                kind: FindingKind::UnsupportedReexport,
+                path: Some(join_path(module_path)),
+                scope,
+                file: file.to_path_buf(),
+                detail: "unclassified Rust item may introduce public module paths".to_owned(),
+            }),
         }
     }
 }
