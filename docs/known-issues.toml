@@ -43,10 +43,11 @@ id = "jivekbd-dragon-bones"
 kind = "not-in-release"
 area = "Scripts"
 text = """The JiveKBD hunting script (King Black Dragon) does not yet bring back
-  Dragon bones reliably. In testing it ran out of food at the dragon and went
-  to the bank without the bones. A fix is planned for 0.2.5."""
+  Dragon bones reliably. In long fights it can run out of food before the
+  dragon dies and return to the bank without the bones. A fix is planned with
+  the native hunting rewrite."""
 first = "0.2.4"
-target = "0.2.5"
+target = "none"
 severity = "medium"
 owner = "T2.rest hunt"
 
