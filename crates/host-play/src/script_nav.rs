@@ -6199,15 +6199,11 @@ impl NavBot {
         self.compact_route = None;
     }
 
-    /// Counts in `1..=WALK_OUTCOME_SEQ_MAX` and wraps back to 1: the slot
-    /// packs its cancel reason in bit 63 (`script::native::WALK_OUTCOME_SEQ_MAX`).
+    /// A plain increment from 1. It never wraps in practice: see the 63-bit
+    /// lifetime note at `script::native::ledger::ObservedWalkOutcome`.
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
-        self.walk_outcome_seq = if self.walk_outcome_seq >= script::native::WALK_OUTCOME_SEQ_MAX {
-            1
-        } else {
-            self.walk_outcome_seq + 1
-        };
+        self.walk_outcome_seq += 1;
     }
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {

@@ -4305,20 +4305,93 @@ fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
     assert!(crate::combat_live_proof_tests::m0_host_gate_open(&host));
 }
 
-/// The host sequence stays in `1..=WALK_OUTCOME_SEQ_MAX`, so it never sets
-/// the bit where the slot packs its cancel reason.
+/// After a manual takeover, later ordinary outcomes (an arrival, a failure
+/// and a navigation reset) move the sequence past the watermark and leave
+/// the watermark unchanged, so the compiled side never reuses the old
+/// `UserInput` reason.
 #[test]
-fn walk_outcome_sequence_wraps_below_the_reason_bit() {
-    let mut bot = NavBot {
-        walk_outcome_seq: script::native::WALK_OUTCOME_SEQ_MAX - 1,
-        ..NavBot::default()
+fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    bot.cancel_for_manual_input();
+    let watermark = bot.manual_takeover_watermark;
+    assert_ne!(watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+    let goal = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
     };
-    bot.clear_walk_outcome();
-    assert_eq!(bot.walk_outcome_seq, script::native::WALK_OUTCOME_SEQ_MAX);
-    bot.clear_walk_outcome();
-    assert_eq!(bot.walk_outcome_seq, 1, "wraps to 1, never to 0 or bit 63");
-    bot.clear_walk_outcome();
-    assert_eq!(bot.walk_outcome_seq, 2);
+    bot.walk_request_id = 997;
+    bot.route_request_id = 997;
+    bot.requested_route = Some(native_requested(goal, 0, false));
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived { at: goal }),
+        false,
+    );
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "an arrival after the takeover is not a takeover"
+    );
+    bot.note_failure(bot.route_generation, 998, goal, 0, false);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a failure after the takeover is not a takeover"
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a navigation reset after the takeover is not a takeover"
+    );
+}
+
+/// A reconnect holds navigation and later resets it. Neither step is a
+/// manual takeover: the watermark stays 0 and the compiled reason stays
+/// `None`.
+#[test]
+fn reconnect_hold_and_reset_do_not_create_a_manual_cancel_reason() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    let generation = rig.slot().lock().unwrap().runtime_generation();
+    crate::script_runtime::hold_script_nav(&rig.navs, "alice", Some(generation));
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.walk_outcome_seq, seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(bot.walk_outcome_seq > seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
 }
 
 #[test]

@@ -40,10 +40,14 @@ impl Runtime {
 /// The host walk outcome the slot observed last: its sequence and its cancel
 /// reason, packed in one word so the per-slot runtime keeps its size
 /// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The sequence uses
-/// bits 0-62 and the reason uses bit 63. The host keeps its sequence in
-/// `1..=WALK_OUTCOME_SEQ_MAX` (it wraps from the maximum back to 1), so a
-/// sequence never reaches bit 63. A sequence above that range breaks the
-/// host contract: debug builds panic, and release builds drop bit 63, so the
+/// bits 0-62 (a 63-bit domain, `1..=WALK_OUTCOME_SEQ_MAX`) and the reason
+/// uses bit 63. The host counts the sequence from 1 with a plain increment
+/// and never wraps it, because readers compare sequences in order (the
+/// manual takeover watermark uses `>=`). This relies on a lifetime
+/// assumption: at one outcome per 600 ms tick, the count needs about 175
+/// billion years to reach 2^63, so in practice the sequence never wraps and
+/// never reaches bit 63. A sequence above the domain breaks the host
+/// contract: debug builds panic, and release builds drop bit 63, so the
 /// sequence never changes the reason.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObservedWalkOutcome(u64);
