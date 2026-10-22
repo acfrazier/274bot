@@ -879,8 +879,9 @@ def build_env(target: Path, **extra: str) -> dict:
     # and a decoded client-cache snapshot (BOT_NAV_SNAPSHOT_ROOT). The bake
     # defaults to revision 289; name the revision only for the other lane, so
     # the 289 build environment stays exactly what it was.
+    # Keep persistent sccache writes outside the disposable build HOME.
     env = dict(os.environ, CARGO_TARGET_DIR=str(target), ENGINE_DIR=str(ENGINE_PRISTINE / "engine"),
-               BOT_NAV_SNAPSHOT_ROOT=str(NAV_SNAPSHOT), **extra)
+               BOT_NAV_SNAPSHOT_ROOT=str(NAV_SNAPSHOT), SCCACHE_DIR=str(ROOT / "sccache"), **extra)
     if REVISION != "289":
         env["BOT_NAV_REVISION"] = REVISION
     return env
@@ -1179,9 +1180,36 @@ def base_env() -> dict:
     return env
 
 
+def write_quest_server_profile(home: Path) -> None:
+    if IS_WINDOWS or JOB != "quest" or PROFILE != "local-289q":
+        return
+    revision = int(REVISION)
+    server = {
+        "name": PROFILE,
+        "revision": revision,
+        "transport": "tcp",
+        "worlds": [{
+            "number": revision,
+            "host": ENGINE_HOST,
+            "port": GAME_PORT,
+            "node_id": revision,
+            "asset_host": ENGINE_HOST,
+            "asset_port": HTTP_PORT,
+        }],
+        "login_key": {"engine_dir": None},
+        "vault": "vault-289q",
+        "members": None,
+        "allow_plaintext_offhost": False,
+    }
+    servers = home / ".274bot" / "servers.json"
+    servers.parent.mkdir(parents=True, exist_ok=True)
+    wtext(servers, json.dumps({"schema_version": 1, "servers": [server]}, indent=1) + "\n")
+
+
 def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str) -> dict:
     env = base_env()
     env.update(private_dirs(home, tmp))
+    write_quest_server_profile(home)
     env.update({
         "TERM": "xterm-256color",
         "LANG": "C.UTF-8",
@@ -1538,8 +1566,9 @@ def lane_env(home: Path, tmp: Path, target: Path, extra: dict) -> dict:
                  "BOT_CPU", "CARGO_TARGET_DIR", "QUESTER_TICK_MS", "ISOHOME_DIR"):
         env.pop(name, None)
     env.update(private_dirs(home, tmp))
-    env.update(CARGO_TARGET_DIR=str(target), BOT_NAV_BUILD="skip", CARGO_INCREMENTAL="0",
-               CARGO_PROFILE_DEV_DEBUG="0", CARGO_TERM_COLOR="never", **extra)
+    env.update(CARGO_TARGET_DIR=str(target), SCCACHE_DIR=str(ROOT / "sccache"),
+               BOT_NAV_BUILD="skip", CARGO_INCREMENTAL="0", CARGO_PROFILE_DEV_DEBUG="0",
+               CARGO_TERM_COLOR="never", **extra)
     if ISOHOME:
         env["ISOHOME_DIR"] = str(home)
     return env
