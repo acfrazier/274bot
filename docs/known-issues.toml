@@ -195,3 +195,19 @@ listed = "0.2.5"
 target = "none"
 severity = "medium"
 owner = "T2.rest thieving"
+
+[[item]]
+id = "manual-movement-only-while-walking"
+kind = "known-issue"
+area = "Scripts"
+text = """A script notices that you moved the bot yourself only while it is
+  walking, or while an rs2b0t script runs a Gather or Combat session. If you
+  move the bot while it fights or gathers in place, "Pause script on manual
+  movement" does not pause the script, the script does not stop, and it
+  carries on. A Quester fight notices your movement only when the fight began
+  with a walk to its spot."""
+first = "0.2.0"
+listed = "0.2.5"
+target = "none"
+severity = "medium"
+owner = "host lifecycle"

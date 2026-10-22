@@ -5221,22 +5221,31 @@ impl M0Drive {
             "action_id": attack["action_id"],
         });
         if !slot_live {
-            capture
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+            // Main ruling 2026-10-22: a fight whose Combat action began
+            // without a walk (a NoTarget restart at the stand, live off-r1)
+            // is not an eligible takeover. Keep the first such observation
+            // and wait for a later engaged one with a registered walk; the
+            // run's deadline ends the cell INVALID if none comes.
+            let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(event) = proof
                 .random_events
-                .push(json!({
+                .iter_mut()
+                .find(|event| event["kind"] == "M0NotEligible")
+            {
+                event["observations"] = json!(event["observations"].as_u64().unwrap_or(0) + 1);
+                event["last_tick"] = json!(tick);
+            } else {
+                proof.random_events.push(json!({
                     "kind": "M0NotEligible",
                     "tick": tick,
+                    "last_tick": tick,
+                    "observations": 1,
                     "active_status": active,
                     "first_imp_attack": first_attack,
                     "host": before_host,
                 }));
-            self.injected = true;
-            return Err((
-                "INVALID",
-                "takeover not eligible: no registered walk".to_owned(),
-            ));
+            }
+            return Ok(());
         }
         let intent = |play: &super::Play| {
             play.navs
@@ -8146,6 +8155,19 @@ fn run_case(case: Case) {
                 case.timeout()
             ));
             writer.outcome = "FAIL".to_owned();
+            let never_eligible = case.is_m0()
+                && !m0.injected
+                && m0_event(
+                    &capture.lock().unwrap_or_else(|e| e.into_inner()),
+                    "M0NotEligible",
+                )
+                .is_some();
+            if never_eligible {
+                let reason = "takeover not eligible: no registered walk".to_owned();
+                combat_proof::mark_invalid(&account, reason.clone());
+                terminal_error = Some(reason);
+                writer.outcome = "INVALID".to_owned();
+            }
             break;
         }
         drop(state);
