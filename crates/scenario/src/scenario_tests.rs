@@ -10824,7 +10824,7 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
 
 #[test]
 fn pair_cells_register_two_visible_actors_and_shared_start() {
-    for (name, card, dest) in [
+    for (name, card, dest, deadline) in [
         (
             "nature_crafter_air",
             "NatureCrafter",
@@ -10833,6 +10833,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "mule_crafter_air",
@@ -10842,6 +10843,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "flax_runner",
@@ -10851,6 +10853,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3444,
                 level: 0,
             },
+            FLAX_RUNNER_DEADLINE,
         ),
         (
             "duel_arena",
@@ -10860,6 +10863,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3274,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
     ] {
         let s = get(name).unwrap_or_else(|| panic!("{name} must be registered"));
@@ -10871,7 +10875,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
         );
         assert_eq!(s.settings.start_script, Some(card));
         assert_eq!(s.settings.inject_companion_as, None);
-        assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(s.settings.deadline, deadline, "{name} deadline");
         assert_eq!(s.settings.terminal_shot, Some(name));
         assert!(
             s.settings.full_rate,
