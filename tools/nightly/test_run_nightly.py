@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests for `run_nightly.py`: the disk guard, the stable tree path, receipts,
-the revision defaults and the cells file.
+the revision defaults, the cells file and the latency lane (settings, the
+classifier, proxy-stats aggregation, the pass against a fake cell runner with
+a real proxy subprocess, and the summary shape with the lane on and off).
 
 The guard stops the Windows nightly from filling its disk: a Cargo target
 folder over `NIGHTLY_TARGET_CAP_GB` is removed before the lanes and before
@@ -24,11 +26,13 @@ import json
 import gc
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import warnings
 from pathlib import Path
@@ -1594,6 +1598,422 @@ class SystemdQuestGateTests(unittest.TestCase):
             self.assertEqual(unsafe_zinfandel.returncode, 1)
             self.assertIn("refusing quest job", unsafe_zinfandel.stderr)
             self.assertEqual(len(capture.read_text(encoding="utf-8").splitlines()), 1)
+
+
+class LatencySettingsTests(unittest.TestCase):
+    def test_parse_latency_bands(self):
+        self.assertEqual(rn.parse_latency_bands(""), [])
+        self.assertEqual(rn.parse_latency_bands("50,100,150"), [50, 100, 150])
+        self.assertEqual(rn.parse_latency_bands(" 50 , 100 "), [50, 100])
+        for bad in ("abc", "0", "-5", "1000", "50,50", "50.5"):
+            with self.assertRaises(ValueError, msg=bad):
+                rn.parse_latency_bands(bad)
+
+    def test_latency_prefix_stays_inside_the_mint_limit(self):
+        # play_bootstrap.rs parse_live_name_prefix accepts 1 to 4 characters.
+        self.assertEqual(rn.latency_prefix("nt", 50), "nt50")
+        self.assertEqual(rn.latency_prefix("nt", 100), "n100")
+        self.assertEqual(rn.latency_prefix("nw", 150), "n150")
+        self.assertEqual(rn.latency_prefix("nq", 5), "nq5")
+        for rtt in (5, 50, 100, 150, 999):
+            self.assertLessEqual(len(rn.latency_prefix("nt", rtt)), 4)
+        with self.assertRaises(ValueError):
+            rn.latency_prefix("", 50)
+
+    def test_classify_latency_covers_each_table_row(self):
+        cases = [
+            # (zero, band, proxy_unavailable, expected)
+            ("PASS", "PASS", False, "pass"),
+            ("PASS", "FAIL", False, "latency-defect"),
+            ("PASS", "TIMEOUT", False, "latency-defect"),
+            ("PASS", "ERROR", False, "latency-defect"),
+            ("PASS", "NOT_RUN", False, "not-run"),
+            ("PASS", "UNAVAILABLE", False, "unavailable"),
+            ("FAIL", "PASS", False, "also-fails-at-0"),
+            ("FAIL", "FAIL", False, "also-fails-at-0"),
+            ("TIMEOUT", "FAIL", False, "also-fails-at-0"),
+            ("ERROR", "FAIL", False, "also-fails-at-0"),
+            ("UNAVAILABLE", "FAIL", False, "no-baseline"),
+            ("NOT_RUN", "FAIL", False, "no-baseline"),
+            ("SKIP", "PASS", False, "no-baseline"),
+            (None, "FAIL", False, "no-baseline"),
+            ("PASS", "FAIL", True, "proxy-unavailable"),
+            ("PASS", "UNAVAILABLE", True, "proxy-unavailable"),
+            (None, "UNAVAILABLE", True, "proxy-unavailable"),
+        ]
+        for zero, band, proxy, expected in cases:
+            self.assertEqual(rn.classify_latency(zero, band, proxy_unavailable=proxy), expected,
+                             f"zero={zero} band={band} proxy={proxy}")
+
+    def test_cell_row_omits_latency_keys_on_zero_rows_only(self):
+        zero = rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c", platform="p")
+        self.assertNotIn("latency_band", rn.cell_row(zero))
+        band = rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c", platform="p",
+                             latency_band="rtt50", latency_rtt_ms=50, latency_class="pass")
+        row = rn.cell_row(band)
+        self.assertEqual((row["latency_band"], row["latency_rtt_ms"], row["latency_class"]),
+                         ("rtt50", 50, "pass"))
+
+    def test_aggregate_proxy_stats_filters_window_and_direct_records(self):
+        def record(opened, first_byte, path, p50, samples, login=None):
+            summary = {"p50": p50, "p95": p50 + 5, "samples": samples} if p50 is not None else None
+            return {"opened_at_epoch": opened, "first_byte": first_byte, "path": path,
+                    "bytes_client_to_server": 10, "bytes_server_to_client": 20,
+                    "queue_delay_ms_client_to_server": summary,
+                    "queue_delay_ms_server_to_client": summary,
+                    "login_first_response_ms": login}
+
+        records = [
+            record(100.0, 14, "delayed", 25.0, 10, login=55.0),
+            record(101.0, 14, "delayed", 27.0, 30, login=65.0),
+            record(102.0, 15, "direct", 0.1, 99),
+            record(103.0, None, "none", None, 0),
+            record(500.0, 14, "delayed", 75.0, 10, login=999.0),
+        ]
+        out = rn.aggregate_proxy_stats(records, 99.0, 200.0)
+        self.assertEqual(out["records"], 4)
+        self.assertEqual(out["connections"], {"game_14": 2, "ondemand_15": 1, "other": 0, "none": 1})
+        self.assertEqual(out["bytes_client_to_server"], 40)
+        # Sample-weighted median of (25 x10, 27 x30): the direct record never counts.
+        self.assertEqual(out["client_to_server"], {"p50_ms": 27.0, "p95_ms": 32.0, "samples": 40})
+        self.assertEqual(out["login_first_response_ms"], 60.0)
+        empty = rn.aggregate_proxy_stats([])
+        self.assertIsNone(empty["client_to_server"]["p50_ms"])
+        self.assertEqual(empty["records"], 0)
+
+    def test_remote_flags_point_the_game_port_at_the_proxy_only(self):
+        with mock.patch.object(rn, "ENGINE_MODE", "remote"), \
+                mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                mock.patch.object(rn, "GAME_PORT", 44594), \
+                mock.patch.object(rn, "HTTP_PORT", 1080):
+            self.assertEqual(rn.engine_flags(),
+                             ["--host", "127.0.0.1", "--port", "44594",
+                              "--asset-host", "127.0.0.1", "--http-port", "1080"])
+            self.assertEqual(rn.engine_flags(49999),
+                             ["--host", "127.0.0.1", "--port", "49999",
+                              "--asset-host", "127.0.0.1", "--http-port", "1080"])
+            cmd = rn.tui_cmd(Path("tui-play"), "walk", game_port=49999)
+            self.assertIn("49999", cmd)
+            self.assertNotIn("44594", cmd)
+        with mock.patch.object(rn, "ENGINE_MODE", "local"):
+            self.assertEqual(rn.engine_flags(49999), [])
+
+    def test_local_mode_latency_profile_points_the_world_at_the_proxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            with mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "JOB", "main"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"), \
+                    mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                    mock.patch.object(rn, "GAME_PORT", 44594), \
+                    mock.patch.object(rn, "HTTP_PORT", 1080):
+                rn.cell_env(home, root / "tmp", root / "evidence", "walk", "nt50", game_port=49999)
+            profile = json.loads((home / ".274bot" / "servers.json").read_text(encoding="utf-8"))
+            server = profile["servers"][0]
+            self.assertEqual(server["name"], "local-289")
+            self.assertEqual(server["vault"], "vault-289")
+            self.assertEqual(server["worlds"], [{
+                "number": 289, "host": "127.0.0.1", "port": 49999, "node_id": 289,
+                "asset_host": "127.0.0.1", "asset_port": 1080}])
+
+    def test_local_mode_without_a_latency_port_writes_no_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            with mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "JOB", "main"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"):
+                rn.cell_env(home, root / "tmp", root / "evidence", "walk", "nt")
+            self.assertFalse((home / ".274bot" / "servers.json").exists())
+
+
+class LatencyMatrixTests(unittest.TestCase):
+    @staticmethod
+    def row(cell, result, *, ticks=None, band=None, rtt=None, cls=None):
+        return rn.CellResult(cell=cell, result=result, branch="dev", commit="c", platform="p",
+                             ticks=ticks, latency_band=band, latency_rtt_ms=rtt, latency_class=cls)
+
+    def test_matrix_sorts_defects_first_and_shows_tick_delta(self):
+        zero = [self.row("walk", "PASS", ticks=10), self.row("cook", "FAIL", ticks=3),
+                self.row("alcher", "PASS", ticks=7)]
+        latency = [
+            self.row("walk", "PASS", ticks=10, band="rtt50", rtt=50, cls="pass"),
+            self.row("walk", "FAIL", ticks=12, band="rtt150", rtt=150, cls="latency-defect"),
+            self.row("cook", "FAIL", ticks=3, band="rtt50", rtt=50, cls="also-fails-at-0"),
+            self.row("cook", "FAIL", ticks=4, band="rtt150", rtt=150, cls="also-fails-at-0"),
+            self.row("alcher", "PASS", ticks=7, band="rtt50", rtt=50, cls="pass"),
+            self.row("alcher", "PASS", ticks=7, band="rtt150", rtt=150, cls="pass"),
+        ]
+        md = rn.md_latency_matrix(zero, latency)
+        self.assertEqual(md[0], "| Cell | rtt0 | rtt50 | rtt150 | Class | Ticks 0→150 |")
+        body = [line for line in md if line.startswith("| `")]
+        self.assertEqual([line.split("`")[1] for line in body], ["walk", "cook", "alcher"])
+        self.assertIn("latency-defect", body[0])
+        self.assertIn("10→12", body[0])
+        self.assertIn("also-fails-at-0", body[1])
+
+
+def _start_echo_server() -> tuple[socket.socket, int, threading.Thread, threading.Event]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+    listener.settimeout(0.25)
+    stopping = threading.Event()
+
+    def echo(conn: socket.socket) -> None:
+        try:
+            while True:
+                data = conn.recv(65536)
+                if not data:
+                    return
+                conn.sendall(data)
+        except OSError:
+            return
+        finally:
+            conn.close()
+
+    def accept() -> None:
+        while not stopping.is_set():
+            try:
+                conn, _addr = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            threading.Thread(target=echo, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    return listener, listener.getsockname()[1], thread, stopping
+
+
+class LatencyPassTests(unittest.TestCase):
+    """The pass against a fake cell runner and a real proxy subprocess."""
+
+    def run_pass(self, root: Path, upstream_port: int, outcomes: dict, *,
+                 traffic: bool = True, stats_p50_override: float | None = None):
+        run_dir = root / "run"
+        run_dir.mkdir(parents=True)
+        binary = root / "tui-play"
+        binary.write_bytes(b"fake-frontend")
+        base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="c" * 9, platform="test")
+
+        def fake_run_cell(cell, frontend, _binary, cell_run_dir, _work, cell_base, _deadline,
+                          game_port=None, name_prefix=None, root_name=None, step=None):
+            started = time.monotonic()
+            result = rn.CellResult(**{**rn.asdict(cell_base), "cell": cell, "frontend": frontend,
+                                      "renderer": "cpu", "started": rn.now_iso()})
+            if traffic:
+                with socket.create_connection(("127.0.0.1", game_port), timeout=10) as sock:
+                    sock.sendall(bytes([14]) + b"ping")
+                    echoed = b""
+                    while len(echoed) < 5:
+                        echoed += sock.recv(5 - len(echoed))
+            result.result, result.ticks = outcomes[cell]
+            result.wall_s = round(time.monotonic() - started, 3)
+            cell_dir = cell_run_dir / root_name / cell
+            cell_dir.mkdir(parents=True, exist_ok=True)
+            return rn.write_cell(cell_dir, result)
+
+        zero = {
+            "walk": rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=10),
+            "cook": rn.CellResult(cell="cook", result="PASS", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=4),
+            "bank": rn.CellResult(cell="bank", result="FAIL", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=1),
+        }
+        patches = [
+            mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"),
+            mock.patch.object(rn, "GAME_PORT", upstream_port),
+            mock.patch.object(rn, "ENGINE_MODE", "remote"),
+            mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "NAME_PREFIX", "nt"),
+            mock.patch.object(rn, "engine_start", lambda _run_dir: (True, "fake engine")),
+            mock.patch.object(rn, "engine_stop", lambda _run_dir: None),
+            mock.patch.object(rn, "run_cell", fake_run_cell),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        if stats_p50_override is not None:
+            real_read = rn.read_proxy_stats
+
+            def off_band(path):
+                rows = real_read(path)
+                for row in rows:
+                    for field in ("queue_delay_ms_client_to_server",
+                                  "queue_delay_ms_server_to_client"):
+                        if row.get(field):
+                            row[field] = {**row[field], "p50": stats_p50_override}
+                return rows
+
+            patches.append(mock.patch.object(rn, "read_proxy_stats", off_band))
+        for patch in patches:
+            patch.start()
+        try:
+            rows, meta = rn.run_latency_pass("dev", binary, list(outcomes), [50], run_dir,
+                                             root / "work", base, {}, 2, zero, None, True)
+        finally:
+            for patch in patches:
+                patch.stop()
+        return rows, meta, run_dir
+
+    def test_fake_engine_run_writes_sidecars_classes_and_rows(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                rows, meta, run_dir = self.run_pass(
+                    Path(tmp), echo_port,
+                    {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)})
+                by_cell = {row.cell: row for row in rows}
+                self.assertEqual(by_cell["walk"].latency_class, "pass")
+                self.assertEqual(by_cell["cook"].latency_class, "latency-defect")
+                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0")
+                for row in rows:
+                    cell_dir = run_dir / "cells-latency" / "rtt50" / row.cell
+                    doc = json.loads((cell_dir / "latency.json").read_text(encoding="utf-8"))
+                    self.assertEqual(doc["band"], "rtt50")
+                    self.assertEqual(doc["configured_rtt_ms"], 50)
+                    self.assertEqual(doc["configured_one_way_ms"], 25.0)
+                    self.assertEqual(doc["account_prefix"], "nt50")
+                    self.assertEqual(doc["latency_class"], row.latency_class)
+                    self.assertIsNotNone(doc["frontend_sha256"])
+                    p50 = doc["measured"]["client_to_server"]["p50_ms"]
+                    self.assertLessEqual(abs(p50 - 25.0), 10.0)
+                    self.assertIsNotNone(doc["login_first_response_ms"])
+                    saved = json.loads((cell_dir / "result.json").read_text(encoding="utf-8"))
+                    self.assertEqual(saved["latency_band"], "rtt50")
+                    self.assertEqual(saved["latency_rtt_ms"], 50)
+                    self.assertEqual(saved["latency_class"], row.latency_class)
+                stats = run_dir / "latency" / "rtt50" / "proxy-stats.jsonl"
+                self.assertGreaterEqual(len(rn.read_proxy_stats(stats)), 3)
+                self.assertEqual(meta["bands"][0]["band"], "rtt50")
+                self.assertTrue(meta["report_only"])
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+    def test_dead_upstream_yields_proxy_unavailable_rows_and_no_cells_start(self):
+        dead = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        dead.bind(("127.0.0.1", 0))
+        dead_port = dead.getsockname()[1]
+        dead.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _meta, run_dir = self.run_pass(
+                Path(tmp), dead_port, {"walk": ("PASS", 1)}, traffic=False)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].result, "UNAVAILABLE")
+            self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+            self.assertIn("latency proxy unavailable", rows[0].reason or "")
+            doc = json.loads((run_dir / "cells-latency" / "rtt50" / "walk" / "latency.json")
+                             .read_text(encoding="utf-8"))
+            self.assertEqual(doc["measured"]["records"], 0)
+
+    def test_a_pass_without_delayed_traffic_fails_the_health_rule(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                rows, _meta, _run_dir = self.run_pass(
+                    Path(tmp), echo_port, {"walk": ("PASS", 1)}, traffic=False)
+                self.assertEqual(rows[0].result, "UNAVAILABLE")
+                self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+                self.assertIn("no delayed connection", rows[0].reason or "")
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+    def test_an_off_band_measured_delay_fails_the_health_rule(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                # Real traffic through the real proxy, with every measured
+                # p50 rewritten to 90 ms against a 25 ms one-way band.
+                rows, _meta, _run_dir = self.run_pass(
+                    Path(tmp), echo_port, {"walk": ("PASS", 1)}, stats_p50_override=90.0)
+                self.assertEqual(rows[0].result, "UNAVAILABLE")
+                self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+                self.assertIn("measured queue delay p50", rows[0].reason or "")
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+
+class LatencyRunBranchTests(unittest.TestCase):
+    def run_unavailable_branch(self, *, latency_bands, latency_cells):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+
+        def fake_update_tree(_branch, tree, _build_log):
+            catalog = tree / rn.CATALOG_RS
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(
+                'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n'
+                '    Entry::new("cook_bot"),\n    Entry::new("quester_path"),\n];\n',
+                encoding="utf-8")
+            return "b" * 40, "b" * 9
+
+        patches = [
+            mock.patch.object(rn, "ROOT", root),
+            mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "update_tree", fake_update_tree),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            run_dir = rn.run_branch("dev", 1, None, None, unavailable="test night off",
+                                    latency_bands=latency_bands, latency_cells=latency_cells)
+        finally:
+            for patch in patches:
+                patch.stop()
+        return run_dir, json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    def test_lane_off_adds_no_latency_keys_anywhere(self):
+        run_dir, summary = self.run_unavailable_branch(latency_bands=[], latency_cells=["walk"])
+        self.assertNotIn("latency", summary)
+        self.assertNotIn("latency_counts", summary)
+        self.assertNotIn("latency_cells", summary)
+        for row in summary["cells"]:
+            self.assertNotIn("latency_band", row)
+        self.assertNotIn("Latency lane", (run_dir / "summary.md").read_text(encoding="utf-8"))
+        self.assertFalse((run_dir / "cells-latency").exists())
+        self.assertTrue((run_dir / "DONE").is_file())
+
+    def test_lane_on_an_unavailable_night_writes_matrix_and_sidecars(self):
+        run_dir, summary = self.run_unavailable_branch(latency_bands=[50], latency_cells=["walk"])
+        self.assertEqual(len(summary["latency_cells"]), 1)
+        row = summary["latency_cells"][0]
+        self.assertEqual((row["cell"], row["result"], row["latency_band"], row["latency_class"]),
+                         ("walk", "UNAVAILABLE", "rtt50", "no-baseline"))
+        self.assertEqual(summary["latency_counts"]["no-baseline"], 1)
+        # The main counts still describe the zero run only.
+        self.assertEqual(sum(summary["counts"].values()), len(summary["cells"]))
+        self.assertTrue(summary["latency"]["report_only"])
+        md = (run_dir / "summary.md").read_text(encoding="utf-8")
+        self.assertIn("## Latency lane (tui, dev only, report-only)", md)
+        self.assertIn("| `walk` | UNAVAILABLE | UNAVAILABLE | no-baseline |", md)
+        doc = json.loads((run_dir / "cells-latency" / "rtt50" / "walk" / "latency.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(doc["configured_one_way_ms"], 25.0)
+        self.assertIsNone(doc["proxy"]["listen_port"])
+        self.assertTrue((run_dir / "DONE").is_file())
+
+    def test_a_latency_name_outside_the_catalog_fails_the_run(self):
+        _run_dir, summary = self.run_unavailable_branch(latency_bands=[50], latency_cells=["nope"])
+        self.assertIn("latency cell list: names not in the catalog: nope", summary["build"]["error"])
+
+    def test_a_quest_cell_in_the_latency_list_fails_the_run(self):
+        _run_dir, summary = self.run_unavailable_branch(
+            latency_bands=[50], latency_cells=["quester_path"])
+        self.assertIn("quest cells stay out of the latency lane: quester_path",
+                      summary["build"]["error"])
 
 
 if __name__ == "__main__":
