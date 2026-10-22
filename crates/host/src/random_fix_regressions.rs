@@ -532,3 +532,93 @@ fn guardian_evade_player_chat_stun_text_does_not_stop_the_stalled_count() {
         );
     }
 }
+
+#[test]
+fn lost_tool_refit_player_chat_rejection_text_does_not_stop_the_repair() {
+    // Only the server game message proves a rejected refit. The lost
+    // tool handle sends "Nothing interesting happens." with `mes` for
+    // a wrong head (`macro_event_lost_axe.rs2:41-45`), and the client
+    // stores that message as chat type 0 with no sender. Another
+    // player can type the same text in public chat (type 2) or send
+    // it in a private message (type 3). Those lines must not stop
+    // the repair. The server line still does. The setup follows
+    // `lost_tool_refit_rejection_releases_the_gatherer`.
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_named(&mut c, 1351, Some("Bronze axe"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    g.tick(&mut drv, &snap, &settings, 0, None);
+    plant_inv_named(&mut c, 492, Some("Axe handle"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 600, None).hold);
+    plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
+    tick_at(&mut c, &mut snap);
+    assert!(g.tick(&mut drv, &snap, &settings, 1_200, None).hold);
+    assert_eq!(drv.menus.len(), 1);
+    assert_eq!(drv.menus[0].1, MiniMenuAction::OP_OBJ3);
+    assert_eq!(drv.menus[0].2, 508);
+
+    c.ground_obj[0][1][0] = None;
+    plant_inv_named(&mut c, 508, Some("Axe head"));
+    c.set_iface_mut(
+        301,
+        IfTypeMut {
+            link_obj_type: Some(vec![493, 509, 0]),
+            link_obj_number: Some(vec![1, 1, 0]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
+    drv.menus.clear();
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 1_800, None);
+    assert!(status.hold);
+    assert_eq!(
+        drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+        vec![
+            MiniMenuAction::USEHELD_START,
+            MiniMenuAction::USEHELD_ONHELD
+        ]
+    );
+
+    // One public line and one private line from another player, each
+    // with the exact rejection text. The repair must continue: the
+    // hold stays and the refit goes out again on each tick.
+    for (type_, at_ms) in [(2, 2_400), (3, 3_000)] {
+        drv.menus.clear();
+        c.add_chat(type_, "Nothing interesting happens.", "Mallory");
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, at_ms, None);
+        assert_eq!(status.kind, Some(RandomKind::LostTool));
+        assert!(
+            status.hold && status.ours,
+            "player chat type {type_} must not stop the refit"
+        );
+        assert_eq!(
+            drv.menus.iter().map(|menu| menu.1).collect::<Vec<_>>(),
+            vec![
+                MiniMenuAction::USEHELD_START,
+                MiniMenuAction::USEHELD_ONHELD
+            ],
+            "the refit goes out again after player chat type {type_}"
+        );
+    }
+
+    // The server line (type 0, no sender) still ends the repair.
+    drv.menus.clear();
+    c.add_chat(0, "Nothing interesting happens.", "");
+    tick_at(&mut c, &mut snap);
+    let rejected = g.tick(&mut drv, &snap, &settings, 3_600, None);
+    assert_eq!(rejected.kind, Some(RandomKind::LostTool));
+    assert!(!rejected.hold && !rejected.ours);
+    assert!(
+        drv.menus.is_empty(),
+        "do not repeat a refit the game rejected"
+    );
+}

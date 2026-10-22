@@ -693,27 +693,42 @@ impl Guardian {
         }
     }
 
-    /// Whether a fresh server game message contains a marker. Every
-    /// caller matches server text, never player text. The stun
-    /// lines, the two plant lines, and the wrong-talk rejection
+    /// Whether a server game message newer than `after_sequence`
+    /// matches `matches`. Every caller matches server text, never
+    /// player text. The stun lines, the two plant lines, the
+    /// wrong-talk rejection line, and the lost-tool refit rejection
     /// line are content `mes` messages. The snapshot row
     /// is `ChatLineView { type_, username, text, sequence }`
     /// (`crates/api/src/snapshot/views.rs:481-486`). A `mes`
     /// reaches the client as `MESSAGE_GAME` and is stored as type 0
-    /// with an empty sender (`client.rs:6425`); the snapshot maps an
-    /// empty sender to `None` (`decode.rs:362-363`). Public chat
+    /// with an empty sender (`client.rs:6425`; the operation path
+    /// stores the same form at `client.rs:5994`); the snapshot maps
+    /// an empty sender to `None` (`decode.rs:362-363`). Public chat
     /// from another player is type 2 with a sender
     /// (`actor_289.rs:613`) and a private message is type 3 or 7
     /// (`client.rs:5899-5903`). Player text is not a server signal,
-    /// so only type 0 with no sender counts. This runs before the
-    /// tick's chat scan advances `chat_seen`, so every caller sees
-    /// the same batch.
-    fn fresh_chat_has(&self, snap: &GameSnapshot, markers: &[&str]) -> bool {
+    /// so only type 0 with no sender counts. Chat rows are newest
+    /// first with descending sequences (`snapshot.rs:1103-1106`),
+    /// so the scan stops at the cutoff.
+    fn server_chat_has_after(
+        snap: &GameSnapshot,
+        after_sequence: i32,
+        matches: impl Fn(&str) -> bool,
+    ) -> bool {
         snap.chat_lines()
             .iter()
-            .take_while(|l| l.sequence > self.chat_seen)
+            .take_while(|l| l.sequence > after_sequence)
             .filter(|l| l.type_ == 0 && l.username.is_none())
-            .any(|l| markers.iter().any(|marker| l.text.contains(marker)))
+            .any(|l| matches(&l.text))
+    }
+
+    /// Whether a fresh server game message contains a marker. This
+    /// runs before the tick's chat scan advances `chat_seen`, so
+    /// every caller sees the same batch.
+    fn fresh_chat_has(&self, snap: &GameSnapshot, markers: &[&str]) -> bool {
+        Self::server_chat_has_after(snap, self.chat_seen, |text| {
+            markers.iter().any(|marker| text.contains(marker))
+        })
     }
 
     /// Remember hostile spawn sightings even before they target this player.
@@ -2398,13 +2413,14 @@ impl Guardian {
     /// Each handle accepts every head tier of its part kind. The default
     /// switch branch sends `dm_default`, "Nothing interesting happens."
     /// (`macro_event_lost_axe.rs2:41-45`; `macro_event_lost_pickaxe.rs2:42-46`;
-    /// `displaymessage.enum:5`).
+    /// `displaymessage.enum:5`). Only the server line counts. A player
+    /// line with the same text must not stop the repair.
     fn observe_lost_tool_refit_rejection(&mut self, snap: &GameSnapshot) {
         let Some(after_sequence) = self.tool_refit_after_sequence else {
             return;
         };
-        let rejected = snap.chat_lines().iter().any(|line| {
-            line.sequence > after_sequence && line.text.trim() == "Nothing interesting happens."
+        let rejected = Self::server_chat_has_after(snap, after_sequence, |text| {
+            text.trim() == "Nothing interesting happens."
         });
         if rejected {
             self.tool_refit_after_sequence = None;
