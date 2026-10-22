@@ -577,6 +577,217 @@ fn reexport_item_respects_public_visibility_and_production_scope() {
 }
 
 #[test]
+fn reexport_r4_type_paths_deny_local_and_external_aliases() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let client = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub mod io { pub mod client_prot { pub struct ClientProt; } }
+         pub type Prot = crate::io::client_prot::ClientProt;"
+            .to_owned(),
+    )]);
+    let api = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "pub type Prot = client::io::client_prot::ClientProt;
+         pub mod nested {
+             use client::io::client_prot as wire;
+             pub type Generic<T> = wire::ClientProt<T>;
+         }"
+            .to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(
+        &[("api", &api), ("client", &client)],
+        &["client::io::client_prot"],
+    );
+    assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
+    assert_eq!(
+        closure.denied,
+        std::collections::BTreeSet::from([
+            "client::io::client_prot".to_owned(),
+            "client::Prot".to_owned(),
+            "api::Prot".to_owned(),
+            "api::nested::Generic".to_owned(),
+        ])
+    );
+    for alias in ["client::Prot", "api::Prot", "api::nested::Generic"] {
+        assert_reexported_seed_is_denied(
+            &closure,
+            alias,
+            &format!("use {alias};"),
+            (FindingKind::UsePath, Some(alias)),
+        );
+    }
+}
+
+#[test]
+fn reexport_r4_non_path_aliases_of_denied_items_fail_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    for ty in [
+        "&'static client::io::client_prot::ClientProt",
+        "(client::io::client_prot::ClientProt, u8)",
+        "[client::io::client_prot::ClientProt; 1]",
+        "fn() -> client::io::client_prot::ClientProt",
+        "<client::io::client_prot::ClientProt as Trait>::Associated",
+        "&'static crate::Prot",
+        "choose_type!()",
+    ] {
+        let files = SourceMap::from([(
+            PathBuf::from("lib.rs"),
+            format!(
+                "pub use client::io::client_prot::ClientProt as Prot;
+                 pub type Wrapped = {ty};"
+            ),
+        )]);
+        let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+        assert_eq!(closure.findings.len(), 1, "{ty}: {closure:#?}");
+        assert_eq!(closure.findings[0].kind, FindingKind::UnsupportedReexport);
+        assert_eq!(closure.findings[0].path.as_deref(), Some("api::Wrapped"));
+    }
+}
+
+#[test]
+fn reexport_r4_alias_visibility_scope_and_harmless_types_pass() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "type Private = client::io::client_prot::ClientProt;
+         pub(crate) type Restricted = &'static client::io::client_prot::ClientProt;
+         #[cfg(test)] pub type TestOnly = client::io::client_prot::ClientProt;
+         #[cfg(test)] pub type TestWrapper = &'static client::io::client_prot::ClientProt;
+         pub type Board = [u8; 9];
+         pub type Text = &'static str;
+         pub type Values = Vec<u8>;"
+            .to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["client::io::client_prot"]);
+    assert!(closure.findings.is_empty(), "{closure:#?}");
+    assert_eq!(
+        closure.denied,
+        std::collections::BTreeSet::from(["client::io::client_prot".to_owned()])
+    );
+}
+
+#[test]
+fn reexport_r4_include_reexports_share_the_including_module() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([
+        (
+            PathBuf::from("lib.rs"),
+            "pub mod io { pub mod client_prot {} }
+             pub mod facade;"
+                .to_owned(),
+        ),
+        (
+            PathBuf::from("facade.rs"),
+            "use crate::io as source;
+             include!(\"extra/exports.inc\");
+             pub use wire as renamed;"
+                .to_owned(),
+        ),
+        (
+            PathBuf::from("extra/exports.inc"),
+            "pub use source as wire;
+             include!(\"nested/more.inc\",);"
+                .to_owned(),
+        ),
+        (
+            PathBuf::from("extra/nested/more.inc"),
+            "pub type Prot = crate::io::client_prot::ClientProt;".to_owned(),
+        ),
+    ]);
+    let closure =
+        compute_deny_closure_sources(&[("client", &files)], &["client::io::client_prot"]);
+    assert!(closure.findings.is_empty(), "{closure:#?}");
+    for alias in [
+        "client::facade::wire::client_prot",
+        "client::facade::renamed::client_prot",
+        "client::facade::Prot",
+    ] {
+        assert_reexported_seed_is_denied(
+            &closure,
+            alias,
+            &format!("use {alias};"),
+            (FindingKind::UsePath, Some(alias)),
+        );
+    }
+    assert_eq!(closure.denied.len(), 4);
+}
+
+#[test]
+fn reexport_r4_invalid_includes_fail_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
+    use std::path::PathBuf;
+
+    for (invocation, extra) in [
+        ("include!(\"missing.rs\");", None),
+        ("include!(\"extra.rs\");", Some("pub use")),
+        ("include!(\"extra.rs\");", Some("include!(\"lib.rs\");")),
+        ("include!(concat!(\"extra\", \".rs\"));", None),
+    ] {
+        let mut files =
+            SourceMap::from([(PathBuf::from("lib.rs"), invocation.to_owned())]);
+        if let Some(source) = extra {
+            files.insert(PathBuf::from("extra.rs"), source.to_owned());
+        }
+        let closure = compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
+        assert!(!closure.findings.is_empty(), "{invocation}: {closure:#?}");
+    }
+}
+
+#[test]
+fn reexport_r4_unknown_item_macros_fail_closed() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
+    use std::path::PathBuf;
+
+    for invocation in [
+        "macro_rules! reexport { () => { pub use client::io as wire; }; } reexport!();",
+        "unknown!();",
+        "other::thread_local!();",
+        "legal_send!();",
+    ] {
+        let files = SourceMap::from([(PathBuf::from("lib.rs"), invocation.to_owned())]);
+        let closure = compute_deny_closure_sources(&[("api", &files)], &["api::prot"]);
+        assert_eq!(closure.findings.len(), 1, "{invocation}: {closure:#?}");
+        assert_eq!(closure.findings[0].kind, FindingKind::UnsupportedReexport);
+        assert_eq!(closure.findings[0].path.as_deref(), Some("api"));
+    }
+}
+
+#[test]
+fn reexport_r4_allowlisted_macros_and_test_scope_pass() {
+    use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
+    use std::path::PathBuf;
+
+    let files = SourceMap::from([(
+        PathBuf::from("lib.rs"),
+        "macro_rules! unused { () => { pub use client::io as wire; }; }
+         thread_local! { static LOCAL: u8 = 0; }
+         std::thread_local! { static QUALIFIED: u8 = 0; }
+         pub mod prot {
+             legal_send!();
+             pub mod nested { another!(); }
+         }
+         #[cfg(test)] unknown!();
+         #[cfg(test)] include!(\"missing.rs\");
+         #[cfg(test)] mod tests { another!(); }"
+            .to_owned(),
+    )]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["api::prot"]);
+    assert!(closure.findings.is_empty(), "{closure:#?}");
+    assert_eq!(
+        closure.denied,
+        std::collections::BTreeSet::from(["api::prot".to_owned()])
+    );
+}
+
+#[test]
 fn aliases_are_scoped_to_inline_modules() {
     let report = action_report(
         "mod a { use api::interact as x; fn f() { x::walk(); } }\
