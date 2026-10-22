@@ -500,6 +500,7 @@ impl CompiledRun {
                 state,
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
+                walk_danger: ctx.compiled.walk_danger,
                 #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
@@ -512,6 +513,7 @@ impl CompiledRun {
                         bank_memory: ctx.compiled.bank_memory,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
+                        walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
                         #[cfg(feature = "load")]

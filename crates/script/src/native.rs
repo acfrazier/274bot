@@ -112,6 +112,66 @@ pub struct WalkPermissions {
     pub allow_danger_zones: bool,
 }
 
+/// The host's danger decision for a candidate's actual walk access tiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkDanger<'a> {
+    Allowed,
+    Denied { zone: &'a str },
+    Unavailable,
+}
+
+/// A tick-borrowed query over the host's effective native walk permissions.
+/// Implementations resolve settings lazily and retain no state between ticks.
+pub trait WalkDangerQuery {
+    fn check(
+        &self,
+        target: WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+    ) -> WalkDanger<'_>;
+
+    /// Restrict only the chosen target's access goals after eligibility checks.
+    /// `None` preserves the existing approach, including its preferred tier.
+    /// Implementations must not allocate goals when no access tile is denied.
+    fn safe_access_goals(
+        &self,
+        target: WorldTile,
+        loc_id: Option<i32>,
+        radius: u16,
+        arrival: nav::contract::ArrivalKind,
+        existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError>;
+}
+
+/// Test fixtures with no host danger policy explicitly allow every access tile.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct AllowWalkDanger;
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl WalkDangerQuery for AllowWalkDanger {
+    fn check(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+    ) -> WalkDanger<'_> {
+        WalkDanger::Allowed
+    }
+
+    fn safe_access_goals(
+        &self,
+        _target: WorldTile,
+        _loc_id: Option<i32>,
+        _radius: u16,
+        _arrival: nav::contract::ArrivalKind,
+        _existing: Option<&WalkGoals>,
+    ) -> Result<Option<WalkGoals>, WalkGoalsError> {
+        Ok(None)
+    }
+}
+
 impl WalkPermissions {
     fn from_bag(card: CompiledId, bag: &SettingsBag) -> Self {
         let (teleports, wilderness, danger_zones) = if card == CompiledId("Gatherer") {
@@ -159,6 +219,12 @@ impl PreparedConfig {
             walk_permissions,
             value: Some(Box::new(value)),
         })
+    }
+
+    /// Prepare settings for the fixed card installed by `SlotScript::start_test_script`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test_script(revision: u64, bag: Arc<SettingsBag>) -> Arc<Self> {
+        Self::new(CompiledId("test"), 1, revision, bag, ())
     }
 
     pub fn card(&self) -> CompiledId {
@@ -406,6 +472,8 @@ pub struct NativeTick<'a> {
     pub service_authority: Option<ServiceAuthority<'a>>,
     /// Borrow of the owner's admitted seat, not a second request scheduler.
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
+    /// Read-only danger admission for target selection, borrowed from the host.
+    pub walk_danger: Option<&'a dyn WalkDangerQuery>,
     #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
