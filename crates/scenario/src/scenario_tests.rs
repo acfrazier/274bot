@@ -14645,7 +14645,7 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
     use crate::scenarios::quester::RUNE_MYST_DEADLINE;
 
     for (name, measured_ms, deadline) in [
-        ("ardy_fighter_bank", 243_907_u64, ARDY_FIGHTER_BANK_DEADLINE),
+        ("ardy_fighter_bank", 365_610_u64, ARDY_FIGHTER_BANK_DEADLINE),
         (
             "auto_fighter_targets",
             580_326,
