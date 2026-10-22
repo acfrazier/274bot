@@ -925,6 +925,71 @@ class QuestJobTests(unittest.TestCase):
             self.assertEqual(quest_env["QUESTER_TICK_MS"], "300")
 
 
+    def test_quest_cell_env_writes_its_private_custom_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            with mock.patch.object(rn, "IS_WINDOWS", False), \
+                    mock.patch.object(rn, "JOB", "quest"), \
+                    mock.patch.object(rn, "PROFILE", "local-289q"), \
+                    mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                    mock.patch.object(rn, "GAME_PORT", 44694), \
+                    mock.patch.object(rn, "HTTP_PORT", 1180), \
+                    mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": 300}):
+                env = rn.cell_env(home, root / "tmp", root / "evidence", "quester_path", "nq")
+
+            self.assertEqual(env["QUESTER_TICK_MS"], "300")
+            self.assertEqual(env["HOME"], str(home))
+            self.assertEqual(env["TMPDIR"], str(root / "tmp"))
+            profile = json.loads((home / ".274bot" / "servers.json").read_text(encoding="utf-8"))
+            self.assertEqual(profile, {
+                "schema_version": 1,
+                "servers": [{
+                    "name": "local-289q",
+                    "revision": 289,
+                    "transport": "tcp",
+                    "worlds": [{
+                        "number": 289,
+                        "host": "127.0.0.1",
+                        "port": 44694,
+                        "node_id": 289,
+                        "asset_host": "127.0.0.1",
+                        "asset_port": 1180,
+                    }],
+                    "login_key": {"engine_dir": None},
+                    "vault": "vault-289q",
+                    "members": None,
+                    "allow_plaintext_offhost": False,
+                }],
+            })
+
+    def test_windows_quest_cell_env_uses_engine_b_without_custom_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            with mock.patch.object(rn, "IS_WINDOWS", True), \
+                    mock.patch.object(rn, "JOB", "quest"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"), \
+                    mock.patch.object(rn, "JOB_DEFAULTS", {"tick_ms": None}):
+                env = rn.cell_env(home, root / "tmp", root / "evidence", "quester_cook", "wq")
+
+            self.assertNotIn("QUESTER_TICK_MS", env)
+            self.assertFalse((home / ".274bot" / "servers.json").exists())
+
+
+class TemporaryCargoEnvironmentTests(unittest.TestCase):
+    def test_builds_with_ephemeral_home_share_runner_cache_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(rn, "ROOT", root):
+                build = rn.build_env(root / "build")
+                lane = rn.lane_env(root / "home", root / "tmp", root / "target", {})
+            expected = str(root / "sccache")
+            self.assertEqual(build["SCCACHE_DIR"], expected)
+            self.assertEqual(lane["SCCACHE_DIR"], expected)
+
+
 class MacQuietLockTests(unittest.TestCase):
     def test_lock_at_cell_boundary_records_reason_and_does_not_start_cell(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -55,6 +55,8 @@ Jobs run sequentially and share the runner's lock and build tree:
   `start-289q.sh` on `1180/44694/9988`. It sets both parallel limits to 1
   because the Q world permits one connected client. Only quest cells get
   `QUESTER_TICK_MS=300` and `local-289q`.
+  Non-Windows quest cells write `local-289q` into each isolated HOME, so they
+  do not use the operator's `~/.274bot/servers.json`.
 - **macOS, merlot:** the `local.274bot-nightly-mac` user LaunchAgent runs main
   with `lanes,panel,tui` on already-running Engine A (`44594/1080`), then quest
   with `panel,tui` on already-running Engine Q (`44694/1180`), serialized to one
@@ -87,6 +89,9 @@ The runner holds `<NIGHTLY_ROOT>/.nightly.lock`, so jobs cannot share the Cargo
 target tree concurrently. It removes matching local runs older than
 `NIGHTLY_KEEP_DAYS` (14 by default); the archive keeps all Linux and Windows
 runs. `NIGHTLY_RUNS_ROOT` can put finished runs outside the runner work root.
+
+Cargo builds use `<NIGHTLY_ROOT>/sccache`, outside their disposable homes, so
+cache writes cannot race per-lane cleanup.
 
 ## Reading a run
 
