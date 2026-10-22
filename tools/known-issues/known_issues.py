@@ -4,8 +4,9 @@
 The ledger lives in ``docs/known-issues.toml`` (one ``[[item]]`` table per
 item). An item is open at release X when its ``listed`` release (default
 ``first``) is not newer than X and its ``fixed`` release (when set) is newer
-than X. ``first`` is the first affected release; ``listed`` differs only when
-the item was found after ``first`` had shipped. The commit that
+than X. ``first`` is the first affected release, or the release under
+development when no shipped release has the problem; ``listed`` differs only
+when the item was found after ``first`` had shipped. The commit that
 fixes an item sets ``fixed`` to the release carrying the fix; items are never
 deleted, so checks of already published releases keep passing. Never edit the
 ``### Known issues`` / ``### Not in this release`` blocks in ``CHANGELOG.md``
@@ -123,6 +124,10 @@ def load_ledger(path, order):
         seen.add(entry["id"])
         first = str(entry["first"])
         version_key(first)
+        if first not in names:
+            raise ValueError(
+                f"{path}: item {entry['id']!r} names an unknown "
+                f"'first' release {first!r}")
         if entry["target"] != "none":
             version_key(entry["target"])
         fixed = None
@@ -238,7 +243,7 @@ def applies(item, release, order):
     ``release``. A release with no CHANGELOG heading yet (the next release)
     counts as newer than every heading. Fixed items stay in the ledger as
     history; ``render`` and ``check`` simply skip them where they are closed."""
-    if item["first"] not in order:
+    if item["first"] not in order and item["first"] != next_release(order):
         raise ValueError(
             f"ledger item {item['id']!r} names an unknown release {item['first']!r}")
     names = extended_order(order, release, (item,))
@@ -251,8 +256,8 @@ def applies(item, release, order):
 def carried_releases(first, release, order):
     """Releases that carry the item into ``release``: ``first`` up to (not
     including) ``release``."""
-    names = with_release(order, release)
-    if first not in order:
+    names = extended_order(order, release, ({"listed": first},))
+    if first not in names:
         raise ValueError(f"unknown release {first!r}")
     return names[names.index(first):names.index(release)]
 
