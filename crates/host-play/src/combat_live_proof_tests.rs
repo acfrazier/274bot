@@ -8231,7 +8231,8 @@ fn run_case(case: Case) {
 
     if case == Case::M5Stop || case.is_m0() {
         assert_eq!(
-            writer.outcome, "PASS",
+            writer.outcome,
+            "PASS",
             "{} live proof: {:?}",
             case.key(),
             writer.error
