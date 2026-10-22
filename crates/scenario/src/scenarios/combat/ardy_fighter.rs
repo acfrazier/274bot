@@ -247,8 +247,21 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
         .find(|step| step.name == "watch Strength XP from the selected melee style after Start")
         .expect("ardy fighter bank has a post-Start Strength watch");
     style_watch.wait.budget_ticks = ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS;
+    scenario.settings.deadline = ARDY_FIGHTER_BANK_DEADLINE;
     scenario
 }
+
+/// Whole-cell wall deadline for the earned-kill bank cell. Measured live on
+/// Engine A at the 289 engine's 600 ms game tick: thirteen passes in fifteen
+/// lifted runs, at 95.702 s (142 game ticks), 97.110 s (144), 99.891 s (149),
+/// 101.798 s (152), 102.924 s (155), 133.471 s (205), 138.713 s (214),
+/// 139.431 s (216), 142.506 s (221), 149.772 s (232), 155.613 s (242),
+/// 158.134 s (246) and 239.154 s (381). The largest is 239.154 s; the deadline
+/// is that plus 50% headroom, rounded up to a whole second (358.73 s ->
+/// 359 s). The other two runs failed the pre-existing 320-game-tick style
+/// watch, which this deadline does not replace. The seeded sibling keeps the
+/// short gold deadline and every post-Start watch keeps its game-tick budget.
+pub(crate) const ARDY_FIGHTER_BANK_DEADLINE: Duration = Duration::from_secs(359);
 
 /// ArdyFighter startup PeriodicBank witness. One DEFAULT_LOOT Guard drop is
 /// seeded with one Cake so only PeriodicBank owns the first trip instead of
