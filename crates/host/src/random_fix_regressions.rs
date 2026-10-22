@@ -444,3 +444,57 @@ fn guardian_r3_only_new_furthest_distance_resets_engaged_budget() {
     assert!(!status.hold && !status.ours, "nine ticks without a new maximum releases");
     assert_eq!(driver.walks.len(), attempts, "give-up sends no walk");
 }
+
+#[test]
+fn guardian_evade_stunned_ticks_do_not_consume_the_stalled_budget() {
+    // FIX-025-F-WATCHMAN recorded sequence: the Watchman is summoned, the
+    // bot fails a pickpocket attempt on a Man and the content applies its
+    // 8-tick stun (`pickpocket.dbrow:10`). The `stunned` walktrigger then
+    // cancels every flee walk and answers "You're stunned!" per attempt
+    // (`movecheck.rs2:1-6`), so the tile cannot change until the stun ends.
+    // Those server-blocked ticks must not spend the 9-tick stalled budget
+    // (Watchman `flee_distance` 7 + 2).
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", -1, 0);
+    plant_npc_typed_with_op(&mut c, 0, 431, "Watchman", 32768, None, "Attack");
+    set_flee_npc(&mut c, 0, 0);
+    let data = event_game_data();
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    assert!(guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data).hold);
+    let mut walks = driver.walks.len();
+    for stunned_tick in 1..=12 {
+        let line = if stunned_tick == 1 {
+            "You've been stunned!"
+        } else {
+            "You're stunned!"
+        };
+        c.add_chat(0, line, "");
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert!(
+            status.hold && status.ours,
+            "a server-blocked flee must not give up at stunned tick {stunned_tick}"
+        );
+        assert!(
+            driver.walks.len() > walks,
+            "the flee keeps attempting walks while stunned at tick {stunned_tick}"
+        );
+        walks = driver.walks.len();
+    }
+    // The stun has ended and the bot still makes no progress: the normal
+    // 9-tick stalled bound applies from here, unspent and unwidened.
+    for stalled_tick in 1..=9 {
+        tick_at(&mut c, &mut snap);
+        let status = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+        assert_eq!(
+            status.hold,
+            stalled_tick < 9,
+            "post-stun stalled tick {stalled_tick}"
+        );
+    }
+}
