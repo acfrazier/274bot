@@ -1,5 +1,8 @@
 # Query: the fluent read DSL
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
+
 `api::query` is the fluent filter surface over the snapshot views. One
 generic base plus per-entity extension traits; every terminal reads from
 the last snapshot rebuild without allocating a world copy.
