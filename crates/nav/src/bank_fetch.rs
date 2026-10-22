@@ -8,7 +8,7 @@
 //! strict search after the steps land.
 //!
 //! The session is a **plan**: ordered steps the host pump executes through
-//! the [`crate::traveller::Traveller`] and `api::interact` bank path (open,
+//! the executor's `Traveller` and `api::interact` bank path (open,
 //! withdraw, then Wear or Close), plus the [`WorldState`] those steps leave
 //! behind for the post-session re-find. A `worn_req` alternative already
 //! carried plans a bare [`BankStep::Wear`] — no bank walk. Anything the plan

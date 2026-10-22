@@ -5,7 +5,7 @@
 //! walk through the same tick without OP_LOC1 (that would Close).
 //!
 //! The high-level [`Traveller::follow`] is a new pollable layer: it drives
-//! a [`crate::router::Route`] leg-by-leg through `api::interact::Interactions`
+//! a [`nav::router::Route`] leg-by-leg through `api::interact::Interactions`
 //! and `api::settle::Settle` (walk legs via `walk` + an `arrived` arm,
 //! transport legs via `interact` on the transport loc + a positional
 //! `arrived(edge.to)` arm), advancing one step per call. The host calls it
@@ -25,18 +25,19 @@ use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WidgetView, WorldTile};
 use client::dash3d::CollisionFlag;
 
-use crate::contract::RoutePlanLease;
-use crate::essence::{
+use nav::contract::RoutePlanLease;
+use nav::essence::{
     essence_session_for_wizard, in_essence_mine, is_essence_entry_edge, EssenceSession,
     ESSENCE_MINE_EXIT_ARRIVE_RADIUS,
 };
-use crate::router::{GridLeg, GridRoute, Leg, Route};
-use crate::tile::{chebyshev, Tile};
-use crate::transport::{
-    is_dialogue_door_loc, DoorDir, TransportEdge, TransportKind, AL_KHARID_TOLL_LEFT_LOC_ID,
-    AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID, CELLAR_SHIFT,
-    SHANTAY_HENGE_LOC_ID,
+use nav::executor_adapter::{
+    is_dialogue_door_loc, is_slashable_web, plan_leg_count, plan_owned_leg, plan_retained_leg,
+    AL_KHARID_TOLL_LEFT_LOC_ID, AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
+    CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
 };
+use nav::router::{GridLeg, GridRoute, Leg, Route};
+use nav::tile::{chebyshev, Tile};
+use nav::transport::{DoorDir, TransportEdge, TransportKind};
 
 mod dialog;
 mod legacy_grid;
@@ -155,7 +156,7 @@ pub enum TravelOutcome {
     EntranceRefused {
         at: WorldTile,
         leg: usize,
-        requirement: crate::world_state::EntranceRequirement,
+        requirement: nav::world_state::EntranceRequirement,
     },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
@@ -239,7 +240,7 @@ pub struct TravelOptions<'a> {
     pub edges: Option<&'a [TransportEdge]>,
     /// Pinned evidence used by route selection, rechecked before gated
     /// transport sends. Missing or undecided evidence fails closed.
-    pub quest_evidence: Option<&'a crate::quest_gates::QuestEvidence>,
+    pub quest_evidence: Option<&'a nav::quest_gates::QuestEvidence>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     #[allow(clippy::type_complexity)]
@@ -328,7 +329,7 @@ impl Traveller {
     /// entered the mine through, and the overworld tile the mine exit
     /// portal returns to. `None` before the first essence entry (and for
     /// bots that never visit the mine). The caller passes this back into
-    /// [`crate::router::FindOptions::essence`] so a route from inside the
+    /// [`nav::router::FindOptions::essence`] so a route from inside the
     /// mine can use the return hop.
     pub fn essence(&self) -> Option<EssenceSession> {
         self.essence
@@ -436,7 +437,7 @@ impl Traveller {
             .follow
             .as_mut()
             .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
-        if crate::debug_enabled() {
+        if api::hostlog::debug_enabled() {
             let run = self.follow.as_ref();
             api::host_log!(
                 Category::NavTrace,
@@ -522,9 +523,9 @@ impl FollowLeg {
         match self {
             Self::Legacy(Leg::Walk { tiles }) => Some(tiles),
             Self::Legacy(Leg::Transport { .. }) => None,
-            Self::Plan { plan, index } => match plan.retained_leg(*index)? {
-                crate::router::CompactRouteLeg::Transport(_) => None,
-                crate::router::CompactRouteLeg::Walk(tiles) => Some(tiles),
+            Self::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
+                nav::router::CompactRouteLeg::Transport(_) => None,
+                nav::router::CompactRouteLeg::Walk(tiles) => Some(tiles),
             },
         }
     }
@@ -534,8 +535,7 @@ impl FollowLeg {
             Self::Legacy(leg @ Leg::Transport { .. }) => leg,
             Self::Legacy(Leg::Walk { .. }) => unreachable!("walk leg routed as transport"),
             Self::Plan { plan, index } => {
-                let leg = plan
-                    .owned_leg(index)
+                let leg = plan_owned_leg(&plan, index)
                     .expect("retained route plan leg remains addressable");
                 if !matches!(leg, Leg::Transport { .. }) {
                     unreachable!("compact route walk leg routed as transport");
@@ -578,7 +578,7 @@ impl FollowRun {
     }
 
     fn start_plan(plan: RoutePlanLease, options: &TravelOptions<'_>) -> FollowRun {
-        let leg_count = plan.leg_count();
+        let leg_count = plan_leg_count(&plan);
         Self::with_legs(
             RouteLegSource::Plan {
                 plan,
@@ -1034,7 +1034,7 @@ impl FollowRun {
                     match find_transport_target_instance(snapshot, edge, selected_npc_index) {
                         Some(target) => {
                             let to = edge.to;
-                            let action = if edge.is_slashable_web() {
+                            let action = if is_slashable_web(edge) {
                                 match current_web_action(snapshot, edge, options.edges) {
                                     Ok(action) => action,
                                     Err(reason) => {
@@ -1066,7 +1066,7 @@ impl FollowRun {
                                     // does not send it a second time.
                                     let tries = if npc_backed(edge)
                                         || (edge.kind == TransportKind::Door
-                                            && !edge.is_slashable_web())
+                                            && !is_slashable_web(edge))
                                         || (edge.open_loc_id.is_some()
                                             && edge.kind != TransportKind::Door
                                             && edge_loc_open(snapshot, edge))
@@ -1149,10 +1149,10 @@ impl FollowRun {
         edge: &TransportEdge,
         at: WorldTile,
         snapshot: &GameSnapshot,
-        evidence: Option<&crate::quest_gates::QuestEvidence>,
+        evidence: Option<&nav::quest_gates::QuestEvidence>,
     ) -> Option<TravelOutcome> {
         if let Some(requirement) =
-            crate::world_state::WorldState::snapshot_exclusion_failure(edge, snapshot)
+            nav::world_state::WorldState::snapshot_exclusion_failure(edge, snapshot)
         {
             return Some(TravelOutcome::EntranceRefused {
                 at,
@@ -1258,8 +1258,7 @@ impl WalkHop {
     fn leg(&self) -> Leg {
         match &self.leg {
             FollowLeg::Legacy(leg) => leg.clone(),
-            FollowLeg::Plan { plan, index } => plan
-                .owned_leg(*index)
+            FollowLeg::Plan { plan, index } => plan_owned_leg(plan, *index)
                 .expect("retained route plan walk leg remains addressable"),
         }
     }
@@ -1333,8 +1332,7 @@ fn fire_follow_leg(options: &mut TravelOptions<'_>, leg: &FollowLeg, phase: LegP
         match leg {
             FollowLeg::Legacy(leg) => cb(leg, phase),
             FollowLeg::Plan { plan, index } => {
-                let leg = plan
-                    .owned_leg(*index)
+                let leg = plan_owned_leg(plan, *index)
                     .expect("retained route plan leg remains addressable");
                 cb(&leg, phase);
             }

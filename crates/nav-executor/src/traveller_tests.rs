@@ -9,15 +9,16 @@ use client::dash3d::ClientNpc;
 use client::io::{ClientStream, ServerProt};
 use std::sync::Arc;
 
-use crate::essence::essence_session_for_wizard;
-use crate::grid::StepGrid;
-use crate::router::{find_on_grid, Leg, Route};
-use crate::tile::Tile;
-use crate::transport::{DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
 use crate::traveller::{
     door_tile, FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
     TravelOutcome, Traveller,
 };
+use nav::essence::essence_session_for_wizard;
+use nav::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
+use nav::grid::StepGrid;
+use nav::router::{find_on_grid, Leg, Route};
+use nav::tile::Tile;
+use nav::transport::{DoorDir, TransportEdge, TransportKind};
 
 #[path = "traveller/npc_hop_tests.rs"]
 mod npc_hop_tests;
@@ -1746,9 +1747,9 @@ fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
 
 #[test]
 fn gated_transport_rechecks_evidence_after_approach_before_send() {
-    use crate::quest_gates::tests::{family, range, tbwt_evidence, window};
-    use crate::quest_gates::QuestGates;
     use api::selected::Truth;
+    use nav::quest_gates::QuestGates;
+    use nav::test_support::{family, range, tbwt_evidence, window};
 
     let proven = tbwt_evidence(range(Some(3), Some(3)));
     let blocked = tbwt_evidence(range(Some(4), Some(4)));
@@ -4056,7 +4057,7 @@ fn follow_ardougne_lever_answers_the_wilderness_warning_then_arrives() {
     let mut c = scene_client();
     plant_loc(
         &mut c,
-        crate::transport::ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
+        nav::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
         "Lever",
         "Pull",
         1,
@@ -4069,7 +4070,7 @@ fn follow_ardougne_lever_answers_the_wilderness_warning_then_arrives() {
     };
     let mut t = Traveller::new();
     let mut edge = shantay_edge();
-    edge.loc_id = crate::transport::ARDOUGNE_WILDERNESS_LEVER_LOC_ID;
+    edge.loc_id = nav::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID;
     edge.ticks = 2;
     edge.consumed_req.clear();
     let to = edge.to;
@@ -7160,7 +7161,7 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
 
 #[test]
 fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+    let Some(world) = nav::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
     let edge = world
@@ -8940,4 +8941,15 @@ impl Out for Sink {
     fn pjstr(&mut self, s: &str) {
         self.strings.push(s.to_string());
     }
+}
+
+#[test]
+fn executor_state_size_pins() {
+    eprintln!(
+        "Traveller={} FollowRun={}",
+        std::mem::size_of::<Traveller>(),
+        std::mem::size_of::<FollowRun>()
+    );
+    assert_eq!(std::mem::size_of::<Traveller>(), 904);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
 }

@@ -19,9 +19,9 @@ use host::Pump;
 use host_play::{ProfileOptions, ServerProfile, SharedClientTemplate};
 use nav::router::{find_with, FindOptions, Leg, Route};
 use nav::transport::TransportKind;
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
 use nav::WorldState;
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use serde_json::{json, Value};
 
 const MAGE_ARENA_ORIGIN: WorldTile = WorldTile {

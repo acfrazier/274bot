@@ -23,8 +23,8 @@ use host::Pump;
 use host_play::{ProfileOptions, ServerProfile, SharedClientTemplate};
 use nav::router::{find_with, FindOptions, Leg};
 use nav::transport::TransportKind;
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use nav::world::NavWorld;
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
 use serde_json::json;
 
 const PORT_SARIM_DOCK: WorldTile = WorldTile {

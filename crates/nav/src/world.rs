@@ -12,7 +12,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -211,8 +211,8 @@ impl NavWorld {
     /// `$NAV_PACK` or the host-play build's revision-289 pack under this
     /// Cargo test executable's profile directory. Tests never read the
     /// operator's home directory.
-    #[cfg(test)]
-    pub(crate) fn default_pack_path() -> PathBuf {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn default_pack_path() -> PathBuf {
         if let Some(path) = std::env::var_os("NAV_PACK") {
             return PathBuf::from(path);
         }
@@ -230,8 +230,8 @@ impl NavWorld {
 
     /// Optional whole-world tests skip only when no pack exists by default.
     /// An explicitly selected or unreadable pack is a failed test, not a skip.
-    #[cfg(test)]
-    pub(crate) fn load_default_pack_or_skip() -> Option<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn load_default_pack_or_skip() -> Option<Self> {
         let path = Self::default_pack_path();
         match Self::load_pack(&path) {
             Ok(w) => Some(w),

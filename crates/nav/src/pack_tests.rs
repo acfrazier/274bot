@@ -17,11 +17,11 @@ use client::dash3d::CollisionFlag;
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
 use crate::pack::PackError;
-use crate::quest_gates::tests::{
-    family as gate_family, family_schema as gate_family_schema, window as gate_window,
-};
 use crate::quest_gates::QuestGates;
 use crate::router::AvoidRect;
+use crate::test_support::{
+    family as gate_family, family_schema as gate_family_schema, window as gate_window,
+};
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules};
 use crate::world::NavWorld;

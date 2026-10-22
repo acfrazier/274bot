@@ -1,6 +1,6 @@
 //! The Rune Essence mine's per-slot return latch. Entering the mine
 //! through wizard N records N; the mine's exit portal may only return
-//! to N. The session lives on the [`crate::traveller::Traveller`]; the
+//! to N. The session lives on the executor's `Traveller`; the
 //! router synthesizes a session-gated return hop from it (the
 //! `[oploc1,blankrunestone_exit_portal]` portal teleports to the
 //! wizard's `^essence_mine_to_<wizard>` anchor). The pack carries entry

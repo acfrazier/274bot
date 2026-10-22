@@ -114,7 +114,11 @@ fn assert_scanner_findings(
     actual.sort();
     let mut expected = expected.to_vec();
     expected.sort();
-    assert_eq!(actual, expected, "fixture {fixture}: {:#?}", report.findings);
+    assert_eq!(
+        actual, expected,
+        "fixture {fixture}: {:#?}",
+        report.findings
+    );
 }
 
 #[test]
@@ -161,10 +165,7 @@ fn public_glob_inside_a_denied_namespace_does_not_expand_closure() {
     use std::path::PathBuf;
 
     let files: SourceMap = BTreeMap::from([
-        (
-            PathBuf::from("lib.rs"),
-            "pub mod interact;\n".to_owned(),
-        ),
+        (PathBuf::from("lib.rs"), "pub mod interact;\n".to_owned()),
         (
             PathBuf::from("interact.rs"),
             "pub mod driver;\npub use driver::*;\npub struct Internal;\n".to_owned(),
@@ -174,8 +175,7 @@ fn public_glob_inside_a_denied_namespace_does_not_expand_closure() {
             "pub fn walk() {}\n".to_owned(),
         ),
     ]);
-    let closure =
-        compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
     assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
     assert_eq!(
         closure.denied,
@@ -185,40 +185,29 @@ fn public_glob_inside_a_denied_namespace_does_not_expand_closure() {
 
 #[test]
 fn unresolved_local_glob_in_an_allowed_namespace_fails_closed() {
-    use crate::test_support::source_scan::{
-        compute_deny_closure_sources, FindingKind, SourceMap,
-    };
+    use crate::test_support::source_scan::{compute_deny_closure_sources, FindingKind, SourceMap};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     let files: SourceMap = BTreeMap::from([
-        (
-            PathBuf::from("lib.rs"),
-            "pub mod exposed;\n".to_owned(),
-        ),
+        (PathBuf::from("lib.rs"), "pub mod exposed;\n".to_owned()),
         (
             PathBuf::from("exposed.rs"),
             "pub use crate::missing::*;\n".to_owned(),
         ),
     ]);
-    let closure =
-        compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
     assert_eq!(closure.findings.len(), 1, "{:#?}", closure.findings);
     assert_eq!(
         closure.findings[0].kind,
         FindingKind::UnsupportedReexportGlob
     );
-    assert_eq!(
-        closure.findings[0].path.as_deref(),
-        Some("api::missing::*")
-    );
+    assert_eq!(closure.findings[0].path.as_deref(), Some("api::missing::*"));
 }
 
 #[test]
 fn glob_chain_exposes_and_tracks_reexports_from_denied_items() {
-    use crate::test_support::source_scan::{
-        compute_deny_closure_sources, SourceMap,
-    };
+    use crate::test_support::source_scan::{compute_deny_closure_sources, SourceMap};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -240,8 +229,7 @@ fn glob_chain_exposes_and_tracks_reexports_from_denied_items() {
             "pub struct Driver;\n".to_owned(),
         ),
     ]);
-    let closure =
-        compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
+    let closure = compute_deny_closure_sources(&[("api", &files)], &["api::interact"]);
     assert!(closure.findings.is_empty(), "{:#?}", closure.findings);
     assert_eq!(
         closure.denied,
@@ -262,7 +250,10 @@ fn aliases_are_scoped_to_inline_modules() {
         "module-local aliases",
         &report,
         &[
-            (crate::test_support::source_scan::FindingKind::UsePath, Some("api::interact")),
+            (
+                crate::test_support::source_scan::FindingKind::UsePath,
+                Some("api::interact"),
+            ),
             (
                 crate::test_support::source_scan::FindingKind::QualifiedPath,
                 Some("api::interact::walk"),
@@ -271,11 +262,9 @@ fn aliases_are_scoped_to_inline_modules() {
     );
 }
 
-
 #[test]
 fn source_scanner_matches_all_twenty_four_design_fixtures() {
     use crate::test_support::source_scan::{scan_sources, FindingKind, SourceMap};
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
     let cases = vec![
         (
@@ -319,11 +308,7 @@ fn source_scanner_matches_all_twenty_four_design_fixtures() {
             "use client::client::Client;",
             vec![(FindingKind::UsePath, Some("client::client::Client"))],
         ),
-        (
-            "8",
-            "use client::dash3d::CollisionFlag;",
-            vec![],
-        ),
+        ("8", "use client::dash3d::CollisionFlag;", vec![]),
         (
             "9",
             "fn f() { let _ = api::interact::walk; }",
@@ -378,18 +363,12 @@ fn source_scanner_matches_all_twenty_four_design_fixtures() {
         (
             "18",
             "use api as a; fn f() { a::interact::walk(0, 0); }",
-            vec![(
-                FindingKind::QualifiedPath,
-                Some("api::interact::walk"),
-            )],
+            vec![(FindingKind::QualifiedPath, Some("api::interact::walk"))],
         ),
         (
             "19",
             "extern crate client as c; fn f() -> c::client::Client { loop {} }",
-            vec![(
-                FindingKind::QualifiedPath,
-                Some("client::client::Client"),
-            )],
+            vec![(FindingKind::QualifiedPath, Some("client::client::Client"))],
         ),
         (
             "22",
@@ -413,7 +392,12 @@ fn source_scanner_matches_all_twenty_four_design_fixtures() {
         PathBuf::from("src/stray.rs"),
         "use api::interact::Driver;".to_owned(),
     );
-    let report = scan_sources(&unattached, "nav", &["api", "client"], EXPECTED_ACTION_CLOSURE);
+    let report = scan_sources(
+        &unattached,
+        "nav",
+        &["api", "client"],
+        EXPECTED_ACTION_CLOSURE,
+    );
     assert_scanner_findings(
         "20 unattached file",
         &report,
@@ -429,7 +413,12 @@ fn source_scanner_matches_all_twenty_four_design_fixtures() {
         PathBuf::from("src/x_tests.rs"),
         "use api::interact::Driver;".to_owned(),
     );
-    let report = scan_sources(&attached_test, "nav", &["api", "client"], EXPECTED_ACTION_CLOSURE);
+    let report = scan_sources(
+        &attached_test,
+        "nav",
+        &["api", "client"],
+        EXPECTED_ACTION_CLOSURE,
+    );
     assert!(report.findings.is_empty(), "{:#?}", report.findings);
 
     let mut attached_production = SourceMap::new();
@@ -452,7 +441,6 @@ fn source_scanner_matches_all_twenty_four_design_fixtures() {
         &report,
         &[(FindingKind::UsePath, Some("api::interact::Driver"))],
     );
-
 }
 
 #[test]
@@ -468,22 +456,10 @@ fn source_scanner_visits_trait_bounds_types_patterns_and_attribute_metas() {
         "path node coverage",
         &report,
         &[
-            (
-                FindingKind::AttributePath,
-                Some("api::interact::check"),
-            ),
-            (
-                FindingKind::QualifiedPath,
-                Some("api::interact::Bound"),
-            ),
-            (
-                FindingKind::QualifiedPath,
-                Some("api::interact::Value"),
-            ),
-            (
-                FindingKind::QualifiedPath,
-                Some("api::interact::Variant"),
-            ),
+            (FindingKind::AttributePath, Some("api::interact::check")),
+            (FindingKind::QualifiedPath, Some("api::interact::Bound")),
+            (FindingKind::QualifiedPath, Some("api::interact::Value")),
+            (FindingKind::QualifiedPath, Some("api::interact::Variant")),
         ],
     );
 }

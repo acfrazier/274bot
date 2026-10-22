@@ -70,11 +70,14 @@ fn prefix_matches(path: &str, relative_prefix: &str) -> bool {
 }
 
 fn path_is_allowed(path: &SourcePath) -> bool {
-    if !planner_path(&path.path) || path.path == PLANNER_ROOT {
+    if !planner_path(&path.path) {
         return true;
     }
     if path.kind == PathKind::Glob {
         return false;
+    }
+    if path.path == PLANNER_ROOT {
+        return true;
     }
     PRODUCTION_ALLOW
         .iter()
@@ -95,7 +98,14 @@ fn surface_violations(report: &ScanReport) -> Vec<SourcePath> {
 }
 
 fn scan_fixture(source: &str) -> ScanReport {
-    scan_text(source, "src/lib.rs", "fixture", Scope::Production, &[PLANNER_ROOT], &[])
+    scan_text(
+        source,
+        "src/lib.rs",
+        "fixture",
+        Scope::Production,
+        &[PLANNER_ROOT],
+        &[],
+    )
 }
 
 #[test]
@@ -143,9 +153,8 @@ fn planner_root_alias_does_not_hide_an_unlisted_path() {
 
 #[test]
 fn the_scanner_import_is_allowed_only_in_test_scope() {
-    let test_report = scan_fixture(
-        "#[cfg(test)] mod tests { use nav::test_support::source_scan; }",
-    );
+    let test_report =
+        scan_fixture("#[cfg(test)] mod tests { use nav::test_support::source_scan; }");
     assert!(
         surface_violations(&test_report).is_empty(),
         "{:#?}",
@@ -211,8 +220,8 @@ fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
         surface_violations(&test_list)
     );
 
-    let production_tile = scan_fixture("use nav::tile::Tile;");
-    assert_eq!(surface_violations(&production_tile).len(), 1);
+    let production_grid = scan_fixture("use nav::grid::StepGrid;");
+    assert_eq!(surface_violations(&production_grid).len(), 1);
 
     let cfg_attr = scan_fixture("#[cfg_attr(feature = \"x\", cfg(test))] mod m {}");
     assert!(cfg_attr
@@ -266,9 +275,8 @@ fn section_469_examples_are_enforced() {
     );
     assert!(surface_violations(&aliased_allowed).is_empty());
 
-    let grouped_allowed = scan_fixture(
-        "use nav::{contract::RoutePlanLease, router::{Leg, Route}};",
-    );
+    let grouped_allowed =
+        scan_fixture("use nav::{contract::RoutePlanLease, router::{Leg, Route}};");
     assert!(surface_violations(&grouped_allowed).is_empty());
 
     let root_alias_disallowed = scan_fixture("use nav as p; fn f() { p::router::find(); }");

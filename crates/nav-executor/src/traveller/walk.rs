@@ -25,7 +25,7 @@ pub(super) fn report_walk(
     aim: WorldTile,
     result: &SendResult<'_>,
 ) {
-    if crate::debug_enabled() {
+    if api::hostlog::debug_enabled() {
         let refusal = match result {
             SendResult::Sent { .. } => None,
             SendResult::Refused { reason, .. } => Some(*reason),
@@ -120,7 +120,7 @@ impl FollowRun {
             self.close_enough.max(CLICK_AHEAD)
         };
         let arms = [("arrived", arrived(hop.aim, radius))];
-        if crate::debug_enabled() {
+        if api::hostlog::debug_enabled() {
             api::host_log!(Category::NavTrace, Level::Debug,
                 "walk tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?} actor={:?} map_flag={:?}",
                 snapshot.tick(), hop.aim, hop.ticks_waited, hop.sent_tile,

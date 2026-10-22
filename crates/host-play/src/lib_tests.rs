@@ -4530,7 +4530,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: a }),
+        Some(nav_executor::TravelOutcome::Arrived { at: a }),
         false,
     );
     assert!(!bot.has_route());
@@ -4543,7 +4543,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: b }),
+        Some(nav_executor::TravelOutcome::Arrived { at: b }),
         false,
     );
     assert_eq!(bot.walk_outcome_seq, 1, "B's own route end publishes");
@@ -4572,7 +4572,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         dest,
         ticks: 0.0,
     };
-    let gave_up = |at| Some(nav::traveller::TravelOutcome::GaveUp { at, hops: 40 });
+    let gave_up = |at| Some(nav_executor::TravelOutcome::GaveUp { at, hops: 40 });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
@@ -4642,7 +4642,7 @@ fn route_end_of_request_id_zero_publishes_nothing() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: dest }),
+        Some(nav_executor::TravelOutcome::Arrived { at: dest }),
         false,
     );
     assert!(!bot.has_route(), "the route ended");
@@ -4677,14 +4677,14 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Stalled {
+        Some(nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 4,
                 z: 3,
                 level: 0,
             },
             aiming: dest,
-            why: nav::traveller::HopFailure::EndBlocked,
+            why: nav_executor::HopFailure::EndBlocked,
             tries: 0,
         }),
         false,
@@ -4709,14 +4709,14 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Stalled {
+        Some(nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 4,
                 z: 3,
                 level: 0,
             },
             aiming: dest,
-            why: nav::traveller::HopFailure::Dropped,
+            why: nav_executor::HopFailure::Dropped,
             tries: 1,
         }),
         false,
@@ -5147,7 +5147,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     };
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Refused {
+        Some(nav_executor::TravelOutcome::Refused {
             at: dest,
             reason: api::interact::SendReason::NotIngame,
         }),
@@ -5172,7 +5172,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     bot.route_request_id = 8;
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Blocked {
+        Some(nav_executor::TravelOutcome::Blocked {
             at: dest,
             leg: 0,
             detail: "missing loc".into(),
@@ -5715,7 +5715,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         assert_eq!(bot.walk_outcome_request_id, second_id);
         apply_nav_follow_outcome(
             bot,
-            Some(nav::traveller::TravelOutcome::GaveUp { at: dest, hops: 3 }),
+            Some(nav_executor::TravelOutcome::GaveUp { at: dest, hops: 3 }),
             false,
         );
         assert_eq!(
@@ -14926,7 +14926,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
         &mut driver,
         &snap,
         stale_stand_route,
-        &mut nav::traveller::TravelOptions {
+        &mut nav_executor::TravelOptions {
             close_enough: 0,
             ..Default::default()
         },
