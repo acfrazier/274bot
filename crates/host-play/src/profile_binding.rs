@@ -767,6 +767,19 @@ impl ProfileSelection {
         }
     }
 
+    /// Start at Load with this revision's embedded game data (tests).
+    /// The synthetic cache fixture does not attest the real game data.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn begin_template_load_for_test(&self) -> Result<TemplatePreparation, String> {
+        let mut profile = self.bind()?;
+        Arc::get_mut(&mut profile)
+            .expect("the fixture profile is not shared yet")
+            .game_data = Some(api::game_data::for_revision(self.revision())?);
+        let mut preparation = self.begin_template_preparation();
+        preparation.stage = TemplateStage::Load(profile);
+        Ok(preparation)
+    }
+
     fn load_nav(
         &self,
         origin: &NavOrigin,
@@ -1466,7 +1479,6 @@ mod tests {
             submit_cooperative, CooperativePreparationStep as Step, PreparationInput,
             PreparationKind,
         };
-        use std::sync::Arc;
         use std::time::{Duration, Instant};
 
         let root = scratch_dir("template-preparation-worker");
@@ -1490,15 +1502,7 @@ mod tests {
             },
         )
         .unwrap();
-        let mut profile = selection.bind().unwrap();
-        // The tiny cache tests decoding, not source attestation. Supply the
-        // real embedded family to exercise the panel's game-data load branch.
-        Arc::get_mut(&mut profile).unwrap().game_data =
-            Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap());
-        let mut preparation = selection.begin_template_preparation();
-        // Cache fill and binding precede this stage in the panel. Enter its
-        // actual load step on the same shared preparation worker.
-        preparation.stage = super::TemplateStage::Load(profile);
+        let mut preparation = selection.begin_template_load_for_test().unwrap();
         let observer = super::ProfileProgressObserver::default();
         let task = submit_cooperative(
             PreparationKind::Profile,
