@@ -16,7 +16,7 @@ tested nor claimed.
 - [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
 - [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
 - [nav.md](nav.md) — whole-world collision + transport graph (pack v17) +
-  Dijkstra router + `Traveller::follow` + WalkTo picker + BankBudget fetch
+  Dijkstra router (`nav`) + `Traveller::follow` (`nav-executor`) + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, Fleet, scripts
@@ -29,7 +29,8 @@ tested nor claimed.
 | Crate | Role |
 | --- | --- |
 | `api` | Read model (`snapshot` + `query`), act primitives (`interact`), settle/evidence (`settle`), legal send table (`prot`), item/loc defs (`obj_names`) |
-| `nav` | Whole-world collision bake, transport graph, Dijkstra router, pollable `Traveller::follow`, WalkTo picker grid |
+| `nav` | Whole-world collision bake, transport graph, Dijkstra router, WalkTo picker grid |
+| `nav-executor` | Pollable `Traveller::follow` over the `nav` world |
 | `host` | One OS thread per client slot; drains gens per frame; snapshot/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM), per-profile script assignment/settings |
 | `host-play` | CLI + shared `Play`: resolve server profile, unlock vault, run slots |
