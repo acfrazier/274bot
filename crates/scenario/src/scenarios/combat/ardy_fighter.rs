@@ -17,15 +17,18 @@ const CHAOS_RUNE_ID: i32 = 562;
 /// costs a whole bank trip before the style (see
 /// `ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS`).
 const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
-/// One pre-style Loot-count trip session of `ardy_fighter_bank`, from the
-/// deposit that ends one trip to the deposit that ends the next (or to the
-/// selected style). A trip comes before the style whenever a Guard sees the
-/// steal (content `stealing.rs2` `stealing_check_for_guard`: a Guard within
-/// five tiles with line of sight attacks) or a public Bones pile lies in the
-/// loot radius, because `loot=Bones` with `bankEveryItems=1` makes either
-/// item a trip end and the card banks before it restocks or sets its style.
-/// Walking pace is one tile per game tick, since long runs end with run
-/// energy 1 to 3:
+/// One pre-style leg of `ardy_fighter_bank`: the game ticks between two
+/// content progress signals before the selected style. The signals are a
+/// deposit that ends a Loot-count trip and a successful steal (Thieving XP,
+/// `stealing.dbrow` `experience` 160). A trip comes before the style whenever
+/// a Guard sees the steal (content `stealing.rs2` `stealing_check_for_guard`:
+/// a Guard within five tiles with line of sight attacks) or a public Bones
+/// pile lies in the loot radius, because `loot=Bones` with `bankEveryItems=1`
+/// makes either item a trip end and the card banks before it restocks or sets
+/// its style. After fights the card can also eat each stolen food at once
+/// (`foodTarget` 1, low HP) and steal again; each such steal is progress. The
+/// longest leg is a deposit followed by a catch and the next deposit. Walking
+/// pace is one tile per game tick, since long runs end with run energy 1 to 3:
 /// - close the booth and walk back to the anchor: 1 + 42 (the 42-tile booth
 ///   route of the live nav trace, `FIX-ARDY-STYLE-025/runs/base-d1`);
 /// - anchor to the stall stand (2668,3312): 7;
@@ -37,6 +40,9 @@ const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 ///   = 77 (six live catches took 35 to 47 game ticks from steal to Bones);
 /// - take the Bones: 3;
 /// - walk the 42-tile route to the booth, open it and deposit: 47.
+///
+/// Live deposit-to-deposit legs took 65 to 128 game ticks (`base-d7`: 95, 65,
+/// 119; `final-r10`: 93, 72, 128; `FIX-ARDY-STYLE-025/runs/*/timeline.txt`).
 pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 26 + 77 + 3 + 47;
 /// First Strength XP of `ardy_fighter_bank` after the card acknowledges the
 /// selected style. Fight picks the nearest unengaged Guard within the leash
@@ -308,6 +314,7 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
             kind: StepKind::ObserveStyleAcrossLootTrips {
                 deposit_id: BONES_ID,
                 food: ARDY_FIGHTER_STALL_FOOD,
+                progress_stat: THIEVING_STAT,
             },
             wait: Wait {
                 arm: ARDY_FIGHTER_STRENGTH_STYLE,

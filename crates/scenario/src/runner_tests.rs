@@ -3831,6 +3831,15 @@ const ARDY_FIGHT_STEP: &str = "watch Strength XP from the selected melee style a
 const ARDY_ATTACK_STAT: usize = 0;
 const ARDY_BONES: i32 = 526;
 const ARDY_CAKE: i32 = 1891;
+const ARDY_THIEVING_STAT: usize = 17;
+
+/// One successful steal: Thieving XP (`stealing.dbrow` `experience` 160 =
+/// 16 XP) and the stolen `food` in the pack.
+fn ardy_steal(c: &mut Client, food: i32) {
+    c.stat_xp[ARDY_THIEVING_STAT] += 16;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    set_inv(c, &[(food, 1)]);
+}
 
 fn ardy_bank_after_start() -> (ScenarioRunner, Client) {
     let (mut runner, mut c) = from_start(ARDY_ORACLE.name);
@@ -3931,7 +3940,9 @@ fn assert_ardy_fails(runner: &mut ScenarioRunner, c: &mut Client, step: &str, ne
     }
 }
 
-/// A card that neither banks nor selects its style fails at one session.
+/// A card that neither banks, steals nor selects its style fails at one leg.
+/// So does a card that steals its food and then idles with it: the steal
+/// restarts the leg once, and nothing restarts it again.
 #[test]
 fn ardy_fighter_bank_style_watch_rejects_an_idle_card() {
     let session = ardy_budget(ARDY_STYLE_STEP);
@@ -3942,6 +3953,67 @@ fn ardy_fighter_bank_style_watch_rejects_an_idle_card() {
         ARDY_STYLE_STEP,
         &format!("not seen within {session} game ticks"),
     );
+    let (mut runner, mut c) = ardy_bank_after_start();
+    oracle_settle(&mut runner, &mut c, session as usize - 20);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 30);
+    assert_ardy_running(&runner, "the steal restarted the leg");
+    assert_ardy_fails(
+        &mut runner,
+        &mut c,
+        ARDY_STYLE_STEP,
+        &format!("[pre-style trips=0 deposited=0 steals=1] not seen within {session} game ticks"),
+    );
+}
+
+/// The `final-r10` receipt (`FIX-ARDY-STYLE-025/runs/final-r10/timeline.txt`):
+/// three pre-style trips (deposits at +93, +165 and +293), then six owner
+/// refusals, two successful steals that the card ate at once (+380, +389),
+/// an emptied stall and a third catch (+406 steal, +451 Bones). The live run
+/// failed the deposit-only leg at 515 game ticks, 11 tiles from the booth,
+/// so its fourth deposit is set at +510. Projected on: back at the stall,
+/// one steal held at +540, style at +542, first Strength hit at +549.
+#[test]
+fn ardy_fighter_bank_style_watch_accepts_the_final_r10_receipt() {
+    let (mut runner, mut c) = ardy_bank_after_start();
+    let mut now = 0;
+    for (banked, deposit_at) in [(1, 93), (2, 165), (3, 293)] {
+        ardy_pre_style_trip(&mut runner, &mut c, banked, deposit_at - now - 3);
+        now = deposit_at + 1;
+    }
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    for (steal_at, food) in [(380, 1901), (389, ARDY_CAKE)] {
+        oracle_settle(&mut runner, &mut c, steal_at - now);
+        ardy_steal(&mut c, food);
+        oracle_settle(&mut runner, &mut c, 2);
+        set_inv(&mut c, &[]);
+        now = steal_at + 2;
+    }
+    oracle_settle(&mut runner, &mut c, 406 - now);
+    now = 406;
+    ardy_pre_style_trip(&mut runner, &mut c, 4, 510 - now - 3);
+    now = 511;
+    assert_ardy_running(&runner, "the fourth deposit at +510");
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 540 - now);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 7);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 5)]);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
 }
 
 /// A trip session longer than content allows fails, even after an earlier
@@ -3959,7 +4031,7 @@ fn ardy_fighter_bank_style_watch_rejects_a_session_beyond_one_content_trip() {
         &mut runner,
         &mut c,
         ARDY_STYLE_STEP,
-        &format!("[pre-style trips=1 deposited=1] not seen within {session} game ticks"),
+        &format!("[pre-style trips=1 deposited=1 steals=0] not seen within {session} game ticks"),
     );
 }
 
