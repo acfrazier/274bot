@@ -155,6 +155,8 @@ impl FollowRun {
             }
             // A disconnect ends the watch; the hop was effectively dropped.
             Some(Outcome::Expired { .. }) => {
+                self.note_walk_stall_idle(&mut hop, snapshot, here);
+                self.log_walk_stall(&hop, snapshot, here, HopFailure::Dropped);
                 fire_leg(options, &hop.leg(), LegPhase::Failed);
                 Poll::Terminal(TravelOutcome::Stalled {
                     at: here,
@@ -177,6 +179,8 @@ impl FollowRun {
                     } else {
                         HopFailure::Expired
                     };
+                    self.note_walk_stall_idle(&mut hop, snapshot, here);
+                    self.log_walk_stall(&hop, snapshot, here, why);
                     fire_leg(options, &hop.leg(), LegPhase::Failed);
                     Poll::Terminal(TravelOutcome::Stalled {
                         at: here,
@@ -193,6 +197,32 @@ impl FollowRun {
                 }
             }
         }
+    }
+
+    /// Called only when the hop terminates, never during its idle window.
+    fn log_walk_stall(
+        &self,
+        hop: &WalkHop,
+        snapshot: &GameSnapshot,
+        end: WorldTile,
+        why: HopFailure,
+    ) {
+        api::host_log!(
+            Category::NavEvent,
+            Level::Info,
+            "walk-stall why={why:?} start={:?} end={end:?} aim={:?} first_send_tick={} last_send_tick={} tries={} waited_calls={} idle_ticks={} last_scene_rebuild_tick={:?} run_energy={} run_mode={} last_server_movement_tick={:?}",
+            hop.start_tile,
+            hop.aim,
+            hop.first_sent_tick,
+            hop.sent_tick,
+            hop.tries.max(1),
+            hop.ticks_waited,
+            hop.stall_idle_ticks,
+            snapshot.last_scene_rebuild_tick(),
+            snapshot.runenergy(),
+            ReadContext::new(snapshot).varp(173) != 0,
+            snapshot.last_server_movement_tick(),
+        );
     }
 
     /// True after enough *distinct* game ticks at the latest observed
@@ -387,6 +417,8 @@ impl FollowRun {
                     hop.aim_index = idx;
                     hop.sent = true;
                     hop.sent_tick = snapshot.tick();
+                    hop.start_tile = here;
+                    hop.first_sent_tick = snapshot.tick();
                     hop.ticks_waited = 0;
                     hop.sent_tile = Some(here);
                     hop.stall_idle_ticks = 0;

@@ -118,8 +118,11 @@ impl GameSnapshot {
         }
         self.self_slot = client.self_slot;
         let base = (client.map_build_base_x, client.map_build_base_z);
+        if client.ingame && self.base.is_some_and(|previous| previous != base) {
+            self.last_scene_rebuild_tick = Some(self.tick);
+        }
         self.base = Some(base);
-        self.tile = client.local_player.as_ref().map(|lp| {
+        let tile = client.local_player.as_ref().map(|lp| {
             (
                 base.0 + lp.route_x[0],
                 base.1 + lp.route_z[0],
@@ -127,6 +130,12 @@ impl GameSnapshot {
                 client.minusedlevel,
             )
         });
+        if !client.ingame || tile.is_none() {
+            self.last_server_movement_tick = None;
+        } else if player_info_ticks != 0 && self.tile.is_some() && self.tile != tile {
+            self.last_server_movement_tick = Some(self.tick);
+        }
+        self.tile = tile;
         let level = client.minusedlevel;
         self.player = client.local_player.as_ref().map(|lp| LocalPlayerView {
             player: PlayerView {
@@ -1108,6 +1117,17 @@ impl GameSnapshot {
     /// tracks the gen for the harness's dirty/tick semantics.
     pub(super) fn rebuild_scene(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.gens.scene);
+        if !client.ingame {
+            self.last_scene_rebuild_tick = None;
+        } else if self.last_scene_rebuild_tick.is_none()
+            || (client.scene_state == 1 && self.scene_state != 1)
+            || (self.scene.available
+                && (self.scene.base_x != client.map_build_base_x
+                    || self.scene.base_z != client.map_build_base_z
+                    || self.scene.level != client.minusedlevel))
+        {
+            self.last_scene_rebuild_tick = Some(self.tick);
+        }
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
         self.attached = client.stream.is_some();
