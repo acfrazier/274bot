@@ -538,7 +538,7 @@ impl Host {
         let t_loop = std::time::Instant::now();
         slot.recover_entity_cycles(client, slot.pacing_now(t_loop));
         client.mainloop();
-        client.advance_hosted_animations();
+        client.advance_hosted_animations(false);
         // The hosted title's `mainloop` changes nothing it draws, so the only
         // title paint owed ahead of its cadence is the in-game → title edge:
         // it replaces the last game frame now and starts a fresh title
@@ -1350,7 +1350,8 @@ impl SlotLoop {
 
     /// Recover missed 20 ms cycles on every slot, including late focused
     /// and busy frames, before new packets replace routes or animations.
-    /// Advance only entity and presentation state, never I/O or input timers.
+    /// Advance only entity and presentation state, including cutscene camera
+    /// updates. Never replay I/O or input timers.
     fn recover_entity_cycles(&mut self, client: &mut Client, now: Instant) {
         if !client.ingame || client.error_loading || client.gens.session != self.pump.last().session
         {
@@ -1372,10 +1373,10 @@ impl SlotLoop {
             client.move_players();
             client.move_npcs();
             client.timeout_chat();
+            client.advance_hosted_animations(true);
             for cycle in &mut client.cam_shake_cycle {
                 *cycle = cycle.wrapping_add(1);
             }
-            client.advance_hosted_animations();
         }
         // Retain fractional periods and account for early control wakes.
         // Do not carry capped stall debt across newly received packets.
