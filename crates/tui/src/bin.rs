@@ -3903,6 +3903,43 @@ fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
     app
 }
 
+/// Build the interactive landing that `run` opens after it unlocks the vault.
+fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, String> {
+    let focus = session.bootstrap_interactive_profiles(&args.users)?;
+    if let Some(focus) = &focus {
+        session.load_and_login(focus);
+        session.focus(focus);
+    }
+    let mut app = new_app(
+        format!(
+            "{} headless · {}",
+            session.app_title(),
+            session.profile_label()
+        ),
+        &session.preferences,
+    );
+    app.names = session.names.clone();
+    app.focused = focus
+        .as_ref()
+        .and_then(|focus| session.names.iter().position(|name| name == focus));
+    if focus.is_none() {
+        app.open_modal(Modal::NewProfile(
+            crate::new_profile::NewProfileView::default(),
+        ));
+        session.open_new_profile(&mut app);
+    }
+    Ok(app)
+}
+
+fn unknown_profile_error(name: &str) -> String {
+    format!(
+        "no profile named {name} in the vault: --user only selects existing \
+         profiles and creates none (start tui-play without --user and add \
+         it with New profile: press N in the Fleet pane, then type its \
+         username and password)"
+    )
+}
+
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -3956,6 +3993,17 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     // The saved session-file preference: open this process's file at start.
     frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;
+    // A missing vault cannot contain the requested profile. Refuse it before
+    // requiring the bundled bot data, and therefore before any passphrase
+    // prompt; the interactive branch checks again before opening the vault.
+    if !memory && matches!(&mode, RunMode::Interactive) {
+        let vault_path = session.bound().expect("bound session").vault_path();
+        if !vault_path.is_file() {
+            if let Some(name) = args.users.first() {
+                return Err(unknown_profile_error(name));
+            }
+        }
+    }
     session
         .bound()
         .expect("bound session")
@@ -4015,6 +4063,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
+            if !vault_exists {
+                if let Some(name) = args.users.first() {
+                    return Err(unknown_profile_error(name));
+                }
+            }
             let pass =
                 frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
                     .map_err(|error| error.to_string())?;
@@ -4027,29 +4080,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             // and `--user` creates none. An empty vault opens on the New
             // profile form, where the operator types the first account's
             // own username and password.
-            let focus = session.bootstrap_interactive_profiles(&args.users)?;
-            if let Some(focus) = &focus {
-                session.load_and_login(focus);
-                session.focus(focus);
-            }
-            let mut app = new_app(
-                format!(
-                    "{} headless · {}",
-                    session.app_title(),
-                    session.profile_label()
-                ),
-                &session.preferences,
-            );
-            app.names = session.names.clone();
-            app.focused = focus
-                .as_ref()
-                .and_then(|focus| session.names.iter().position(|n| n == focus));
-            if focus.is_none() {
-                app.open_modal(Modal::NewProfile(
-                    crate::new_profile::NewProfileView::default(),
-                ));
-                session.open_new_profile(&mut app);
-            }
+            let app = interactive_landing(&mut session, args)?;
             run_loop(session, app)
         }
     }
@@ -4073,14 +4104,9 @@ impl TuiSession {
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        for u in users {
-            if !self.names.contains(u) {
-                return Err(format!(
-                    "no profile named {u} in the vault: --user only selects existing \
-                     profiles and creates none (start tui-play without --user and add \
-                     it with New profile: press N in the Fleet pane, then type its \
-                     username and password)"
-                ));
+        for user in users {
+            if !self.names.contains(user) {
+                return Err(unknown_profile_error(user));
             }
         }
         Ok(users

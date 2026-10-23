@@ -10,7 +10,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 /// Which field of the form takes typing.
@@ -61,17 +61,8 @@ impl NewProfileView {
     /// username field keeps its last cells on screen and the password
     /// mask is capped, with its length named when it is longer.
     pub fn render(&self, area: Rect, buf: &mut Buffer) -> Rect {
-        let popup = centered(area, 56, 11);
-        Clear.render(popup, buf);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" New profile ");
-        let inner = block.inner(popup);
-        block.render(popup, buf);
-        if inner.height < 2 || inner.width < 12 {
-            return popup;
-        }
-        let width = usize::from(inner.width);
+        let popup_width = 56.min(area.width);
+        let width = usize::from(popup_width.saturating_sub(2));
         let field_width = width.saturating_sub(11);
         let username = tail(&self.username, field_width);
         let mask = "*".repeat(self.password_len.min(field_width));
@@ -119,6 +110,23 @@ impl NewProfileView {
         } else {
             lines.push(Line::styled("[Save Enter]  [Close Esc]", bold));
         }
+        // Keep the full refusal and save notice above the fixed footer.
+        let extra_error_rows = self.error.as_deref().map_or(0, |error| {
+            wrapped_rows(error, width.max(1)).saturating_sub(1)
+        });
+        let height =
+            u16::try_from((lines.len() + extra_error_rows + 3).max(11)).unwrap_or(u16::MAX);
+        let popup = centered(area, 56, height);
+        Clear.render(popup, buf);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" New profile ");
+        let inner = block.inner(popup);
+        block.render(popup, buf);
+        if inner.height < 2 || inner.width < 12 {
+            return popup;
+        }
+        let width = usize::from(inner.width);
         Paragraph::new(lines).wrap(Wrap { trim: false }).render(
             Rect::new(inner.x, inner.y, inner.width, inner.height - 1),
             buf,
@@ -132,6 +140,38 @@ impl NewProfileView {
         );
         popup
     }
+}
+
+/// Count the rows used by paragraph word wrapping.
+fn wrapped_rows(text: &str, width: usize) -> usize {
+    let width = width.max(1);
+    text.split('\n')
+        .map(|line| {
+            let mut rows = 0;
+            let mut used: usize = 0;
+            let mut has_content = false;
+            for word in line.split_whitespace() {
+                let word_width = Span::raw(word).width();
+                if has_content && used.saturating_add(1).saturating_add(word_width) <= width {
+                    used += 1 + word_width;
+                    continue;
+                }
+                if has_content {
+                    rows += 1;
+                }
+                let wrapped = word_width.div_ceil(width);
+                let remainder = word_width % width;
+                rows += wrapped.saturating_sub(1);
+                used = if remainder == 0 { width } else { remainder };
+                has_content = true;
+            }
+            if has_content || line.is_empty() {
+                rows + 1
+            } else {
+                rows
+            }
+        })
+        .sum()
 }
 
 fn marker(active: bool) -> &'static str {
@@ -212,20 +252,29 @@ mod tests {
         }
     }
 
-    /// A refused save shows its reason in the form, with
-    /// `nothing was saved.` under it (the shared form's words).
+    /// A long duplicate name wraps without cutting off the save notice.
     #[test]
-    fn a_refused_save_shows_its_reason() {
+    fn a_refused_save_shows_its_reason_and_save_notice() {
+        let error = "credentials: a profile named rvopuslong12 already exists";
         let view = NewProfileView {
-            error: Some("credentials: username required".into()),
+            error: Some(error.into()),
             ..NewProfileView::default()
         };
-        let rows = drawn(&view, 80, 24);
-        let screen = rows.join("\n");
-        assert!(
-            screen.contains("credentials: username required"),
-            "{screen}"
-        );
-        assert!(screen.contains("nothing was saved."), "{screen}");
+        for (width, height) in [(120, 40), (80, 24)] {
+            let screen = drawn(&view, width, height).join("\n");
+            let visible = screen
+                .replace('│', " ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                visible.contains(error),
+                "{width}x{height}: missing full refusal\n{screen}"
+            );
+            assert!(
+                visible.contains("nothing was saved."),
+                "{width}x{height}: missing save notice\n{screen}"
+            );
+        }
     }
 }
