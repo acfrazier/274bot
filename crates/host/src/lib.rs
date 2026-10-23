@@ -2,6 +2,8 @@
 
 mod auto_run;
 pub mod capacity;
+mod input_observation;
+pub use input_observation::InputLineageGuard;
 pub mod login_queue;
 #[cfg(feature = "performance-profile")]
 pub mod performance_profile;
@@ -344,6 +346,9 @@ impl Host {
             random_event_policies,
         );
         slot.game_data = game_data;
+        if let Some(input) = &input {
+            input.bind_outbound_observer(client);
+        }
         #[cfg(feature = "performance-profile")]
         {
             slot.profile = Some(performance_profile::register(username));

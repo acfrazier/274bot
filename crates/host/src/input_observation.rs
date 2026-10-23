@@ -1,0 +1,180 @@
+//! The slot's single encrypted-input observation point.
+//!
+//! This state outlives script owners, holds and reconnects. Packet counters
+//! describe committed host input. They never admit or refuse input.
+
+use std::sync::{Arc, Mutex};
+
+use api::interact::server_ordered::{InputLineage, ServerOrderedInputState};
+use api::selected::ClientRevision;
+use client::io::PacketObserver;
+
+use crate::SlotInput;
+
+pub(crate) struct InputObservation {
+    state: Mutex<ObservationState>,
+}
+
+#[derive(Clone, Copy)]
+enum LineageKind {
+    Foreign,
+    Content,
+    Advanced,
+}
+
+struct ObservationState {
+    inputs: ServerOrderedInputState,
+    revision: ClientRevision,
+    lineage: LineageKind,
+    request_id: u64,
+    committed_packets: u64,
+}
+
+impl Default for InputObservation {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(ObservationState {
+                inputs: ServerOrderedInputState::default(),
+                revision: ClientRevision::R274,
+                lineage: LineageKind::Foreign,
+                request_id: 0,
+                committed_packets: 0,
+            }),
+        }
+    }
+}
+
+/// A frame-scoped attribution. It grants no input authority.
+pub struct InputLineageGuard<'a> {
+    input: &'a SlotInput,
+}
+
+impl Drop for InputLineageGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self.input.input_observation.state.lock().unwrap();
+        state.lineage = LineageKind::Foreign;
+        state.request_id = 0;
+    }
+}
+
+impl SlotInput {
+    /// Bind the one callback used by native, compat and manual client input.
+    pub fn bind_outbound_observer(self: &Arc<Self>, client: &mut client::client::Client) {
+        self.observe_input_session(client.revision(), client.gens.session);
+        let observer: Arc<dyn PacketObserver> = self.clone();
+        client.out.set_observer(Some(observer));
+    }
+
+    /// Reset only when a new PLAYER_INFO tick is observed. A session change
+    /// invalidates ownership but does not create a tick or erase totals.
+    pub fn observe_input_tick(&self, revision: ClientRevision, tick: u64, session: u64) {
+        let mut state = self.input_observation.state.lock().unwrap();
+        state.revision = revision;
+        state.inputs.observe_session(session);
+        state.inputs.observe_tick(tick);
+    }
+
+    /// Bind session identity without inventing a newly received PLAYER_INFO.
+    pub fn observe_input_session(&self, revision: ClientRevision, session: u64) {
+        let mut state = self.input_observation.state.lock().unwrap();
+        state.revision = revision;
+        state.inputs.observe_session(session);
+    }
+
+    /// Attribute this request's writes without reserving rate capacity.
+    pub fn input_lineage(&self, lineage: InputLineage) -> InputLineageGuard<'_> {
+        let mut state = self.input_observation.state.lock().unwrap();
+        (state.lineage, state.request_id) = match lineage {
+            InputLineage::Foreign => (LineageKind::Foreign, 0),
+            InputLineage::ContentRequest(id) => (LineageKind::Content, id),
+            InputLineage::AdvancedRequest(id) => (LineageKind::Advanced, id),
+        };
+        InputLineageGuard { input: self }
+    }
+
+    /// Inspect or update bounded content ownership without copying a snapshot.
+    /// The closure must not emit packets, because the sink takes the same lock.
+    pub fn with_server_ordered_input<T>(
+        &self,
+        apply: impl FnOnce(&mut ServerOrderedInputState) -> T,
+    ) -> T {
+        apply(&mut self.input_observation.state.lock().unwrap().inputs)
+    }
+
+    /// A foreign local edit invalidates content ownership even with no packet.
+    pub fn foreign_local_input(&self) {
+        self.with_server_ordered_input(ServerOrderedInputState::foreign_local_input);
+    }
+}
+
+impl PacketObserver for SlotInput {
+    fn observed_tick(&self, tick: u64, session: u64) {
+        let mut state = self.input_observation.state.lock().unwrap();
+        state.inputs.observe_session(session);
+        state.inputs.observe_tick(tick);
+    }
+
+    fn foreign_local_input(&self) {
+        SlotInput::foreign_local_input(self);
+    }
+
+    fn packet_body_length(&self, opcode: u8) -> i16 {
+        let revision = self.input_observation.state.lock().unwrap().revision;
+        api::prot::packet_metadata(revision, opcode).map_or(-3, |metadata| metadata.length as i16)
+    }
+
+    fn packet_committed(&self, opcode: u8, _encoded_length: usize) {
+        let mut state = self.input_observation.state.lock().unwrap();
+        state.committed_packets = state
+            .committed_packets
+            .checked_add(1)
+            .expect("one committed packet per nanosecond takes 584 years to exhaust u64");
+        let revision = state.revision;
+        let lineage = match state.lineage {
+            LineageKind::Foreign => InputLineage::Foreign,
+            LineageKind::Content => InputLineage::ContentRequest(state.request_id),
+            LineageKind::Advanced => InputLineage::AdvancedRequest(state.request_id),
+        };
+        state.inputs.record_opcode(revision, opcode, lineage);
+    }
+
+    fn committed_packet_count(&self) -> Option<u64> {
+        Some(
+            self.input_observation
+                .state
+                .lock()
+                .unwrap()
+                .committed_packets,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_slot_observation_state_has_no_heap_and_pins_fixed_memory() {
+        assert_eq!(std::mem::size_of::<ServerOrderedInputState>(), 168);
+        assert_eq!(std::mem::size_of::<ObservationState>(), 192);
+        #[cfg(target_os = "macos")]
+        assert_eq!(std::mem::size_of::<InputObservation>(), 208);
+        #[cfg(target_os = "linux")]
+        assert_eq!(std::mem::size_of::<InputObservation>(), 200);
+        assert_eq!(std::mem::size_of::<InputLineageGuard<'_>>(), 8);
+        let input = SlotInput::new();
+        let before = input.with_server_ordered_input(|state| state.snapshot());
+        input.observe_input_session(ClientRevision::R289, 1);
+        input.observe_input_tick(ClientRevision::R289, 1, 1);
+        input.foreign_local_input();
+        let after = input.with_server_ordered_input(|state| state.snapshot());
+        assert_eq!(before.packet_count(), after.packet_count());
+        eprintln!(
+            "S3 memory: input={} observation={} mutex-owner={} lineage-guard={}; observer state heap=0",
+            std::mem::size_of::<ServerOrderedInputState>(),
+            std::mem::size_of::<ObservationState>(),
+            std::mem::size_of::<InputObservation>(),
+            std::mem::size_of::<InputLineageGuard<'_>>(),
+        );
+    }
+}

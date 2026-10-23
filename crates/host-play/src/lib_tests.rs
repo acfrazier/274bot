@@ -29649,6 +29649,9 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
 #[path = "script_native_walk_tests.rs"]
 mod native_walk;
 
+#[path = "script_server_ordered_tests.rs"]
+mod server_ordered;
+
 #[path = "script_progress_tests.rs"]
 mod script_progress;
 
