@@ -35,11 +35,6 @@ const PRODUCTION_ALLOW: &[&str] = &[
     "essence::in_essence_mine",
     "essence::is_essence_entry_edge",
     "essence::ESSENCE_MINE_EXIT_ARRIVE_RADIUS",
-    "router::GridRoute",
-    "router::GridLeg",
-    "tile::Tile",
-    "tile::chebyshev",
-    "arrival::arrived",
 ];
 
 const TEST_ALLOW: &[&str] = &[
@@ -228,6 +223,13 @@ fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
         .findings
         .iter()
         .any(|finding| finding.kind == FindingKind::UnsupportedCfgAttr));
+}
+#[test]
+fn production_scope_rejects_removed_list_c_items() {
+    let report = scan_fixture("use nav::router::GridRoute;");
+    let violations = surface_violations(&report);
+    assert_eq!(violations.len(), 1, "{violations:#?}");
+    assert_eq!(violations[0].path, "nav::router::GridRoute");
 }
 
 #[test]
