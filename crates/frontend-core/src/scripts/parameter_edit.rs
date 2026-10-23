@@ -980,6 +980,12 @@ impl Scripts {
             .find(|(key, _)| key.matches(profile, selection, field))
             .and_then(|(_, edit)| edit.error.as_deref())
     }
+    /// Whether `error` belongs to a dirty, non-pending parameter draft.
+    pub fn has_parameter_draft_error(&self, error: &str) -> bool {
+        self.parameter_edits.values().any(|edit| {
+            edit.dirty && edit.pending.is_none() && edit.error.as_deref() == Some(error)
+        })
+    }
 
     /// Queue one profile save for a committed field. Only an in-flight save
     /// deduplicates a repeated value. A failed save can be retried.
