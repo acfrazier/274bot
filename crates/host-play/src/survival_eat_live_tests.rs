@@ -147,6 +147,8 @@ struct SentAction {
 struct LiveObserver {
     snapshot: GameSnapshot,
     pump: Pump,
+    was_ingame: bool,
+    final_login_tick: Option<u32>,
     tele_sent: bool,
     arrived_tick: Option<u32>,
     action: Option<LiveAction>,
@@ -158,7 +160,22 @@ impl LiveObserver {
         // Preparation relogs. Keep the condition owner's session-local clock.
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
+        if client.ingame && !self.was_ingame {
+            self.final_login_tick = Some(u32::from(self.snapshot.tick()));
+        }
+        self.was_ingame = client.ingame;
     }
+}
+
+fn walk_poison_seed_ready(
+    final_login: Option<u32>,
+    tick: u32,
+    route_active: bool,
+    route_progressed: bool,
+) -> bool {
+    route_active
+        && route_progressed
+        && final_login.is_some_and(|login| tick.saturating_sub(login) >= POISON_PREFIX_TICKS)
 }
 
 struct LiveCell {
@@ -1241,6 +1258,7 @@ fn walk_receipt(
         "start": [WALK_ORIGIN.x, WALK_ORIGIN.z, WALK_ORIGIN.level],
         "target": [WALK_TARGET.x, WALK_TARGET.z, WALK_TARGET.level],
         "setup_tick": setup_tick,
+        "final_login_tick": cell.live.lock().final_login_tick,
         "poison_seed_tick": seed_tick,
         "poison_seed_sent": poison_send.map(|sent| json!({"tick": sent.tick, "accepted": sent.accepted})),
         "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
@@ -1279,7 +1297,6 @@ fn run_walk_case(case: EatCase) {
     let walk_state = Arc::new(Mutex::new(WalkState::default()));
     let mut seed_tick = None;
     let mut poison_send = None;
-    let mut route_started_tick = None;
     let mut seed_scheduled = false;
     if failure.is_none() {
         {
@@ -1331,16 +1348,19 @@ fn run_walk_case(case: EatCase) {
             continue;
         }
         last_tick = Some(frame.tick);
-        if route.as_ref().is_some_and(RouteSample::active) {
-            route_started_tick.get_or_insert(frame.tick);
-        }
         frames.push(frame);
         let tick = frames.last().expect("just pushed").tick;
-        if seed_tick.is_none()
-            && !seed_scheduled
-            && route_started_tick
-                .is_some_and(|started| tick.saturating_sub(started) >= POISON_PREFIX_TICKS)
-        {
+        if seed_tick.is_none() && !seed_scheduled && {
+            let live = cell.live.lock();
+            walk_poison_seed_ready(
+                live.final_login_tick,
+                tick,
+                route.as_ref().is_some_and(RouteSample::active),
+                live.snapshot
+                    .tile()
+                    .is_some_and(|tile| tile != (WALK_ORIGIN.x, WALK_ORIGIN.z, WALK_ORIGIN.level)),
+            )
+        } {
             cell.live.lock().action = Some(LiveAction::Poison);
             seed_scheduled = true;
         }
@@ -1682,6 +1702,16 @@ fn live_survival_eat_poison_through_api_combat_fight() {
 #[cfg(test)]
 mod oracle_tests {
     use super::*;
+
+    #[test]
+    fn oracle_seed_waits_for_login_prefix_and_active_route_progress() {
+        assert!(walk_poison_seed_ready(Some(0), 31, true, true));
+        assert!(walk_poison_seed_ready(Some(100), 131, true, true));
+        assert!(!walk_poison_seed_ready(Some(0), 30, true, true));
+        assert!(!walk_poison_seed_ready(None, 31, true, true));
+        assert!(!walk_poison_seed_ready(Some(0), 31, false, true));
+        assert!(!walk_poison_seed_ready(Some(0), 31, true, false));
+    }
 
     fn frame(
         tick: u32,

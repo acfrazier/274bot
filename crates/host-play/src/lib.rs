@@ -252,7 +252,9 @@ pub struct Play {
     queue: SharedLoginQueue,
     per_frame: SlotFrame,
     #[cfg(any(test, feature = "test-support"))]
-    post_native_player_info: Option<play_slots::PostNativePlayerInfo>,
+    post_native_player_info: Option<play_slots::PostFrameObserver>,
+    #[cfg(feature = "test-support")]
+    post_host_frame: Option<play_slots::PostFrameObserver>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
     /// Vault profiles keyed by username (a later spawn/reconnect looks up

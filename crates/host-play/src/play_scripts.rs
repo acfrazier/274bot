@@ -433,6 +433,17 @@ impl Play {
         self.post_native_player_info = Some(Arc::new(observer));
     }
 
+    /// Install a read-only harness observer before spawning slots. It runs each
+    /// client frame after the real host policy copy and native observation.
+    /// Its storage and call exist only with the test-support feature.
+    #[cfg(feature = "test-support")]
+    pub fn set_post_host_frame_observer(
+        &mut self,
+        observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
+    ) {
+        self.post_host_frame = Some(Arc::new(observer));
+    }
+
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's
     /// per-uid NavBot). WalkTo's [`WalkArm`] map is a different latch.
     pub fn script_nav_paint(&self) -> ScriptNavPaint {

@@ -1413,9 +1413,9 @@
       "id": "seam_type|crates/frontend-core/src/session/commands.rs|SurvivalEdit",
       "path": "crates/frontend-core/src/session/commands.rs",
       "symbol": "SurvivalEdit",
-      "classification": "scalar",
+      "classification": "owning",
       "owner": "T3",
-      "reason": "Staged SetSurvival policy value with no owned allocation."
+      "reason": "Move-only SetSurvival edit holding a scalar policy without an allocation."
     },
     {
       "id": "seam_type|crates/frontend-core/src/session/commands.rs|GuardianEdit",
@@ -2690,7 +2690,41 @@
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     }
   ],
-  "violations": [],
+  "violations": [
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::producer::route_view|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav::producer::route_view",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle borrows a synthetic route through its real owner lease; the facade has no synthetic route constructor.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::router::Leg::Walk|macro_token_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav::router::Leg::Walk",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle builds one quiet walking leg; the facade has no synthetic route constructor.",
+      "removal_endpoint": "T5.1",
+      "classification": "macro_token_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::router::Route|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav::router::Route",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle retains its exact synthetic route while comparing the two real decisions.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    }
+  ],
   "test_exceptions": [
     {
       "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::router::AvoidRect|exact_test_fixture_oracle_import",

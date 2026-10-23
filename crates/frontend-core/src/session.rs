@@ -385,7 +385,7 @@ enum ArmMirrorKind {
     },
     /// The Cure poison setting's post-write mirror.
     Survival {
-        new: crate::CurePoison,
+        new: crate::profile_draft::CurePoison,
     },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
