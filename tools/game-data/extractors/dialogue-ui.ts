@@ -1,4 +1,4 @@
-import { parsePack, requireGatherText } from './common.ts';
+import { requireGatherText } from './common.ts';
 import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements } from './gathering-rs2.ts';
 
@@ -47,18 +47,48 @@ function oneBlock(blocks: Rs2Block[], kind: string, name: string): Rs2Block {
     return found[0];
 }
 
+export type InterfaceAliasIdentity = { id: number; line: number };
+
+/** Resolve selected interface.pack aliases without losing duplicate rows. */
+export function resolveInterfaceAliases(content: string, aliases: readonly string[], family: string): Record<string, InterfaceAliasIdentity> {
+    const wanted = new Set(aliases);
+    if (wanted.size !== aliases.length) throw new Error(`${family}: requested interface aliases are duplicated`);
+
+    const rows = new Map<string, InterfaceAliasIdentity[]>();
+    const pack = requireGatherText(content, 'pack/interface.pack');
+    for (const [index, raw] of pack.split(/\r?\n/).entries()) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        const equals = line.indexOf('=');
+        if (equals <= 0) continue;
+        const alias = line.slice(equals + 1);
+        if (!wanted.has(alias)) continue;
+        const matches = rows.get(alias) ?? [];
+        matches.push({ id: Number(line.slice(0, equals)), line: index + 1 });
+        rows.set(alias, matches);
+    }
+
+    const resolved: Record<string, InterfaceAliasIdentity> = {};
+    const ids = new Map<number, string>();
+    for (const alias of aliases) {
+        const found = rows.get(alias) ?? [];
+        if (found.length === 0 || (found.length === 1 && (!Number.isInteger(found[0].id) || found[0].id <= 0))) {
+            throw new Error(`${family}: missing or invalid interface alias ${alias}`);
+        }
+        if (found.length !== 1) throw new Error(`${family}: ambiguous interface alias ${alias}`);
+        const previous = ids.get(found[0].id);
+        if (previous !== undefined) throw new Error(`${family}: controls have ambiguous packed identities (${previous}, ${alias})`);
+        ids.set(found[0].id, alias);
+        resolved[alias] = found[0];
+    }
+    return resolved;
+}
+
+
 /** Resolve only source-proven generic/quest-completion scrolls and book controls. */
 export function extractDialogueUiFacts(content: string): DialogueUiIds {
-    const pack = parsePack(requireGatherText(content, dialogueUiContentFiles[0]));
     const book = parseRs2Blocks(dialogueUiContentFiles[1], requireGatherText(content, dialogueUiContentFiles[1]));
     const scroll = parseRs2Blocks(dialogueUiContentFiles[2], requireGatherText(content, dialogueUiContentFiles[2]));
-    const resolve = (alias: string): number => {
-        const id = pack.get(alias);
-        if (id === undefined || !Number.isInteger(id) || id <= 0) {
-            throw new Error(`dialogue_ui: missing or invalid interface alias ${alias}`);
-        }
-        return id;
-    };
     if (!hasStatement(oneBlock(scroll, 'label', 'scroll_pirate_message'), 'if_openmain(scroll)')) {
         throw new Error('dialogue_ui: pirate scroll does not open the main scroll root');
     }
@@ -95,14 +125,20 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
         throw new Error('dialogue_ui: unsupported max-page forward visibility marker');
     }
 
-    const facts = {
-        scroll_root: resolve('scroll'),
-        quest_scroll_root: resolve('questscroll'),
-        book_root: resolve('book'),
-        book_forward: resolve(forward[0].name),
-        book_close: resolve('book:close'),
-        book_forward_marker: resolve(hide[1]),
+    const resolved = resolveInterfaceAliases(content, [
+        'scroll',
+        'questscroll',
+        'book',
+        forward[0].name,
+        'book:close',
+        hide[1],
+    ], 'dialogue_ui');
+    return {
+        scroll_root: resolved.scroll.id,
+        quest_scroll_root: resolved.questscroll.id,
+        book_root: resolved.book.id,
+        book_forward: resolved[forward[0].name].id,
+        book_close: resolved['book:close'].id,
+        book_forward_marker: resolved[hide[1]].id,
     };
-    if (new Set(Object.values(facts)).size !== 6) throw new Error('dialogue_ui: controls have ambiguous packed identities');
-    return facts;
 }
