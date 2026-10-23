@@ -209,13 +209,36 @@ where
     Ok(Some(damage))
 }
 
-fn poison_damage(poison: PoisonState, ticks: i32) -> Result<i32, UnknownWhy> {
+fn poison_pulse_now(poison: PoisonState, q_unknown: u8) -> u8 {
     match poison {
-        PoisonState::Poisoned { per_tick, .. } => {
-            mul(i32::from(per_tick), ceil(ticks, POISON_PERIOD)?)
-        }
-        _ => Ok(0),
+        PoisonState::Onset { .. } => q_unknown,
+        PoisonState::Poisoned {
+            per_tick,
+            hit_since_mark,
+            ..
+        } if hit_since_mark => per_tick.max(q_unknown),
+        PoisonState::Poisoned { per_tick, .. } => per_tick,
+        PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => 0,
     }
+}
+
+fn poison_charged(poison: PoisonState) -> bool {
+    match poison {
+        PoisonState::Onset { .. } => true,
+        PoisonState::Poisoned {
+            per_tick,
+            hit_since_mark,
+            ..
+        } => per_tick != 0 || hit_since_mark,
+        PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => false,
+    }
+}
+
+fn poison_damage(poison: PoisonState, ticks: i32, q_unknown: u8) -> Result<i32, UnknownWhy> {
+    mul(
+        i32::from(poison_pulse_now(poison, q_unknown)),
+        ceil(ticks, POISON_PERIOD)?,
+    )
 }
 /// Floor with no live rows. None means no executable on-foot way out.
 pub fn estimated_floor(
@@ -275,7 +298,11 @@ where
             return Ok(None);
         };
         cost = cost.max(value);
-        poison = poison.max(poison_damage(input.poison, add(d, LAG)?)?);
+        poison = poison.max(poison_damage(
+            input.poison,
+            add(d, LAG)?,
+            tables.unknown_poison_pulse(),
+        )?);
     }
     Ok(Some(add(
         add(cost, poison)?,
@@ -363,8 +390,13 @@ where
     }
     if minimum_rate == u8::MAX {
         return Ok(match input.poison {
-            PoisonState::Poisoned { per_tick, .. } => 2 * i32::from(per_tick) + 1,
-            _ => 0,
+            PoisonState::Onset { .. } | PoisonState::Poisoned { .. } => {
+                2 * i32::from(poison_pulse_now(
+                    input.poison,
+                    tables.unknown_poison_pulse(),
+                )) + 1
+            }
+            PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => 0,
         });
     }
     let look = u16::from(minimum_rate)
@@ -401,7 +433,11 @@ where
     let v = volley(plan, next, credited, checkpoint)
         .await?
         .max(volley(plan, i, credited, checkpoint).await?);
-    let reserve = poison_damage(input.poison, add(i32::from(look), LAG)?)?;
+    let reserve = poison_damage(
+        input.poison,
+        add(i32::from(look), LAG)?,
+        tables.unknown_poison_pulse(),
+    )?;
     Ok(add(add(add(highest, m)?, v)?, reserve)?.max(add(mul(v, 2)?, 1)?))
 }
 fn ordinary(food: &FoodFact) -> bool {
@@ -491,9 +527,13 @@ where
         super::checkpoint(checkpoint).await;
     }
     if tick % POISON_PERIOD == 0 {
-        if let PoisonState::Poisoned { per_tick, .. } = input.poison {
-            damage = add(damage, i32::from(per_tick))?;
-        }
+        damage = add(
+            damage,
+            i32::from(poison_pulse_now(
+                input.poison,
+                tables.unknown_poison_pulse(),
+            )),
+        )?;
     }
     Ok(damage)
 }
@@ -575,10 +615,7 @@ where
     if let Some(why) = input_problem(input, tables) {
         return Err(why);
     }
-    if plan.intervals.is_empty()
-        && input.live_len == 0
-        && !matches!(input.poison, PoisonState::Poisoned { per_tick: 1.., .. })
-    {
+    if plan.intervals.is_empty() && input.live_len == 0 && !poison_charged(input.poison) {
         return Ok(ReplayResult {
             passed: true,
             hp_after: i32::from(input.hp),
@@ -1381,9 +1418,11 @@ where
             .await?;
             hp_after = bounded_hp(baseline.hp_after)?;
             bites = baseline.bites;
-            // Poison alone cannot make a no-crossing walk unsafe. Retain
-            // physical NPC damage diagnostics; permits still allows fleeing.
-            if !baseline.passed && (!plan.intervals.is_empty() || input.live_len != 0) {
+            if !baseline.passed
+                && (!plan.intervals.is_empty()
+                    || input.live_len != 0
+                    || poison_charged(input.poison))
+            {
                 verdict = Verdict::Unsurvivable;
                 let mut carried = None;
                 for (id, count) in input.food_iter() {
@@ -1500,13 +1539,36 @@ where
             }
         }
     }
-    if let PoisonState::Poisoned { per_tick, .. } = input.poison {
+    let poison_need = match input.poison {
+        PoisonState::Onset { .. } => Some((context.risks.poison_unknown_v, true)),
+        PoisonState::Poisoned {
+            per_tick,
+            hit_since_mark,
+            ..
+        } => Some((
+            if hit_since_mark {
+                per_tick.max(context.risks.poison_unknown_v)
+            } else {
+                per_tick
+            },
+            false,
+        )),
+        PoisonState::Unknown { .. } | PoisonState::Clear | PoisonState::Immune { .. } => None,
+    };
+    if let Some((pulse, onset)) = poison_need {
         needs[need_count] = Some(SupplyNeed::Info(InfoNeed::Antipoison));
         need_count += 1;
-        let _ = write!(
-            reason,
-            "poisoned ({per_tick} per 30 ticks): drink an antipoison to clear; "
-        );
+        if onset {
+            let _ = write!(
+                reason,
+                "poisoned (onset, up to {pulse} per 30 ticks): drink an antipoison to clear; "
+            );
+        } else {
+            let _ = write!(
+                reason,
+                "poisoned ({pulse} per 30 ticks): drink an antipoison to clear; "
+            );
+        }
     }
     let mut supplies = Vec::with_capacity(need_count);
     supplies.extend(needs.into_iter().flatten());

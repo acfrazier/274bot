@@ -10,6 +10,7 @@ pub mod clue_facts;
 pub mod clue_logic;
 pub mod clue_pack;
 pub mod clue_puzzle;
+pub mod condition;
 pub mod content;
 pub mod cook_locations;
 pub mod debug_commands;

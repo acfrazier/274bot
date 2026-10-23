@@ -1643,6 +1643,8 @@ fn compiled_ctx<'a>(
         snapshot: None,
         obj_names: None,
         compiled: crate::CompiledTick {
+            condition: None,
+            poison_unknown_pulse: None,
             walk_danger: None,
             selected,
             reach: None,

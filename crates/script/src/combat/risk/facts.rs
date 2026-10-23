@@ -104,7 +104,7 @@ impl KindRisk {
         let max_hit = npc_max_hit(row);
         let rate = combat.npc_rate(row);
         let range = compact_ranges(row);
-        let poison = poison_per_tick(row.poison_severity);
+        let poison = poison_pulse(row.poison_severity);
         let style = npc_style(row);
 
         let unknown = if row.poison_severity.is_none() {
@@ -272,7 +272,11 @@ fn flight_ticks(attackrange: i32) -> Option<u8> {
     u8::try_from((duration + 29) / 30).ok()
 }
 
-fn poison_per_tick(severity: Option<i32>) -> Option<u8> {
+/// Convert an engine poison severity to its per-fire pulse.
+///
+/// The engine subtracts one severity per poison fire and deals
+/// `ceil(severity / 5)` damage.
+pub fn poison_pulse(severity: Option<i32>) -> Option<u8> {
     match severity {
         None => None,
         Some(value) if value >= 0 => u8::try_from((i64::from(value) + 4) / 5).ok(),
@@ -334,7 +338,7 @@ impl RiskTables {
             npcs.push((row.id, KindRisk::from_npc(row, combat)));
             yield_unit().await;
         }
-        let poison_unknown_v = poison_unknown_v_rows_cooperative(rows, yield_unit).await;
+        let poison_unknown_v = combat.unknown_poison_pulse();
         Ok(Self {
             npcs: npcs.into_boxed_slice(),
             poison_unknown_v,
@@ -379,27 +383,7 @@ impl RiskTables {
     }
 }
 
-async fn poison_unknown_v_rows_cooperative<F, U>(rows: &[NpcNameRow], yield_unit: &mut F) -> u8
-where
-    F: FnMut() -> U,
-    U: Future<Output = ()>,
-{
-    if rows.is_empty() {
-        return u8::MAX;
-    }
-    let mut maximum = 0;
-    for row in rows {
-        let Some(per_tick) = poison_per_tick(row.poison_severity) else {
-            return u8::MAX;
-        };
-        maximum = maximum.max(per_tick);
-        yield_unit().await;
-    }
-    maximum
-}
-
-#[cfg(test)]
-fn poison_unknown_v_rows(rows: &[NpcNameRow]) -> u8 {
+pub(crate) fn poison_unknown_v_rows(rows: &[NpcNameRow]) -> u8 {
     if rows.is_empty() {
         return u8::MAX;
     }
@@ -409,7 +393,7 @@ fn poison_unknown_v_rows(rows: &[NpcNameRow]) -> u8 {
         let Some(severity) = row.poison_severity else {
             return u8::MAX;
         };
-        let Some(per_tick) = poison_per_tick(Some(severity)) else {
+        let Some(per_tick) = poison_pulse(Some(severity)) else {
             return u8::MAX;
         };
         maximum = maximum.max(per_tick);
@@ -563,7 +547,7 @@ mod tests {
         let missing_poison = KindRisk::from_npc(&row, &combat);
         assert_eq!(missing_poison.unknown, UnknownKind::MissingFacts);
         assert_eq!(missing_poison.poison, u8::MAX);
-        assert_eq!(poison_per_tick(None), None);
+        assert_eq!(poison_pulse(None), None);
         assert_eq!(poison_unknown_v_rows(&[row]), u8::MAX);
         assert_eq!(poison_unknown_v_rows(&[npc()]), 0);
 
@@ -661,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn u2_cooperative_risk_table_matches_sync_and_checkpoints_both_passes() {
+    fn u2_cooperative_risk_table_matches_sync_and_checkpoints_every_npc() {
         let combat = combat();
         let rows = &combat.selected().npc_names().unwrap().rows;
         let mut checkpoints = 0;
@@ -675,7 +659,9 @@ mod tests {
         ))
         .unwrap();
         let synchronous = RiskTables::build(&combat);
-        assert_eq!(checkpoints, rows.len() * 2);
+        // The shared CombatTables already caches the revision's pulse maximum.
+        // This builder now has one NPC pass, with one checkpoint per row.
+        assert_eq!(checkpoints, rows.len());
         assert_eq!(cooperative.npcs.as_ref(), synchronous.npcs.as_ref());
         assert_eq!(cooperative.poison_unknown_v, synchronous.poison_unknown_v);
     }

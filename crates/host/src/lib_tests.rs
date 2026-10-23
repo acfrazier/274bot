@@ -617,7 +617,7 @@ fn session_change_same_drain_publishes_fresh_packet_families() {
     install_revision_snapshot_ifaces(&mut client);
 
     let mut pump = Pump::new();
-    pump.drain(client.gens);
+    pump.drain_client(&client);
     let mut snapshot = GameSnapshot::new();
 
     reconnect_grant(&mut client);
@@ -728,7 +728,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     client.gens.scene = 1;
     let mut pump = Pump::new();
     let mut snapshot = GameSnapshot::new();
-    publish_snapshot(&mut snapshot, &client, pump.drain(client.gens));
+    publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
     assert_eq!(snapshot.scene_state(), 1);
     assert!(
         !snapshot.scene().available,
@@ -740,7 +740,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     // drain; an unavailable grid is materialized once when the client
     // becomes scene-ready (retained collision after a session reset).
     client.scene_state = 2;
-    let quiet = pump.drain(client.gens);
+    let quiet = pump.drain_client(&client);
     assert!(!quiet.dirty.any());
     publish_snapshot(&mut snapshot, &client, quiet);
 
@@ -751,7 +751,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     );
     let flags_before = snapshot.scene().collision_flags.clone();
     client.collision[0].flags[0][0] ^= 1;
-    let quiet_again = pump.drain(client.gens);
+    let quiet_again = pump.drain_client(&client);
     assert!(!quiet_again.dirty.any());
     publish_snapshot(&mut snapshot, &client, quiet_again);
     assert_eq!(

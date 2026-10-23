@@ -272,6 +272,7 @@ pub struct CombatTables {
     potions: [Option<PotionFamily>; 7],
     melee_mode_rows: MeleeModeIndex,
     melee_mode_varp: Option<i32>,
+    poison_unknown_pulse: u8,
 }
 
 impl CombatTables {
@@ -309,6 +310,9 @@ impl CombatTables {
         let potions = build_potions(&selected, consumption)?;
         validate_combat_indexes(&selected)?;
         let (melee_mode_rows, melee_mode_varp) = build_melee_mode_index(&selected)?;
+        let poison_unknown_pulse = super::risk::poison_unknown_v_rows(
+            selected.npc_names().map_or(&[], |names| &names.rows),
+        );
 
         Ok(Arc::new(Self {
             selected,
@@ -317,12 +321,17 @@ impl CombatTables {
             potions,
             melee_mode_rows,
             melee_mode_varp,
+            poison_unknown_pulse,
         }))
     }
 
     /// Shared source facts; cloning the `Arc` does not copy the selected data.
     pub fn selected(&self) -> &Arc<SelectedGameData> {
         &self.selected
+    }
+    /// Cached maximum pulse over the selected revision, not a per-bot fact.
+    pub(crate) fn unknown_poison_pulse(&self) -> u8 {
+        self.poison_unknown_pulse
     }
 
     /// Selected NPC row by packed type id.

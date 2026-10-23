@@ -9,6 +9,7 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock};
 
 use crate::walk_plan::RoutePath;
+use api::condition::PoisonState;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
 use nav::contract::BoundZoneKey;
@@ -17,8 +18,8 @@ use nav::router::{AvoidRect, FindOptions, Route};
 use nav::world::NavWorld;
 use nav::zones::{ZoneExempt, ZoneKey};
 use script::combat::frame::Frame;
+pub use script::combat::risk::RiskInput;
 use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
-pub use script::combat::risk::{PoisonState, RiskInput};
 use script::combat::{CombatTables, ThreatSet};
 pub use script::native::{RiskPolicy, WalkAllow, WalkRefusal};
 
@@ -218,6 +219,12 @@ fn tables(world: &NavWorld) -> Option<&Tables> {
     cell.get().and_then(Option::as_ref)
 }
 
+/// The same shared selection the admission model uses, read at session start.
+pub(crate) fn condition_tables(world: &NavWorld) -> Option<(Arc<CombatTables>, u8)> {
+    let tables = tables(world)?;
+    Some((Arc::clone(&tables.combat), tables.risks.poison_unknown_v))
+}
+
 /// Reuse warm facts, but never hold the world's opaque cache initializer
 /// while a cold selected-NPC table is built cooperatively.
 async fn tables_cooperative<'a, F, U>(world: &'a NavWorld, yield_unit: &mut F) -> Option<&'a Tables>
@@ -277,14 +284,24 @@ pub fn unavailable(map_members: bool) -> RiskInput {
     }
 }
 
-/// Copy a snapshot once at request admission. Poison remains Unknown until
-/// the later observer supplies positive evidence; silence is not a cure.
+/// Capture one admission from the host's current condition, never a retained
+/// assessment's poison input. Missing or stale conditions fail closed.
 pub fn capture(
     snapshot: &GameSnapshot,
     map_members: bool,
-    poison: PoisonState,
+    condition: Option<&api::condition::BotCondition>,
     off_debt: bool,
 ) -> RiskInput {
+    let poison = condition
+        .filter(|fact| {
+            fact.tick == snapshot.tick() && fact.session == api::condition::SessionMark::Live
+        })
+        .map_or(
+            PoisonState::Unknown {
+                since: snapshot.tick() as u16,
+            },
+            |fact| fact.poison,
+        );
     let mut input = RiskInput {
         poison,
         off_debt,
@@ -623,7 +640,7 @@ pub(crate) fn publish(
     let input = capture(
         snapshot,
         map_members,
-        admission.input.poison,
+        bot.condition.current(),
         bot.walk_guard_off.is_some(),
     );
     if !fresh(assessment, input) {
