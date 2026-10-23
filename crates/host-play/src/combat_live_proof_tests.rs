@@ -201,6 +201,10 @@ enum Case {
     M0Manual,
     /// M0, the setting on: the step pauses; after Resume it restarts.
     M0ManualPaused,
+    /// S2: an engaged combat step without any registered walk.
+    S2InPlace,
+    /// S2: the same in-place step with Pause on and an explicit Resume.
+    S2InPlacePaused,
     M6,
     R1,
     R2,
@@ -222,6 +226,8 @@ impl Case {
             Self::M5Stop => "M5-Stop",
             Self::M0Manual => "M0-manual",
             Self::M0ManualPaused => "M0-manual-paused",
+            Self::S2InPlace => "S2-inplace",
+            Self::S2InPlacePaused => "S2-inplace-paused",
             Self::M6 => "M6",
             Self::R1 => "R1",
             Self::R2 => "R2",
@@ -243,6 +249,8 @@ impl Case {
             Self::M5Stop => "combat_stop_owned_prayer_cleanup",
             Self::M0Manual => "combat_m0_manual_movement_cancels_combat_step",
             Self::M0ManualPaused => "combat_m0_manual_movement_pause_restarts_combat_step",
+            Self::S2InPlace => "s2_inplace_manual_takeover",
+            Self::S2InPlacePaused => "s2_inplace_manual_takeover_paused",
             Self::M6 => "combat_m6_melee_combo_eat",
             Self::R1 => "combat_r1_ranged_rapid",
             Self::R2 => "combat_r2_ranged_wrong_ammo",
@@ -261,6 +269,18 @@ impl Case {
         matches!(self, Self::M0Manual | Self::M0ManualPaused)
     }
 
+    fn is_s2(self) -> bool {
+        matches!(self, Self::S2InPlace | Self::S2InPlacePaused)
+    }
+
+    fn is_manual_cell(self) -> bool {
+        self.is_m0() || self.is_s2()
+    }
+
+    fn pause_on_takeover(self) -> bool {
+        matches!(self, Self::M0ManualPaused | Self::S2InPlacePaused)
+    }
+
     fn path_relative(self) -> &'static str {
         match self {
             Self::M1
@@ -268,7 +288,9 @@ impl Case {
             | Self::M5
             | Self::M5Stop
             | Self::M0Manual
-            | Self::M0ManualPaused => "imp.json",
+            | Self::M0ManualPaused
+            | Self::S2InPlace
+            | Self::S2InPlacePaused => "imp.json",
             Self::M2 | Self::R1 | Self::R2 | Self::R3 => "fixtures/combat_melee_upkeep.json",
             Self::M3 | Self::M6 => "fixtures/combat_melee_food_only.json",
             Self::M4 => "fixtures/combat_unattackable.json",
@@ -280,7 +302,11 @@ impl Case {
 
     fn items(self) -> &'static [(&'static str, i32)] {
         match self {
-            Self::M1 | Self::M0Manual | Self::M0ManualPaused => M1_ITEMS,
+            Self::M1
+            | Self::M0Manual
+            | Self::M0ManualPaused
+            | Self::S2InPlace
+            | Self::S2InPlacePaused => M1_ITEMS,
             Self::M1HandIn => &[
                 ("bronze_scimitar", 1),
                 ("red_bead", 1),
@@ -307,7 +333,9 @@ impl Case {
             Self::M1HandIn | Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 | Self::R1 | Self::R3 => Duration::from_secs(900),
             Self::M4 | Self::R2 => Duration::from_secs(300),
-            Self::M0Manual | Self::M0ManualPaused => Duration::from_secs(600),
+            Self::M0Manual | Self::M0ManualPaused | Self::S2InPlace | Self::S2InPlacePaused => {
+                Duration::from_secs(600)
+            }
             Self::MageAuto | Self::MageManualFallback | Self::MageManualNoFallback => {
                 Duration::from_secs(900)
             }
@@ -318,6 +346,7 @@ impl Case {
         match self {
             Self::M1 | Self::M5 | Self::M5Stop => Ok(IMP_START),
             Self::M0Manual | Self::M0ManualPaused => standable_neighbor(world, M0_START_ANCHOR),
+            Self::S2InPlace | Self::S2InPlacePaused => Ok(IMP_START),
             // COMBAT-S3A-2 operator-authorized hand-in-only staging: the
             // CB46 seed cannot cross the default danger zones from Ardougne.
             // Start on the Wizard Tower ground floor, not at the farm.
@@ -761,6 +790,8 @@ impl EvidenceWriter {
         let mut receipt = json!({
             "proof": if self.case.is_m0() {
                 "M0-QUESTER-MANUAL-COMBAT"
+            } else if self.case.is_s2() {
+                "EVENT-RUNTIME-S2"
             } else if self.case == Case::M5Stop {
                 "LIFECYCLE-FOLLOWUPS-1"
             } else if self.case.is_magic() {
@@ -990,7 +1021,12 @@ fn preparation_steps(
     capture: Arc<Mutex<CombatCapture>>,
 ) -> Vec<Step> {
     let stats: &[(&'static str, i32, i32)] = match case {
-        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => &[
+        Case::M1
+        | Case::M1HandIn
+        | Case::M0Manual
+        | Case::M0ManualPaused
+        | Case::S2InPlace
+        | Case::S2InPlacePaused => &[
             ("attack", 0, 40),
             ("strength", 2, 40),
             ("defence", 1, 40),
@@ -1046,7 +1082,12 @@ fn preparation_steps(
         })
         .collect::<Vec<_>>();
     match case {
-        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => {
+        Case::M1
+        | Case::M1HandIn
+        | Case::M0Manual
+        | Case::M0ManualPaused
+        | Case::S2InPlace
+        | Case::S2InPlacePaused => {
             steps.push(wear_step(BRONZE_SCIMITAR_ID));
         }
         Case::M2 => {
@@ -2134,7 +2175,12 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
         return Some("Start baseline is not an attached in-game scene".to_owned());
     }
     match case {
-        Case::M1 | Case::M1HandIn | Case::M0Manual | Case::M0ManualPaused => {
+        Case::M1
+        | Case::M1HandIn
+        | Case::M0Manual
+        | Case::M0ManualPaused
+        | Case::S2InPlace
+        | Case::S2InPlacePaused => {
             if stat_pair(baseline, "attack") != Some((40, 40))
                 || stat_pair(baseline, "strength") != Some((40, 40))
                 || stat_pair(baseline, "defence") != Some((40, 40))
@@ -2514,6 +2560,8 @@ fn case_ready(case: Case, capture: &CombatCapture) -> bool {
         Case::M5Stop => stop_ready(capture),
         Case::M0Manual => m0_manual_ready(capture),
         Case::M0ManualPaused => m0_paused_ready(capture),
+        Case::S2InPlace => manual_ready(capture, s2_takeover_valid),
+        Case::S2InPlacePaused => paused_ready(capture, s2_takeover_valid),
         Case::M6 => m6_ready(capture),
         Case::R1 | Case::R2 | Case::R3 => ranged_ready(case, capture),
         Case::MageAuto => magic_ready(Case::MageAuto, capture),
@@ -5073,6 +5121,37 @@ fn m0_takeover_valid(takeover: &Value) -> bool {
         && takeover["first_imp_attack"].is_object()
 }
 
+fn takeover_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    line.split_whitespace().find_map(|word| {
+        let (key, value) = word.split_once('=')?;
+        (key == field).then_some(value)
+    })
+}
+
+/// S2 accepts the decision's facts, not just the test thread's earlier sample.
+fn s2_takeover_valid(takeover: &Value) -> bool {
+    let Some(line) = takeover["decision_line"].as_str() else {
+        return false;
+    };
+    takeover["slot_live_native_owner"] == true
+        && takeover["slot_api_session"] == false
+        && takeover["slot_live_walking_operation"] == false
+        && takeover["host_before"]["native_walk_live"] == false
+        && m0_host_gate_open(&takeover["host_before"])
+        && takeover["intent_seq"]["after"].as_u64() > takeover["intent_seq"]["before"].as_u64()
+        && m0_step_active(&takeover["active_status"])
+        && takeover["first_imp_attack"].is_object()
+        && takeover_field(line, "live_native_owner") == Some("true")
+        && takeover_field(line, "live_work") == Some("true")
+        && takeover_field(line, "active_walk") == Some("false")
+        && takeover_field(line, "api_session") == Some("false")
+        && takeover_field(line, "live_walking_operation") == Some("false")
+        && takeover_field(line, "native_walk_live") == Some("false")
+        && M0_HOST_WALK_WORK
+            .iter()
+            .all(|field| takeover_field(line, field) == Some("false"))
+}
+
 /// The kept host lines: the takeover line, the Quester's root failure line
 /// exactly `expected_roots` times, and no repeat summary for it. A terminal
 /// also writes child and park lines with the same message (live off-try1);
@@ -5106,6 +5185,10 @@ fn m0_host_log_ok(capture: &CombatCapture, expected_roots: usize) -> bool {
 /// Pause off: exactly one `manual-movement` terminal after the takeover, never
 /// left again, with no later combat report and no Pause.
 fn m0_manual_ready(capture: &CombatCapture) -> bool {
+    manual_ready(capture, m0_takeover_valid)
+}
+
+fn manual_ready(capture: &CombatCapture, valid: fn(&Value) -> bool) -> bool {
     let Some(takeover) = m0_event(capture, "M0Takeover") else {
         return false;
     };
@@ -5125,7 +5208,7 @@ fn m0_manual_ready(capture: &CombatCapture) -> bool {
     let observed_after = m0_frame_tick(capture)
         .zip(terminal_tick)
         .is_some_and(|(now, terminal)| now >= terminal + 10);
-    m0_takeover_valid(takeover)
+    valid(takeover)
         && takeover["setting_pause_on_manual_movement"] == false
         // A Blocked native card stops its slot (`slot.rs` `stop_blocked`),
         // so the state after the takeover may already be Idle.
@@ -5146,6 +5229,10 @@ fn m0_manual_ready(capture: &CombatCapture) -> bool {
 /// Pause on: the takeover pauses the script; after Resume the step restarts
 /// and attacks again, and no `manual-movement` terminal follows.
 fn m0_paused_ready(capture: &CombatCapture) -> bool {
+    paused_ready(capture, m0_takeover_valid)
+}
+
+fn paused_ready(capture: &CombatCapture, valid: fn(&Value) -> bool) -> bool {
     let (Some(takeover), Some(paused), Some(resumed)) = (
         m0_event(capture, "M0Takeover"),
         m0_event(capture, "M0Paused"),
@@ -5177,7 +5264,7 @@ fn m0_paused_ready(capture: &CombatCapture) -> bool {
         .iter()
         .skip(takeover["statuses_before"].as_u64().unwrap_or(0) as usize)
         .any(|status| status["phase"] == "Blocked" || !status["failure"].is_null());
-    m0_takeover_valid(takeover)
+    valid(takeover)
         && takeover["setting_pause_on_manual_movement"] == true
         && takeover["state_after"] == "Paused"
         && paused_tick - at <= 5
@@ -5210,7 +5297,7 @@ impl M0Drive {
         if !self.injected {
             return self.inject(case, play, account, capture);
         }
-        if case == Case::M0ManualPaused && !self.resumed {
+        if case.pause_on_takeover() && !self.resumed {
             let tick = m0_frame_tick(&capture.lock().unwrap_or_else(|e| e.into_inner()));
             let state = play.script_state(account);
             if state == script::RunState::Paused {
@@ -5293,15 +5380,31 @@ impl M0Drive {
         if !m0_host_gate_open(&before_host) {
             return Ok(());
         }
-        let slot_live = super::script_slot(&play.scripts, account)
-            .and_then(|slot| slot.lock().ok().map(|slot| slot.live_walking_operation()))
-            .unwrap_or(false);
+        let (slot_live, native_owner, api_session) = super::script_slot(&play.scripts, account)
+            .and_then(|slot| {
+                slot.lock().ok().map(|slot| {
+                    (
+                        slot.live_walking_operation(),
+                        slot.live_native_owner(),
+                        slot.api_session_takes_manual_input(),
+                    )
+                })
+            })
+            .unwrap_or((false, false, false));
+        if case.is_s2()
+            && (slot_live
+                || !native_owner
+                || api_session
+                || before_host["native_walk_live"] != false)
+        {
+            return Ok(());
+        }
         let first_attack = json!({
             "sequence": attack["sequence"],
             "run": attack["run"],
             "action_id": attack["action_id"],
         });
-        if !slot_live {
+        if case.is_m0() && !slot_live {
             // Main ruling 2026-10-22: a fight whose Combat action began
             // without a walk (a NoTarget restart at the stand, live off-r1)
             // is not an eligible takeover. Keep the first such observation
@@ -5344,6 +5447,16 @@ impl M0Drive {
         }
         let after = intent(play);
         let state_after = play.script_state(account);
+        let decision_line = m0_host_log_lines(account)
+            .into_iter()
+            .rev()
+            .find(|line| line.contains(M0_HOST_TAKEOVER));
+        let walking_decision = decision_line.as_deref().is_some_and(|line| {
+            ["live_walking_operation", "native_walk_live", "active_walk"]
+                .into_iter()
+                .chain(M0_HOST_WALK_WORK.iter().copied())
+                .any(|field| takeover_field(line, field) == Some("true"))
+        });
         self.injected = true;
         self.takeover_tick = tick;
         capture
@@ -5354,12 +5467,15 @@ impl M0Drive {
                 "kind": "M0Takeover",
                 "case": case.key(),
                 "tick": tick,
-                "setting_pause_on_manual_movement": case == Case::M0ManualPaused,
+                "setting_pause_on_manual_movement": case.pause_on_takeover(),
                 "active_status": active,
                 "first_imp_attack": first_attack,
                 "step_to": step_to,
                 "intent_seq": {"before": before, "after": after},
                 "slot_live_walking_operation": slot_live,
+                "slot_live_native_owner": native_owner,
+                "slot_api_session": api_session,
+                "decision_line": decision_line,
                 "host_walk_in_flight": !m0_host_gate_open(&before_host),
                 "host_before": before_host,
                 "host_after": host(play).unwrap_or(Value::Null),
@@ -5370,6 +5486,12 @@ impl M0Drive {
             return Err((
                 "FAIL",
                 "the manual step did not move the intent counter in 10 s".to_owned(),
+            ));
+        }
+        if case.is_s2() && walking_decision {
+            return Err((
+                "INVALID",
+                "the takeover decision reports walking work, not an in-place owner".to_owned(),
             ));
         }
         Ok(())
@@ -8056,9 +8178,9 @@ fn run_case(case: Case) {
     }
     play.focus(&account);
     // M0: Pause off is set explicitly; Pause on is the default (`true`).
-    let m0_sink = case.is_m0() && *M0_HOST_LOG_INSTALLED;
-    if case.is_m0() {
-        play.set_pause_script_on_manual_walk_abort(case == Case::M0ManualPaused);
+    let m0_sink = case.is_manual_cell() && *M0_HOST_LOG_INSTALLED;
+    if case.is_manual_cell() {
+        play.set_pause_script_on_manual_walk_abort(case.pause_on_takeover());
     }
     let mut m0 = M0Drive::default();
 
@@ -8069,7 +8191,7 @@ fn run_case(case: Case) {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
         }
-        if case.is_m0() {
+        if case.is_manual_cell() {
             m0_record_host_log(&account, &capture, m0_sink);
             if let Err((outcome, reason)) = m0.step(case, &play, &account, &capture) {
                 if outcome == "INVALID" {
@@ -8204,7 +8326,7 @@ fn run_case(case: Case) {
                     writer.scenario_status = format!("Failed({error})");
                 }
                 terminal_error.get_or_insert_with(|| format!("ScenarioRunner failed: {error}"));
-                if case.is_m0() {
+                if case.is_manual_cell() {
                     // The parked Quester ends the scenario step; the M0
                     // receipt, not the Blocked status alone, decides.
                     // Without a takeover, the cause that the runner
@@ -8259,7 +8381,7 @@ fn run_case(case: Case) {
         thread::sleep(Duration::from_millis(50));
     }
 
-    if case.is_m0() {
+    if case.is_manual_cell() {
         m0_record_host_log(&account, &capture, m0_sink);
     }
     let capture_snapshot = capture.lock().unwrap_or_else(|e| e.into_inner());
@@ -8314,7 +8436,7 @@ fn run_case(case: Case) {
         );
     }
 
-    if case == Case::M5Stop || case.is_m0() {
+    if case == Case::M5Stop || case.is_manual_cell() {
         assert_eq!(
             writer.outcome,
             "PASS",
@@ -8386,6 +8508,18 @@ fn live_combat_m0_manual_movement_ends_quester_combat_step_once() {
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]
 fn live_combat_m0_manual_movement_pause_restarts_quester_combat_step() {
     run_case(Case::M0ManualPaused);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and Engine A on loopback at 600 ms"]
+fn live_s2_inplace_manual_takeover_ends_step_once() {
+    run_case(Case::S2InPlace);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and Engine A on loopback at 600 ms"]
+fn live_s2_inplace_manual_takeover_pause_restarts_step() {
+    run_case(Case::S2InPlacePaused);
 }
 
 #[test]
@@ -12067,4 +12201,61 @@ fn m0_runner_failure_follows_the_recorded_cause_not_the_read_time() {
         ),
         "the runner's deadline after a takeover is a FAIL"
     );
+}
+
+#[test]
+fn s2_oracle_requires_in_place_facts_at_the_takeover_decision() {
+    for paused in [false, true] {
+        let mut capture = m0_oracle_capture(paused);
+        assert!(!s2_takeover_valid(
+            m0_event(&capture, "M0Takeover").unwrap()
+        ));
+        let event = m0_event_mut(&mut capture, "M0Takeover");
+        event["slot_live_walking_operation"] = json!(false);
+        event["slot_live_native_owner"] = json!(true);
+        event["slot_api_session"] = json!(false);
+        event["host_before"]["native_walk_live"] = json!(false);
+        let line = format!(
+            "{M0_HOST_TAKEOVER} tick=100 live_work=true active_walk=false live_native_owner=true live_walking_operation=false api_session=false load_active=false pause_owner={paused} native_walk_live=false walk_work_live=false route=false compact_route=false has_route=false pending_route=false route_ticket=false route_work_pending=false bank_fetch=false carried_walk=false"
+        );
+        event["decision_line"] = json!(line);
+        let ready = if paused { paused_ready } else { manual_ready };
+        assert!(ready(&capture, s2_takeover_valid));
+        for field in M0_HOST_WALK_WORK.iter().copied().chain([
+            "live_walking_operation",
+            "native_walk_live",
+            "api_session",
+            "active_walk",
+        ]) {
+            m0_event_mut(&mut capture, "M0Takeover")["decision_line"] =
+                json!(line.replace(&format!("{field}=false"), &format!("{field}=true")));
+            assert!(!ready(&capture, s2_takeover_valid), "decision {field}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires S2_M0_RECEIPTS pointing to recorded M0 walking receipts"]
+fn s2_oracle_rejects_recorded_m0_walking_receipts() {
+    let paths = std::env::var_os("S2_M0_RECEIPTS").expect("S2_M0_RECEIPTS");
+    let mut count = 0;
+    for path in std::env::split_paths(&paths) {
+        let receipt: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read M0 receipt")).unwrap();
+        let mut capture = CombatCapture::default();
+        capture.frames = serde_json::from_value(receipt["frames"].clone()).unwrap();
+        capture.statuses = serde_json::from_value(receipt["statuses"].clone()).unwrap();
+        capture.actions = serde_json::from_value(receipt["actions"].clone()).unwrap();
+        capture.random_events = serde_json::from_value(receipt["random_events"].clone()).unwrap();
+        assert_eq!(
+            m0_event(&capture, "M0Takeover").unwrap()["slot_live_walking_operation"],
+            true,
+            "the negative receipt must contain a walking takeover"
+        );
+        assert!(!manual_ready(&capture, s2_takeover_valid));
+        assert!(!paused_ready(&capture, s2_takeover_valid));
+        eprintln!("REJECTED walking receipt {}", path.display());
+        count += 1;
+    }
+    assert!(count >= 2, "supply both Pause settings");
 }

@@ -589,6 +589,9 @@ mod combat_proof;
 #[path = "combat_live_proof_tests.rs"]
 mod combat_live_proof_tests;
 
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+mod manual_takeover_compat_live_tests;
+
 #[cfg(test)]
 #[path = "walk_guard_live_tests.rs"]
 mod walk_guard_live_tests;

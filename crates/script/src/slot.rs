@@ -1603,6 +1603,8 @@ impl SlotScript {
         if self.state == RunState::Error {
             return;
         }
+        self.native_runtime.consume_manual_takeover();
+
         self.interrupt_compiled(Interrupt::Resume);
         #[cfg(feature = "load")]
         self.interrupt_api(Interrupt::Resume);
@@ -2486,15 +2488,22 @@ impl SlotScript {
         }
         false
     }
+    /// A live native ledger owner, including work that acts in place.
+    pub fn live_native_owner(&self) -> bool {
+        self.native_runtime
+            .ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.owner.as_ref().is_some_and(|owner| owner.live()))
+    }
 
-    /// Live work a manual movement takes over: a walking operation, or a
-    /// Gather or Combat API session with or without a walk in flight.
+    /// Live work a manual movement takes over: a walking operation, a live
+    /// native ledger owner, or a Gather or Combat API session.
     pub fn manual_input_owner(&self) -> bool {
         #[cfg(feature = "load")]
         if self.api_session_takes_manual_input() {
             return true;
         }
-        self.live_walking_operation()
+        self.live_walking_operation() || self.live_native_owner()
     }
 
     pub fn note_manual_walk_takeover(&mut self, intent_seq: u64, tick: u64) {

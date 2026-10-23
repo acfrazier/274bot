@@ -412,6 +412,7 @@ pub enum ManualMoveIntent {
 
 impl ManualMoveIntent {
     fn classify(client: &client::client::Client, owner: MouseOwner) -> Option<Self> {
+        use client::client::MiniMenuAction;
         if owner != MouseOwner::User || !client.ingame || client.shell.mouse_click_button != 1 {
             return None;
         }
@@ -425,8 +426,26 @@ impl ManualMoveIntent {
             return None;
         }
         if client.is_menu_open {
-            return (client.menu_area == 0 && client.menu_option_at(x, y).is_some())
-                .then_some(Self::WorldMenu);
+            if client.menu_area != 0 {
+                return None;
+            }
+            let row = client.menu_option_at(x, y)?;
+            let mut action = *client.menu_action.get(row as usize)?;
+            if action >= MiniMenuAction::_PRIORITY {
+                action -= MiniMenuAction::_PRIORITY;
+            }
+            // Cancel and Examine rows never take over: they act in place or
+            // do nothing. Every other chosen world-menu row still qualifies.
+            if matches!(
+                action,
+                MiniMenuAction::CANCEL
+                    | MiniMenuAction::OP_LOC6
+                    | MiniMenuAction::OP_NPC6
+                    | MiniMenuAction::OP_OBJ6
+            ) {
+                return None;
+            }
+            return Some(Self::WorldMenu);
         }
         client::client::Client::world_viewport_hit(x, y).then_some(Self::Viewport)
     }
@@ -987,7 +1006,7 @@ mod tests {
     };
     use crate::render::{HeadIdentity, RenderRefusal, RenderService};
     use api::identity::{Notice, Notifier, SlotKey};
-    use client::client::GameShell;
+    use client::client::{GameShell, MiniMenuAction};
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
     use std::cell::RefCell;
@@ -2051,8 +2070,10 @@ mod tests {
         client.menu_y = 20;
         client.menu_width = 100;
         client.menu_num_entries = 1;
-        // A real row (including Cancel/Examine) qualifies; an off-row
-        // world click is only menu dismissal, not raw viewport intent.
+        client.menu_action[0] = MiniMenuAction::WALK;
+        // A real action row qualifies; an off-row world click is only menu
+        // dismissal, not raw viewport intent. Cancel and Examine rows never
+        // qualify (see world_menu_examine_and_cancel_are_not_takeovers).
         assert_eq!(
             ManualMoveIntent::classify(&client, MouseOwner::User),
             Some(ManualMoveIntent::WorldMenu)
@@ -2082,6 +2103,46 @@ mod tests {
         client.shell.mouse_click_button = 1;
         client.ingame = false;
         assert_eq!(ManualMoveIntent::classify(&client, MouseOwner::User), None);
+    }
+
+    #[test]
+    fn world_menu_examine_and_cancel_are_not_takeovers() {
+        let mut client = intent_client();
+        client.shell.mouse_click_button = 1;
+        client.shell.mouse_click_x = 30;
+        client.shell.mouse_click_y = 51;
+        client.is_menu_open = true;
+        client.menu_area = 0;
+        client.menu_x = 20;
+        client.menu_y = 20;
+        client.menu_width = 100;
+        client.menu_num_entries = 1;
+        // Cancel and every Examine row stay in place, with and without the
+        // _PRIORITY offset a highlighted row carries. Walk and Talk-to
+        // still take over.
+        for action in [
+            MiniMenuAction::CANCEL,
+            MiniMenuAction::OP_LOC6,
+            MiniMenuAction::OP_NPC6,
+            MiniMenuAction::OP_OBJ6,
+        ] {
+            for offset in [0, MiniMenuAction::_PRIORITY] {
+                client.menu_action[0] = offset + action;
+                assert_eq!(
+                    ManualMoveIntent::classify(&client, MouseOwner::User),
+                    None,
+                    "action {action} offset {offset}"
+                );
+            }
+        }
+        for action in [MiniMenuAction::WALK, MiniMenuAction::OP_NPC2] {
+            client.menu_action[0] = action;
+            assert_eq!(
+                ManualMoveIntent::classify(&client, MouseOwner::User),
+                Some(ManualMoveIntent::WorldMenu),
+                "action {action}"
+            );
+        }
     }
 
     #[test]

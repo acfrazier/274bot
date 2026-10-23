@@ -779,13 +779,15 @@ impl StepPlan for CombatPlan {
             last_outcome: None,
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
-            walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
+            manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
             finish_target_index: None,
             finish_ticks_elapsed: 0,
             finish_last_tick: None,
             trace_event: None,
         };
         run.begin_combat(cx)?;
+        run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
+
         Ok(Box::new(run))
     }
 
@@ -1114,7 +1116,7 @@ struct CombatRun {
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
     raised_prayers: RaisedPrayers,
-    walk_outcome_seq_at_begin: u64,
+    manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
     finish_target_index: Option<usize>,
     finish_ticks_elapsed: u64,
@@ -1193,14 +1195,6 @@ impl CombatRun {
             }
             _ => self.raised_prayers,
         }
-    }
-
-    /// A manual takeover after this step began. The host publishes the
-    /// takeover's own walk outcome sequence with `UserInput`; an outcome
-    /// observed at begin is an earlier takeover's and never ends this step.
-    fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
-        cx.tick.cx.observed_walk_outcome_seq != self.walk_outcome_seq_at_begin
-            && cx.tick.cx.observed_walk_cancel_reason == crate::native::WalkCancelReason::UserInput
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
@@ -1851,7 +1845,7 @@ impl CombatRun {
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         self.capture_prayer_cleanup();
-        if self.user_interrupted_since_begin(cx) {
+        if self.manual_takeover_watch.interrupted(&cx.tick.cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
         }
