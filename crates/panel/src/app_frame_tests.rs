@@ -20,6 +20,7 @@ use dear_imgui_wgpu as imgui_wgpu;
 use frontend_core::command::Subject;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
 use frontend_core::surface::{FrameBuf, InputEv, InputProbe, InputSender, SlotInput};
+use frontend_core::test_support::paint::TestPaint;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use frontend_core::GameInputEvent;
@@ -162,9 +163,21 @@ impl Rig {
     /// One frame with the pointer at `spot` and the left button `down`.
     /// `pointer` is what the `Pumps` driver stages for the Game image.
     fn frame_at(&mut self, spot: [f32; 2], down: bool, pointer: Pointer) -> bool {
+        self.frame_buttons_at(spot, down, false, pointer)
+    }
+
+    /// One frame with both physical mouse-button states.
+    fn frame_buttons_at(
+        &mut self,
+        spot: [f32; 2],
+        left_down: bool,
+        right_down: bool,
+        pointer: Pointer,
+    ) -> bool {
         let io = self.ctx.io_mut();
         io.add_mouse_pos_event(spot);
-        io.add_mouse_button_event(MouseButton::Left, down);
+        io.add_mouse_button_event(MouseButton::Left, left_down);
+        io.add_mouse_button_event(MouseButton::Right, right_down);
         self.ctx
             .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let title = game_window_title(self.state.session.focused_name().as_deref());
@@ -258,6 +271,27 @@ fn window_centre(title: &str) -> Option<[f32; 2]> {
         }
         let (pos, size) = ((*window).Pos, (*window).Size);
         Some([pos.x + size.x / 2.0, pos.y + size.y / 2.0])
+    }
+}
+
+/// The Game window's outer position and content-region size after the
+/// frame that drew it. The Grid lays its cells out from the content
+/// region, so a test aims at a cell from both.
+fn window_pos_and_content(title: &str) -> Option<([f32; 2], [f32; 2])> {
+    let name = CString::new(title).ok()?;
+    // SAFETY: called with the frame's context bound; the name is a
+    // NUL-terminated copy that outlives the call, and the window is read
+    // only after the lookup found it.
+    unsafe {
+        let window = sys::igFindWindowByName(name.as_ptr());
+        if window.is_null() || !(*window).Active {
+            return None;
+        }
+        let content = (*window).ContentRegionRect;
+        Some((
+            [(*window).Pos.x, (*window).Pos.y],
+            [content.Max.x - content.Min.x, content.Max.y - content.Min.y],
+        ))
     }
 }
 
@@ -781,10 +815,197 @@ fn captured_input_is_submitted_once_per_frame(drive: Drive) {
     );
     rig.frame(Pointer::Away);
     let later = drain(&rx);
-    assert!(later.is_empty(), "a later empty frame replays {later:?}");
+    match drive {
+        Drive::UiFrame => assert!(
+            matches!(later.as_slice(), [InputEv::Up]),
+            "the physical release routes outside the image, got {later:?}"
+        ),
+        Drive::Pumps => assert!(
+            later.is_empty(),
+            "the pump-only driver stages no physical release, got {later:?}"
+        ),
+    }
+    rig.frame(Pointer::Away);
+    assert!(
+        drain(&rx).is_empty(),
+        "a later empty frame does not replay the release"
+    );
 }
 
 scenario!(captured_input, captured_input_is_submitted_once_per_frame);
+
+/// The single Game view and Grid both release a captured mouse button
+/// outside the image to the slot that received its press.
+#[test]
+fn game_and_grid_panes_release_mouse_buttons_outside_the_image() {
+    for grid in [false, true] {
+        for (name, left, right, button) in [("left", true, false, 1), ("right", false, true, 2)] {
+            let pane = if grid { "grid" } else { "game" };
+            let label = format!("mouse-up-{pane}-{name}");
+            let (mut session, _dir) = session_with_play(&label, &["alice"]);
+            session.multibox = grid;
+            session.wall.grid = grid;
+            session.focus.lock().unwrap().capture = true;
+            let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+                return;
+            };
+            publish_ingame(rig.session(), "alice");
+            for _ in 0..3 {
+                assert!(!rig.frame(Pointer::Away));
+            }
+            let (sender, probe) = InputSender::probe();
+            rig.session().map_desk.set_input_sender(Some(sender));
+            let image = rig.game_centre.expect("the Game window is open");
+            let mut image_hovered = false;
+            for _ in 0..8 {
+                assert!(!rig.frame_buttons_at(image, false, false, Pointer::Over));
+                if drain(&probe)
+                    .iter()
+                    .any(|event| matches!(event, InputEv::Move { .. }))
+                {
+                    image_hovered = true;
+                    break;
+                }
+            }
+            assert!(image_hovered, "{pane}: the pointer reaches the Game Image");
+
+            assert!(!rig.frame_buttons_at(image, left, right, Pointer::Over));
+            let press = drain(&probe);
+            assert!(
+                press.iter().any(
+                    |event| matches!(event, InputEv::Down { button: got, .. } if *got == button)
+                ),
+                "{pane} {name}: the press reaches its slot, got {press:?}"
+            );
+
+            let outside = [2.0, 2.0];
+            assert!(!rig.frame_buttons_at(outside, left, right, Pointer::Away));
+            assert!(
+                drain(&probe).is_empty(),
+                "{pane} {name}: moving outside does not release the held button"
+            );
+            if grid {
+                rig.session()
+                    .fleet_model
+                    .staged_filter_mut()
+                    .push_str("zzz");
+                rig.session()
+                    .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+                assert!(!rig.frame_buttons_at(outside, left, right, Pointer::Away));
+                assert!(
+                    drain(&probe).is_empty(),
+                    "grid {name}: hiding the cell does not end the hold"
+                );
+            }
+
+            assert!(!rig.frame_buttons_at(outside, false, false, Pointer::Away));
+            assert_eq!(
+                drain(&probe),
+                [InputEv::Up],
+                "{pane} {name}: the physical off-image release reaches the press slot"
+            );
+        }
+    }
+}
+
+/// A Grid press inside the focused cell's script paint must not also click
+/// the game. A later loaded cell with an open body must not clear the
+/// focused cell's paint flag before the capture gate reads it.
+#[test]
+fn a_paint_press_in_the_focused_grid_cell_sends_no_game_down() {
+    let (mut session, _dir) = session_with_play("grid-paint-press", &["alice", "bob"]);
+    session.multibox = true;
+    session.wall.grid = true;
+    {
+        let mut focus = session.focus.lock().unwrap();
+        focus.capture = true;
+        // Draw every wall member so both Grid cell bodies are open: the
+        // defect needs a loaded cell after the focused one, drawing its
+        // body. (Only-render-selected folds the unfocused bodies.)
+        focus.only_render_selected = false;
+        focus.wall_open = true;
+        focus.wall = vec!["alice".to_string(), "bob".to_string()];
+    }
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    publish_ingame(rig.session(), "bob");
+    TestPaint::new(Some("BoneBurier"), &["a row", "second row"])
+        .publish(rig.session().core.play_for_test().unwrap(), "alice");
+    for _ in 0..3 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    // The pane reattaches its capture channel while the draw prefs settle;
+    // take its place with a probe after the warm-up frames. The pane has
+    // one capture feed, the focused slot's: a game Down for either cell's
+    // slot is staged on this feed.
+    let (sender, probe) = InputSender::probe();
+    rig.session().map_desk.set_input_sender(Some(sender));
+
+    let title = game_window_title(rig.session().focused_name().as_deref());
+    let (window, avail) =
+        window_pos_and_content(&title).expect("the Game window is open in Grid mode");
+    let cells = crate::grid::grid_cells(2, avail);
+    assert_eq!(cells.len(), 2, "both loaded slots have a Grid cell");
+    let [cx, cy, cw, ch] = cells[0];
+    // The script paint draws at the applet's lower left (`PANEL_RECT`,
+    // `crates/frontend-core/src/scripts/paint_style.rs:14`), inside the
+    // cell's Image. This point is over both: 34% across and 90% down the
+    // first cell stays inside the panel for any cap-row height.
+    let spot = [window[0] + cx + cw * 0.34, window[1] + cy + ch * 0.90];
+
+    let mut in_paint = false;
+    for _ in 0..8 {
+        assert!(!rig.frame_buttons_at(spot, false, false, Pointer::Over));
+        if rig.state.paint.pointer_inside_panel() {
+            in_paint = true;
+            break;
+        }
+    }
+    assert!(
+        in_paint,
+        "the probe point lands inside the focused cell's script paint"
+    );
+    drain(&probe);
+
+    assert!(!rig.frame_buttons_at(spot, true, false, Pointer::Over));
+    let pressed = drain(&probe);
+    assert!(
+        !pressed
+            .iter()
+            .any(|event| matches!(event, InputEv::Down { .. })),
+        "the paint press sends no game Down for either slot, got {pressed:?}"
+    );
+    assert!(
+        rig.state.paint.pointer_inside_panel(),
+        "the paint owns the press, not the game under it"
+    );
+    assert!(!rig.frame_buttons_at(spot, false, false, Pointer::Away));
+    let released = drain(&probe);
+    assert!(
+        !released
+            .iter()
+            .any(|event| matches!(event, InputEv::Down { .. } | InputEv::Up)),
+        "a paint press's release sends no button event to the game, got {released:?}"
+    );
+
+    // The other direction: a press on the same Image but outside the paint
+    // still reaches the game, so the silence above is the paint's doing.
+    let centre = [window[0] + cx + cw * 0.5, window[1] + cy + ch * 0.5];
+    assert!(!rig.frame_buttons_at(centre, false, false, Pointer::Over));
+    drain(&probe);
+    assert!(!rig.frame_buttons_at(centre, true, false, Pointer::Over));
+    let control = drain(&probe);
+    assert!(
+        control
+            .iter()
+            .any(|event| matches!(event, InputEv::Down { .. })),
+        "a press inside the Image but outside the paint reaches the game, got {control:?}"
+    );
+    assert!(!rig.frame_buttons_at(centre, false, false, Pointer::Away));
+    drain(&probe);
+}
 
 /// The rail caps a frame drew (`name: brief`), in their drawn order.
 fn drawn_caps<'a>(text: &str, names: &[&'a str]) -> Vec<&'a str> {

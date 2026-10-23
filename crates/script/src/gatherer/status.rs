@@ -1,7 +1,7 @@
 use crate::native::{
     NativeOutput, NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue,
 };
-use crate::shim::ScriptPaint;
+use crate::shim::{host_control_buttons, ScriptPaint};
 use crate::CompiledId;
 use api::selected::RunKey;
 use std::sync::Arc;
@@ -177,6 +177,9 @@ pub fn paint(data: &StatusData) -> Arc<ScriptPaint> {
             format!("tool {} · {}", data.tool, data.target),
             format!("last event: {}", data.last_event),
         ],
+        // The host Pause and Stop controls, as a compat helper paint
+        // advertises them.
+        buttons: host_control_buttons(),
         ..ScriptPaint::default()
     })
 }
@@ -289,6 +292,51 @@ mod tests {
             value("xp_per_hour"),
             StatusValue::Integer(-1),
             "missing xp_per_hour publishes -1",
+        );
+    }
+
+    /// The native Gatherer paint advertises the host Pause and Stop
+    /// controls, in the order a compat helper paint advertises them.
+    #[test]
+    fn paint_advertises_host_pause_and_stop() {
+        let data = StatusData {
+            skill: "Woodcutting",
+            method: Arc::from("normal"),
+            phase: "gathering",
+            area: Arc::from("Start"),
+            target: Arc::from("Tree"),
+            tool: Arc::from("Bronze axe"),
+            bait: 0,
+            food: 0,
+            coins: 0,
+            yielded: 0,
+            dropped: 0,
+            deposited: 0,
+            trips: 0,
+            xp: 0,
+            xp_per_hour: None,
+            bank: Arc::from(""),
+            last_progress: 0,
+            deaths: 0,
+            recoveries: 0,
+            recovery_step: 0,
+            absent: 0,
+            zone_gated: 0,
+            excluded_targets: Arc::from(""),
+            last_event: Arc::from(""),
+        };
+        let frame = paint(&data);
+        let ids: Vec<(&str, &str)> = frame
+            .buttons
+            .iter()
+            .map(|button| (button.id.as_str(), button.label.as_str()))
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                (crate::shim::HOST_PAUSE_CONTROL_ID, "Pause"),
+                (crate::shim::HOST_STOP_CONTROL_ID, "Stop"),
+            ]
         );
     }
 }
