@@ -233,7 +233,7 @@ fn assert_return_recovery_submitted(gatherer: &Gatherer) {
         gatherer.last_event.as_ref(),
         "return recovery action submitted after transient Stalled"
     );
-    assert_eq!(gatherer.scratch.return_recovery_actions, 1);
+    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 1);
 }
 fn catherby_npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
     NpcView {
@@ -1471,7 +1471,7 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
             .map(|failure| failure.code.as_ref()),
         Some("return-failed")
     );
-    assert_eq!(gatherer.scratch.return_recovery_actions, 0);
+    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 0);
     if let Some(ledger) = ledger {
         assert!(ledger.outbox.is_empty());
     }

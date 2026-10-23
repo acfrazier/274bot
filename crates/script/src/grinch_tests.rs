@@ -2,7 +2,8 @@ use super::CARD;
 use crate::native::{
     ledger, ActionContext, HostEffect, InteractionReceipt, NativeActions, NativeOutput,
     NativePhase, NativeTick, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
-    ScriptStatus, SettingsBag, StatusValue, StopReason, WalkEnd, WalkReceipt,
+    ScriptStatus, SettingsBag, StatusValue, StopReason, WalkEnd, WalkReceipt, WalkStall,
+    WalkStallReason,
 };
 use crate::native_bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::shim::InteractReq;
@@ -430,6 +431,50 @@ fn respond_walk(driver: &mut Driver, tick: u64, end: WalkEnd) -> (u64, WorldTile
         request_id,
         evidence: stamp(run, tick),
         end,
+        blocked: None,
+        detail: None,
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+    (request_id, target)
+}
+
+fn respond_stalled_walk(
+    driver: &mut Driver,
+    tick: u64,
+    at: WorldTile,
+    aiming: WorldTile,
+    why: WalkStallReason,
+    tries: u32,
+) -> (u64, WorldTile) {
+    let (request_id, run, target) = {
+        let action = driver
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|action| match &action.effect {
+                HostEffect::Walk(request) => {
+                    Some((action.request_id.get(), action.run(), request.target))
+                }
+                _ => None,
+            })
+            .expect("native walk request");
+        action
+    };
+    driver.ledger.as_mut().unwrap().walk = Some(WalkReceipt {
+        goal: None,
+        request_id,
+        evidence: stamp(run, tick),
+        end: WalkEnd::Stalled(Arc::new(WalkStall {
+            at,
+            aiming,
+            why,
+            tries,
+        })),
         blocked: None,
         detail: None,
         refusal: None,
@@ -1278,8 +1323,13 @@ fn full_inventory_snapshot(at: WorldTile, selected_id: i32) -> GameSnapshot {
     snapshot
 }
 
-#[test]
-fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
+fn deposit_only_return_fixture() -> (
+    Driver,
+    Box<dyn Script>,
+    GameSnapshot,
+    api::query::ReachQueryView,
+    u64,
+) {
     let bank = NamedBank::new("Fixture bank", BANK_TILE);
     let banks = Arc::new(NamedBankFacts::from_banks(vec![bank]));
     let mut bag = settings(&[ITEM]);
@@ -1410,7 +1460,12 @@ fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
     );
     assert!(matches!(status(&driver).phase, NativePhase::Working));
     assert_eq!(text_field(status(&driver), "status"), "returning to start");
+    (driver, script, snapshot, reach, return_walk)
+}
 
+#[test]
+fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
+    let (mut driver, mut script, mut snapshot, _reach, return_walk) = deposit_only_return_fixture();
     let (return_receipt, returned_at) = respond_walk(&mut driver, 7, WalkEnd::Arrived);
     assert_eq!(return_receipt, return_walk);
     set_position(&mut snapshot, returned_at);
@@ -1425,6 +1480,107 @@ fn deposit_only_run_uses_shared_bank_observations_closes_and_returns_exactly() {
     );
     require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 9));
     assert!(script.waits_for_evidence());
+}
+
+#[test]
+fn transient_return_stalls_replan_and_arrive_at_original_start() {
+    for why in [WalkStallReason::Expired, WalkStallReason::Dropped] {
+        let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
+        let stalled_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
+        let (stalled, _) = respond_stalled_walk(&mut driver, 8, stalled_at, ANCHOR, why, 3);
+        assert_eq!(stalled, return_walk);
+        set_position(&mut snapshot, stalled_at);
+        let reach = reach_view(stalled_at, &[]);
+        require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
+        let (recovery_walk, target, radius) =
+            latest_walk(&driver).expect("one fresh return walk was submitted");
+        assert!(recovery_walk > return_walk);
+        assert_eq!((target, radius), (ANCHOR, 0));
+
+        let (recovery_receipt, arrived_at) = respond_walk(&mut driver, 9, WalkEnd::Arrived);
+        assert_eq!(recovery_receipt, recovery_walk);
+        assert_eq!(arrived_at, ANCHOR);
+        set_position(&mut snapshot, arrived_at);
+        let reach = reach_view(arrived_at, &[]);
+        require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 9));
+        assert_eq!(script.recovery_anchor(), Some(ANCHOR));
+        assert!(status(&driver).failure.is_none());
+    }
+}
+
+#[test]
+fn second_transient_return_stall_stops_after_one_recovery_with_typed_detail() {
+    let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
+    let first_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
+    let (first_stall, _) = respond_stalled_walk(
+        &mut driver,
+        8,
+        first_at,
+        ANCHOR,
+        WalkStallReason::Expired,
+        3,
+    );
+    assert_eq!(first_stall, return_walk);
+    set_position(&mut snapshot, first_at);
+    let reach = reach_view(first_at, &[]);
+    require_continue(driver.tick(&mut *script, &snapshot, Some(&reach), None, 8));
+    let (recovery_walk, target, radius) =
+        latest_walk(&driver).expect("bounded recovery walk was submitted");
+    assert!(recovery_walk > return_walk);
+    assert_eq!((target, radius), (ANCHOR, 0));
+
+    let second_at = tile(BANK_TILE.x + 2, BANK_TILE.z + 1);
+    let (second_stall, _) = respond_stalled_walk(
+        &mut driver,
+        9,
+        second_at,
+        ANCHOR,
+        WalkStallReason::Expired,
+        4,
+    );
+    assert_eq!(second_stall, recovery_walk);
+    set_position(&mut snapshot, second_at);
+    let reach = reach_view(second_at, &[]);
+    let failure = driver
+        .tick(&mut *script, &snapshot, Some(&reach), None, 9)
+        .flow
+        .expect_err("a repeated stall must stop the return");
+    let detail = format!(
+        "walk stalled (Expired) at {:?}, aiming at {:?}, tries: 4",
+        second_at, ANCHOR
+    );
+    assert_eq!(failure.code.as_ref(), "action-failed");
+    assert!(failure.message.contains(&detail), "{}", failure.message);
+    assert_eq!(latest_walk(&driver).unwrap().0, recovery_walk);
+    assert_eq!(script.recovery_anchor(), None);
+}
+
+#[test]
+fn end_blocked_return_stall_is_terminal_without_recovery() {
+    let (mut driver, mut script, mut snapshot, _, return_walk) = deposit_only_return_fixture();
+    let blocked_at = tile(BANK_TILE.x + 1, BANK_TILE.z + 1);
+    let (stalled, _) = respond_stalled_walk(
+        &mut driver,
+        8,
+        blocked_at,
+        ANCHOR,
+        WalkStallReason::EndBlocked,
+        1,
+    );
+    assert_eq!(stalled, return_walk);
+    set_position(&mut snapshot, blocked_at);
+    let reach = reach_view(blocked_at, &[]);
+    let failure = driver
+        .tick(&mut *script, &snapshot, Some(&reach), None, 8)
+        .flow
+        .expect_err("an end-blocked stall is not transient");
+    let detail = format!(
+        "walk stalled (EndBlocked) at {:?}, aiming at {:?}, tries: 1",
+        blocked_at, ANCHOR
+    );
+    assert_eq!(failure.code.as_ref(), "action-failed");
+    assert!(failure.message.contains(&detail), "{}", failure.message);
+    assert_eq!(latest_walk(&driver).unwrap().0, return_walk);
 }
 
 #[test]
