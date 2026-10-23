@@ -3557,8 +3557,8 @@ fn a_rename_apart_whose_copy_cannot_be_made_leaves_the_file_untouched_and_refuse
     );
 }
 
-/// A compound update remains queued while its file publication is held.
-/// The service owns its whole intent; polling only observes the outcome.
+/// A compound preference patch remains queued while its file publication is
+/// held. The service owns its whole intent; polling only observes the outcome.
 #[test]
 fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
     let scratch = IsolatedEnv::enter("local-state-t33-queued-update");
@@ -3577,13 +3577,14 @@ fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
             vault::write_private_file(path, bytes)
         }));
 
-    let update = preferences
-        .begin_update(|document| {
-            document.insert("a".into(), serde_json::json!(1));
-            document.insert("b".into(), serde_json::json!(2));
-            Ok(())
-        })
+    let mut patch = PreferencePatch::new();
+    patch
+        .set_member(&["a"], Some(serde_json::json!(1)))
         .unwrap();
+    patch
+        .set_member(&["b"], Some(serde_json::json!(2)))
+        .unwrap();
+    let update = preferences.begin_patch(patch).unwrap();
     let Update::Queued(mut queued) = update else {
         panic!("the held first write outlasts the bounded wait: {update:?}");
     };
@@ -3605,7 +3606,6 @@ fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
     assert_eq!(saved, serde_json::json!({"a": 1, "b": 2}));
     assert_eq!(preferences.value("b").unwrap(), 2);
 }
-
 #[test]
 fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
     let scratch = IsolatedEnv::enter("local-state-preference-patch-rebase");
@@ -3701,7 +3701,7 @@ fn dropping_preference_watch_keeps_service_owned_request_and_result() {
     else {
         panic!("a non-empty patch is service-owned")
     };
-    let request = watch.request_id().expect("queued request identity");
+    let request = watch.request_id();
     entered_rx
         .recv_timeout(WAIT)
         .expect("the writer reaches the held request");
@@ -3774,7 +3774,7 @@ fn compound_preference_patch_rebases_after_cold_hydration_and_frontend_drop() {
     let Update::Queued(mut watch) = preferences.begin_patch(patch).unwrap() else {
         panic!("a compound patch remains service-owned while hydration is held");
     };
-    let request = watch.request_id().expect("queued request identity");
+    let request = watch.request_id();
     assert!(watch.poll().is_none(), "the held read has not completed");
 
     // An outside edit lands after the caller formed its patch but before the
@@ -3920,8 +3920,8 @@ fn preference_results_outlive_neutral_history_and_bound_new_admission() {
             .code(),
         Some(ErrorCode::Busy { .. })
     ));
-    let first_request = watches[0].request_id().unwrap();
-    let last_request = watches.last().unwrap().request_id().unwrap();
+    let first_request = watches[0].request_id();
+    let last_request = watches.last().unwrap().request_id();
     release_tx.send(()).unwrap();
     assert!(matches!(
         service.wait_request(last_request, WAIT),
@@ -4037,7 +4037,7 @@ fn shutdown_cancels_a_cold_compound_preference_once_without_saving_defaults() {
     let Update::Queued(watch) = preferences.begin_patch(patch).unwrap() else {
         panic!("the compound request is queued behind cold hydration");
     };
-    let request = watch.request_id().unwrap();
+    let request = watch.request_id();
     drop(watch);
     drop(preferences);
     drop(service);
