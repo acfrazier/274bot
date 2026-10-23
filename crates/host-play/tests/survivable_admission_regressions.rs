@@ -122,7 +122,10 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(root),
         );
-        WalkGlobals::read(&service.preferences())
+        let preferences = service.preferences();
+        let readback = preferences.reload();
+        assert_eq!(readback.is_ok(), name != "malformed", "{name}: {readback:?}");
+        WalkGlobals::read(&preferences)
     };
     let sources = [
         ("default", WalkGlobals::default()),
