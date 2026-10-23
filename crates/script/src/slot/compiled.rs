@@ -405,6 +405,7 @@ pub(super) fn frame_context<'a>(
                     .is_some_and(|snapshot| snapshot.tick() == fact.tick)
         }),
         poison_unknown_pulse: ctx.compiled.poison_unknown_pulse.unwrap_or(u8::MAX),
+        cure_poison: ctx.compiled.cure_poison,
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
@@ -527,6 +528,7 @@ impl CompiledRun {
                         bank_memory: ctx.compiled.bank_memory,
                         condition: ctx.compiled.condition,
                         poison_unknown_pulse: ctx.compiled.poison_unknown_pulse,
+                        cure_poison: ctx.compiled.cure_poison,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
                         walk_danger: ctx.compiled.walk_danger,

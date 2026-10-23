@@ -43,6 +43,10 @@ pub struct CompiledTick<'a> {
     pub condition: Option<api::condition::BotCondition>,
     /// Strongest selected NPC poison pulse. `None` fails closed at the reader.
     pub poison_unknown_pulse: Option<u8>,
+    /// The profile's Cure poison setting for this frame, read from the
+    /// slot's mirror once per frame. The default cures when needed; a
+    /// bare ctx carries the default. Never posted into an isolate.
+    pub cure_poison: crate::survival::CurePoison,
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav::contract::CollisionView<'a>>,
