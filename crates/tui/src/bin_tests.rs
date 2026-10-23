@@ -882,18 +882,32 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
 /// create the vault file.
 #[test]
 fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
-    let _iso = IsolatedStores::enter("tui-user-missing-vault");
-    let vault_path = frontend_core::scripts::paths::bot_file("vault-289");
-    assert!(!vault_path.exists(), "the test starts without a vault");
+    let iso = IsolatedStores::enter("tui-user-missing-vault");
+    let no_vault = |home: &std::path::Path| {
+        std::fs::read_dir(home.join(".274bot"))
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .all(|entry| !entry.file_name().to_string_lossy().starts_with("vault"))
+            })
+            .unwrap_or(true)
+    };
+    assert!(no_vault(iso.home()), "the test starts without a vault");
     let nav_dir = std::env::current_exe()
         .expect("test binary path")
         .parent()
         .and_then(std::path::Path::parent)
         .expect("target debug directory")
         .join("nav/289");
+    // The local profile resolves with any engine directory; `--user` on a
+    // missing vault is refused before binding reads the engine key or
+    // prepares the cache, so the test needs neither the host's `ENGINE_DIR`
+    // nor `LOGIN_RSAN/E`, nor a running engine.
     let args = parse_args_from([
         "--profile".to_string(),
         "local-289".to_string(),
+        "--engine".to_string(),
+        iso.dir().join("engine").to_string_lossy().into_owned(),
         "--nav-pack".to_string(),
         nav_dir
             .join("274bot.navpack")
@@ -918,7 +932,7 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
          username and password)"
     );
     assert!(
-        !vault_path.exists(),
+        no_vault(iso.home()),
         "a rejected user must not create a vault"
     );
 }
