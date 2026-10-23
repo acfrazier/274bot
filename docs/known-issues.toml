@@ -297,3 +297,16 @@ first = "0.2.5"
 target = "none"
 severity = "low"
 owner = "scripts-misc"
+
+[[item]]
+id = "super-antipoison-ordinary-immunity-credit"
+kind = "not-in-release"
+area = "Scripts"
+text = """After a super antipoison the bot counts only the ordinary immunity
+  time (120 game ticks instead of 570), so it may drink again sooner than
+  needed. It is still immune for the real time. Counting the super immunity
+  is planned for a later release."""
+first = "0.2.6"
+target = "none"
+severity = "low"
+owner = "T2 survival"
