@@ -111,6 +111,33 @@ class GuestBootstrapTests(unittest.TestCase):
             self.assertTrue((guest_root / "engine-q-pristine/engine/package-lock.json").is_file())
             self.assertTrue((guest_root / "nav-snapshot").is_dir())
 
+    def test_private_guest_copy_is_writable_but_shared_input_stays_readonly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "input/engine"
+            source.mkdir(parents=True)
+            (source / "package-lock.json").write_text("{}\n", encoding="utf-8")
+            executable = source / "start.sh"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+            outside = root / "outside"
+            outside.write_text("outside\n", encoding="utf-8")
+            outside.chmod(0o444)
+            (source / "link").symlink_to(outside)
+            nightly.make_readonly(source)
+            destination = root / "guest/engine"
+
+            nightly.copy_guest_input(source, destination)
+
+            (destination / "node_modules").mkdir()
+            (destination / "package-lock.json").write_text("changed\n", encoding="utf-8")
+            self.assertEqual((source / "package-lock.json").read_text(encoding="utf-8"), "{}\n")
+            self.assertEqual(source.stat().st_mode & 0o200, 0)
+            self.assertEqual((source / "package-lock.json").stat().st_mode & 0o200, 0)
+            self.assertEqual(outside.stat().st_mode & 0o200, 0)
+            self.assertTrue((destination / "link").is_symlink())
+            self.assertTrue((destination / "start.sh").stat().st_mode & 0o100)
+
 
 class RunArchiveTests(unittest.TestCase):
     def make_run(self, root: Path, name: str) -> Path:
@@ -206,6 +233,27 @@ class TartStartTests(unittest.TestCase):
         self.assertEqual(command[command.index("--disk-size") + 1], "160")
         self.assertEqual(command[command.index("--base") + 1], "274bot-mac-base")
         self.assertIn("--skip-tcc-bootstrap", command)
+
+
+class TartSupervisorTests(unittest.TestCase):
+    def test_retains_fast_failure_log_outside_the_disposable_guest(self):
+        vm = nightly.TartVM(SimpleNamespace(), lambda: 200 * nightly.GIB)
+        vm.session = {"guest_home": "/Users/bot/headed/nightly-test"}
+        vm.supervisor_path = Path("/tmp/supervisor.sh")
+        guest = mock.Mock(side_effect=["", "__DONE__1\nsetup failed\n"])
+        output = io.StringIO()
+
+        with mock.patch.object(vm, "guest_sh", guest), contextlib.redirect_stdout(output):
+            code = vm.run_supervised(["/usr/bin/python3", "bootstrap.py"], "bootstrap",
+                                     lambda: False)
+
+        self.assertEqual(code, 1)
+        self.assertIn("setup failed", output.getvalue())
+        shared_log = nightly.shell_quote(f"{nightly.GUEST_SHARE}/logs/bootstrap.log")
+        self.assertIn(shared_log, guest.call_args_list[0].args[0])
+        self.assertIn(shared_log, guest.call_args_list[1].args[0])
+        self.assertIsNone(vm.active_pid_file)
+        self.assertIsNone(vm.active_status_file)
 
 
 class FakeVM:

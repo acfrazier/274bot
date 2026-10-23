@@ -626,7 +626,7 @@ class TartVM:
             raise NightlyError("Tart session is not ready for a guest command")
         guest_home = str(self.session["guest_home"])
         run_root = f"{guest_home}/nightly-control"
-        logs = f"{run_root}/logs"
+        logs = f"{GUEST_SHARE}/logs"
         statuses = f"{run_root}/status"
         pidfiles = f"{run_root}/pids"
         log_path = f"{logs}/{key}.log"
@@ -658,14 +658,20 @@ class TartVM:
             progress()
             state = self.guest_sh(
                 "if [ -f " + shell_quote(status_path) + " ]; then printf '__DONE__'; "
-                "cat " + shell_quote(status_path) + "; else printf '__RUNNING__\\n'; "
+                "cat " + shell_quote(status_path) + "; printf '\\n'; "
+                "tail -n 12 " + shell_quote(log_path) + " 2>/dev/null || true; "
+                "else printf '__RUNNING__\\n'; "
                 "tail -n 12 " + shell_quote(log_path) + " 2>/dev/null || true; fi"
             )
             if state.startswith("__DONE__"):
+                result_lines = state[len("__DONE__"):].strip().splitlines()
                 try:
-                    code = int(state[len("__DONE__"):].strip().splitlines()[0])
+                    code = int(result_lines[0])
                 except (ValueError, IndexError) as error:
                     raise NightlyError(f"guest task wrote invalid status: {state!r}") from error
+                output = "\n".join(result_lines[1:]).strip()
+                if output and output != last_output:
+                    log(output)
                 self.active_pid_file = None
                 self.active_status_file = None
                 if disk_abort:
@@ -911,6 +917,14 @@ def copy_guest_input(source: Path, destination: Path) -> None:
         raise NightlyError(f"guest input already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(str(source), str(destination), symlinks=True)
+    # Staged host inputs stay read-only, but each private guest copy must be writable.
+    for base, _directories, files in os.walk(str(destination), followlinks=False):
+        directory = Path(base)
+        directory.chmod(stat.S_IMODE(directory.stat().st_mode) | stat.S_IWUSR)
+        for name in files:
+            path = directory / name
+            if not path.is_symlink():
+                path.chmod(stat.S_IMODE(path.stat().st_mode) | stat.S_IWUSR)
 
 
 def guest_bootstrap(input_root: Path, guest_root: Path, guest_home: Path) -> Dict[str, str]:

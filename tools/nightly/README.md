@@ -64,6 +64,8 @@ Jobs run sequentially and share the runner's lock and build tree:
   clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
   runs macOS 27.0.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk.
   The host stages the runner, catalog, fixtures and Engine A/Q source data.
+  Shared inputs stay read-only. Private guest copies permit owner writes for
+  dependency installation, engine state and Git mirrors.
   The guest checks out each exact branch commit from `branches.conf` and runs
   main with `lanes,panel,tui`, then quest with `panel,tui`. Each branch uses a
   fresh source tree. Quest cells use one connection because Engine Q sets
@@ -453,6 +455,9 @@ The controller checks
 The runner checks the guest copy at each cell and lane boundary. While the
 LaunchAgent runs, `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
 contains the PID, job, state, branch commits and Tart session ID.
+Bootstrap and job logs remain in the helper session's host `share/logs/`
+directory after the clone is deleted. The controller also prints the final
+log lines when a task finishes, including failures before the first run folder.
 From 20:00, reserve one macOS VM slot for the nightly. Agents can use only
 the other slot until the nightly stops its clone. Tart permits two macOS VMs
 on this host. Do not stop another agent's guest to obtain the nightly slot.
