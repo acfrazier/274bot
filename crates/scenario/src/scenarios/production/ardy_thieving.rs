@@ -504,6 +504,102 @@ pub(crate) fn ardy_thiever_knight_scenario() -> Scenario {
     })
 }
 
+#[derive(Default)]
+struct ArdyGuardAttackState {
+    /// NPC slot the fixture already sent Attack to and still waits on.
+    sent_index: Option<usize>,
+}
+
+/// The fixture Attack that starts the prepared Guard fight. The
+/// readiness watch and this step read different snapshots, so a
+/// Guard that moved out of range, left, or became busy between the
+/// two must not fail the cell at once: admission re-selects from
+/// each new snapshot, once per observed game tick, until some real
+/// Guard targets the player (the wait arm) or the step's game-tick
+/// budget runs out. A sent Attack is not re-sent while its Guard is
+/// still free to engage the player. Only a non-transient dispatch
+/// refusal fails the send. The step never spawns a Guard and never
+/// attacks one that is already engaged.
+fn ardy_guard_attack_step() -> Step {
+    let state = std::sync::Mutex::new(ArdyGuardAttackState::default());
+    Step {
+        name: "Attack a real market Guard and acknowledge its target before Start",
+        kind: StepKind::Repeat {
+            send: Box::new(move |c, snapshot| {
+                let Ok(mut state) = state.lock() else {
+                    return false;
+                };
+                ardy_guard_attack_send(c, snapshot, &mut state)
+            }),
+        },
+        wait: Wait {
+            arm: Proof::NpcNameTargetingLocal { name: "Guard" },
+            budget_ticks: 150,
+        },
+    }
+}
+
+fn ardy_guard_attack_send(
+    c: &mut Client,
+    snapshot: &GameSnapshot,
+    state: &mut ArdyGuardAttackState,
+) -> bool {
+    // The wait arm already holds on this snapshot. Send nothing; the
+    // runner advances the step on this same poll.
+    if (Proof::NpcNameTargetingLocal { name: "Guard" }).check(snapshot, None) {
+        return true;
+    }
+    if let Some(index) = state.sent_index {
+        let waiting_on_sent_guard = snapshot.npcs().iter().any(|npc| {
+            npc.index == index
+                && npc.name.as_deref() == Some("Guard")
+                && npc.target.is_none()
+                && (npc.total_health == 0 || npc.health > 0)
+        });
+        if waiting_on_sent_guard {
+            return true;
+        }
+        // The sent Guard left, died, or engaged someone else before
+        // it targeted the player. Release it and re-select below.
+        state.sent_index = None;
+    }
+    let Some(guard) = snapshot
+        .npcs()
+        .iter()
+        .filter(|npc| {
+            npc.name.as_deref() == Some("Guard")
+                && npc.distance <= 5
+                && !npc.in_combat
+                && npc.target.is_none()
+                && (npc.total_health == 0 || npc.health > 0)
+        })
+        .min_by_key(|npc| npc.distance)
+    else {
+        // No eligible Guard in this snapshot. Wait for the next one;
+        // the step's game-tick budget bounds the admission wait.
+        return true;
+    };
+    let index = guard.index;
+    let mut interactions = Interactions::new(snapshot, c);
+    match interactions.interact(OpTarget::Npc(guard), ActionSpec::Label("Attack".into())) {
+        SendResult::Sent { .. } => {
+            state.sent_index = Some(index);
+            true
+        }
+        // The snapshot raced the client's live state between rebuild
+        // and dispatch. Retry on the next observed game tick. The
+        // shop-banker opener treats the same reasons as transient.
+        SendResult::Refused {
+            reason: SendReason::SceneUnavailable | SendReason::OffScene | SendReason::StaleTarget,
+            ..
+        } => true,
+        SendResult::Refused { reason, .. } => {
+            eprintln!("[scenario] market Guard Attack send refused: {reason:?}");
+            false
+        }
+    }
+}
+
 /// `guardResponse=Fight` on ArdyThiever: prepare food and use an ordinary
 /// Attack on a real market Guard before Start. FightBack then handles the
 /// attacker, followed by the pickpocket bank/return/further cycle.
@@ -618,36 +714,7 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
         "acknowledge an unengaged market Guard before the fixture Attack",
         ARDY_CAKES_GUARD_READY,
     ));
-    steps.push(Step {
-        name: "Attack a real market Guard and acknowledge its target before Start",
-        kind: StepKind::Perform {
-            send: Box::new(|c, snapshot| {
-                let Some(guard) = snapshot
-                    .npcs()
-                    .iter()
-                    .filter(|npc| {
-                        npc.name.as_deref() == Some("Guard")
-                            && npc.distance <= 5
-                            && !npc.in_combat
-                            && npc.target.is_none()
-                    })
-                    .min_by_key(|npc| npc.distance)
-                else {
-                    return false;
-                };
-                let mut interactions = Interactions::new(snapshot, c);
-                matches!(
-                    interactions
-                        .interact(OpTarget::Npc(guard), ActionSpec::Label("Attack".into()),),
-                    SendResult::Sent { .. }
-                )
-            }),
-        },
-        wait: Wait {
-            arm: Proof::NpcNameTargetingLocal { name: "Guard" },
-            budget_ticks: 150,
-        },
-    });
+    steps.push(ardy_guard_attack_step());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         (
