@@ -249,7 +249,14 @@ fn dispatch_application<Io>(
         }
         ScriptRow::DiscardParameterText => match scripts.take_staged_parameter_discard() {
             Some(staged) => {
-                scripts.discard_parameter_text(&staged.key);
+                match staged {
+                    crate::scripts::StagedParameterDiscard::Field(key) => {
+                        scripts.discard_parameter_text(&key);
+                    }
+                    crate::scripts::StagedParameterDiscard::Profile(profile) => {
+                        scripts.discard_profile_parameter_text(&profile);
+                    }
+                }
                 Applied::Done
             }
             None => Applied::Rejected(Rejection::NotStaged, None),
@@ -400,44 +407,27 @@ fn commit_staged_setting<Io>(
     if kind.is_some_and(|kind| (kind == CardKind::Native) != native.is_some()) {
         return Applied::Rejected(Rejection::NotApplicable, None);
     }
-    if let Some(id) = native {
-        let Some(profile) = profile else {
-            return Applied::Rejected(Rejection::NotApplicable, None);
-        };
-        return match scripts.set_compiled_setting(core, profile, id, &staged.field, staged.value) {
-            Ok(operation) => Applied::Operation(operation),
-            Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
-        };
-    }
-    let Some((source, lookup)) = staged.selection.loaded_card() else {
-        return Applied::Rejected(Rejection::NotApplicable, None);
-    };
-    let Some(card) = scripts.card(source, lookup) else {
-        return Applied::Rejected(
-            Rejection::NotApplicable,
-            Some("script card is unavailable".into()),
-        );
-    };
-    let name = card.name().to_owned();
-    let path = card.path().to_path_buf();
-    if let Some(profile) = profile {
-        match scripts.set_profile_setting(
-            core,
-            profile,
-            source,
-            &name,
-            &path,
-            &staged.field,
-            staged.value,
-        ) {
-            Ok(operation) => Applied::Operation(operation),
-            Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
+    let key = ParameterEditKey::new(profile, &staged.selection, &staged.field);
+    let current = scripts.durable_setting_value(core, profile, &staged.selection, &staged.field);
+    let current_text = current
+        .as_ref()
+        .map(script::format_setting_value)
+        .unwrap_or_default();
+    *scripts.parameter_text_mut(&key, &current_text, current.clone()) =
+        script::format_setting_value(&staged.value);
+    match scripts.commit_parameter_value(
+        core,
+        &key,
+        &staged.selection,
+        &staged.field,
+        staged.value,
+        current,
+    ) {
+        Ok(ParameterCommit::Submitted(operation) | ParameterCommit::Pending(operation)) => {
+            Applied::Operation(operation)
         }
-    } else {
-        match scripts.set_legacy_value(source, &name, &staged.field, staged.value) {
-            Ok(()) => Applied::Done,
-            Err(error) => Applied::Failed(FailureKind::WriteFailed, Some(error)),
-        }
+        Ok(ParameterCommit::Unchanged | ParameterCommit::Saved) => Applied::Done,
+        Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
     }
 }
 

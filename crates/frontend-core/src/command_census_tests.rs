@@ -359,6 +359,10 @@ const CORE: &[(&str, Decision)] = &[
         Staged(C::DiscardParameterText),
     ),
     (
+        "scripts/mod.rs::Scripts::stage_profile_parameter_discard",
+        Staged(C::DiscardParameterText),
+    ),
+    (
         "scripts/sync.rs::Scripts::stage_settings_sync_prepare",
         StagedFor(
             &[

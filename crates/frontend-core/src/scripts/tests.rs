@@ -18,7 +18,7 @@ use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
-use crate::surface::HeadlessSurface;
+use crate::surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 use api::identity::{ProcessIncarnation, ProcessTime, RequestIdMinter, Scope, Settlement};
 use api::process_condition::{
     ConditionCause, ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCode,
@@ -98,7 +98,36 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     }
 }
 
+struct ScriptSurface<'a>(&'a mut Scripts);
+
+impl SlotSurface for ScriptSurface<'_> {
+    type Io = ();
+
+    fn attach(
+        &mut self,
+        name: &str,
+        profile: &mut SpawnProfile<'_>,
+        retained: Option<()>,
+    ) -> SlotAttach<()> {
+        HeadlessSurface::new().attach(name, profile, retained)
+    }
+
+    fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
+    fn released(&mut self, _name: &str) {}
+    fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+
+    fn models(&mut self) -> crate::models::Models<'_> {
+        crate::models::Models::none().with_scripts(self.0)
+    }
+}
+
 impl Fixture {
+    fn submit(&mut self, command: OperatorCommand, targets: crate::session::Targets<'_>) {
+        self.core
+            .submit(command, targets, &mut ScriptSurface(&mut self.scripts))
+            .unwrap();
+    }
+
     fn card(&mut self, file: &str, src: &str) -> script::JsCard {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
@@ -358,6 +387,10 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             &[],
         )
         .is_err());
+    assert!(f
+        .scripts
+        .parameter_text_error_for(Some("alice"), &selection, "count")
+        .is_some());
     assert_eq!(
         f.core.last_operation().map(|report| report.id()),
         before,
@@ -398,6 +431,11 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
     assert!(
         f.scripts.parameter_edit_blocks_start("alice"),
         "a valid but uncommitted draft must hold Start"
+    );
+    let drafts: Vec<_> = f.scripts.parameter_draft_details("alice").collect();
+    assert_eq!(
+        drafts,
+        vec![(card.name.as_str(), "count", "valid unsaved value")]
     );
 
     let value = parse_parameter_text(SettingView::new(def), "123", &[]).unwrap();
@@ -462,6 +500,352 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         ParameterCommit::Unchanged
     );
     assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
+}
+
+#[test]
+fn failed_parameter_save_releases_start_and_allows_the_same_value_to_retry() {
+    let mut f = fixture("parameter-save-retry", &["alice"]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("alice", &card);
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let key = ParameterEditKey::new(Some("alice"), &selection, "surface");
+    let value = json!("Fire");
+    let vault_file = f.dir.join("vault");
+    let aside = f.dir.join("vault-aside");
+    std::fs::rename(&vault_file, &aside).unwrap();
+    std::fs::create_dir(&vault_file).unwrap();
+    let first = f
+        .scripts
+        .commit_parameter_value(
+            &mut f.core,
+            &key,
+            &selection,
+            "surface",
+            value.clone(),
+            Some(json!("Range")),
+        )
+        .unwrap();
+    assert!(matches!(first, ParameterCommit::Submitted(_)));
+    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert!(f.scripts.parameter_text_error(&key).is_some());
+    assert!(f
+        .scripts
+        .parameter_text_error_for(Some("alice"), &selection, "surface")
+        .is_some());
+    assert!(
+        !f.scripts.parameter_edit_blocks_start("alice"),
+        "a failed save must keep the durable value and release Start"
+    );
+    std::fs::remove_dir(&vault_file).unwrap();
+    std::fs::rename(&aside, &vault_file).unwrap();
+    let retry = f
+        .scripts
+        .commit_parameter_value(
+            &mut f.core,
+            &key,
+            &selection,
+            "surface",
+            value.clone(),
+            Some(json!("Range")),
+        )
+        .expect("the same deliberate edit can retry after the save error");
+    assert!(matches!(retry, ParameterCommit::Submitted(_)));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+    let saved = f.saved_bag("alice", &card.identity_key()).unwrap();
+    assert_eq!(saved["surface"], value);
+    f.start_running("alice");
+}
+
+#[test]
+fn typed_parameter_save_failure_restores_saved_text_and_exposes_error() {
+    let mut f = fixture("typed-parameter-save-failure", &["alice"]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range', options: ['Range', 'Fire'] } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("alice", &card);
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    f.set("alice", &card, "surface", json!("Fire"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let vault_file = f.dir.join("vault");
+    let aside = f.dir.join("vault-aside");
+    std::fs::rename(&vault_file, &aside).unwrap();
+    std::fs::create_dir(&vault_file).unwrap();
+    f.scripts
+        .stage_setting(Some("alice"), &selection, "surface", json!("Range"));
+    f.submit(
+        OperatorCommand::SaveScriptSettings(CardKind::Script),
+        crate::session::Targets::Profile("alice"),
+    );
+    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    std::fs::remove_dir(&vault_file).unwrap();
+    std::fs::rename(&aside, &vault_file).unwrap();
+
+    assert_eq!(
+        f.scripts
+            .parameter_text_mut_for(
+                Some("alice"),
+                &selection,
+                "surface",
+                "Fire",
+                Some(json!("Fire")),
+            )
+            .as_str(),
+        "Fire"
+    );
+    assert!(f
+        .scripts
+        .parameter_text_error_for(Some("alice"), &selection, "surface")
+        .is_some());
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+}
+
+#[test]
+fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
+    let mut f = fixture("parameter-save-cancelled", &["alice"]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("alice", &card);
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let key = ParameterEditKey::new(Some("alice"), &selection, "surface");
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    let op = match f
+        .scripts
+        .commit_parameter_value(
+            &mut f.core,
+            &key,
+            &selection,
+            "surface",
+            json!("Fire"),
+            Some(json!("Range")),
+        )
+        .unwrap()
+    {
+        ParameterCommit::Submitted(op) => op,
+        other => panic!("expected an accepted settings write, got {other:?}"),
+    };
+    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+
+    // A later write of the same field replaces the accepted edit in this
+    // commit. Settle the actual writer outcome, not an injected test result.
+    f.set("alice", &card, "surface", json!("Range"));
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.core.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled)
+    );
+
+    assert_eq!(
+        f.scripts
+            .parameter_text_mut(&key, "Range", Some(json!("Range")))
+            .as_str(),
+        "Range"
+    );
+    assert_eq!(
+        f.scripts
+            .parameter_text_error_for(Some("alice"), &selection, "surface"),
+        Some("settings save was cancelled")
+    );
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+    assert!(f.scripts.parameter_draft_details("alice").next().is_none());
+    assert_eq!(
+        f.saved_bag("alice", &card.identity_key()).unwrap()["surface"],
+        json!("Range")
+    );
+    f.start_running("alice");
+}
+
+#[test]
+fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change() {
+    let mut f = fixture("parameter-typed-command", &["prefs-typed"]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range', options: ['Range', 'Fire'] } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("prefs-typed", &card);
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    for value in [json!("Fire"), json!("Range")] {
+        f.scripts
+            .stage_setting(Some("prefs-typed"), &selection, "surface", value.clone());
+        f.submit(
+            OperatorCommand::SaveScriptSettings(CardKind::Script),
+            crate::session::Targets::Profile("prefs-typed"),
+        );
+        assert!(f.scripts.parameter_edit_blocks_start("prefs-typed"));
+        assert_eq!(
+            f.scripts
+                .start_profile(&mut f.core, "prefs-typed", None)
+                .unwrap_err()
+                .kind(),
+            ScriptStartErrorKind::Waiting
+        );
+        let op = f.core.last_operation().unwrap().id();
+        f.core.flush_writes();
+        f.scripts.poll(&mut f.core);
+        assert!(!f.scripts.parameter_edit_blocks_start("prefs-typed"));
+        assert_eq!(
+            f.saved_bag("prefs-typed", &card.identity_key()).unwrap()["surface"],
+            value
+        );
+        let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-typed"));
+        crate::log::global().refresh(&mut log);
+        let old = if value == json!("Fire") {
+            "\"Range\""
+        } else {
+            "\"Fire\""
+        };
+        let expected = format!(
+            "saved script settings; profile prefs-typed; card {}; action parameter edit; field surface; old {old}; new {value}; op#{}",
+            card.name, op.0
+        );
+        assert!(log
+            .rows()
+            .iter()
+            .any(|row| { row.level() == api::hostlog::Level::Info && row.message() == expected }));
+    }
+    f.start_running("prefs-typed");
+    let mut credential = f.core.durable_profile("prefs-typed").unwrap().clone();
+    let live = f
+        .scripts
+        .profile_save_live(&f.core, "prefs-typed", &credential.settings)
+        .expect("the running script has live settings");
+    credential.password = "updated-password".into();
+    let op = f
+        .core
+        .save_profile(
+            credential,
+            crate::session::ArmMirror::remember(Some(live)),
+            "password",
+        )
+        .unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-typed"));
+    crate::log::global().refresh(&mut log);
+    assert!(!log.rows().iter().any(|row| {
+        row.message().contains("saved script settings")
+            && row.message().contains(&format!("op#{}", op.0))
+    }));
+}
+
+#[test]
+fn legacy_parameter_save_logs_card_field_and_both_values() {
+    let mut f = fixture("legacy-parameter-log", &["alice"]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let key = ParameterEditKey::new(None, &selection, "surface");
+    let current = f
+        .scripts
+        .durable_setting_value(&f.core, None, &selection, "surface")
+        .unwrap();
+    assert_eq!(
+        f.scripts
+            .commit_parameter_value(
+                &mut f.core,
+                &key,
+                &selection,
+                "surface",
+                json!("Fire"),
+                Some(current)
+            )
+            .unwrap(),
+        ParameterCommit::Saved
+    );
+    let op = f.core.last_operation().unwrap().id();
+    let expected = format!(
+        "saved script settings; profile legacy; card {}; action parameter edit; field surface; old \"Range\"; new \"Fire\"; op#{}",
+        card.name, op.0
+    );
+    let mut log = crate::log::LogView::new(crate::log::LogScope::Process);
+    crate::log::global().refresh(&mut log);
+    assert!(log
+        .rows()
+        .iter()
+        .any(|row| { row.level() == api::hostlog::Level::Info && row.message() == expected }));
+}
+
+#[test]
+fn discard_recovers_hidden_card_drafts_without_cancelling_an_accepted_save() {
+    let mut f = fixture("parameter-hidden-discard", &["alice", "bob"]);
+    let card = f.card(
+        "count.ts",
+        "export const SETTINGS = { count: { type: 'int', default: '1' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign("alice", &card);
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let def = SettingView::new(&card.settings_schema[0]);
+    for profile in ["alice", "bob"] {
+        let key = ParameterEditKey::new(Some(profile), &selection, "count");
+        *f.scripts.parameter_text_mut(&key, "1", Some(json!(1))) = "-".into();
+        assert!(f
+            .scripts
+            .validate_parameter_buffer(&key, "1", Some(json!(1)), def, &[])
+            .is_err());
+        let drafts: Vec<_> = f.scripts.parameter_draft_details(profile).collect();
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].0, card.name.as_str());
+        assert_eq!(drafts[0].1, "count");
+        assert_eq!(drafts[0].2, f.scripts.parameter_text_error(&key).unwrap());
+    }
+    assert!(f.scripts.has_parameter_draft("alice"));
+    f.scripts.stage_profile_parameter_discard("alice");
+    f.submit(
+        OperatorCommand::DiscardParameterText,
+        crate::session::Targets::Application,
+    );
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+    assert!(f.scripts.parameter_edit_blocks_start("bob"));
+    let key = ParameterEditKey::new(Some("alice"), &selection, "count");
+    f.scripts
+        .commit_parameter_value(
+            &mut f.core,
+            &key,
+            &selection,
+            "count",
+            json!(2),
+            Some(json!(1)),
+        )
+        .unwrap();
+    assert!(f.scripts.parameter_draft_details("alice").next().is_none());
+    f.scripts.stage_profile_parameter_discard("alice");
+    f.submit(
+        OperatorCommand::DiscardParameterText,
+        crate::session::Targets::Application,
+    );
+    assert!(f.scripts.parameter_edit_blocks_start("alice"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert!(!f.scripts.parameter_edit_blocks_start("alice"));
+    assert_eq!(
+        f.saved_bag("alice", &card.identity_key()).unwrap()["count"],
+        json!(2)
+    );
+    f.start_running("alice");
 }
 
 #[test]
@@ -925,6 +1309,50 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     );
     let summary = report.summary().to_string();
     assert_eq!(f.scripts.take_notice(), Some(Notice::show(summary)));
+}
+#[test]
+fn apply_to_all_logs_each_profile_settings_write() {
+    let mut f = fixture("sync-profile-settings-log", &["alice", "bob", "dave"]);
+    let card = f.card(
+        "settings-sync-log.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    for profile in ["alice", "bob", "dave"] {
+        f.assign(profile, &card);
+    }
+    f.set("alice", &card, "surface", json!("Fire"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    f.prepare("alice", &card);
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    for profile in ["bob", "dave"] {
+        let mut log = crate::log::LogView::new(crate::log::LogScope::slot(profile));
+        crate::log::global().refresh(&mut log);
+        let prefix = format!(
+            "saved script settings; profile {profile}; card {}; action apply-to-all; field surface; old \"Range\"; new \"Fire\"; op#",
+            card.name
+        );
+        let records: Vec<_> = log
+            .rows()
+            .iter()
+            .filter(|row| {
+                row.level() == api::hostlog::Level::Info && row.message().starts_with(&prefix)
+            })
+            .collect();
+        assert_eq!(records.len(), 1, "{profile}: {:?}", log.rows());
+        assert!(
+            records[0]
+                .message()
+                .strip_prefix(&prefix)
+                .is_some_and(|operation| operation.parse::<u64>().is_ok()),
+            "{profile}: {}",
+            records[0].message()
+        );
+    }
 }
 
 /// Wall-wide Apply to all copies same-card members only: unassigned members

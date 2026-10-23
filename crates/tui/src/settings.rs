@@ -735,26 +735,39 @@ fn char_width(text: &str, at: usize, ch: char) -> usize {
     Span::raw(&text[at..at + ch.len_utf8()]).width()
 }
 
-/// How many rows `text` takes wrapped at `width` columns (a character
-/// wrap, as [`draw_wrapped`] draws it). Empty text takes none.
-fn wrapped_rows(text: &str, width: usize) -> u16 {
-    let mut rows = 0;
-    let mut used = width;
-    for (at, ch) in text.char_indices() {
-        let w = char_width(text, at, ch);
-        if used + w > width {
-            rows += 1;
-            used = 0;
+/// Borrow character-wrapped rows without copying the text.
+pub(crate) fn wrapped_lines(text: &str, width: usize) -> impl Iterator<Item = &str> {
+    let mut remaining = text;
+    let width = width.max(1);
+    std::iter::from_fn(move || {
+        if remaining.is_empty() {
+            return None;
         }
-        used += w;
-    }
-    rows
+        let mut used = 0;
+        let mut end = remaining.len();
+        for (at, ch) in remaining.char_indices() {
+            let columns = char_width(remaining, at, ch);
+            if at > 0 && used + columns > width {
+                end = at;
+                break;
+            }
+            used += columns;
+        }
+        let (line, rest) = remaining.split_at(end);
+        remaining = rest;
+        Some(line)
+    })
+}
+
+/// How many character-wrapped rows `text` takes. Empty text takes none.
+pub(crate) fn wrapped_rows(text: &str, width: usize) -> u16 {
+    u16::try_from(wrapped_lines(text, width).count()).unwrap_or(u16::MAX)
 }
 
 /// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the
 /// popup's width, stopping at `bottom`. Returns the next free row. Slices
 /// the borrowed text, so it allocates nothing.
-fn draw_wrapped(
+pub(crate) fn draw_wrapped(
     buf: &mut Buffer,
     inner: Rect,
     mut y: u16,
@@ -763,23 +776,9 @@ fn draw_wrapped(
     style: Style,
 ) -> u16 {
     let width = usize::from(inner.width).max(1);
-    let mut start = 0;
-    let mut used = 0;
-    for (at, ch) in text.char_indices() {
-        let w = char_width(text, at, ch);
-        if used + w > width {
-            if y < bottom {
-                buf.set_stringn(inner.x, y, &text[start..at], width, style);
-            }
-            y += 1;
-            start = at;
-            used = 0;
-        }
-        used += w;
-    }
-    if start < text.len() {
+    for line in wrapped_lines(text, width) {
         if y < bottom {
-            buf.set_stringn(inner.x, y, &text[start..], width, style);
+            buf.set_stringn(inner.x, y, line, width, style);
         }
         y += 1;
     }

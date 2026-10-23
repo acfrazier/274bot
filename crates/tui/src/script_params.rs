@@ -2,7 +2,6 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use frontend_core::scripts::{format_setting_value, Loadouts, SchemaRef, SettingView};
@@ -24,6 +23,8 @@ pub struct ParamsState {
     pub choice_search: String,
     pub choice_searchable: bool,
     pub error: Option<String>,
+    /// Kept save errors, keyed by the field that submitted the write.
+    pub save_errors: Vec<(String, String)>,
     /// Apply-to-all confirmation line (scope and the y/n keys) while one
     /// is prepared.
     pub sync_prompt: Option<String>,
@@ -484,6 +485,23 @@ impl<'a> ParamsPane<'a> {
         if let Some(err) = self.state.error.as_deref() {
             return err.to_string();
         }
+        if self.state.editing && (self.state.choice_single || self.state.multi_select) {
+            if let Some(def) = self
+                .schema
+                .iter()
+                .filter(|def| def.visible(self.bag))
+                .nth(self.state.cursor)
+            {
+                if let Some((_, error)) = self
+                    .state
+                    .save_errors
+                    .iter()
+                    .find(|(field, _)| field == def.id())
+                {
+                    return format!("{}: {error}", def.display_label());
+                }
+            }
+        }
         if let Some(prompt) = self.state.sync_prompt.as_deref() {
             return prompt.to_string();
         }
@@ -598,11 +616,12 @@ impl Widget for ParamsPane<'_> {
             return;
         }
 
-        let mut lines = Vec::new();
+        let mut lines: Vec<String> = Vec::new();
         if let Some(badge) = self.state.restart_badge.as_deref() {
-            lines.push(Line::from(badge));
+            lines.push(badge.to_owned());
         }
         let mut cursor_line = 0usize;
+        let mut cursor_end_line = 1usize;
         let mut unavailable_current = None;
         let mut site_reason_detail = false;
         let mut quest_detail = None;
@@ -619,20 +638,20 @@ impl Widget for ParamsPane<'_> {
                     stored_quest = Some(stored);
                 }
                 let label = def.display_label();
-                lines.push(Line::from(format!("{label} choices")));
+                lines.push(format!("{label} choices"));
                 if self.state.choice_searchable {
                     let query = if self.state.choice_search.is_empty() {
                         "type to filter"
                     } else {
                         &self.state.choice_search
                     };
-                    lines.push(Line::from(format!("search: {query}")));
+                    lines.push(format!("search: {query}"));
                 }
                 let indices = self.choice_indices(&opts);
                 let start = lines.len();
                 if indices.is_empty() {
                     cursor_line = start;
-                    lines.push(Line::from("no matching options"));
+                    lines.push("no matching options".to_owned());
                 } else {
                     cursor_line = start
                         + self
@@ -677,15 +696,13 @@ impl Widget for ParamsPane<'_> {
                         } else {
                             "[-]"
                         };
-                        lines.push(Line::from(format!(
-                            "{mark}{status} {}",
-                            opts.label_for(opt)
-                        )));
+                        lines.push(format!("{mark}{status} {}", opts.label_for(opt)));
                     }
                 }
                 if let Some(stored) = stored_quest {
                     quest_detail = Some((opts, stored));
                 }
+                cursor_end_line = cursor_line + 1;
             }
         } else {
             let mut last_group: Option<&str> = None;
@@ -703,11 +720,12 @@ impl Widget for ParamsPane<'_> {
                 if group != last_group {
                     last_group = group;
                     if let Some(g) = group {
-                        lines.push(Line::from(format!("— {g} —")));
+                        lines.push(format!("— {g} —"));
                         if g == "Walk permissions" {
-                            lines.push(Line::from(
-                                "Allow for this script even when the global setting is off.",
-                            ));
+                            lines.push(
+                                "Allow for this script even when the global setting is off."
+                                    .to_owned(),
+                            );
                         }
                     }
                 }
@@ -784,7 +802,31 @@ impl Widget for ParamsPane<'_> {
                         current
                     }
                 };
-                lines.push(Line::from(format!("{mark}{label}: {value}")));
+                let range = if def.ty() == "number" {
+                    match def.bounds() {
+                        (Some(min), Some(max), _) => format!(" ({min}–{max})"),
+                        (Some(min), None, _) => format!(" (minimum {min})"),
+                        (None, Some(max), _) => format!(" (maximum {max})"),
+                        (None, None, _) => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
+                lines.push(format!("{mark}{label}{range}: {value}"));
+                if let Some((_, error)) = self
+                    .state
+                    .save_errors
+                    .iter()
+                    .find(|(field, _)| field == def.id())
+                {
+                    lines.push(format!("  {label}: {error}"));
+                }
+                if i == self.state.cursor {
+                    if let Some(error) = self.state.error.as_deref() {
+                        lines.push(format!("  {label}: {error}"));
+                    }
+                    cursor_end_line = lines.len();
+                }
             }
         }
 
@@ -810,45 +852,60 @@ impl Widget for ParamsPane<'_> {
             (None, reserve)
         } else {
             let hint = self.hint();
-            let reserve = if hint.chars().count() > inner.width as usize {
-                2u16
-            } else {
-                1u16
-            };
+            let reserve = crate::settings::wrapped_rows(&hint, usize::from(inner.width))
+                .min(inner.height.saturating_sub(1));
             (Some(hint), reserve)
         };
-        let content_h = inner.height.saturating_sub(reserve) as usize;
-        if cursor_line < self.state.scroll {
-            self.state.scroll = cursor_line;
+        // Scroll physical, wrapped rows rather than clipping logical rows.
+        // Keep the selected field and its validation error in the same view.
+        let wrapped_height =
+            |line: &String| crate::settings::wrapped_lines(line, usize::from(inner.width)).count();
+        let cursor_start = lines.iter().take(cursor_line).map(wrapped_height).sum();
+        let cursor_end: usize = lines.iter().take(cursor_end_line).map(wrapped_height).sum();
+        let content_h = usize::from(inner.height.saturating_sub(reserve));
+        if cursor_start < self.state.scroll {
+            self.state.scroll = cursor_start;
+        } else if cursor_end > self.state.scroll + content_h {
+            self.state.scroll = cursor_end.saturating_sub(content_h).min(cursor_start);
         }
-        if content_h > 0 && cursor_line >= self.state.scroll + content_h {
-            self.state.scroll = cursor_line + 1 - content_h;
-        }
-        let max_off = lines.len().saturating_sub(content_h.max(1));
-        self.state.scroll = self.state.scroll.min(max_off);
-        let window: Vec<Line> = if content_h == 0 {
-            Vec::new()
-        } else {
-            lines
-                .into_iter()
-                .skip(self.state.scroll)
-                .take(content_h)
-                .collect()
-        };
+        let total_rows: usize = lines.iter().map(wrapped_height).sum();
+        self.state.scroll = self
+            .state
+            .scroll
+            .min(total_rows.saturating_sub(content_h.max(1)));
         let list = Rect {
             height: inner.height.saturating_sub(reserve),
             ..inner
         };
-        Paragraph::new(window).render(list, buf);
+        for (row, text) in lines
+            .iter()
+            .flat_map(|line| crate::settings::wrapped_lines(line, usize::from(inner.width)))
+            .skip(self.state.scroll)
+            .take(content_h)
+            .enumerate()
+        {
+            buf.set_stringn(
+                list.x,
+                list.y + u16::try_from(row).unwrap_or(u16::MAX),
+                text,
+                usize::from(list.width),
+                ratatui::style::Style::default(),
+            );
+        }
         let hint_area = Rect {
             y: list.y + list.height,
             height: inner.height - list.height,
             ..inner
         };
         if let Some(hint) = hint {
-            Paragraph::new(hint)
-                .wrap(ratatui::widgets::Wrap { trim: true })
-                .render(hint_area, buf);
+            crate::settings::draw_wrapped(
+                buf,
+                hint_area,
+                hint_area.y,
+                hint_area.bottom(),
+                &hint,
+                ratatui::style::Style::default(),
+            );
         } else if let Some((options, stored)) = quest_detail.as_ref() {
             let mut y = hint_area.y;
             let bottom = hint_area.y.saturating_add(hint_area.height);
@@ -2568,6 +2625,95 @@ mod tests {
             assert!(
                 text.contains("Restart required to apply saved settings."),
                 "{width}x{height}: missing restart badge: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn cookbot_labels_ranges_and_live_validation_are_readable_at_both_sizes() {
+        let loadouts = Loadouts::default();
+        let labels = [
+            "Raw fish to cook",
+            "Fire ground search radius",
+            "Bank stand tile",
+            "Range stand tile",
+            "Openable obstacles",
+            "Cook surface search radius",
+        ];
+        let mut schema = TestSchema::empty();
+        for (index, label) in labels.iter().enumerate() {
+            schema.add_setting(
+                &format!("field{index}"),
+                "number",
+                Some("12"),
+                Some(label),
+                &[],
+            );
+            schema.set_min("2").set_max("20");
+        }
+        for (width, height) in [(80, 24), (120, 40)] {
+            let mut bag = serde_json::Map::new();
+            let mut state = ParamsState {
+                open: true,
+                cursor: 5,
+                ..Default::default()
+            };
+            let mut commit = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| {
+                panic!("an invalid draft must not be saved")
+            };
+            let mut pane = ParamsPane {
+                schema: schema.schema_ref(),
+                bag: &mut bag,
+                commit: &mut commit,
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            type_replace(&mut pane, "40");
+            let error = pane.state.error.clone().expect("validate before Enter");
+            assert!(
+                pane.state.editing,
+                "the form stays open on the invalid draft"
+            );
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| frame.render_widget(pane, frame.area()))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            let compact = text
+                .chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .collect::<String>();
+            for label in labels {
+                assert!(
+                    compact.contains(
+                        &label
+                            .chars()
+                            .filter(|ch| ch.is_alphanumeric())
+                            .collect::<String>()
+                    ),
+                    "{width}x{height}: missing full label {label}: {text}"
+                );
+            }
+            assert!(
+                text.contains("2–20"),
+                "{width}x{height}: bounds missing: {text}"
+            );
+            assert!(
+                compact.contains(
+                    &error
+                        .chars()
+                        .filter(|ch| ch.is_alphanumeric())
+                        .collect::<String>()
+                ),
+                "{width}x{height}: live validation missing: {text}"
             );
         }
     }
