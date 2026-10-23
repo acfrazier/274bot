@@ -1444,10 +1444,13 @@ impl Scripts {
         value: Value,
     ) -> Result<(), String> {
         let source = source.to_script();
-        let card = self.legacy.card_key(source, name);
+        let card = self
+            .js
+            .get(source, name)
+            .map_or(name, |card| card.name.as_str());
         self.legacy.set_value(source, name, id, value.clone());
         self.legacy.save()?;
-        core.log_legacy_script_settings(&card, "parameter edit", id, old_value.as_ref(), &value);
+        core.log_legacy_script_settings(card, "parameter edit", id, old_value.as_ref(), &value);
         Ok(())
     }
 
@@ -1846,7 +1849,7 @@ impl Scripts {
         if let Some(name) = identity.strip_prefix("compiled:") {
             if let Some(card) = script::compiled_id(name).and_then(script::compiled_card) {
                 let schema = (card.schema)();
-                return format_script_settings_log(card.name, action, &schema, old, new);
+                return format_script_settings_log(card.name, action, schema, old, new);
             }
         } else if let Some((source, lookup)) = identity.split_once(':') {
             if let Some(card) =
@@ -2178,7 +2181,7 @@ impl Scripts {
                     }
                     None => Map::new(),
                 };
-                script::merge_bag(&(card.schema)(), &overrides, None)
+                script::merge_bag((card.schema)(), &overrides, None)
                     .get(field)
                     .cloned()
             }

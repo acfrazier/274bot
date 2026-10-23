@@ -3870,6 +3870,204 @@ fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str)
 }
 
 #[test]
+fn script_prefs_labels_wrap_inside_the_normal_and_narrow_window() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let mut label_text = String::new();
+    let labels = [
+        "Raw fish to cook",
+        "Fire ground search radius",
+        "Bank stand tile",
+        "Range stand tile",
+        "Openable obstacles",
+        "Cook surface search radius",
+    ];
+    for width in [360.0, 220.0] {
+        for _ in 0..2 {
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 900.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                ui.log_to_clipboard(0u32);
+                ui.window("Script prefs labels")
+                    .size([width, 800.0], dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let left = ui.cursor_screen_pos()[0];
+                        let right = left + ui.content_region_avail()[0];
+                        for label in labels {
+                            let schema = frontend_core::test_support::scripts::TestSchema::setting(
+                                "field",
+                                "string",
+                                None,
+                                Some(label),
+                                &[],
+                            );
+                            super::script_parameter_label(
+                                ui,
+                                schema.schema_ref().get("field").unwrap(),
+                                &mut label_text,
+                            );
+                            assert!(
+                                ui.item_rect_min()[0] >= left - 0.5
+                                    && ui.item_rect_max()[0] <= right + 0.5,
+                                "{label} exceeds the {width}-pixel window"
+                            );
+                        }
+                    });
+                ui.log_finish();
+            }
+            ctx.render();
+        }
+        let text = drawn.0.take();
+        for label in labels {
+            assert!(
+                text.contains(label),
+                "the full label must be readable: {label}"
+            );
+        }
+    }
+}
+
+#[test]
+fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let mut session = crate::session::Session::new();
+    let selection = ScriptChoice::loaded(CardSource::Catalog, "CookBot");
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "leashRadius",
+        "number",
+        Some("12"),
+        Some("Cook surface search radius"),
+        &[],
+    );
+    schema.set_min("2").set_max("20");
+    let bag = serde_json::Map::from_iter([("leashRadius".into(), serde_json::json!(12))]);
+    for step in 0..5 {
+        if step == 3 {
+            ctx.io_mut().add_input_character('4');
+            ctx.io_mut().add_input_character('0');
+        }
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("Script prefs number")
+                .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+                    if step == 1 {
+                        ui.set_keyboard_focus_here();
+                    }
+                    super::script_parameter_rows(
+                        ui,
+                        &mut session,
+                        &selection,
+                        None,
+                        schema.schema_ref(),
+                        bag.clone(),
+                    );
+                    assert!(ui.item_rect_max()[0] <= right + 0.5, "the error wraps");
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    let error = session
+        .scripts
+        .parameter_text_error_for(None, &selection, "leashRadius")
+        .expect("typing an out-of-range value validates before Enter or closing the form");
+    assert!(text.contains("Cook surface search radius"));
+    assert!(text.contains("Valid range: 2–20"), "{text}");
+    assert!(
+        text.contains("40"),
+        "the invalid draft remains in the open form"
+    );
+    assert!(
+        text.contains(error),
+        "the field displays its validation error: {text}"
+    );
+}
+
+#[test]
+fn main_script_recovery_names_the_hidden_card_and_field() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let iso = frontend_core::test_support::IsolatedStores::enter("script-hidden-field");
+    let path = iso.dir().join("CookBot.ts");
+    std::fs::write(
+        &path,
+        "export const SETTINGS = { leashRadius: { type: 'number', default: 12, min: 2, max: 20, label: 'Cook surface search radius' } };\nexport default class CookBot extends LoopingBot { loop() {} }\n",
+    ).unwrap();
+    let mut session = crate::session::Session::new();
+    let card = session.scripts.load_card(&path).unwrap();
+    let selection = ScriptChoice::loaded(CardSource::File, card.identity_id());
+    let mut schema = frontend_core::scripts::OwnedSchema::default();
+    schema.copy_from(
+        session
+            .scripts
+            .card(CardSource::File, card.identity_id())
+            .unwrap()
+            .schema(),
+    );
+    let def = schema.as_ref().get("leashRadius").unwrap();
+    session.set_focus_for_test("alice");
+    *session.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        def.id(),
+        "12",
+        Some(serde_json::json!(12)),
+    ) = "40".into();
+    let error = session
+        .scripts
+        .validate_parameter_buffer_for(
+            Some("alice"),
+            &selection,
+            def.id(),
+            ("12", Some(serde_json::json!(12))),
+            def,
+            &[],
+        )
+        .unwrap_err();
+    session.script_sel = Some(ScriptChoice::compiled(
+        frontend_core::scripts::CompiledCardId::lookup("Gatherer").unwrap(),
+    ));
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("main script recovery")
+                .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+                .build(|| super::script_parameter_draft_recovery(ui, &mut session));
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains(&format!("CookBot: Cook surface search radius: {error}")),
+        "{text}"
+    );
+    assert!(text.contains("Discard unsaved settings"), "{text}");
+}
+#[test]
 fn memory_notice_gets_its_own_readable_popup_row() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("memory-popup-layout");

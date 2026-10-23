@@ -1057,6 +1057,8 @@ pub struct Session {
     /// Retained copy of the selected card's schema the parameter editors
     /// walk while they change the session (copied only when it changes).
     pub(crate) script_param_schema: frontend_core::scripts::OwnedSchema,
+    /// Reused range and draft-detail text, so warm prefs frames do not allocate it.
+    pub(crate) script_parameter_label: String,
     /// Loadouts CRUD window (non-modal).
     pub loadouts_open: bool,
     /// Item search box for the active slot or supply row.
@@ -1509,6 +1511,7 @@ impl Session {
             script_parameter_filter: String::new(),
             script_parameter_filter_id: None,
             script_param_schema: frontend_core::scripts::OwnedSchema::default(),
+            script_parameter_label: String::new(),
             loadouts_open: false,
             loadouts_search: String::new(),
             loadouts_search_slot: None,
