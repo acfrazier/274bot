@@ -887,9 +887,8 @@ pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<Ro
 fn unattributed_onset() -> PoisonState {
     PoisonState::Onset {
         since: 0,
-        q: 0,
+        q: None,
         hit_since_line: false,
-        latched: false,
     }
 }
 

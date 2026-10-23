@@ -20,8 +20,9 @@ use script::combat::threats::ThreatSet;
 const POISON_LINE: &str = "You have been poisoned!";
 const DRINK_LINE: &str = "You drink some of your antipoison potion.";
 const FRUIT_LINE: &str = "You eat the fruit.";
-// content/scripts/skill_combat/scripts/poison.rs2:72-75: normal timer, 30 ticks.
-const CLEAN_TICKS: u8 = 30;
+// poison.rs2:29,72-75: 30 ticks to the fire, then one queued-damage tick
+// (World.ts:701-704; Player.ts:903-911), plus the existing observation margin.
+const CLEAN_TICKS: u8 = (30 + 1 + script::combat::risk::consts::LAG) as u8;
 
 #[derive(Default)]
 struct SettleWindow {
@@ -77,12 +78,21 @@ impl Default for SlotCondition {
 }
 
 impl SlotCondition {
-    pub(crate) fn session_started(&mut self, tick: u32, tables: Option<(Arc<CombatTables>, u8)>) {
+    pub(crate) fn session_started(
+        &mut self,
+        tick: u32,
+        chat_sequence: i32,
+        tables: Option<(Arc<CombatTables>, u8)>,
+    ) {
         *self = Self::default();
         self.last_tick = tick;
+        // Reconnect retains the client's ring. Ignore every pre-boundary line,
+        // including lines the old snapshot had not rebuilt or consumed.
+        self.chat_seen = chat_sequence;
+        self.chat_visible = chat_sequence;
         self.memory = self
             .memory
-            .transition(PoisonEvent::Reconnect { tick: tick as u16 }, None);
+            .transition(PoisonEvent::Reconnect { tick: tick as u16 });
         self.fact.poison = self.memory.state;
         if let Some((tables, q)) = tables {
             self.tables = Some(tables);
@@ -119,7 +129,7 @@ impl SlotCondition {
     }
 
     fn transition(&mut self, event: PoisonEvent) {
-        self.memory = self.memory.transition(event, None);
+        self.memory = self.memory.transition(event);
     }
 
     fn incomplete(&mut self, error: ConditionError) {
@@ -149,6 +159,12 @@ impl SlotCondition {
             self.session_ended();
             return;
         }
+        if self.tables.is_none() {
+            // Without selected content, zero food/cures would falsely mean
+            // "none held". An unpublished fact keeps both summaries unknown.
+            self.complete = false;
+            return;
+        }
         if snapshot.local_player().is_none() {
             self.incomplete(ConditionError::NoLocalPlayer);
             return;
@@ -170,6 +186,23 @@ impl SlotCondition {
             self.incomplete(ConditionError::InventoryUnavailable);
             return;
         }
+        let inv_gen = snapshot
+            .inventory_packet_generation()
+            .expect("validated inventory packet");
+        let derived = if self.inv_gen != Some(inv_gen) {
+            match script::survival::condition::derive(
+                snapshot,
+                self.tables.as_deref().expect("validated selected tables"),
+            ) {
+                Ok(derived) => Some(derived),
+                Err(error) => {
+                    self.incomplete(error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let tick = snapshot.tick();
         let now = tick as u16;
         let k = tick.saturating_sub(self.last_tick);
@@ -197,21 +230,12 @@ impl SlotCondition {
             // The ring is newest first. Every new line has the same conservative
             // origin, but its oldest poison/drink ordering still matters.
             let previous_seen = self.chat_seen;
-            for line in snapshot
-                .chat_lines()
-                .iter()
-                .rev()
-                .filter(|line| line.sequence > previous_seen)
-            {
+            for line in snapshot.chat_lines().iter().rev().filter(|line| {
+                line.sequence > previous_seen && line.type_ == 0 && line.username.is_none()
+            }) {
                 if line.text == POISON_LINE {
                     poison_signal = true;
                     self.transition(PoisonEvent::PoisonChat { tick: now });
-                    if let PoisonState::Onset {
-                        q, latched: false, ..
-                    } = &mut self.memory.state
-                    {
-                        *q = self.q_unknown;
-                    }
                     let proven = line.sequence <= self.chat_visible || !drain.npc_rows_coherent;
                     let can_latch =
                         proven && k == 1 && prev_complete && self.tables.is_some() && hit_at_edge;
@@ -230,13 +254,9 @@ impl SlotCondition {
                     self.transition(PoisonEvent::ProvenDrink { origin });
                     self.latch = None;
                 } else if line.text == FRUIT_LINE
-                    && snapshot
-                        .inventory()
-                        .iter()
-                        .filter(|item| item.def.id == 464)
-                        .map(|item| item.count)
-                        .sum::<i32>()
-                        < i32::from(self.fact.cures.strange_fruit)
+                    && derived.is_some_and(|fact| {
+                        fact.cures.strange_fruit < self.fact.cures.strange_fruit
+                    })
                 {
                     // strange_fruit.rs2:6-12 and consume_messages.dbrow:713-718.
                     // The line must accompany an observed fruit loss. Its single
@@ -256,13 +276,6 @@ impl SlotCondition {
                 for &(kind, value) in hits.iter().flatten() {
                     if (kind == 2) != poison {
                         continue;
-                    }
-                    if kind == 2 && matches!(self.memory.state, PoisonState::Immune { .. }) {
-                        host_log!(
-                            Category::NavEvent,
-                            Level::Warn,
-                            "poison mark contradicts credited immunity"
-                        );
                     }
                     self.transition(PoisonEvent::Hitmark {
                         kind: kind.clamp(0, u16::MAX as i32) as u16,
@@ -298,7 +311,9 @@ impl SlotCondition {
                 && !poison_signal
             {
                 self.window.clean = self.window.clean.saturating_add(1);
-                if self.window.clean >= CLEAN_TICKS
+                // The final possible mark tick stays Unknown. Clear only on
+                // the following edge, after the inclusive observation bound.
+                if self.window.clean > CLEAN_TICKS
                     && self.window.accepted
                     && !self.memory.session_invalid
                 {
@@ -320,22 +335,9 @@ impl SlotCondition {
         self.fact.hp = hp.effective.clamp(0, u8::MAX as i32) as u8;
         self.fact.hp_max = hp.base.clamp(0, u8::MAX as i32) as u8;
         self.fact.hp_known = true;
-        let inv_gen = snapshot
-            .inventory_packet_generation()
-            .expect("validated inventory packet");
-        if self.inv_gen != Some(inv_gen) {
-            if let Some(tables) = self.tables.as_deref() {
-                match script::survival::condition::derive(snapshot, tables) {
-                    Ok(derived) => {
-                        self.fact.food = derived.food;
-                        self.fact.cures = derived.cures;
-                    }
-                    Err(error) => {
-                        self.incomplete(error);
-                        return;
-                    }
-                }
-            }
+        if let Some(derived) = derived {
+            self.fact.food = derived.food;
+            self.fact.cures = derived.cures;
             self.inv_gen = Some(inv_gen);
         }
         self.fact.poison = self.memory.state;

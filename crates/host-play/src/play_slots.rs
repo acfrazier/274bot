@@ -1507,8 +1507,6 @@ fn spawn_slot_thread(
                                     // Before the first script tick of the
                                     // session (design-bank-snapshot §1.4).
                                     slot_bank.session_started();
-                                    slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
-                                        .condition.session_started(nav_snapshot.tick(), slot_world.as_deref().and_then(crate::admission::condition_tables));
                                 } else {
                                     observe_client_session_exit(c, &arm_latch_obs);
                                     end_slot_session(
@@ -1528,6 +1526,10 @@ fn spawn_slot_thread(
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            if session_boundary && c.ingame {
+                                slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
+                                    .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
+                            }
                             // The open bank's rows reach the account memory
                             // here (design-bank-snapshot §1.3); a close saves.
                             slot_bank.observe_frame(&nav_snapshot);
