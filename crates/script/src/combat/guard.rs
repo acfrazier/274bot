@@ -2675,6 +2675,25 @@ mod tests {
         assert_eq!(guard.drink_count, 1);
         assert!(!guard.schedule.ready(OpKind::Eat, 5));
         assert!(guard.schedule.ready(OpKind::Eat, 6));
+
+        scene.inventory.retain(|item| item.def.id != lobster_id);
+        scene.stats[3].effective += 12;
+        scene.refresh();
+        let frame = Frame::borrow(scene.view_at(4)).unwrap();
+        guard.settle_eat(&frame, 4, emergency + 12);
+        assert!(!guard.schedule.pending(OpKind::Eat));
+        assert!(guard.schedule.pending(OpKind::Drink));
+        assert_eq!(guard.eat_id, 0);
+        assert_eq!(guard.drink_count, 1);
+
+        scene
+            .inventory
+            .retain(|item| item.def.name.as_deref() != Some("Strange fruit"));
+        scene.refresh();
+        guard.settle_drink(&Frame::borrow(scene.view_at(5)).unwrap(), 5, 43);
+        assert!(!guard.schedule.pending(OpKind::Drink));
+        assert_eq!(guard.schedule.unsettled[OpKind::Drink.index()], 0);
+        assert_eq!(guard.flags & FLAG_CURE_FRUIT, 0);
     }
     #[test]
     fn food_permission_defaults_true_and_can_disable_eating() {

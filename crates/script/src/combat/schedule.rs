@@ -1,6 +1,7 @@
 //! Server input, next-food, interaction and swing clocks are independent.
 use super::tables::FoodFact;
 
+/// Maximum age for an admitted Eat awaiting a visible count drop or HP rise.
 /// Shared by the combat machine and the walk guard.
 pub(crate) const EAT_OBSERVATION_WINDOW_TICKS: u8 = 6;
 

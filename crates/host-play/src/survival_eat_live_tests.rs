@@ -78,6 +78,12 @@ const FULL_HP_SEED: &[&str] = &[
     "setstat prayer 43",
     "give lobster 5",
 ];
+const FRUIT_SEED: &[&str] = &[
+    "setstat hitpoints 10",
+    "setstat prayer 43",
+    "give lobster 5",
+    "give macro_triffidfruit 1",
+];
 const COMBAT_SEED: &[&str] = &[
     "setstat attack 1",
     "setstat strength 1",
@@ -338,6 +344,7 @@ struct EatAction {
     accepted: bool,
     source: String,
     owner_run: Option<String>,
+    fight_action: Option<u64>,
     real_wire: bool,
 }
 
@@ -346,6 +353,7 @@ struct AttackAction {
     tick: ActionSnapshotTick,
     accepted: bool,
     owner_run: Option<String>,
+    fight_action: Option<u64>,
     real_wire: bool,
 }
 
@@ -534,6 +542,18 @@ fn full_hp_seed_ready(snapshot: &GameSnapshot) -> bool {
         && bank_core_live::count(snapshot.inventory(), LOBSTER_ID) == 5
 }
 
+fn fruit_id() -> i32 {
+    api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("289 content")
+        .item_by_alias("macro_triffidfruit")
+        .expect("Strange fruit")
+        .id
+}
+
+fn fruit_seed_ready(snapshot: &GameSnapshot) -> bool {
+    full_hp_seed_ready(snapshot) && bank_core_live::count(snapshot.inventory(), fruit_id()) == 1
+}
+
 fn combat_seed_ready(snapshot: &GameSnapshot) -> bool {
     [0, 1, 2, 3, 5].into_iter().all(|index| {
         let expected = match index {
@@ -680,7 +700,11 @@ fn captured_actions(capture: &Arc<StdMutex<CombatCapture>>) -> Vec<Value> {
 }
 
 fn is_eat(action: &Value) -> bool {
-    (action["kind"] == json!("guard") && action["op"] == json!("eat"))
+    (action["kind"] == json!("guard")
+        && action["op"] == json!("eat")
+        && action["item"]
+            .as_str()
+            .is_none_or(|name| name.eq_ignore_ascii_case("lobster")))
         || (action["kind"] == json!("interaction")
             && action["request"]["op"] == json!("held")
             && action["request"]["name"]
@@ -754,6 +778,7 @@ fn eat_actions(actions: &[Value]) -> Vec<EatAction> {
                 accepted: action["accepted"] == json!(true),
                 source: action["kind"].as_str()?.to_owned(),
                 owner_run: action["run"].as_str().map(str::to_owned),
+                fight_action: action["action_id"].as_u64(),
                 real_wire: has_decoded_wire(action),
             })
         })
@@ -768,6 +793,7 @@ fn attack_actions(actions: &[Value]) -> Vec<AttackAction> {
             tick: ActionSnapshotTick::from_capture(action),
             accepted: action["accepted"] == json!(true),
             owner_run: action["run"].as_str().map(str::to_owned),
+            fight_action: action["action_id"].as_u64(),
             real_wire: has_decoded_wire(action),
         })
         .collect()
@@ -1119,6 +1145,93 @@ fn evaluate_walk(
     }
 }
 
+/// Food and Strange fruit share %eat_delay: a bite at T permits fruit at T+3.
+/// consume.rs2:109,122-127. Fruit removes itself before its cure message
+/// (effects/scripts/strange_fruit.rs2:6-12), so count drop and a cleared poison
+/// condition prove cure.
+fn evaluate_fruit(
+    frames: &[ObservedFrame],
+    actions: &[Value],
+    policy_tick: Option<u32>,
+) -> OracleDecision {
+    let eats = eat_actions(actions);
+    let Some(bite) = eats.first() else {
+        return OracleDecision::Pending;
+    };
+    let Some(bite_tick) = bite.tick.0 else {
+        return OracleDecision::Fail("oracle: fruit cell bite has no snapshot tick".into());
+    };
+    if frames
+        .iter()
+        .filter(|frame| frame.tick >= bite_tick)
+        .any(|frame| frame.hp == 0 || frame.non_poison_damage || !frame.route_active)
+    {
+        return OracleDecision::Fail(
+            "fixture: fruit route died, lost its guard, or took other damage".into(),
+        );
+    }
+    if eats.len() != 1 || !bite.accepted || bite.hp_before != 4 || bite.lobsters_before != 5 {
+        return OracleDecision::Fail(
+            "product: fruit cell needs exactly one due health bite".into(),
+        );
+    }
+    let Some(policy_tick) = policy_tick else {
+        return OracleDecision::Pending;
+    };
+    if policy_tick != bite_tick {
+        return OracleDecision::Fail(
+            "fixture: cure policy was not enabled immediately after the bite".into(),
+        );
+    }
+    let fruits = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == "guard"
+                && action["op"] == "eat"
+                && action["item"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Strange fruit"))
+        })
+        .collect::<Vec<_>>();
+    let due = bite_tick + 3;
+    if fruits
+        .iter()
+        .any(|action| action["snapshot_tick"].as_u64() != Some(u64::from(due)))
+    {
+        return OracleDecision::Fail(
+            "product: fruit did not use the first content-allowed tick T+3".into(),
+        );
+    }
+    if fruits.len() > 1 {
+        return OracleDecision::Fail("product: fruit was retried instead of cured once".into());
+    }
+    if let Some(action) = fruits.first() {
+        if action["accepted"] != true {
+            return OracleDecision::Fail("product: fruit click was not accepted".into());
+        }
+        if frames.iter().any(|frame| {
+            (due..=due + 3).contains(&frame.tick)
+                && matches!(
+                    frame.poison,
+                    PoisonState::Clear | PoisonState::Immune { .. }
+                )
+                && frame.hp == 10
+                && frame.lobsters == 4
+                && snapshot_item_count(&frame.evidence["snapshot_facts"], i64::from(fruit_id()))
+                    == 0
+        }) {
+            return OracleDecision::Pass;
+        }
+    }
+    if frames.last().is_some_and(|frame| frame.tick > due + 3) {
+        OracleDecision::Fail(
+            "product: fruit did not cure within its content observation window".into(),
+        )
+    } else {
+        OracleDecision::Pending
+    }
+}
+
 fn evaluate_combat(
     seed_tick: u32,
     frames: &[ObservedFrame],
@@ -1238,10 +1351,12 @@ fn evaluate_combat(
             && attack.tick <= eat.tick
             && attack.owner_run.is_some()
             && attack.owner_run == eat.owner_run
+            && attack.fight_action.is_some_and(|id| id != 0)
+            && attack.fight_action == eat.fight_action
     });
     if !same_fight {
         return OracleDecision::Fail(
-            "oracle: no accepted wire-decoded Cow attack shares the Eat run".into(),
+            "oracle: no accepted wire-decoded Cow attack shares the Eat fight action".into(),
         );
     }
     if healed_after(frames, eat, 10) {
@@ -1274,10 +1389,20 @@ fn captured_evidence(capture: &Arc<StdMutex<CombatCapture>>) -> Value {
 
 fn write_receipt(evidence: &Path, receipt: &Value) -> PathBuf {
     std::fs::create_dir_all(evidence).expect("create cell evidence directory");
+    let mut receipt = receipt.clone();
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("read receipt git commit");
+    assert!(commit.status.success(), "git rev-parse HEAD failed");
+    receipt["commit"] = json!(String::from_utf8(commit.stdout)
+        .expect("UTF-8 commit")
+        .trim());
     let path = evidence.join("receipt.json");
     std::fs::write(
         &path,
-        serde_json::to_vec_pretty(receipt).expect("serialize receipt"),
+        serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
     )
     .unwrap_or_else(|error| panic!("write receipt {}: {error}", path.display()));
     println!("survival-eat-receipt={}", path.display());
@@ -1337,8 +1462,18 @@ fn walk_receipt(
     })
 }
 
-fn run_walk_case(case: EatCase) {
-    let cell = start_cell(case.name(), case.seed(), case.seed_ready(), WALK_ORIGIN);
+fn run_walk_case(case: EatCase, fruit_delay: bool) {
+    let label = if fruit_delay {
+        "L-CURE-FRUIT-EAT-DELAY"
+    } else {
+        case.name()
+    };
+    let (seed, ready) = if fruit_delay {
+        (FRUIT_SEED, fruit_seed_ready as fn(&GameSnapshot) -> bool)
+    } else {
+        (case.seed(), case.seed_ready())
+    };
+    let cell = start_cell(label, seed, ready, WALK_ORIGIN);
     let mut frames = Vec::new();
     let mut failure = None;
     let mut passed = false;
@@ -1353,6 +1488,7 @@ fn run_walk_case(case: EatCase) {
     let mut seed_tick = None;
     let mut poison_send = None;
     let mut seed_scheduled = false;
+    let mut policy_tick = None;
     if failure.is_none() {
         {
             let live = cell.live.lock();
@@ -1440,8 +1576,25 @@ fn run_walk_case(case: EatCase) {
         }
         let actions = captured_actions(&cell.capture);
         let eats = eat_actions(&actions);
+        if fruit_delay && policy_tick.is_none() {
+            if let Some(bite_tick) = eats.first().and_then(|eat| eat.tick.0) {
+                cell.play
+                    .arm(&cell.account)
+                    .expect("live arm")
+                    .set_cure_poison(vault::CurePoison::WhenNeeded);
+                policy_tick = Some(tick);
+                assert_eq!(
+                    tick, bite_tick,
+                    "enable fruit cure immediately after the accepted bite"
+                );
+            }
+        }
         let decision = seed_tick.map_or(OracleDecision::Pending, |seed| {
-            evaluate_walk(case, seed, &frames, &eats)
+            if fruit_delay {
+                evaluate_fruit(&frames, &actions, policy_tick)
+            } else {
+                evaluate_walk(case, seed, &frames, &eats)
+            }
         });
         match decision {
             OracleDecision::Pending => {}
@@ -1481,7 +1634,7 @@ fn run_walk_case(case: EatCase) {
         }
     }
     cell.play.script_stop(&cell.account);
-    let receipt = walk_receipt(
+    let mut receipt = walk_receipt(
         &cell,
         case,
         setup_tick,
@@ -1492,6 +1645,12 @@ fn run_walk_case(case: EatCase) {
             .map(|(class, reason)| (*class, reason.clone())),
         &walk_state,
     );
+    receipt["cell"] = json!(label);
+    if fruit_delay {
+        receipt["cure_poison"] = json!("never, then when-needed after the bite");
+        receipt["policy_change_tick"] = json!(policy_tick);
+        receipt["fruit_first_allowed_offset"] = json!(3);
+    }
     let receipt_path = write_receipt(&cell.evidence, &receipt);
     assert!(
         passed,
@@ -1706,6 +1865,7 @@ fn run_combat_cell() {
             "accepted": eat.accepted,
             "source": eat.source,
             "owner_run": eat.owner_run,
+            "fight_action": eat.fight_action,
             "real_wire": eat.real_wire,
         })).collect::<Vec<_>>(),
         "attack_actions": attack_actions(&actions).iter().map(|attack| json!({
@@ -1713,6 +1873,7 @@ fn run_combat_cell() {
             "snapshot_tick": attack.tick.0,
             "accepted": attack.accepted,
             "owner_run": attack.owner_run,
+            "fight_action": attack.fight_action,
             "real_wire": attack.real_wire,
         })).collect::<Vec<_>>(),
         "frames": frames.iter().map(ObservedFrame::evidence).collect::<Vec<_>>(),
@@ -1740,13 +1901,19 @@ fn script_slot_probe(play: &super::Play, account: &str, expression: &str) -> Val
 #[test]
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_eat_poison_line_native_walk() {
-    run_walk_case(EatCase::PoisonLine);
+    run_walk_case(EatCase::PoisonLine, false);
 }
 
 #[test]
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_eat_full_hp_native_walk() {
-    run_walk_case(EatCase::FullHp);
+    run_walk_case(EatCase::FullHp, false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_strange_fruit_after_bite() {
+    run_walk_case(EatCase::FullHp, true);
 }
 
 #[test]
@@ -1758,6 +1925,74 @@ fn live_survival_eat_poison_through_api_combat_fight() {
 #[cfg(test)]
 mod oracle_tests {
     use super::*;
+
+    fn fruit_receipt(click_tick: u32, cleared: bool) -> (Vec<ObservedFrame>, Vec<Value>) {
+        let mut frames = vec![
+            mark_frame(82, 4, 10, 5, 82),
+            mark_frame(84, 10, 10, 4, 82),
+            mark_frame(86, 10, 10, 4, 82),
+            mark_frame(89, 10, 10, 4, 82),
+        ];
+        for frame in &mut frames {
+            frame.route_active = true;
+        }
+        if cleared {
+            frames[2].poison = PoisonState::Clear;
+            frames[2].evidence =
+                json!({"snapshot_facts": {"inventory": [{"id": LOBSTER_ID, "count": 4}]}});
+        }
+        let actions = vec![
+            json!({
+                "kind": "guard", "op": "eat", "item": "Lobster",
+                "snapshot_tick": 82, "accepted": true,
+                "snapshot": {
+                    "stats": [{"index": 3, "effective": 4, "base": 10}],
+                    "inventory": [{"id": LOBSTER_ID, "count": 5}],
+                },
+            }),
+            json!({
+                "kind": "guard", "op": "eat", "item": "Strange fruit",
+                "snapshot_tick": click_tick, "accepted": true,
+            }),
+        ];
+        (frames, actions)
+    }
+
+    #[test]
+    fn fruit_oracle_accepts_first_allowed_tick_and_observed_cure() {
+        let (frames, actions) = fruit_receipt(85, true);
+        assert_eq!(
+            evaluate_fruit(&frames, &actions, Some(82)),
+            OracleDecision::Pass
+        );
+    }
+
+    #[test]
+    fn fruit_oracle_rejects_early_or_late_clicks_and_missing_cure() {
+        for tick in [83, 84, 86] {
+            let (frames, actions) = fruit_receipt(tick, true);
+            assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
+                OracleDecision::Fail(reason) if reason.contains("first content-allowed")));
+        }
+        let (frames, actions) = fruit_receipt(85, false);
+        assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
+            OracleDecision::Fail(reason) if reason.contains("did not cure")));
+    }
+
+    #[test]
+    fn combat_oracle_rejects_an_attack_from_another_fight_in_the_same_run() {
+        let mut actions = combat_capture_with_clocks(89, 82);
+        actions[0]["action_id"] = json!(6);
+        let frames = vec![
+            onset_frame(51, 10, 10),
+            mark_frame(82, 4, 10, 5, 82),
+            mark_frame(84, 10, 10, 4, 82),
+        ];
+        assert!(matches!(
+            evaluate_combat(50, &frames, &eat_actions(&actions), &attack_actions(&actions)),
+            OracleDecision::Fail(reason) if reason.contains("Eat fight action"),
+        ));
+    }
 
     #[test]
     fn oracle_action_condition_clock_checks_exact_windows_without_offsets() {
@@ -1802,6 +2037,7 @@ mod oracle_tests {
                 "snapshot_tick": 50,
                 "accepted": true,
                 "run": "run-1",
+                "action_id": 7,
                 "wire_decoded": true,
                 "wire_opcodes": [72],
             }),
@@ -1813,6 +2049,7 @@ mod oracle_tests {
                 "snapshot_tick": snapshot_tick,
                 "accepted": true,
                 "run": "run-1",
+                "action_id": 7,
                 "wire_decoded": true,
                 "wire_opcodes": [76],
                 "snapshot": {
@@ -2135,6 +2372,7 @@ mod oracle_tests {
             accepted: true,
             source: source.to_owned(),
             owner_run: run.map(str::to_owned),
+            fight_action: run.map(|_| 7),
             real_wire: wire,
         }
     }
@@ -2289,6 +2527,7 @@ mod oracle_tests {
             tick: ActionSnapshotTick(Some(95)),
             accepted: true,
             owner_run: Some("run-1".to_owned()),
+            fight_action: Some(7),
             real_wire: true,
         }];
         assert_eq!(
@@ -2297,7 +2536,7 @@ mod oracle_tests {
         );
         assert!(matches!(
             evaluate_combat(99, &frames, &eats, &[]),
-            OracleDecision::Fail(reason) if reason.contains("shares the Eat run")
+            OracleDecision::Fail(reason) if reason.contains("Eat fight action")
         ));
         let synthetic_eat = vec![eat(131, 4, 10, 5, "interaction", Some("run-1"), false)];
         assert!(matches!(
@@ -2318,6 +2557,7 @@ mod oracle_tests {
             tick: ActionSnapshotTick(Some(95)),
             accepted: true,
             owner_run: Some("run-1".to_owned()),
+            fight_action: Some(7),
             real_wire: true,
         }];
         let mut early = eat.clone();

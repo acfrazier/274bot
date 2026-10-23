@@ -113,7 +113,7 @@ pub const SURVIVAL_FIELDS: [(CurePoison, &str, &str); 3] = [
     (
         CurePoison::WhenNeeded,
         "when_needed",
-        "When needed: drink in combat or protected walks",
+        "When needed: drink for health in combat or protected walks",
     ),
     (
         CurePoison::Always,

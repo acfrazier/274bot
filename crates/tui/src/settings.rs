@@ -869,7 +869,9 @@ mod tests {
                 "{w}x{h}: the group heading paints:\n{text}"
             );
             assert!(
-                text.contains("> cure poison: When needed: drink in combat or protected walks"),
+                text.contains(
+                    "> cure poison: When needed: drink for health in combat or protected walks"
+                ),
                 "{w}x{h}: the selected cure poison row paints:\n{text}"
             );
         }

@@ -170,7 +170,17 @@ pub(crate) fn apply_guard_op(
     #[cfg(test)]
     if sent {
         if let Some(account) = account {
-            crate::combat_proof::record_guard(account, snapshot, kind, component);
+            let item = match op {
+                GuardOp::Eat { name } | GuardOp::Drink { name, .. } => Some(name.as_ref()),
+                _ => None,
+            };
+            crate::combat_proof::record_guard(account, snapshot, kind, component, item);
+        }
+    }
+    #[cfg(feature = "test-support")]
+    if sent {
+        if let Some(account) = account {
+            crate::play_scripts::notify_guard_action_for_test(account, snapshot, op);
         }
     }
     let _ = (kind, component);
@@ -1122,6 +1132,8 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     && route.destination().level == *level
                         )
                     });
+                    // A later route may follow while the old off-click is watched,
+                    // but cannot raise a protect that debt could clear.
                     let guard_op = if bot.walk_guard_off.is_none() {
                         let condition = bot
                             .condition

@@ -18,15 +18,14 @@ use std::sync::LazyLock;
 #[cfg(feature = "test-support")]
 use api::snapshot::GameSnapshot;
 #[cfg(feature = "test-support")]
-use script::combat::{GuardOp, tables::PotionKind};
+use script::combat::{tables::PotionKind, GuardOp};
 
 #[cfg(feature = "test-support")]
 type GuardActionEvents = Arc<parking_lot::Mutex<Vec<GuardDrinkAction>>>;
 
 #[cfg(feature = "test-support")]
-static GUARD_ACTION_OBSERVERS: LazyLock<
-    parking_lot::Mutex<HashMap<String, GuardActionEvents>>,
-> = LazyLock::new(Default::default);
+static GUARD_ACTION_OBSERVERS: LazyLock<parking_lot::Mutex<HashMap<String, GuardActionEvents>>> =
+    LazyLock::new(Default::default);
 
 #[cfg(feature = "test-support")]
 fn guard_action_observers() -> &'static parking_lot::Mutex<HashMap<String, GuardActionEvents>> {
@@ -86,11 +85,7 @@ pub fn register_guard_action_observer_for_test(account: &str) -> GuardActionObse
 
 /// Record an accepted antipoison Drink from the host walk guard in tests.
 #[cfg(feature = "test-support")]
-pub(crate) fn notify_guard_action_for_test(
-    account: &str,
-    snapshot: &GameSnapshot,
-    op: &GuardOp,
-) {
+pub(crate) fn notify_guard_action_for_test(account: &str, snapshot: &GameSnapshot, op: &GuardOp) {
     let GuardOp::Drink {
         name,
         kind: PotionKind::Antipoison | PotionKind::SuperAntipoison,

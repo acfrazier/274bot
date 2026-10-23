@@ -2057,7 +2057,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod abort_hold_cure_policy_tests {
     use super::*;
-    use crate::native::{ledger, HostEffect};
+    use crate::native::HostEffect;
     use crate::quester::families::tests::{def, local_player, with_tick};
     use api::selected::ClientRevision;
     use api::snapshot::{
@@ -2112,13 +2112,7 @@ mod abort_hold_cure_policy_tests {
                     } else {
                         40
                     },
-                    base: if index == 3 {
-                        5
-                    } else if index == 5 {
-                        43
-                    } else {
-                        40
-                    },
+                    base: if index == 5 { 43 } else { 40 },
                     xp: 0,
                     used: api::snapshot::stat_used(index as usize),
                 })

@@ -987,7 +987,7 @@ mod tests {
             99,
             PoisonState::Onset {
                 since: 0,
-                q: Some(11),
+                q: Some(1),
                 hit_since_line: false,
             },
             FoodSummary::default(),
