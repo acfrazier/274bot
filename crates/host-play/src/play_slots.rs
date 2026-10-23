@@ -1518,13 +1518,31 @@ fn spawn_slot_thread(
                                         &observe_channels,
                                     );
                                     slot_bank.session_ended();
+                                    if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                        bot.condition.session_ended();
+                                    }
                                 }
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            if session_boundary && c.ingame {
+                                slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
+                                    .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
+                            }
                             // The open bank's rows reach the account memory
                             // here (design-bank-snapshot §1.3); a close saves.
                             slot_bank.observe_frame(&nav_snapshot);
+                            let condition = {
+                                let mut navs = slot_navs.lock().unwrap();
+                                if let Some(bot) = navs.get_mut(name) {
+                                    bot.condition.observe_frame(&nav_snapshot, &drain, status.hold);
+                                    bot.condition.published()
+                                } else {
+                                    api::condition::BotCondition::default()
+                                }
+                            };
+                            let condition_dispatch = slot_navs.lock().unwrap().get(name)
+                                .and_then(|bot| bot.condition.dispatch_checkpoint(c));
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -1741,6 +1759,7 @@ fn spawn_slot_thread(
                                         // click that bumps no family. Bool copy.
                                         s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
+                                        s.condition = condition;
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
@@ -1937,6 +1956,14 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 if let Some(observer) = &post_native_player_info {
                                     observer(c, name);
+                                }
+                            }
+                            // Inspect actual queued packets before mainloop's
+                            // next flush. This spans scripts, wires and Traveller.
+                            // Guardian dispatch is already covered by status.hold.
+                            if let Some(checkpoint) = condition_dispatch {
+                                if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                    bot.condition.observe_dispatch(c, checkpoint);
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with

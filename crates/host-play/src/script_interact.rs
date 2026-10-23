@@ -368,6 +368,7 @@ where
     // Arms below bind a request field called `name`; this is the slot's.
     let slot = name;
     for req in reqs {
+        let previous_wrote = std::mem::take(&mut wrote);
         match req {
             InteractReq::OpenBooth {
                 x,
@@ -1342,6 +1343,7 @@ where
             | InteractReq::ChannelMessage { .. }
             | InteractReq::ChannelStatus { .. } => {}
         }
+        wrote |= previous_wrote;
     }
     for yaw in camera_yaws {
         wrote |= driver.set_orbit_camera_yaw(yaw);

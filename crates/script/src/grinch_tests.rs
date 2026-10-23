@@ -173,6 +173,8 @@ impl Driver {
         let flow = {
             let mut actions = NativeActions { _private: () };
             let cx = ActionContext {
+                condition: None,
+                poison_unknown_pulse: u8::MAX,
                 evidence,
                 pin: &pin,
                 snapshot: SnapshotView::new(Some(snapshot), evidence)
@@ -205,6 +207,8 @@ impl Driver {
                     snapshot: Some(snapshot),
                     obj_names: None,
                     compiled: crate::CompiledTick {
+                        condition: None,
+                        poison_unknown_pulse: None,
                         walk_danger: None,
                         selected: Some(&selected),
                         reach: None,

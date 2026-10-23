@@ -122,6 +122,8 @@ impl Probe<'_> {
         let mut budget = TickBudget::default();
         budget.observe(evidence.tick);
         let cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_bank_memory(Some(self.bank)),

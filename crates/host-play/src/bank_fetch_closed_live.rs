@@ -528,7 +528,7 @@ fn pump_frame(
     guard.risk_input = Some(crate::admission::capture(
         snapshot,
         map_members,
-        Default::default(),
+        None,
         false,
     ));
     guard.tile = Some([here.0, here.1, here.2]);

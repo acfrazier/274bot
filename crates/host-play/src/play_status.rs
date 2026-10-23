@@ -99,6 +99,8 @@ pub struct SlotStatus {
     /// `client_frame` return each observe. The chrome contract both the
     /// panel and the TUI bind.
     pub random: RandomStatus,
+    /// Complete observed account condition, or a boundary-marked last fact.
+    pub condition: api::condition::BotCondition,
     /// The slot script's latest recorded paint frame (the Load isolate
     /// forwards it after every tick that painted). Disconnect and Pause retain
     /// this shared frame; Stop or slot unload clears it from the lifecycle
@@ -146,6 +148,7 @@ impl Clone for SlotStatus {
             chat_head: self.chat_head.clone(),
             tutorial_pending: self.tutorial_pending,
             random: self.random.clone(),
+            condition: self.condition,
             script_paint: self.script_paint.clone(),
         }
     }
@@ -192,6 +195,7 @@ impl Clone for SlotStatus {
         self.chat_head.clone_from(&source.chat_head);
         self.tutorial_pending = source.tutorial_pending;
         self.script_paint.clone_from(&source.script_paint);
+        self.condition = source.condition;
         let (random, from) = (&mut self.random, &source.random);
         random.kind.clone_from(&from.kind);
         random.name.clone_from(&from.name);
@@ -353,6 +357,7 @@ impl Default for SlotStatus {
             chat_head: String::new(),
             tutorial_pending: false,
             random: RandomStatus::default(),
+            condition: api::condition::BotCondition::default(),
             script_paint: None,
         }
     }
@@ -589,6 +594,7 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     s.walk_z = -1;
     s.walk_level = -1;
     s.random = RandomStatus::default();
+    s.condition.session = api::condition::SessionMark::Boundary;
 }
 
 pub(super) fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
