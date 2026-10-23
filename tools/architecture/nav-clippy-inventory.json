@@ -17,6 +17,7 @@
       "api::interact::Driver::login",
       "api::interact::Driver::note_input_activity",
       "api::interact::Driver::packet_checkpoint",
+      "api::interact::Driver::packet_commit_count",
       "api::interact::Driver::revision",
       "api::interact::Driver::send_cheat",
       "api::interact::Driver::send_packet",
@@ -53,6 +54,7 @@
       "api::interact::Interactions::walk",
       "api::interact::Interactions::walk_nearest",
       "api::interact::Interactions::wear",
+      "api::interact::PacketCheckpoint::capture",
       "api::interact::answer_count",
       "api::interact::cheat",
       "api::interact::cheat_allowed",
@@ -73,6 +75,7 @@
       "api::interact::driver::Driver::login",
       "api::interact::driver::Driver::note_input_activity",
       "api::interact::driver::Driver::packet_checkpoint",
+      "api::interact::driver::Driver::packet_commit_count",
       "api::interact::driver::Driver::revision",
       "api::interact::driver::Driver::send_cheat",
       "api::interact::driver::Driver::send_packet",
@@ -82,6 +85,7 @@
       "api::interact::driver::Driver::trace_packets",
       "api::interact::driver::Driver::try_move",
       "api::interact::driver::Driver::unread_keys_pending",
+      "api::interact::driver::PacketCheckpoint::capture",
       "api::interact::driver::answer_count",
       "api::interact::driver::cheat",
       "api::interact::driver::cheat_allowed",
@@ -191,6 +195,19 @@
       "api::interact::server_ordered::ContractPredecessor::sources",
       "api::interact::server_ordered::ContractPredecessor::synchronous",
       "api::interact::server_ordered::ContractPredecessor::to",
+      "api::interact::server_ordered::ExactLocReference::from_snapshot",
+      "api::interact::server_ordered::ExactLocReference::new",
+      "api::interact::server_ordered::ExactNpcReference::from_snapshot",
+      "api::interact::server_ordered::ExactNpcReference::new",
+      "api::interact::server_ordered::InventoryItemReference::component_id",
+      "api::interact::server_ordered::InventoryItemReference::from_snapshot",
+      "api::interact::server_ordered::InventoryItemReference::inventory_generation",
+      "api::interact::server_ordered::InventoryItemReference::item_id",
+      "api::interact::server_ordered::InventoryItemReference::new",
+      "api::interact::server_ordered::InventoryItemReference::slot",
+      "api::interact::server_ordered::KnifeContract::knife",
+      "api::interact::server_ordered::KnifeContract::logs",
+      "api::interact::server_ordered::KnifeContract::sources",
       "api::interact::server_ordered::NpcTransformAction::npc_type_id",
       "api::interact::server_ordered::NpcTransformAction::operation_fingerprint",
       "api::interact::server_ordered::NpcTransformAction::slot",
@@ -207,15 +224,126 @@
       "api::interact::server_ordered::ServerOrderedCatalog::components",
       "api::interact::server_ordered::ServerOrderedCatalog::entries",
       "api::interact::server_ordered::ServerOrderedCatalog::entry",
+      "api::interact::server_ordered::ServerOrderedCatalog::knife",
       "api::interact::server_ordered::ServerOrderedCatalog::npc_operation",
       "api::interact::server_ordered::ServerOrderedCatalog::npc_transforms",
       "api::interact::server_ordered::ServerOrderedCatalog::numeric_locs",
       "api::interact::server_ordered::ServerOrderedCatalog::revision",
+      "api::interact::server_ordered::ServerOrderedDispatch::refused",
+      "api::interact::server_ordered::ServerOrderedExpectation::contract",
+      "api::interact::server_ordered::ServerOrderedExpectation::expires_tick",
+      "api::interact::server_ordered::ServerOrderedExpectation::phase",
+      "api::interact::server_ordered::ServerOrderedExpectation::predecessor_request_id",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::category_counts",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_contract",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_page_excluded",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_reset_stage",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::current_tick",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::expectation",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::input_epoch",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::invalidation_epoch",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::observed_tick",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::packet_count",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::require_expectation",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::session_generation",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot::stamp",
+      "api::interact::server_ordered::ServerOrderedInputStamp::input_epoch",
+      "api::interact::server_ordered::ServerOrderedInputStamp::invalidation_epoch",
+      "api::interact::server_ordered::ServerOrderedInputStamp::session_generation",
+      "api::interact::server_ordered::ServerOrderedInputState::begin_continue_exclusion",
+      "api::interact::server_ordered::ServerOrderedInputState::begin_continue_reset",
+      "api::interact::server_ordered::ServerOrderedInputState::bind_expectation",
+      "api::interact::server_ordered::ServerOrderedInputState::continue_page_excluded",
+      "api::interact::server_ordered::ServerOrderedInputState::foreign_local_input",
+      "api::interact::server_ordered::ServerOrderedInputState::invalidate_content_expectation",
+      "api::interact::server_ordered::ServerOrderedInputState::observe_continue_reset_closure",
+      "api::interact::server_ordered::ServerOrderedInputState::observe_continue_reset_initial_page",
+      "api::interact::server_ordered::ServerOrderedInputState::observe_session",
+      "api::interact::server_ordered::ServerOrderedInputState::observe_tick",
+      "api::interact::server_ordered::ServerOrderedInputState::record_continue_reset_talk_to",
+      "api::interact::server_ordered::ServerOrderedInputState::record_continue_successor",
+      "api::interact::server_ordered::ServerOrderedInputState::record_opcode",
+      "api::interact::server_ordered::ServerOrderedInputState::require_expectation",
+      "api::interact::server_ordered::ServerOrderedInputState::reserve_continue_reset_talk_to",
+      "api::interact::server_ordered::ServerOrderedInputState::retire_continue_exclusion",
+      "api::interact::server_ordered::ServerOrderedInputState::retire_continue_reset",
+      "api::interact::server_ordered::ServerOrderedInputState::retire_expectation",
+      "api::interact::server_ordered::ServerOrderedInputState::snapshot",
+      "api::interact::server_ordered::ServerOrderedInputState::stamp",
+      "api::interact::server_ordered::ServerOrderedInputs::dispatch",
+      "api::interact::server_ordered::ServerOrderedInputs::dispatch_advanced",
+      "api::interact::server_ordered::ServerOrderedPageStamp::acknowledgement",
+      "api::interact::server_ordered::ServerOrderedPageStamp::fingerprint",
+      "api::interact::server_ordered::ServerOrderedPageStamp::new",
+      "api::interact::server_ordered::ServerOrderedPageStamp::phase",
+      "api::interact::server_ordered::ServerOrderedRequest::row_count",
+      "api::interact::server_ordered::ServerOrderedRequest::validate_advanced_shape",
+      "api::interact::server_ordered::ServerOrderedRequest::validate_shape",
+      "api::interact::server_ordered::input::ServerOrderedExpectation::contract",
+      "api::interact::server_ordered::input::ServerOrderedExpectation::expires_tick",
+      "api::interact::server_ordered::input::ServerOrderedExpectation::phase",
+      "api::interact::server_ordered::input::ServerOrderedExpectation::predecessor_request_id",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::category_counts",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_contract",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_page_excluded",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_reset_stage",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::current_tick",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::input_epoch",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::invalidation_epoch",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::observed_tick",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::packet_count",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::require_expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::session_generation",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot::stamp",
+      "api::interact::server_ordered::input::ServerOrderedInputStamp::input_epoch",
+      "api::interact::server_ordered::input::ServerOrderedInputStamp::invalidation_epoch",
+      "api::interact::server_ordered::input::ServerOrderedInputStamp::session_generation",
+      "api::interact::server_ordered::input::ServerOrderedInputState::begin_continue_exclusion",
+      "api::interact::server_ordered::input::ServerOrderedInputState::begin_continue_reset",
+      "api::interact::server_ordered::input::ServerOrderedInputState::bind_expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputState::continue_page_excluded",
+      "api::interact::server_ordered::input::ServerOrderedInputState::foreign_local_input",
+      "api::interact::server_ordered::input::ServerOrderedInputState::invalidate_content_expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputState::observe_continue_reset_closure",
+      "api::interact::server_ordered::input::ServerOrderedInputState::observe_continue_reset_initial_page",
+      "api::interact::server_ordered::input::ServerOrderedInputState::observe_session",
+      "api::interact::server_ordered::input::ServerOrderedInputState::observe_tick",
+      "api::interact::server_ordered::input::ServerOrderedInputState::record_continue_reset_talk_to",
+      "api::interact::server_ordered::input::ServerOrderedInputState::record_continue_successor",
+      "api::interact::server_ordered::input::ServerOrderedInputState::record_opcode",
+      "api::interact::server_ordered::input::ServerOrderedInputState::require_expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputState::reserve_continue_reset_talk_to",
+      "api::interact::server_ordered::input::ServerOrderedInputState::retire_continue_exclusion",
+      "api::interact::server_ordered::input::ServerOrderedInputState::retire_continue_reset",
+      "api::interact::server_ordered::input::ServerOrderedInputState::retire_expectation",
+      "api::interact::server_ordered::input::ServerOrderedInputState::snapshot",
+      "api::interact::server_ordered::input::ServerOrderedInputState::stamp",
+      "api::interact::server_ordered::input::ServerOrderedPageStamp::acknowledgement",
+      "api::interact::server_ordered::input::ServerOrderedPageStamp::fingerprint",
+      "api::interact::server_ordered::input::ServerOrderedPageStamp::new",
+      "api::interact::server_ordered::input::ServerOrderedPageStamp::phase",
       "api::interact::server_ordered::npc_transforms::NpcTransformAction::npc_type_id",
       "api::interact::server_ordered::npc_transforms::NpcTransformAction::operation_fingerprint",
       "api::interact::server_ordered::npc_transforms::NpcTransformAction::slot",
       "api::interact::server_ordered::npc_transforms::NpcTransformEvidence::evidence_sha256",
       "api::interact::server_ordered::npc_transforms::NpcTransformEvidence::operations",
+      "api::interact::server_ordered::request::ExactLocReference::from_snapshot",
+      "api::interact::server_ordered::request::ExactLocReference::new",
+      "api::interact::server_ordered::request::ExactNpcReference::from_snapshot",
+      "api::interact::server_ordered::request::ExactNpcReference::new",
+      "api::interact::server_ordered::request::InventoryItemReference::component_id",
+      "api::interact::server_ordered::request::InventoryItemReference::from_snapshot",
+      "api::interact::server_ordered::request::InventoryItemReference::inventory_generation",
+      "api::interact::server_ordered::request::InventoryItemReference::item_id",
+      "api::interact::server_ordered::request::InventoryItemReference::new",
+      "api::interact::server_ordered::request::InventoryItemReference::slot",
+      "api::interact::server_ordered::request::ServerOrderedDispatch::refused",
+      "api::interact::server_ordered::request::ServerOrderedInputs::dispatch",
+      "api::interact::server_ordered::request::ServerOrderedInputs::dispatch_advanced",
+      "api::interact::server_ordered::request::ServerOrderedRequest::row_count",
+      "api::interact::server_ordered::request::ServerOrderedRequest::validate_advanced_shape",
+      "api::interact::server_ordered::request::ServerOrderedRequest::validate_shape",
       "api::interact::set_run",
       "api::interact::still_present",
       "api::interact::tele_args",
@@ -309,9 +437,11 @@
       "api::prot::Send::report_abuse",
       "api::prot::Send::resume_pausebutton",
       "api::prot::Send::tut_clickside",
+      "api::prot::Send::validate_for_revision",
       "api::prot::Send::write_for_revision",
       "api::prot::effects::effects",
       "api::prot::legal_sends_for",
+      "api::prot::packet_metadata",
       "api::selected::ClientRevision::as_i32",
       "api::selected::ClientRevision::is_274",
       "api::selected::ClientRevision::is_289",
@@ -338,6 +468,7 @@
       "client::client::Client::add_player_options",
       "client::client::Client::add_world_options",
       "client::client::Client::adopt_from",
+      "client::client::Client::advance_hosted_animations",
       "client::client::Client::apply_cam_lookat",
       "client::client::Client::apply_cam_moveto",
       "client::client::Client::apply_cam_reset",
@@ -539,6 +670,7 @@
       "client::client::client::Client::add_player_options",
       "client::client::client::Client::add_world_options",
       "client::client::client::Client::adopt_from",
+      "client::client::client::Client::advance_hosted_animations",
       "client::client::client::Client::apply_cam_lookat",
       "client::client::client::Client::apply_cam_moveto",
       "client::client::client::Client::apply_cam_reset",
@@ -834,8 +966,10 @@
       "api::interact::server_ordered::BankWithdrawMode",
       "api::interact::server_ordered::BankerPageProof",
       "api::interact::server_ordered::ButtonType",
+      "api::interact::server_ordered::CloseModalReason",
       "api::interact::server_ordered::ComponentProperties",
       "api::interact::server_ordered::ComponentType",
+      "api::interact::server_ordered::ContinueResetStage",
       "api::interact::server_ordered::ContractBasis",
       "api::interact::server_ordered::ContractComponent",
       "api::interact::server_ordered::ContractCondition",
@@ -844,12 +978,55 @@
       "api::interact::server_ordered::ContractIdentity",
       "api::interact::server_ordered::ContractKey",
       "api::interact::server_ordered::ContractPredecessor",
+      "api::interact::server_ordered::CountResumeContract",
+      "api::interact::server_ordered::ExactLocOrNpcRef",
+      "api::interact::server_ordered::ExactLocReference",
+      "api::interact::server_ordered::ExactNpcReference",
+      "api::interact::server_ordered::ExpectedModalRoot",
+      "api::interact::server_ordered::InputLineage",
+      "api::interact::server_ordered::InventoryItemReference",
+      "api::interact::server_ordered::KnifeArmShape",
+      "api::interact::server_ordered::KnifeContract",
       "api::interact::server_ordered::NpcTransformAction",
       "api::interact::server_ordered::NpcTransformEvidence",
       "api::interact::server_ordered::NumericLocContract",
+      "api::interact::server_ordered::RowDispatch",
       "api::interact::server_ordered::ServerOrderedCatalog",
+      "api::interact::server_ordered::ServerOrderedDispatch",
+      "api::interact::server_ordered::ServerOrderedDispatchContext",
+      "api::interact::server_ordered::ServerOrderedError",
+      "api::interact::server_ordered::ServerOrderedExpectation",
+      "api::interact::server_ordered::ServerOrderedInputError",
+      "api::interact::server_ordered::ServerOrderedInputSnapshot",
+      "api::interact::server_ordered::ServerOrderedInputStamp",
+      "api::interact::server_ordered::ServerOrderedInputState",
+      "api::interact::server_ordered::ServerOrderedInputs",
+      "api::interact::server_ordered::ServerOrderedPageStamp",
+      "api::interact::server_ordered::ServerOrderedRequest",
+      "api::interact::server_ordered::input::ContinueResetStage",
+      "api::interact::server_ordered::input::InputLineage",
+      "api::interact::server_ordered::input::ServerOrderedExpectation",
+      "api::interact::server_ordered::input::ServerOrderedInputError",
+      "api::interact::server_ordered::input::ServerOrderedInputSnapshot",
+      "api::interact::server_ordered::input::ServerOrderedInputStamp",
+      "api::interact::server_ordered::input::ServerOrderedInputState",
+      "api::interact::server_ordered::input::ServerOrderedPageStamp",
       "api::interact::server_ordered::npc_transforms::NpcTransformAction",
       "api::interact::server_ordered::npc_transforms::NpcTransformEvidence",
+      "api::interact::server_ordered::request::CloseModalReason",
+      "api::interact::server_ordered::request::CountResumeContract",
+      "api::interact::server_ordered::request::ExactLocOrNpcRef",
+      "api::interact::server_ordered::request::ExactLocReference",
+      "api::interact::server_ordered::request::ExactNpcReference",
+      "api::interact::server_ordered::request::ExpectedModalRoot",
+      "api::interact::server_ordered::request::InventoryItemReference",
+      "api::interact::server_ordered::request::KnifeArmShape",
+      "api::interact::server_ordered::request::RowDispatch",
+      "api::interact::server_ordered::request::ServerOrderedDispatch",
+      "api::interact::server_ordered::request::ServerOrderedDispatchContext",
+      "api::interact::server_ordered::request::ServerOrderedError",
+      "api::interact::server_ordered::request::ServerOrderedInputs",
+      "api::interact::server_ordered::request::ServerOrderedRequest",
       "api::prot::AbuseReason",
       "api::prot::Base37Name",
       "api::prot::CycleLogic1",
@@ -857,8 +1034,10 @@
       "api::prot::LegalSend",
       "api::prot::MinimapTrailer",
       "api::prot::MouseMoveRecord",
+      "api::prot::PacketCategory",
       "api::prot::PacketError",
       "api::prot::PacketLength",
+      "api::prot::PacketMetadata",
       "api::prot::Send",
       "api::prot::effects::Effect",
       "api::prot::effects::PacketEffects",
@@ -1041,6 +1220,61 @@
       "target": "api::interact::driver::seed_at"
     },
     {
+      "kind": "value",
+      "path": "api::interact::server_ordered::BANK_COUNT_PHASE",
+      "target": "api::interact::server_ordered::request::BANK_COUNT_PHASE"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::CloseModalReason",
+      "target": "api::interact::server_ordered::request::CloseModalReason"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ContinueResetStage",
+      "target": "api::interact::server_ordered::input::ContinueResetStage"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::CountResumeContract",
+      "target": "api::interact::server_ordered::request::CountResumeContract"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef",
+      "target": "api::interact::server_ordered::request::ExactLocOrNpcRef"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ExactLocReference",
+      "target": "api::interact::server_ordered::request::ExactLocReference"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ExactNpcReference",
+      "target": "api::interact::server_ordered::request::ExactNpcReference"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ExpectedModalRoot",
+      "target": "api::interact::server_ordered::request::ExpectedModalRoot"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::InputLineage",
+      "target": "api::interact::server_ordered::input::InputLineage"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::InventoryItemReference",
+      "target": "api::interact::server_ordered::request::InventoryItemReference"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::KnifeArmShape",
+      "target": "api::interact::server_ordered::request::KnifeArmShape"
+    },
+    {
       "kind": "type",
       "path": "api::interact::server_ordered::NpcTransformAction",
       "target": "api::interact::server_ordered::npc_transforms::NpcTransformAction"
@@ -1049,6 +1283,66 @@
       "kind": "type",
       "path": "api::interact::server_ordered::NpcTransformEvidence",
       "target": "api::interact::server_ordered::npc_transforms::NpcTransformEvidence"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::RowDispatch",
+      "target": "api::interact::server_ordered::request::RowDispatch"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch",
+      "target": "api::interact::server_ordered::request::ServerOrderedDispatch"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext",
+      "target": "api::interact::server_ordered::request::ServerOrderedDispatchContext"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedError",
+      "target": "api::interact::server_ordered::request::ServerOrderedError"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation",
+      "target": "api::interact::server_ordered::input::ServerOrderedExpectation"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputError",
+      "target": "api::interact::server_ordered::input::ServerOrderedInputError"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot",
+      "target": "api::interact::server_ordered::input::ServerOrderedInputSnapshot"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputStamp",
+      "target": "api::interact::server_ordered::input::ServerOrderedInputStamp"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputState",
+      "target": "api::interact::server_ordered::input::ServerOrderedInputState"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputs",
+      "target": "api::interact::server_ordered::request::ServerOrderedInputs"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp",
+      "target": "api::interact::server_ordered::input::ServerOrderedPageStamp"
+    },
+    {
+      "kind": "type",
+      "path": "api::interact::server_ordered::ServerOrderedRequest",
+      "target": "api::interact::server_ordered::request::ServerOrderedRequest"
     },
     {
       "kind": "method",
@@ -1466,6 +1760,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "api::interact::Driver::packet_commit_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "api::interact::Driver::revision",
       "rustdoc_kind": "function"
     },
@@ -1812,6 +2112,12 @@
       "lint": "type",
       "path": "api::interact::PacketCheckpoint",
       "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::PacketCheckpoint::capture",
+      "rustdoc_kind": "function"
     },
     {
       "declared_type": {
@@ -2338,6 +2644,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "api::interact::driver::Driver::packet_commit_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "api::interact::driver::Driver::revision",
       "rustdoc_kind": "function"
     },
@@ -2432,6 +2744,12 @@
       "lint": "type",
       "path": "api::interact::driver::PacketCheckpoint",
       "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::driver::PacketCheckpoint::capture",
+      "rustdoc_kind": "function"
     },
     {
       "declared_type": {
@@ -2618,6 +2936,15 @@
       "lint": "inventory_only",
       "path": "api::interact::server_ordered::*",
       "rustdoc_kind": "import"
+    },
+    {
+      "declared_type": {
+        "primitive": "u8"
+      },
+      "kind": "value",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::BANK_COUNT_PHASE",
+      "rustdoc_kind": "constant"
     },
     {
       "kind": "type",
@@ -2833,6 +3160,18 @@
       "kind": "variant",
       "lint": "inventory_only",
       "path": "api::interact::server_ordered::ButtonType::Toggle",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::CloseModalReason",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::CloseModalReason::TerminalBankExit",
       "rustdoc_kind": "variant"
     },
     {
@@ -3055,6 +3394,48 @@
       "kind": "variant",
       "lint": "inventory_only",
       "path": "api::interact::server_ordered::ComponentType::Unused",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ContinueResetStage",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::AwaitClosure",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::AwaitInitialPage",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::AwaitOwnedTalkTo",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::Inactive",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::InitialPageObserved",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ContinueResetStage::ResetRequired",
       "rustdoc_kind": "variant"
     },
     {
@@ -3414,6 +3795,234 @@
     {
       "kind": "type",
       "lint": "type",
+      "path": "api::interact::server_ordered::CountResumeContract",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::CountResumeContract::BankDepositX",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::CountResumeContract::BankWithdrawX",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::CountResumeContract::BankWithdrawX::expected_mode",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef::Loc",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef::Loc::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef::Npc",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ExactLocOrNpcRef::Npc::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ExactLocReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ExactLocReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ExactLocReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ExactNpcReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ExactNpcReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ExactNpcReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ExpectedModalRoot",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ExpectedModalRoot::Bank",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::InputLineage",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::InputLineage::AdvancedRequest",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::InputLineage::AdvancedRequest::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::InputLineage::ContentRequest",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::InputLineage::ContentRequest::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::InputLineage::Foreign",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::InventoryItemReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::component_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::inventory_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::item_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::InventoryItemReference::slot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::KnifeArmShape",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::KnifeArmShape::Continuing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::KnifeArmShape::Continuing::click",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::KnifeArmShape::Ending",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::KnifeContract",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::KnifeContract::knife",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::KnifeContract::logs",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::KnifeContract::sources",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
       "path": "api::interact::server_ordered::NpcTransformAction",
       "rustdoc_kind": "struct"
     },
@@ -3492,6 +4101,48 @@
     {
       "kind": "type",
       "lint": "type",
+      "path": "api::interact::server_ordered::RowDispatch",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::HostQueued",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::HostQueued::wire_events",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::NotAttempted",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::Refused",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::Refused::reason",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::RowDispatch::SkippedDependency",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
       "path": "api::interact::server_ordered::ServerOrderedCatalog",
       "rustdoc_kind": "struct"
     },
@@ -3534,6 +4185,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedCatalog::knife",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "api::interact::server_ordered::ServerOrderedCatalog::npc_operation",
       "rustdoc_kind": "function"
     },
@@ -3553,6 +4210,1098 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::server_ordered::ServerOrderedCatalog::revision",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::dispatch_tick",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::dispatched_prefix",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::refused",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::row_count",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::rows",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::terminal",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatch::wire_events",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext::authority",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext::debug",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext::dispatch_tick",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext::input",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedDispatchContext::request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::AuthorityDenied",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::BudgetExhausted",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::Cancelled",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::ConflictingPrompt",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::ContractUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::DestructiveCheatConfirmationUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::EncodingFailed",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::ExpiredExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::InvalidShape",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::InvalidatedExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::MissingExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::ObservationUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::PermissionDenied",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::PinMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::RequestTooLarge",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::RevisionMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::StaleModal",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::StaleOwner",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::StaleTarget",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::TransportUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedError::UnsupportedPacket",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation::contract",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation::expires_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation::phase",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedExpectation::predecessor_request_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::ContinueFenceActive",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::ContinueFenceMissing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::ExpiredExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::InvalidatedExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::MissingExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedInputError::MissingObservation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::category_counts",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_contract",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_page_excluded",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::continue_reset_stage",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::current_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::input_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::invalidation_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::observed_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::packet_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::require_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::session_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputSnapshot::stamp",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputStamp",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputStamp::input_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputStamp::invalidation_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputStamp::session_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputState",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::begin_continue_exclusion",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::begin_continue_reset",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::bind_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::continue_page_excluded",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::foreign_local_input",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::invalidate_content_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::observe_continue_reset_closure",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::observe_continue_reset_initial_page",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::observe_session",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::observe_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::record_continue_reset_talk_to",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::record_continue_successor",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::record_opcode",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::require_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::reserve_continue_reset_talk_to",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::retire_continue_exclusion",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::retire_continue_reset",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::retire_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputState::stamp",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedInputs",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputs::dispatch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedInputs::dispatch_advanced",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp::acknowledgement",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp::fingerprint",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedPageStamp::phase",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::ServerOrderedRequest",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CloseModal",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CloseModal::expected_root",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CloseModal::reason",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume::bank_session_generation",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume::contract",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume::predecessor_request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume::run_generation",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::CountResume::value",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::KnifeArm",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::KnifeArm::knife",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::KnifeArm::logs",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::KnifeArm::shape",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::row_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::validate_advanced_shape",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::ServerOrderedRequest::validate_shape",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ContinueResetStage",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::AwaitClosure",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::AwaitInitialPage",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::AwaitOwnedTalkTo",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::Inactive",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::InitialPageObserved",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ContinueResetStage::ResetRequired",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::InputLineage",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::InputLineage::AdvancedRequest",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::InputLineage::AdvancedRequest::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::InputLineage::ContentRequest",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::InputLineage::ContentRequest::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::InputLineage::Foreign",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedExpectation",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedExpectation::contract",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedExpectation::expires_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedExpectation::phase",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedExpectation::predecessor_request_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::ContinueFenceActive",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::ContinueFenceMissing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::ExpiredExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::InvalidatedExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::MissingExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputError::MissingObservation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::category_counts",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_contract",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_page_excluded",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::continue_reset_stage",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::current_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::input_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::invalidation_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::observed_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::packet_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::require_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::session_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputSnapshot::stamp",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputStamp",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputStamp::input_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputStamp::invalidation_epoch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputStamp::session_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::begin_continue_exclusion",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::begin_continue_reset",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::bind_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::continue_page_excluded",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::foreign_local_input",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::invalidate_content_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::observe_continue_reset_closure",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::observe_continue_reset_initial_page",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::observe_session",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::observe_tick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::record_continue_reset_talk_to",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::record_continue_successor",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::record_opcode",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::require_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::reserve_continue_reset_talk_to",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::retire_continue_exclusion",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::retire_continue_reset",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::retire_expectation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedInputState::stamp",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::input::ServerOrderedPageStamp",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedPageStamp::acknowledgement",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedPageStamp::fingerprint",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedPageStamp::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::input::ServerOrderedPageStamp::phase",
       "rustdoc_kind": "function"
     },
     {
@@ -3595,6 +5344,579 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::server_ordered::npc_transforms::NpcTransformEvidence::operations",
+      "rustdoc_kind": "function"
+    },
+    {
+      "declared_type": {
+        "primitive": "u8"
+      },
+      "kind": "value",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::BANK_COUNT_PHASE",
+      "rustdoc_kind": "constant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::CloseModalReason",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::CloseModalReason::TerminalBankExit",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::CountResumeContract",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::CountResumeContract::BankDepositX",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::CountResumeContract::BankWithdrawX",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::CountResumeContract::BankWithdrawX::expected_mode",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ExactLocOrNpcRef",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ExactLocOrNpcRef::Loc",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ExactLocOrNpcRef::Loc::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ExactLocOrNpcRef::Npc",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ExactLocOrNpcRef::Npc::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ExactLocReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ExactLocReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ExactLocReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ExactNpcReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ExactNpcReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ExactNpcReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ExpectedModalRoot",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ExpectedModalRoot::Bank",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::InventoryItemReference",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::component_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::from_snapshot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::inventory_generation",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::item_id",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::InventoryItemReference::slot",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::KnifeArmShape",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::KnifeArmShape::Continuing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::KnifeArmShape::Continuing::click",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::KnifeArmShape::Ending",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::RowDispatch",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::HostQueued",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::HostQueued::wire_events",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::NotAttempted",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::Refused",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::Refused::reason",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::RowDispatch::SkippedDependency",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::dispatch_tick",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::dispatched_prefix",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::refused",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::row_count",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::rows",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::terminal",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatch::wire_events",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext::authority",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext::debug",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext::dispatch_tick",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext::input",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedDispatchContext::request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ServerOrderedError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::AuthorityDenied",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::BudgetExhausted",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::Cancelled",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::ConflictingPrompt",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::ContractUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::DestructiveCheatConfirmationUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::EncodingFailed",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::ExpiredExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::InvalidShape",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::InvalidatedExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::MissingExpectation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::ObservationUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::PermissionDenied",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::PinMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::RequestTooLarge",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::RevisionMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::StaleModal",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::StaleOwner",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::StaleTarget",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::TransportUnavailable",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedError::UnsupportedPacket",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ServerOrderedInputs",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedInputs::dispatch",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedInputs::dispatch_advanced",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CloseModal",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CloseModal::expected_root",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CloseModal::reason",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume::bank_session_generation",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume::contract",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume::predecessor_request_id",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume::run_generation",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::CountResume::value",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::KnifeArm",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::KnifeArm::knife",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::KnifeArm::logs",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::KnifeArm::shape",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::row_count",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::validate_advanced_shape",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::server_ordered::request::ServerOrderedRequest::validate_shape",
       "rustdoc_kind": "function"
     },
     {
@@ -3992,6 +6314,36 @@
     {
       "kind": "type",
       "lint": "type",
+      "path": "api::prot::PacketCategory",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketCategory::ClientEvent",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketCategory::Housekeeping",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketCategory::RestrictedEvent",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketCategory::UserEvent",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
       "path": "api::prot::PacketError",
       "rustdoc_kind": "enum"
     },
@@ -4138,6 +6490,36 @@
       "lint": "method",
       "path": "api::prot::PacketLength::validate",
       "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::PacketMetadata",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketMetadata::category",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketMetadata::length",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketMetadata::named",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketMetadata::opcode",
+      "rustdoc_kind": "struct_field"
     },
     {
       "kind": "type",
@@ -4652,6 +7034,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "api::prot::Send::validate_for_revision",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "api::prot::Send::write_for_revision",
       "rustdoc_kind": "function"
     },
@@ -4725,6 +7113,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::prot::legal_sends_for",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::packet_metadata",
       "rustdoc_kind": "function"
     },
     {
@@ -5337,6 +7731,12 @@
       "kind": "method",
       "lint": "method",
       "path": "client::client::Client::adopt_from",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::advance_hosted_animations",
       "rustdoc_kind": "function"
     },
     {
@@ -8084,6 +10484,12 @@
     {
       "kind": "field",
       "lint": "inventory_only",
+      "path": "client::client::ClientGens::npc_info",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
       "path": "client::client::ClientGens::player",
       "rustdoc_kind": "struct_field"
     },
@@ -10254,6 +12660,12 @@
       "kind": "method",
       "lint": "method",
       "path": "client::client::client::Client::adopt_from",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::advance_hosted_animations",
       "rustdoc_kind": "function"
     },
     {
@@ -12852,6 +15264,12 @@
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::ClientGens::npc",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientGens::npc_info",
       "rustdoc_kind": "struct_field"
     },
     {
@@ -20881,23 +23299,31 @@
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "cb3e8f74d5f8efaaa62cc2927f83ed08669682d58f0a290029c09af323a30622"
+      "sha256": "94496b1bbd1d41488d17553c4b394b78991a18acca848d8ae567ee9546cc5015"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
-      "sha256": "c35c38b0b261e31f8c096efd87f5a5e2d488a2a1a9948f18bc45f0a28ab4896a"
+      "sha256": "948caaf83619c603709cb842ea5fc772a77ac6e67a2d05e0e03d886c78069e9b"
+    },
+    {
+      "path": "crates/api/src/interact/server_ordered/input.rs",
+      "sha256": "773ea02a312e1ea034026c8dfff5c14fe9fe1fd35503d3f37e21e95c3e919b72"
     },
     {
       "path": "crates/api/src/interact/server_ordered/npc_transforms.rs",
       "sha256": "9209ef45c49603a5a78b822eab9efa061304fbdad658619cff479da84d3f36da"
     },
     {
+      "path": "crates/api/src/interact/server_ordered/request.rs",
+      "sha256": "e3906ea50cd40d8728301b654cc6bb102dcb6b5020e5bdd2a0f860834fe868e8"
+    },
+    {
       "path": "crates/api/src/lib.rs",
-      "sha256": "f46165ae24311f1a46cfb7ab95551eb9ad5218349a9dbc48e66af2381d5f32c2"
+      "sha256": "ff2c1203af01ebbd95d93e72d6ca0fff6ef113664272e5676b87d2a531f00766"
     },
     {
       "path": "crates/api/src/prot.rs",
-      "sha256": "07967f605597d5a183079f6c941acc428f5f1188d5973fdb16bf2210e2728777"
+      "sha256": "bb2598aaeea9cd07cb3182fb50c76947637901730a0d546e8527132bcbd7200d"
     },
     {
       "path": "crates/api/src/prot/effects.rs",
@@ -20909,7 +23335,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/client.rs",
-      "sha256": "5c319a87e9822880dc25f1b473ad0af417b868fd8d19adcba759c87b89dc5469"
+      "sha256": "7776c2a64317b566b40d6f64ce14d4f6045c7a53456c84c6349fcc725ecdca8e"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/mod.rs",
@@ -20929,7 +23355,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/io/mod.rs",
-      "sha256": "d2f4217b911efe575eed97935707d3d32a64d014feb19b8c0145261c052efe41"
+      "sha256": "2058a62c0cdac9ce54b9472c1a9a6cfa652d2fb64d02bf52fba0816fb04a92f1"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/lib.rs",
@@ -20940,11 +23366,13 @@
     {
       "files": [
         "crates/api/src/interact/driver.rs",
+        "crates/api/src/interact/server_ordered/input.rs",
         "crates/api/src/interact/server_ordered/npc_transforms.rs",
+        "crates/api/src/interact/server_ordered/request.rs",
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "a7c802ed6fa827a7842aebd39587d87f0d37dde94d0f52e7fa86270688017db9"
+      "sha256": "e4cbbc8b2621b81f3da1f28f11f28924762f2f6a7d347170b49769afdaed1d65"
     },
     {
       "files": [
@@ -24115,6 +26543,24 @@
       "kind": "value",
       "lint": "inventory_only",
       "path": "api::interact::driver::RUN_ORB_OFF",
+      "rustdoc_kind": "constant"
+    },
+    {
+      "declared_type": {
+        "primitive": "u8"
+      },
+      "kind": "value",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::BANK_COUNT_PHASE",
+      "rustdoc_kind": "constant"
+    },
+    {
+      "declared_type": {
+        "primitive": "u8"
+      },
+      "kind": "value",
+      "lint": "inventory_only",
+      "path": "api::interact::server_ordered::request::BANK_COUNT_PHASE",
       "rustdoc_kind": "constant"
     },
     {
