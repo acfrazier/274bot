@@ -903,14 +903,19 @@ sequence. Already operator-paused or reconnect-carried script work keeps its
 existing Resume behavior.
 
 The shared navigation preference `nav.pause_script_on_manual_walk_abort`,
-displayed as “Pause script on manual movement,” defaults to ON. It gates only
-the pause of the script that owns the cancelled walk, or a live `api.gather`
-or `api.combat` session that manual movement ended with no walk in flight; it
-never gates intent detection, cancellation, or the posted outcome. With it OFF, cancellation
-still occurs and scripts remain able to observe their normal end state,
-including compat `false` and the v2 `user-input` reason. A native script may
-make a new decision after an explicit Resume, but the cancelled request, host
-carry, queued pre-takeover walking work, and watchdog recovery are not replayed.
+displayed as “Pause script on manual movement,” defaults to ON. With it ON,
+manual movement pauses a running script that owns an active walk, a live
+native action, or a live `api.gather` or `api.combat` session. Native actions
+count even while fighting or gathering in place. Any running Load script
+(including rs2b0t scripts) pauses, even without a walk, session, or native action.
+A built-in script between actions does not pause unless it still owns a walk.
+The preference never gates intent detection, cancellation, or the posted
+outcome. With it OFF, walks and API sessions still end normally, including
+compat `false` and the v2 `user-input` reason. Other in-place work can continue
+unless its native family handles takeover, as Quester fights do. A native
+script may make a new decision after an explicit Resume, but the cancelled
+request, host carry, queued pre-takeover walking work, and watchdog recovery
+are not replayed.
 For compat walks, watchdog-owned replacement routes retain the original
 request, key and generation for this terminal; their internal zero id does not
 replace the caller's receipt. Native-owned recovery ends its typed walk to its
@@ -918,10 +923,11 @@ owner instead of carrying a receipt-only compat identity. Takeover also
 restamps gameplay progress, so leaving pause OFF does not immediately trigger
 a stale WedgeWalk recovery.
 
-The detector classifies movement intent, not successful displacement. Accepted
-conservative positives include a world-menu Examine/Cancel selection and
-unwalkable or same-path clicks, even when no movement follows. Inventory,
-chat, main-modal widgets, and unrelated keyboard input are excluded. The
+The detector classifies movement intent, not successful displacement. It accepts
+user-owned viewport and minimap clicks, qualifying world-menu actions, and
+TUI Manual steps. Unwalkable or same-path clicks count even when no movement
+follows. World-menu Examine and Cancel selections do not count. Script-generated
+input, inventory, chat, main-modal widgets, and unrelated keyboard input are excluded. The
 documented residue remains: a rare pointer jump from a hovered world-menu
 action to side chrome can invoke the last-drawn default action without passing
 the world-pointer classifier; spellbook/jewellery teleports and dialogue travel

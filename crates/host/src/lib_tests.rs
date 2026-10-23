@@ -1052,11 +1052,22 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 
 #[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
-    use client::client::MiniMenuAction;
-    for (x, y, expected) in [
-        (30, 51, None),
-        (30, 20, None),
-        (648, 83, Some(ManualMoveIntent::Minimap)),
+    use client::client::{ClientNpc, MiniMenuAction};
+    for (x, y, action, expected) in [
+        (
+            30,
+            51,
+            MiniMenuAction::OP_NPC2,
+            Some(ManualMoveIntent::WorldMenu),
+        ),
+        (30, 51, MiniMenuAction::CANCEL, None),
+        (30, 20, MiniMenuAction::CANCEL, None),
+        (
+            648,
+            83,
+            MiniMenuAction::CANCEL,
+            Some(ManualMoveIntent::Minimap),
+        ),
     ] {
         let mut c = Client::new(cfg());
         ingame_scene2(&mut c);
@@ -1066,7 +1077,9 @@ fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
         c.menu_y = 20;
         c.menu_width = 100;
         c.menu_num_entries = 1;
-        c.menu_action[0] = MiniMenuAction::CANCEL;
+        c.menu_action[0] = action;
+        c.menu_param_a[0] = 42;
+        c.npc[42] = Some(Box::new(ClientNpc::at(10, 10)));
         let input = SlotInput::new();
         input.set_enabled(true);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1097,6 +1110,24 @@ fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
                         client.out.pos, 21,
                         "retain the real minimap packet and extras"
                     );
+                } else if expected == Some(ManualMoveIntent::WorldMenu) {
+                    assert_eq!(
+                        &client.out.data()[..10],
+                        &[
+                            ClientProt::MOVE_OPCLICK.id as u8,
+                            5,
+                            0,
+                            0,
+                            10,
+                            0,
+                            10,
+                            ClientProt::OPNPC2.id as u8,
+                            0,
+                            42,
+                        ],
+                        "retain the human NPC action and its zero-step approach"
+                    );
+                    assert_eq!(client.out.pos, 10);
                 } else {
                     assert_eq!(client.out.pos, 0, "menu Cancel/dismissal sends no walk");
                 }

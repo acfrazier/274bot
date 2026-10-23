@@ -11,8 +11,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 ### Scripts
 
-- "Pause script on manual movement" now also pauses a running script that acts
-  in place, including rs2b0t scripts. Resume continues from the pause.
+- With "Pause script on manual movement" on, moving the bot yourself now pauses
+  any running rs2b0t script. It also pauses a built-in script while it acts in
+  place, such as fighting or gathering. Resume continues the script.
 - Examine and Cancel from a game-world menu no longer count as manual movement.
 
 ### Nav
