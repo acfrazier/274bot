@@ -88,7 +88,8 @@ pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use prefs::UiPreferences;
 pub use profile_draft::{
-    GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, GUARDIAN_EVENTS,
+    CurePoison, GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, SurvivalDraft,
+    SurvivalSettings, GUARDIAN_EVENTS, SURVIVAL_FIELDS,
 };
 pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
@@ -109,7 +110,7 @@ pub use selection::{
 pub use session::{
     pick_focus, ArmMirror, DrawPolicy, GameInputEvent, GuardianEdit, MapDesk, MemoryNotice,
     Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
-    StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
+    StartSettled, SubmitError, Submitted, SurvivalEdit, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
