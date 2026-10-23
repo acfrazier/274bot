@@ -47,8 +47,12 @@ use frontend_core::launch::{
     ValidationPending,
 };
 use frontend_core::process::debug_enabled;
+use frontend_core::surface::map_image_to_applet;
 
-use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
+use crate::input_capture::{
+    discard_unconsumed_native_capture, stream_capture, KeyboardOwner, MouseButtons, MouseFrame,
+    MouseTarget, PaintMouseGate,
+};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_stop_enabled, PanelWindow, Session,
@@ -153,6 +157,9 @@ struct PanelState {
     game_view: Option<GameView>,
     session: Session,
     keyboard: KeyboardOwner,
+    /// Press-origin routing for captured mouse buttons at the paint
+    /// boundary, shared by the single-bot pane and the grid pane.
+    mouse_gate: PaintMouseGate,
     dock_inited: bool,
     /// Which dock layout the tree was last built with; `None` before the
     /// first init. A MultiBox toggle rebuilds the tree when this differs.
@@ -631,6 +638,7 @@ impl PanelState {
             game_view: None,
             session,
             keyboard: KeyboardOwner::default(),
+            mouse_gate: PaintMouseGate::default(),
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -1083,6 +1091,12 @@ fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     Some(session.core.script_paint(name))
 }
 
+/// Draw the focused slot's script paint over the Game Image and apply
+/// its hit, if any. Returns whether the pointer is inside the drawn
+/// paint panel this frame. The panes give that to the mouse gate,
+/// which decides where a press that starts now belongs: a press on
+/// the paint never also clicks the game under it. A release follows
+/// the press that started it, not this frame's pointer place.
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
@@ -1090,7 +1104,7 @@ fn overlay_script_paint(
     paint: Option<Option<PaintFrame>>,
     min: [f32; 2],
     size: [f32; 2],
-) {
+) -> bool {
     match paint {
         Some(paint) => {
             if let Some((hit, generation)) = state.paint.frame(
@@ -1111,8 +1125,12 @@ fn overlay_script_paint(
                     }
                 }
             }
+            state.paint.pointer_inside_panel()
         }
-        None => state.paint.release_canvas(gpu),
+        None => {
+            state.paint.release_canvas(gpu);
+            false
+        }
     }
 }
 
@@ -1360,13 +1378,136 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
         }
         if state.session.walkto_open {
             picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
+            let (capture_enabled, capture_keys) = {
+                let focus = state.session.focus.lock().unwrap();
+                (focus.capture, should_capture(&focus))
+            };
+            let slot = state.session.core.selected();
+            capture_game_mouse(
+                ui,
+                &state.session.core,
+                &mut state.session.map_desk,
+                &mut state.keyboard,
+                &mut state.mouse_gate,
+                MouseCaptureView {
+                    slot,
+                    image_min: [0.0; 2],
+                    image_size: [0.0; 2],
+                    image_hovered: false,
+                    pointer_in_paint: false,
+                    capture_enabled,
+                    capture_keys,
+                },
+            );
         } else if grid {
             grid_pane(ui, gpu, state, avail);
         } else {
             game_pane(ui, gpu, state, avail);
         }
     });
-    state.session.set_game_pane_open(built.is_some());
+    let open = built.is_some();
+    state.session.set_game_pane_open(open);
+    if !open {
+        state.mouse_gate.clear();
+    }
+}
+
+struct MouseCaptureView<'a> {
+    slot: Option<&'a str>,
+    image_min: [f32; 2],
+    image_size: [f32; 2],
+    image_hovered: bool,
+    pointer_in_paint: bool,
+    capture_enabled: bool,
+    capture_keys: bool,
+}
+
+/// Capture button edges for the shared Game panes.
+fn capture_game_mouse(
+    ui: &Ui,
+    core: &frontend_core::OperatorSession<crate::session::SlotIo>,
+    map_desk: &mut frontend_core::MapDesk,
+    keyboard: &mut KeyboardOwner,
+    mouse_gate: &mut PaintMouseGate,
+    view: MouseCaptureView<'_>,
+) {
+    let MouseCaptureView {
+        slot,
+        image_min,
+        image_size,
+        image_hovered,
+        pointer_in_paint,
+        capture_enabled,
+        capture_keys,
+    } = view;
+    if !capture_enabled {
+        mouse_gate.clear();
+        return;
+    }
+
+    let mouse = ui.io().mouse_pos();
+    let buttons = MouseButtons {
+        left_down: ui.is_mouse_clicked(MouseButton::Left),
+        right_down: ui.is_mouse_clicked(MouseButton::Right),
+        left_up: ui.is_mouse_released(MouseButton::Left),
+        right_up: ui.is_mouse_released(MouseButton::Right),
+    };
+    let applet_point = if image_hovered {
+        map_image_to_applet(
+            mouse[0] - image_min[0],
+            mouse[1] - image_min[1],
+            image_size[0],
+            image_size[1],
+        )
+    } else {
+        None
+    };
+    if image_hovered {
+        stream_capture(
+            map_desk,
+            mouse[0] - image_min[0],
+            mouse[1] - image_min[1],
+            image_size[0],
+            image_size[1],
+            false,
+            false,
+            false,
+            false,
+            &[],
+        );
+    }
+
+    let input = slot
+        .and_then(|name| core.slot_io(name))
+        .map(|slot| Arc::clone(&slot.input));
+    let is_new_game_press = image_hovered
+        && !pointer_in_paint
+        && input.is_some()
+        && (buttons.left_down || buttons.right_down);
+    let sender = if is_new_game_press {
+        map_desk.duplicate_input_sender()
+    } else {
+        None
+    };
+    let target = slot
+        .zip(input.as_ref())
+        .map(|(slot, input)| MouseTarget { slot, input });
+    let frame = MouseFrame {
+        target,
+        sender,
+        image_hovered,
+        pointer_in_paint,
+        applet_point,
+        buttons,
+    };
+    mouse_gate.route(map_desk, frame, |name, input| {
+        core.slot_io(name)
+            .is_some_and(|slot| Arc::ptr_eq(&slot.input, input))
+    });
+
+    if capture_keys && image_hovered {
+        keyboard.capture_keys(ui, map_desk);
+    }
 }
 
 /// Single-bot / rail Game pane: native 765×503, centred in the leaf.
@@ -1379,10 +1520,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     if state.game_view.is_none() {
         state.game_view = Some(GameView::init(gpu));
     }
-    let (draw, capture) = {
+    let (draw, capture, capture_enabled) = {
         let focus = state.session.focus.lock().unwrap();
-        (should_draw(&focus), should_capture(&focus))
+        (should_draw(&focus), should_capture(&focus), focus.capture)
     };
+    let name = state.session.focused_name().unwrap_or_default();
+    let mut image_min = [0.0; 2];
+    let mut image_hovered = false;
+    let mut pointer_in_paint = false;
     // A head the render service refused (its cap is full) draws nothing:
     // say so in this cell instead of showing a stale picture.
     let refused = draw
@@ -1401,7 +1546,6 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // read-back), the `PixMap` arm uploads the CPU pixels. `take`
         // returning `None` is "no new frame since the last upload", the
         // same skip the old snapshot path gave.
-        let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
@@ -1432,7 +1576,12 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
+        // The capture gate and anchor belong to the Image item. Read
+        // them now: after the overlays the last submitted item is no
+        // longer guaranteed to be the Image.
         let min = ui.item_rect_min();
+        image_min = min;
+        image_hovered = ui.is_item_hovered();
         #[cfg(feature = "render-diagnostics")]
         {
             let fb = ui.io().display_framebuffer_scale();
@@ -1454,31 +1603,27 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let paint = focused_paint(&state.session);
-        overlay_script_paint(ui, gpu, state, paint, min, size);
-        // Capture: only map/enqueue while on and hovered;
-        // capture off skips the coord math entirely (tx is
-        // also None).
-        if capture && ui.is_item_hovered() {
-            let mouse = ui.io().mouse_pos();
-            let min = ui.item_rect_min();
-            stream_capture(
-                &mut state.session.map_desk,
-                mouse[0] - min[0],
-                mouse[1] - min[1],
-                size[0],
-                size[1],
-                ui.is_mouse_clicked(MouseButton::Left),
-                ui.is_mouse_clicked(MouseButton::Right),
-                ui.is_mouse_released(MouseButton::Left),
-                ui.is_mouse_released(MouseButton::Right),
-                &[],
-            );
-            state.keyboard.capture_keys(ui, &mut state.session.map_desk);
-        }
+        pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
     } else {
         ui.text_disabled("renderer off");
         state.paint.release_canvas(gpu);
     }
+    capture_game_mouse(
+        ui,
+        &state.session.core,
+        &mut state.session.map_desk,
+        &mut state.keyboard,
+        &mut state.mouse_gate,
+        MouseCaptureView {
+            slot: (!name.is_empty()).then_some(name.as_str()),
+            image_min,
+            image_size: size,
+            image_hovered,
+            pointer_in_paint,
+            capture_enabled,
+            capture_keys: capture,
+        },
+    );
 }
 
 /// MultiBox grid-mode Game pane: same cap as the sidecar (dot, name +
@@ -1488,6 +1633,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     state.sync_fleet();
     let shown = state.session.fleet_model.counts().shown_loaded();
+    let (capture, capture_enabled, only_selected) = {
+        let focus = state.session.focus.lock().unwrap();
+        (
+            should_capture(&focus),
+            focus.capture,
+            focus.only_render_selected,
+        )
+    };
     if shown == 0 {
         state.queue_cards.clear();
         let loaded = state
@@ -1506,6 +1659,23 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // which also disposes them, is not drawn in Grid).
         let model = &state.session.fleet_model;
         dispose_idle_views(&mut state.views, gpu, |name| tile_shown(model, name));
+        // A filtered Grid can hide its cells while a focused game press remains held.
+        capture_game_mouse(
+            ui,
+            &state.session.core,
+            &mut state.session.map_desk,
+            &mut state.keyboard,
+            &mut state.mouse_gate,
+            MouseCaptureView {
+                slot: state.session.core.selected(),
+                image_min: [0.0; 2],
+                image_size: [0.0; 2],
+                image_hovered: false,
+                pointer_in_paint: false,
+                capture_enabled,
+                capture_keys: capture,
+            },
+        );
         return;
     }
     // The cells read the model's rows while their clicks need the session:
@@ -1514,10 +1684,6 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let model = std::mem::take(&mut state.session.fleet_model);
     let labels = std::mem::take(&mut state.fleet_labels);
     let cells = grid_cells(shown, avail);
-    let (capture, only_selected) = {
-        let focus = state.session.focus.lock().unwrap();
-        (should_capture(&focus), focus.only_render_selected)
-    };
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
@@ -1528,7 +1694,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let switch_world = state.session.can_switch_world();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
+    let mut image_min = [0.0; 2];
+    let mut image_size = [0.0; 2];
+    let mut image_hovered = false;
+    let mut pointer_in_paint = false;
     let mut clicked = None;
+    let mut target_slot = None;
     for ((index, row), [cx, cy, cw, ch]) in model
         .shown_rows()
         .filter(|(_, row)| row.loaded())
@@ -1543,6 +1714,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 draw_for_slot(&focus, name),
             )
         };
+        if is_focused {
+            target_slot = Some(name);
+        }
         ui.set_cursor_pos([cx, cy]);
         let preview = rail_preview_open(
             name,
@@ -1586,32 +1760,27 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 after[1] + ((remain_h - size[1]) * 0.5).max(0.0),
             ]);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
-            let image_min = ui.item_rect_min();
-            if is_focused && capture && ui.is_item_hovered() {
-                let mouse = ui.io().mouse_pos();
-                let min = image_min;
-                stream_capture(
-                    &mut state.session.map_desk,
-                    mouse[0] - min[0],
-                    mouse[1] - min[1],
-                    size[0],
-                    size[1],
-                    ui.is_mouse_clicked(MouseButton::Left),
-                    ui.is_mouse_clicked(MouseButton::Right),
-                    ui.is_mouse_released(MouseButton::Left),
-                    ui.is_mouse_released(MouseButton::Right),
-                    &[],
-                );
-                state.keyboard.capture_keys(ui, &mut state.session.map_desk);
-            }
-            state.queue_cards.frame(ui, name, row.queue(), image_min);
+            // As in the single-bot pane: the capture gate and anchor
+            // belong to the cell's Image item, read before the
+            // overlays draw over it.
+            let cell_image_min = ui.item_rect_min();
             if is_focused {
-                overlay_script_paint(
+                image_min = cell_image_min;
+                image_size = size;
+                image_hovered = ui.is_item_hovered();
+            }
+            state
+                .queue_cards
+                .frame(ui, name, row.queue(), cell_image_min);
+            // Only the focused cell writes the paint flag: a later open
+            // cell must not clear the value the capture gate reads.
+            if is_focused {
+                pointer_in_paint = overlay_script_paint(
                     ui,
                     gpu,
                     state,
                     focused_paint.take(),
-                    ui.item_rect_min(),
+                    cell_image_min,
                     size,
                 );
             }
@@ -1630,6 +1799,22 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             clicked = Some(TileClick::Select(index));
         }
     }
+    capture_game_mouse(
+        ui,
+        &state.session.core,
+        &mut state.session.map_desk,
+        &mut state.keyboard,
+        &mut state.mouse_gate,
+        MouseCaptureView {
+            slot: target_slot,
+            image_min,
+            image_size,
+            image_hovered,
+            pointer_in_paint,
+            capture_enabled,
+            capture_keys: capture,
+        },
+    );
     state.queue_cards.end_frame();
     state.session.fleet_model = model;
     state.fleet_labels = labels;

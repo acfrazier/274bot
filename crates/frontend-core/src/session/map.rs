@@ -206,8 +206,19 @@ impl GameInputEvent {
 
 const GAME_INPUT_CAPACITY: usize = 512;
 
+struct StagedGameInput {
+    event: GameInputEvent,
+    sender: Option<InputSender>,
+}
+
+impl StagedGameInput {
+    fn sender<'a>(&'a self, fallback: Option<&'a InputSender>) -> Option<&'a InputSender> {
+        self.sender.as_ref().or(fallback)
+    }
+}
+
 struct GameInputQueue {
-    events: [Option<GameInputEvent>; GAME_INPUT_CAPACITY],
+    events: [Option<StagedGameInput>; GAME_INPUT_CAPACITY],
     len: usize,
     overflowed: bool,
 }
@@ -215,7 +226,7 @@ struct GameInputQueue {
 impl Default for GameInputQueue {
     fn default() -> Self {
         Self {
-            events: [None; GAME_INPUT_CAPACITY],
+            events: std::array::from_fn(|_| None),
             len: 0,
             overflowed: false,
         }
@@ -224,16 +235,27 @@ impl Default for GameInputQueue {
 
 impl GameInputQueue {
     fn clear(&mut self) {
+        for event in &mut self.events[..self.len] {
+            *event = None;
+        }
         self.len = 0;
         self.overflowed = false;
     }
 
     fn push(&mut self, event: GameInputEvent) -> bool {
+        self.push_with_sender(event, None)
+    }
+
+    fn push_to(&mut self, event: GameInputEvent, sender: &InputSender) -> bool {
+        self.push_with_sender(event, Some(sender.duplicate()))
+    }
+
+    fn push_with_sender(&mut self, event: GameInputEvent, sender: Option<InputSender>) -> bool {
         let Some(slot) = self.events.get_mut(self.len) else {
             self.overflowed = true;
             return false;
         };
-        *slot = Some(event);
+        *slot = Some(StagedGameInput { event, sender });
         self.len += 1;
         true
     }
@@ -246,8 +268,8 @@ impl GameInputQueue {
         self.overflowed
     }
 
-    fn iter(&self) -> impl Iterator<Item = GameInputEvent> + '_ {
-        self.events[..self.len].iter().flatten().copied()
+    fn iter(&self) -> impl Iterator<Item = &StagedGameInput> + '_ {
+        self.events[..self.len].iter().flatten()
     }
 }
 
@@ -439,12 +461,18 @@ impl MapDesk {
         self.game_input.clear();
     }
 
-    /// Stage one event in the fixed-capacity GameInput buffer.
-    ///
-    /// Returns `false` when the frame buffer is full. The overflow remains
-    /// staged so the GameInput row can report the dropped event.
+    /// Stage one input event for dispatch in the current frame.
     pub fn stage_game_input(&mut self, event: GameInputEvent) -> bool {
         self.game_input.push(event)
+    }
+
+    /// Stage one captured event for the sender that received its press.
+    ///
+    /// The selected input sender can change before the frame is submitted.
+    /// This method keeps the event bound to the original recipient.
+    pub fn stage_captured_input_to(&mut self, sender: &InputSender, event: InputEv) -> bool {
+        self.game_input
+            .push_to(GameInputEvent::Captured(event), sender)
     }
 
     /// Whether the current frame has input or overflow state to submit.
@@ -461,9 +489,18 @@ impl MapDesk {
     pub fn input_connected(&self) -> bool {
         self.input_sender.is_some()
     }
+
+    /// Duplicate the current capture sender for a press-time recipient.
+    pub fn duplicate_input_sender(&self) -> Option<InputSender> {
+        self.input_sender.as_ref().map(InputSender::duplicate)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
-    pub fn staged_game_input_for_test(&self) -> Vec<GameInputEvent> {
-        self.game_input.iter().collect()
+    pub fn staged_game_input_for_test(&self) -> Vec<(GameInputEvent, Option<&InputSender>)> {
+        self.game_input
+            .iter()
+            .map(|staged| (staged.event, staged.sender.as_ref()))
+            .collect()
     }
 
     fn clear_map_confirmation(&mut self) {
@@ -831,19 +868,21 @@ impl<Io> OperatorSession<Io> {
             .game_input
             .is_overflowed()
             .then(|| "game input frame is full".to_owned());
-        for event in desk.game_input.iter() {
-            match event {
-                GameInputEvent::Captured(event) => match desk.input_sender.as_ref() {
-                    Some(sender) if sender.send(event) => {}
-                    Some(_) => {
-                        failure = Some("capture input channel is disconnected".to_owned());
-                        break;
+        for staged in desk.game_input.iter() {
+            match staged.event {
+                GameInputEvent::Captured(event) => {
+                    match staged.sender(desk.input_sender.as_ref()) {
+                        Some(sender) if sender.send(event) => {}
+                        Some(_) => {
+                            failure = Some("capture input channel is disconnected".to_owned());
+                            break;
+                        }
+                        None => {
+                            failure = Some("capture input channel is unavailable".to_owned());
+                            break;
+                        }
                     }
-                    None => {
-                        failure = Some("capture input channel is unavailable".to_owned());
-                        break;
-                    }
-                },
+                }
                 GameInputEvent::Wire(command) => match self.play.as_ref() {
                     Some(play) => play.queue_wire(name, command),
                     None => {
@@ -1075,6 +1114,29 @@ fn demand_applied(desk: &mut MapDesk, request: RequestId) -> super::commands::Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn targeted_game_input_keeps_its_press_recipient_after_focus_changes() {
+        let (old, old_probe) = InputSender::probe();
+        let (new, new_probe) = InputSender::probe();
+        let mut desk = MapDesk::default();
+        desk.set_input_sender(Some(old.duplicate()));
+        let down = InputEv::Down {
+            button: 2,
+            x: 10,
+            y: 20,
+        };
+        assert!(desk.stage_captured_input_to(&old, down));
+        desk.set_input_sender(Some(new));
+
+        let staged = desk.game_input.iter().next().expect("staged press");
+        let sender = staged
+            .sender(desk.input_sender.as_ref())
+            .expect("the press keeps its original sender");
+        assert!(sender.send(down));
+        assert_eq!(old_probe.try_iter().collect::<Vec<_>>(), [down]);
+        assert!(new_probe.try_iter().next().is_none());
+    }
 
     #[test]
     fn input_queue_overflow_stays_visible_until_frame_reset() {
