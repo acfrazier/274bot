@@ -3,7 +3,6 @@
 use thiserror::Error;
 
 const POISON_PERIOD: u16 = 30;
-const LAG: u16 = 2;
 
 /// The observed condition of one account.
 ///
@@ -114,12 +113,10 @@ pub enum PoisonState {
     Onset {
         /// Tick of the poison line.
         since: u16,
-        /// Pulse attributed to the poison source, or a conservative pulse bound.
-        q: u8,
+        /// `None` while unlatched, or the attributed pulse once latched.
+        q: Option<u8>,
         /// A hit arrived after the poison line.
         hit_since_line: bool,
-        /// The owner completed or rejected the source-attribution window.
-        latched: bool,
     },
     /// A poison mark established the pulse at its latest observed fire.
     Poisoned {
@@ -218,15 +215,11 @@ impl PoisonMemory {
         }
     }
 
-    /// Apply one explicit event and optional complete accepted-click evidence.
+    /// Apply one explicit event to the current poison memory.
     ///
-    /// Silence does not reduce a known poison reserve. An accepted-click window
-    /// can clear only an `Unknown` state.
-    pub fn transition(
-        mut self,
-        event: PoisonEvent,
-        accepted_click: Option<AcceptedClickWindow>,
-    ) -> Self {
+    /// Silence does not reduce a known poison reserve. A latch completion
+    /// records a pulse only while an onset remains unlatched.
+    pub fn transition(mut self, event: PoisonEvent) -> Self {
         match event {
             PoisonEvent::None => {}
             PoisonEvent::Reconnect { tick } => {
@@ -239,7 +232,16 @@ impl PoisonMemory {
                 value,
                 tick,
             } => {
-                if !self.session_invalid {
+                // A fire queues its damage before a drink can make poison
+                // negative (poison.rs2:29-40). Player.ts:903-911 can defer that
+                // queue behind a delay or modal. It cannot revoke the proven
+                // immunity, but marks after its lower bound fail closed.
+                if !self.session_invalid
+                    && !matches!(
+                        self.state,
+                        PoisonState::Immune { until_lower } if !tick_after(tick, until_lower)
+                    )
+                {
                     self.state = PoisonState::Poisoned {
                         per_tick: value,
                         last_mark: tick,
@@ -261,14 +263,11 @@ impl PoisonMemory {
                         hit_since_mark: true,
                     };
                 }
-                PoisonState::Onset {
-                    since, q, latched, ..
-                } if tick_after(tick, since) => {
+                PoisonState::Onset { since, q, .. } if tick_after(tick, since) => {
                     self.state = PoisonState::Onset {
                         since,
                         q,
                         hit_since_line: true,
-                        latched,
                     };
                 }
                 _ => {}
@@ -282,9 +281,8 @@ impl PoisonMemory {
             PoisonEvent::PoisonChat { tick } if !self.session_invalid => {
                 self.state = PoisonState::Onset {
                     since: tick,
-                    q: 0,
+                    q: None,
                     hit_since_line: false,
-                    latched: false,
                 };
                 self.death_seen = false;
             }
@@ -292,16 +290,14 @@ impl PoisonMemory {
             PoisonEvent::LatchComplete { q } if !self.session_invalid => {
                 if let PoisonState::Onset {
                     since,
+                    q: None,
                     hit_since_line,
-                    latched: false,
-                    ..
                 } = self.state
                 {
                     self.state = PoisonState::Onset {
                         since,
-                        q,
+                        q: Some(q),
                         hit_since_line,
-                        latched: true,
                     };
                 }
             }
@@ -343,79 +339,9 @@ impl PoisonMemory {
             }
             PoisonEvent::RespawnObserved => {}
         }
-
-        if matches!(event, PoisonEvent::None)
-            && !self.session_invalid
-            && !self.death_seen
-            && matches!(self.state, PoisonState::Unknown { .. })
-            && accepted_click.is_some_and(|window| {
-                let PoisonState::Unknown { since } = self.state else {
-                    return false;
-                };
-                window.proves_timer_ran(since)
-            })
-        {
-            self.state = PoisonState::Clear;
-        }
         self
     }
 }
-
-/// Complete evidence for the accepted-click window that can clear `Unknown`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcceptedClickWindow {
-    /// Tick at the end of the observed window.
-    pub t: u16,
-    /// Tick at which the click was sent.
-    pub click_sent_at: u16,
-    /// The map aimed at the current tile at tick `t`.
-    pub map_aim_at_t: bool,
-    /// Tile progress occurred at tick `t`.
-    pub tile_progress_at_t: bool,
-    /// The main modal was clear at tick `t`.
-    pub main_clear_t: bool,
-    /// The main modal was clear at tick `t + 1`.
-    pub main_clear_t_plus_1: bool,
-    /// Chat was clear at tick `t`.
-    pub chat_clear_t: bool,
-    /// Chat was clear at tick `t + 1`.
-    pub chat_clear_t_plus_1: bool,
-    /// No held input existed at tick `t`.
-    pub no_hold_t: bool,
-    /// No held input existed at tick `t + 1`.
-    pub no_hold_t_plus_1: bool,
-    /// First snapshot tick in the observed sequence.
-    pub snapshots_from: u16,
-    /// Last snapshot tick in the observed sequence.
-    pub snapshots_through: u16,
-    /// Every expected snapshot was observed consecutively.
-    pub snapshots_consecutive: bool,
-    /// A poison mark was observed before the window ended.
-    pub poison_mark_seen_through_end: bool,
-}
-
-impl AcceptedClickWindow {
-    fn proves_timer_ran(self, since: u16) -> bool {
-        let elapsed = self.t.wrapping_sub(since);
-        let expected_from = self.t.wrapping_sub(1);
-        let expected_through = self.t.wrapping_add(1).wrapping_add(LAG);
-        (POISON_PERIOD..0x8000).contains(&elapsed)
-            && self.click_sent_at == self.t.wrapping_sub(1)
-            && self.map_aim_at_t
-            && self.tile_progress_at_t
-            && self.main_clear_t
-            && self.main_clear_t_plus_1
-            && self.chat_clear_t
-            && self.chat_clear_t_plus_1
-            && self.no_hold_t
-            && self.no_hold_t_plus_1
-            && self.snapshots_from == expected_from
-            && self.snapshots_through == expected_through
-            && self.snapshots_consecutive
-            && !self.poison_mark_seen_through_end
-    }
-}
-
 /// A lower-bound immunity interval earned by a proven cure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImmunityCredit;
@@ -518,16 +444,19 @@ pub mod poison_math {
                 since,
                 q,
                 hit_since_line,
-                latched,
             } => {
-                let widened = hit_since_line || exposure == Exposure::Unknown || !latched;
-                let q_effective = if widened { q_unknown } else { q };
+                let widened = hit_since_line || exposure == Exposure::Unknown || q.is_none();
+                let q_effective = if widened {
+                    q_unknown
+                } else {
+                    q.unwrap_or(q_unknown)
+                };
                 PoisonOutlook {
                     total: unknown_total(q_effective),
                     fires: unknown_fires(q_effective),
                     next_fire_at: since.wrapping_add(POISON_PERIOD),
                     per_fire_now: q_effective,
-                    pending: !latched,
+                    pending: q.is_none(),
                 }
             }
         }
@@ -584,19 +513,71 @@ pub mod poison_math {
 
         fn onset(q: u8) -> PoisonMemory {
             PoisonMemory::from_state(PoisonState::Clear)
-                .transition(PoisonEvent::PoisonChat { tick: 0 }, None)
-                .transition(PoisonEvent::LatchComplete { q }, None)
+                .transition(PoisonEvent::PoisonChat { tick: 0 })
+                .transition(PoisonEvent::LatchComplete { q })
+        }
+
+        #[test]
+        fn onset_latch_is_optional_and_completion_never_lowers_it() {
+            let unlatched = PoisonMemory::from_state(PoisonState::Clear)
+                .transition(PoisonEvent::PoisonChat { tick: 12 });
+            assert_eq!(
+                unlatched.state,
+                PoisonState::Onset {
+                    since: 12,
+                    q: None,
+                    hit_since_line: false,
+                }
+            );
+
+            let latched = unlatched
+                .transition(PoisonEvent::LatchComplete { q: 7 })
+                .transition(PoisonEvent::LatchComplete { q: 3 });
+            assert_eq!(
+                latched.state,
+                PoisonState::Onset {
+                    since: 12,
+                    q: Some(7),
+                    hit_since_line: false,
+                }
+            );
+        }
+
+        #[test]
+        fn poison_marks_respect_the_proven_immunity_boundary() {
+            let immune_at_origin = |origin| {
+                PoisonMemory::from_state(PoisonState::Clear)
+                    .transition(PoisonEvent::ProvenDrink { origin })
+            };
+            for offset in [2, 120] {
+                let memory = immune_at_origin(10).transition(PoisonEvent::Hitmark {
+                    kind: 2,
+                    value: 4,
+                    tick: 10 + offset,
+                });
+                assert_eq!(memory.state, PoisonState::Immune { until_lower: 130 });
+            }
+            let memory = immune_at_origin(10).transition(PoisonEvent::Hitmark {
+                kind: 2,
+                value: 4,
+                tick: 131,
+            });
+            assert_eq!(
+                memory.state,
+                PoisonState::Poisoned {
+                    per_tick: 4,
+                    last_mark: 131,
+                    hit_since_mark: false,
+                }
+            );
         }
 
         fn hit(memory: PoisonMemory, pulse: u8, tick: u16) -> PoisonMemory {
-            memory.transition(
-                PoisonEvent::Hitmark {
-                    kind: 2,
-                    value: pulse,
-                    tick,
-                },
-                None,
-            )
+            memory.transition(PoisonEvent::Hitmark {
+                kind: 2,
+                value: pulse,
+                tick,
+            })
         }
 
         #[test]
@@ -604,9 +585,8 @@ pub mod poison_math {
             for (pulse, after_mark, total) in [(1, 4, 5), (6, 99, 105), (11, 319, 330)] {
                 let state = PoisonState::Onset {
                     since: 0,
-                    q: pulse,
+                    q: Some(pulse),
                     hit_since_line: false,
-                    latched: true,
                 };
                 let value = outlook(state, 0);
                 assert_eq!(value.total, total);
@@ -641,9 +621,8 @@ pub mod poison_math {
                 outlook(
                     PoisonState::Onset {
                         since: 0,
-                        q: 0,
+                        q: None,
                         hit_since_line: false,
-                        latched: false,
                     },
                     0,
                 )
@@ -657,9 +636,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: 3,
+                    q: Some(3),
                     hit_since_line: false,
-                    latched: true,
                 },
                 Exposure::None,
                 0,
@@ -675,9 +653,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: 3,
+                    q: None,
                     hit_since_line: false,
-                    latched: false,
                 },
                 Exposure::None,
                 0,
@@ -693,9 +670,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: 11,
+                    q: Some(11),
                     hit_since_line: false,
-                    latched: true,
                 },
                 Exposure::Attributable { max_pulse: 3 },
                 0,
@@ -710,9 +686,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: 3,
+                    q: Some(3),
                     hit_since_line: false,
-                    latched: true,
                 },
                 Exposure::Unknown,
                 0,
@@ -727,9 +702,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: 3,
+                    q: Some(3),
                     hit_since_line: true,
-                    latched: true,
                 },
                 Exposure::None,
                 0,
@@ -752,14 +726,11 @@ pub mod poison_math {
         #[test]
         fn reducer_mark_after_hit_sets_mark_value() {
             let memory = hit(
-                onset(11).transition(
-                    PoisonEvent::Hitmark {
-                        kind: 1,
-                        value: 0,
-                        tick: 31,
-                    },
-                    None,
-                ),
+                onset(11).transition(PoisonEvent::Hitmark {
+                    kind: 1,
+                    value: 0,
+                    tick: 31,
+                }),
                 11,
                 60,
             );
@@ -776,40 +747,31 @@ pub mod poison_math {
 
         #[test]
         fn poison_math_zero_hitmark_since_mark_widens() {
-            let memory = hit(onset(11), 6, 30).transition(
-                PoisonEvent::Hitmark {
-                    kind: 0,
-                    value: 0,
-                    tick: 31,
-                },
-                None,
-            );
+            let memory = hit(onset(11), 6, 30).transition(PoisonEvent::Hitmark {
+                kind: 0,
+                value: 0,
+                tick: 31,
+            });
             assert_eq!(outlook(memory.state, 31).total, 330);
         }
 
         #[test]
         fn poison_math_retired_source_keeps_widened_bound() {
-            let memory = hit(onset(11), 6, 30).transition(
-                PoisonEvent::Hitmark {
-                    kind: 1,
-                    value: 0,
-                    tick: 31,
-                },
-                None,
-            );
+            let memory = hit(onset(11), 6, 30).transition(PoisonEvent::Hitmark {
+                kind: 1,
+                value: 0,
+                tick: 31,
+            });
             assert_eq!(outlook(memory.state, 32).total, 330);
         }
 
         #[test]
         fn poison_math_refresh_ignores_attributable_pulse() {
-            let memory = hit(onset(11), 6, 30).transition(
-                PoisonEvent::Hitmark {
-                    kind: 1,
-                    value: 0,
-                    tick: 31,
-                },
-                None,
-            );
+            let memory = hit(onset(11), 6, 30).transition(PoisonEvent::Hitmark {
+                kind: 1,
+                value: 0,
+                tick: 31,
+            });
             assert_eq!(
                 remaining(
                     memory.state,
@@ -825,14 +787,11 @@ pub mod poison_math {
         #[test]
         fn poison_math_next_mark_clears_refresh() {
             let memory = hit(
-                hit(onset(11), 6, 30).transition(
-                    PoisonEvent::Hitmark {
-                        kind: 1,
-                        value: 0,
-                        tick: 31,
-                    },
-                    None,
-                ),
+                hit(onset(11), 6, 30).transition(PoisonEvent::Hitmark {
+                    kind: 1,
+                    value: 0,
+                    tick: 31,
+                }),
                 6,
                 60,
             );
@@ -859,14 +818,11 @@ pub mod poison_math {
             let initial = hit(onset(11), 6, 10);
             assert_eq!(outlook(initial.state, 11).total, 99);
 
-            let after_impact = initial.transition(
-                PoisonEvent::Hitmark {
-                    kind: 1,
-                    value: 0,
-                    tick: 12,
-                },
-                None,
-            );
+            let after_impact = initial.transition(PoisonEvent::Hitmark {
+                kind: 1,
+                value: 0,
+                tick: 12,
+            });
             assert_eq!(outlook(after_impact.state, 12).total, 330);
 
             let corrected = hit(after_impact, 11, 42);
@@ -955,9 +911,8 @@ pub mod poison_math {
             let value = remaining(
                 PoisonState::Onset {
                     since: 0,
-                    q: u8::MAX,
+                    q: Some(u8::MAX),
                     hit_since_line: false,
-                    latched: true,
                 },
                 Exposure::None,
                 0,

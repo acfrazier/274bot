@@ -31,6 +31,9 @@ struct Live {
     previous_line: bool,
     edge_line_visible_before: bool,
     tick: u32,
+    player_info_generation: u64,
+    npc_info_generation: u64,
+    npc_rows_coherent: bool,
 }
 
 impl Live {
@@ -38,6 +41,9 @@ impl Live {
         // Preparation relogs. Use the condition owner's session-local clock.
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
+        self.player_info_generation = client.gens.player_info;
+        self.npc_info_generation = client.gens.npc_info;
+        self.npc_rows_coherent = drain.npc_rows_coherent;
     }
 }
 
@@ -76,12 +82,9 @@ impl PoisonOracle {
         if condition.hp == 0 {
             return Err(format!("death at tick {tick}"));
         }
-        if let PoisonState::Onset {
-            since, q, latched, ..
-        } = condition.poison
-        {
+        if let PoisonState::Onset { since, q, .. } = condition.poison {
             if self.since.is_none() {
-                if q != 11 || !latched {
+                if q != Some(11) {
                     return Err(format!(
                         "wrong onset at tick {tick}: {:?}",
                         condition.poison
@@ -351,8 +354,9 @@ fn run_condition_cell(super_dose: bool, deposit: bool) {
             "line_visible_before_edge": live.edge_line_visible_before,
             "raw_chat": live.snapshot.chat_lines().iter().map(|line| serde_json::json!({ "sequence": line.sequence, "text": line.text })).collect::<Vec<_>>(),
             "raw_hitmarks": live.snapshot.hitmarks().map(|marks| marks.marks.iter().map(|mark| serde_json::json!({ "kind": mark.kind, "value": mark.value, "cycle": mark.cycle, "loop_cycle": marks.loop_cycle })).collect::<Vec<_>>()),
-            "player_info_generation": live.snapshot.gens().player_info,
-            "npc_info_generation": live.snapshot.gens().npc_info,
+            "player_info_generation": live.player_info_generation,
+            "npc_info_generation": live.npc_info_generation,
+            "npc_rows_coherent": live.npc_rows_coherent,
             "drink_line": drink_line,
             "held": live.snapshot.inventory().iter().filter(|item| item.def.id == id).map(|item| item.count).sum::<i32>(),
             "bank_open": live.snapshot.bank_component_id() >= 0,
@@ -458,9 +462,8 @@ mod oracle_tests {
     fn onset(q: u8, latched: bool) -> BotCondition {
         condition(PoisonState::Onset {
             since: 100,
-            q,
+            q: latched.then_some(q),
             hit_since_line: false,
-            latched,
         })
     }
 

@@ -119,6 +119,7 @@ fn owner() -> SlotCondition {
     let mut owner = SlotCondition::default();
     owner.session_started(
         0,
+        0,
         Some((script::combat::guard::shared_tables().unwrap(), 11)),
     );
     owner.observe_frame(&frame(0), &drain(false, true), false);
@@ -156,8 +157,7 @@ fn assert_onset(owner: &SlotCondition, q: u8, latched: bool, refreshed: bool) {
         owner.current().unwrap().poison,
         PoisonState::Onset {
             since: 1,
-            q,
-            latched,
+            q: latched.then_some(q),
             hit_since_line: refreshed
         }
     );
@@ -181,17 +181,152 @@ fn incomplete_frame_at_same_tick_hides_fact() {
 #[test]
 fn reconnect_hides_fact_until_first_complete_frame() {
     let mut owner = owner();
+    owner.observe_frame(&frame(200), &drain(true, true), false);
     owner.session_ended();
     assert!(owner.current().is_none());
-    owner.session_started(1, None);
+    owner.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
     assert!(owner.current().is_none());
     assert_eq!(owner.published().session, SessionMark::Boundary);
     owner.observe_frame(&frame(1), &drain(false, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Unknown { since: 1 }
+    );
+    assert_eq!(owner.last_tick, 1);
+}
+
+#[test]
+fn unavailable_tables_keep_food_and_cures_unknown() {
+    let mut owner = SlotCondition::default();
+    owner.session_started(1, 0, None);
+    let mut snapshot = frame(1);
+    inventory(&mut snapshot, 1, &[179, 379]);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert!(
+        owner.current().is_none(),
+        "zero summaries must not publish as known"
+    );
+    assert_eq!(owner.published().session, SessionMark::Boundary);
+    assert_eq!(
+        owner.inv_gen, None,
+        "unknown content cannot consume inventory"
+    );
+}
+
+#[test]
+fn reconnect_watermark_ignores_retained_and_unread_old_drinks() {
+    let mut owner = owner();
+    let mut snapshot = frame(1);
+    chat(&mut snapshot, 1, DRINK_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
     assert!(matches!(
         owner.current().unwrap().poison,
-        PoisonState::Unknown { .. }
+        PoisonState::Immune { .. }
     ));
-    assert_eq!(owner.unknown_pulse(), u8::MAX);
+    owner.session_ended();
+    // Client position 2 includes a line the previous snapshot never consumed.
+    owner.session_started(
+        1,
+        2,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    chat(&mut snapshot, 2, DRINK_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Unknown { since: 1 }
+    );
+    snapshot.seed_tick(2);
+    chat(&mut snapshot, 3, DRINK_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Immune { until_lower: 122 }
+    );
+}
+
+#[test]
+fn player_chat_cannot_spoof_poison_drink_or_fruit() {
+    for (type_, username) in [
+        (2, Some("Other player")),
+        (3, Some("Other player")),
+        (7, Some("Other player")),
+        (9, Some("Clan member")),
+        (0, Some("Named sender")),
+        (2, None),
+    ] {
+        let mut owner = owner();
+        let mut snapshot = frame(1);
+        inventory(&mut snapshot, 1, &[464]);
+        for (tick, text) in [(1, POISON_LINE), (3, DRINK_LINE), (4, FRUIT_LINE)] {
+            if tick == 3 {
+                snapshot.seed_tick(2);
+                hit(&mut snapshot, 2, 6, 1);
+                owner.observe_frame(&snapshot, &drain(true, true), false);
+            }
+            snapshot.seed_tick(tick);
+            if tick == 4 {
+                inventory(&mut snapshot, 2, &[]);
+            }
+            snapshot.seed_chat_lines(vec![ChatLineView {
+                type_,
+                username: username.map(str::to_owned),
+                text: text.into(),
+                sequence: tick as i32,
+            }]);
+            owner.observe_frame(&snapshot, &drain(true, true), false);
+            if tick == 1 {
+                assert!(matches!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Unknown { .. }
+                ));
+            } else {
+                assert!(matches!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Poisoned { .. }
+                ));
+            }
+        }
+        snapshot.seed_tick(5);
+        chat(&mut snapshot, 5, DRINK_LINE);
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Immune { until_lower: 125 }
+        );
+    }
+}
+
+#[test]
+fn queued_poison_marks_keep_only_proven_drink_immunity() {
+    let mut owner = owner();
+    let mut snapshot = frame(1);
+    chat(&mut snapshot, 1, DRINK_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    for tick in [3, 121] {
+        snapshot.seed_tick(tick);
+        hit(&mut snapshot, 2, 6, tick as i32);
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Immune { until_lower: 121 }
+        );
+    }
+    snapshot.seed_tick(122);
+    hit(&mut snapshot, 2, 6, 122);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 122,
+            hit_since_mark: false
+        }
+    );
 }
 
 #[test]
@@ -303,11 +438,7 @@ fn reducer_latch_disqualifying_edges_use_q_unknown() {
         owner.observe_frame(&snapshot, &drain(true, false), false);
         assert!(matches!(
             owner.current().unwrap().poison,
-            PoisonState::Onset {
-                q: 11,
-                latched: true,
-                ..
-            }
+            PoisonState::Onset { q: Some(11), .. }
         ));
     }
 }
@@ -532,18 +663,53 @@ fn fruit_line_requires_fruit_loss_and_grants_no_future_fire() {
 }
 
 #[test]
-fn accepted_click_settle_needs_thirty_consecutive_clean_edges() {
-    let mut owner = owner();
+fn accepted_click_settle_covers_last_login_mark_tick_and_lag() {
+    // Login is session tick 1. The timer fires 30 ticks later, damage is
+    // queued for the following tick, and LAG retains two observation ticks.
+    let mut owner = SlotCondition::default();
+    owner.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    owner.observe_frame(&frame(1), &drain(true, true), false);
     owner.accepted_click();
-    for tick in 1..30 {
+    for tick in 2..=34 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
-        assert!(matches!(
+        assert_eq!(
             owner.current().unwrap().poison,
-            PoisonState::Unknown { .. }
-        ));
+            PoisonState::Unknown { since: 1 },
+            "tick {tick} must still cover the login fire's possible mark"
+        );
     }
-    owner.observe_frame(&frame(30), &drain(true, true), false);
+    owner.observe_frame(&frame(35), &drain(true, true), false);
     assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+}
+
+#[test]
+fn login_poison_mark_at_last_settle_tick_prevents_clear() {
+    let mut owner = SlotCondition::default();
+    owner.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    owner.observe_frame(&frame(1), &drain(true, true), false);
+    owner.accepted_click();
+    for tick in 2..34 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    let mut snapshot = frame(34);
+    hit(&mut snapshot, 2, 6, 1);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 34,
+            hit_since_mark: false
+        }
+    );
 }
 
 #[test]
@@ -554,7 +720,7 @@ fn guardian_hold_on_wake_resets_clean_window_and_click() {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
     owner.observe_frame(&frame(14), &drain(false, true), true);
-    for tick in 15..=45 {
+    for tick in 15..=48 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
     }
     assert!(matches!(
@@ -562,7 +728,7 @@ fn guardian_hold_on_wake_resets_clean_window_and_click() {
         PoisonState::Unknown { .. }
     ));
     owner.accepted_click();
-    owner.observe_frame(&frame(46), &drain(true, true), false);
+    owner.observe_frame(&frame(49), &drain(true, true), false);
     assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
 }
 

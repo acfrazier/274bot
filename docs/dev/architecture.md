@@ -681,16 +681,26 @@ libtest exception.
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |
 | `*_live.rs`, `*_live_probe.rs`, `*_live_tests.rs` | live cells run through `cargo test` | ignored; see [the harness](harness.md) |
 
-The slot condition consumes poison chat and raw hitmarks only at PLAYER_INFO
-edges. The applied NPC_INFO counter can complete a proven onset source inside
-that edge's observation window. Ambiguous lines use the strongest selected
-poison pulse immediately. A later smaller poison mark lowers the reserve.
+The slot condition consumes game messages with no sender and raw hitmarks only
+at PLAYER_INFO edges. Player chat cannot supply poison or cure evidence.
+The applied NPC_INFO counter can complete a proven onset source inside that
+edge's observation window. An unlatched onset has no attributed pulse.
+Ambiguous lines use the strongest selected poison pulse immediately.
+A later smaller poison mark lowers the reserve unless proven immunity covers it.
 `CombatTables` caches the selected revision's unknown poison pulse once.
 Route replay reads that shared bound without changing the observed `RiskInput`.
 Every antipoison drink line credits only the ordinary 120-tick lower bound,
-including super antipoison. Inventory loss without a drink line grants no credit.
+including super antipoison. Queued poison damage cannot revoke that credit
+through its inclusive end tick. Later poison marks replace it.
+Inventory loss without a drink line grants no credit.
 Admission and native actions read the current stamped fact, not private poison
-memory. Reconnect hides the fact until the first complete live frame.
+memory. Reconnect starts at the reset session tick and current client chat cursor.
+It hides the fact until a complete live frame with selected combat tables exists.
+Missing tables leave food and cures unknown, not known empty.
+Unknown poison stays unknown through 33 consecutive clean observed ticks.
+It clears on the next clean tick, with an accepted input inside the window.
+The bound includes the 30-tick timer, one queued-damage tick and the existing
+two-tick observation margin. Modal and guardian holds reset the window.
 
 Map-cache census retains at most 1,030 root summaries. Completion transfers that
 allocation without a replacement. A new scan releases previous census storage
