@@ -1824,6 +1824,241 @@ fn observe_sees_packets_applied_in_the_same_frame() {
     );
 }
 
+/// Replay the same remote-player update at the focused and parked cadences.
+/// The clock is explicit, so machine load cannot change the animation oracle.
+fn remote_animation_at_focus(period_ms: u64) -> Vec<i32> {
+    use client::client::{ClientNpc, ClientPlayer, ClientRevision};
+    use client::config::{SeqType, SpotType};
+    use client::io::ServerProt289;
+    use std::io::Write;
+
+    let sequence = || SeqType {
+        num_frames: 3,
+        frames: Some(vec![-1; 3]),
+        delay: Some(vec![4, 6, 5]),
+        loops: 3,
+        maxloops: 99,
+        ..Default::default()
+    };
+    let cache = Arc::new(Cache {
+        seqs: vec![sequence(), sequence()],
+        spots: vec![SpotType {
+            seq: Some(1),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.cache = cache;
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.local_player = Some(ClientPlayer::at(50, 50));
+    c.local_player
+        .as_mut()
+        .unwrap()
+        .teleport(&c.cache, true, 50, 50);
+    let mut remote = ClientPlayer::at(51, 50);
+    remote.teleport(&c.cache, true, 51, 50);
+    remote.readyanim = 0;
+    remote.walkanim = 0;
+    remote.chat_timer = 20;
+    remote.chat_message = Some("old chat".into());
+    let mut npc = ClientNpc::at(52, 50);
+    npc.entity = remote.entity.clone();
+    npc.move_code(&c.cache, false, 4);
+    c.npc[7] = Some(Box::new(npc));
+    c.npc_count = 1;
+    c.npc_ids[0] = 7;
+    let local = c.local_player.as_mut().unwrap();
+    local.readyanim = 0;
+    local.walkanim = 0;
+    local.move_code(&c.cache, false, 4);
+    local.chat_timer = 20;
+    local.chat_message = Some("old chat".into());
+    c.players[3] = Some(Box::new(remote));
+    c.player_count = 1;
+    c.player_ids[0] = 3;
+    // No local movement, retained remote with ANIM and delayed SPOTANIM.
+    let mut initial = bit_packet(&[(1, 0), (8, 1), (1, 1), (2, 0), (11, 2047)]);
+    initial.extend([0x82, 1, 0, 0, 2, 0, 0, 0, 0, 0, 5]);
+    dispatch_packet(&mut c, ServerProt289::PLAYER_INFO, initial);
+    assert!(c.ingame);
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    c.ptype = -1;
+    let t0 = Instant::now();
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        if elapsed != 0 && elapsed % 600 == 0 {
+            let update = if elapsed == 600 {
+                // A new walk, primary sequence and delayed effect arrive
+                // after the old state must finish its missed cycles.
+                let mut packet =
+                    bit_packet(&[(1, 0), (8, 1), (1, 1), (2, 1), (3, 4), (1, 1), (11, 2047)]);
+                packet.extend([0x82, 1, 0, 1, 2, 0, 0, 0, 0, 0, 5]);
+                packet
+            } else {
+                bit_packet(&[(1, 0), (8, 1), (1, 0)])
+            };
+            let mut wire = vec![ServerProt289::PLAYER_INFO as u8, 0, update.len() as u8];
+            wire.extend(update);
+            server.write_all(&wire).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while c.stream.as_mut().unwrap().available().unwrap() < wire.len() as i32 {
+                assert!(Instant::now() < deadline, "fixture packet did not arrive");
+                thread::yield_now();
+            }
+        }
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "focus-animation",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+    }
+    let mut state = Vec::new();
+    for e in [
+        &c.players[3].as_ref().unwrap().entity,
+        &c.local_player.as_ref().unwrap().entity,
+        &c.npc[7].as_ref().unwrap().entity,
+    ] {
+        state.extend([
+            e.x,
+            e.z,
+            e.route_length,
+            e.secondary_anim,
+            e.secondary_anim_frame,
+            e.secondary_anim_cycle,
+            e.primary_anim,
+            e.primary_anim_frame,
+            e.primary_anim_cycle,
+            e.primary_anim_delay,
+            e.primary_anim_loop,
+            e.spotanim_id,
+            e.spotanim_frame,
+            e.spotanim_cycle,
+            e.chat_timer,
+            i32::from(e.chat_message.is_some()),
+        ]);
+    }
+    state
+}
+
+#[test]
+fn parked_remote_animation_matches_twenty_ms_at_focus() {
+    let focused = remote_animation_at_focus(20);
+    let parked = remote_animation_at_focus(600);
+    assert_eq!(
+        parked, focused,
+        "remote secondary/primary/spot animation state must not depend on focus"
+    );
+}
+
+#[test]
+fn entity_catchup_retains_fractional_time_and_counts_early_wakes_once() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for (elapsed, expected_cycle) in [
+        (0, 1),
+        (10, 2),
+        (20, 3),
+        (35, 4),
+        (600, 31),
+        (611, 32),
+        (1200, 61),
+    ] {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+        assert_eq!(c.loop_cycle, expected_cycle, "elapsed={elapsed}");
+    }
+}
+
+#[test]
+fn entity_catchup_discards_long_stall_debt_and_resets_at_session_boundaries() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for (elapsed, expected_cycle) in [(0, 1), (10_000, 52), (10_020, 53)] {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+        assert_eq!(c.loop_cycle, expected_cycle);
+    }
+    c.gens.session = c.gens.session.wrapping_add(1);
+    slot.pacing_now = Some(t0 + Duration::from_secs(20));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    assert_eq!(
+        c.loop_cycle, 54,
+        "a new session must not inherit old elapsed time"
+    );
+    c.ingame = false;
+    slot.pacing_now = Some(t0 + Duration::from_secs(30));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    c.ingame = true;
+    slot.pacing_now = Some(t0 + Duration::from_secs(40));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    assert_eq!(c.loop_cycle, 56, "title time must not age the next game");
+}
+
+#[test]
+fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() {
+    use std::io::Write;
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    c.reboot_timer = 300;
+    c.logout_timer = 200;
+    c.shell.idle_cycles = 100;
+    c.out.p1(42);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    server.write_all(&[89, 0, 10]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while c.stream.as_mut().unwrap().available().unwrap() < 3 {
+        assert!(Instant::now() < deadline, "fixture packet did not arrive");
+        thread::yield_now();
+    }
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    slot.advance_parked_entities(&mut c, t0);
+    slot.advance_parked_entities(&mut c, t0 + Duration::from_millis(600));
+    assert_eq!(c.loop_cycle, 29);
+    assert_eq!(
+        (c.reboot_timer, c.logout_timer, c.shell.idle_cycles),
+        (300, 200, 100)
+    );
+    assert_eq!(c.out.pos, 1);
+    assert_eq!(c.stream.as_mut().unwrap().available().unwrap(), 3);
+    server.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        std::io::Read::read(&mut server, &mut byte)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::WouldBlock,
+        "catch-up must not flush the queued outbound byte"
+    );
+}
+
 #[test]
 fn idle_observe_wire_reaches_socket_on_the_next_frame_without_parking() {
     use std::io::Read;
