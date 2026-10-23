@@ -31,6 +31,25 @@ fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
 
 #[test]
 fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() {
+    const CHILD: &str = "FRONTEND_CORE_PROFILE_PREPARATION_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "launch::tests::profile_preparation_with_embedded_289_game_data_completes_on_shared_worker",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "profile preparation test child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
     use super::{ProfileArgs, ProfileEnv, ProfileLauncher};
     use std::time::{Duration, Instant};
 

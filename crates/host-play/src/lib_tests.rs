@@ -633,15 +633,11 @@ fn live_vault_passphrase_is_fresh_and_accepted() {
     vault::check_new_passphrase(&second).unwrap();
 }
 
-/// A login against a closed local port: a real refused connection.
+/// Use a low port outside the ephemeral range used by the loopback test listeners.
 fn refused_login_error() -> LoginError {
-    let port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
-        port,
+        port: 1023,
         cache_dir: "/tmp".into(),
         members: true,
         lowmem: false,
