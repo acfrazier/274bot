@@ -77,6 +77,8 @@ pub mod settings_store;
 pub mod shim;
 mod shop_open;
 pub mod slot;
+/// Pure condition derivation and survival arithmetic.
+pub mod survival;
 pub mod trade_screen;
 pub mod watchdog;
 pub mod work_admission;
