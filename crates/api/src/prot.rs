@@ -5,6 +5,8 @@
 //! packets are `pub` in the table but
 //! unused by the kernel.
 
+use std::sync::LazyLock;
+
 use client::io::{map_client_prot, ClientProt, ClientRevision, Packet};
 
 /// One legal outbound packet.
@@ -131,6 +133,85 @@ pub fn legal_sends_for(revision: ClientRevision) -> Vec<LegalSend> {
         .collect()
 }
 
+/// Category charged by the engine's per-tick decoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacketCategory {
+    /// Normal game actions, including movement and chat input.
+    UserEvent,
+    /// Client telemetry, focus and idle events.
+    ClientEvent,
+    /// An engine-restricted event category; no current named row uses it.
+    RestrictedEvent,
+    /// Client housekeeping excluded from input accounting.
+    Housekeeping,
+}
+
+/// Selected metadata for one named packet opcode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketMetadata {
+    /// The selected revision's opcode byte.
+    pub opcode: u8,
+    /// The named protocol identity before revision mapping.
+    pub named: ClientProt,
+    /// The fixed body size, `-1` for VAR_BYTE or `-2` for VAR_SHORT.
+    pub length: i32,
+    /// The engine input category or housekeeping classification.
+    pub category: PacketCategory,
+}
+
+const EMPTY_METADATA: [Option<PacketMetadata>; 256] = [None; 256];
+static PACKET_METADATA: LazyLock<[[Option<PacketMetadata>; 256]; 2]> = LazyLock::new(|| {
+    let mut tables = [EMPTY_METADATA; 2];
+    for &named in NAMED_CLIENT_PROTS {
+        let category = match named {
+            ClientProt::NO_TIMEOUT
+            | ClientProt::MAP_BUILD_COMPLETE
+            | ClientProt::ANTICHEAT_OPLOGIC1
+            | ClientProt::ANTICHEAT_OPLOGIC2
+            | ClientProt::ANTICHEAT_OPLOGIC3
+            | ClientProt::ANTICHEAT_OPLOGIC4
+            | ClientProt::ANTICHEAT_OPLOGIC5
+            | ClientProt::ANTICHEAT_OPLOGIC6
+            | ClientProt::ANTICHEAT_OPLOGIC7
+            | ClientProt::ANTICHEAT_OPLOGIC8
+            | ClientProt::ANTICHEAT_OPLOGIC9
+            | ClientProt::ANTICHEAT_CYCLELOGIC1
+            | ClientProt::ANTICHEAT_CYCLELOGIC2
+            | ClientProt::ANTICHEAT_CYCLELOGIC3
+            | ClientProt::ANTICHEAT_CYCLELOGIC4
+            | ClientProt::ANTICHEAT_CYCLELOGIC5
+            | ClientProt::ANTICHEAT_CYCLELOGIC6
+            | ClientProt::ANTICHEAT_CYCLELOGIC7 => PacketCategory::Housekeeping,
+            ClientProt::IDLE_TIMER
+            | ClientProt::EVENT_MOUSE_CLICK
+            | ClientProt::EVENT_MOUSE_MOVE
+            | ClientProt::EVENT_APPLET_FOCUS
+            | ClientProt::EVENT_CAMERA_POSITION => PacketCategory::ClientEvent,
+            _ => PacketCategory::UserEvent,
+        };
+        for (index, revision) in [ClientRevision::R274, ClientRevision::R289]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = map_client_prot(revision, named);
+            if let Ok(opcode) = u8::try_from(selected.id) {
+                tables[index][usize::from(opcode)] = Some(PacketMetadata {
+                    opcode,
+                    named,
+                    length: selected.length,
+                    category,
+                });
+            }
+        }
+    }
+    tables
+});
+
+/// Return metadata for an observed opcode without allocating or scanning tables.
+pub fn packet_metadata(revision: ClientRevision, opcode: u8) -> Option<PacketMetadata> {
+    PACKET_METADATA[usize::from(revision.is_289())][usize::from(opcode)]
+}
+
 mod sink {
     /// Raw encrypted sink for API internals and opt-in test recorders only.
     pub trait Out {
@@ -145,6 +226,8 @@ mod sink {
         /// Append a client string with its newline terminator.
         #[cfg(any(test, feature = "test-support"))]
         fn pjstr(&mut self, s: &str);
+        /// Complete a validated packet for an optional real-sink observer.
+        fn finish_packet(&mut self) {}
         /// Append an already validated body without a second buffer.
         fn pbytes(&mut self, bytes: &[u8]) {
             for &byte in bytes {
@@ -178,6 +261,9 @@ impl Out for Packet {
     }
     fn pbytes(&mut self, bytes: &[u8]) {
         self.pdata(bytes, 0, bytes.len());
+    }
+    fn finish_packet(&mut self) {
+        Packet::finish_packet(self);
     }
 }
 
@@ -581,6 +667,32 @@ impl Send {
         }
     }
 
+    /// Validate the complete packet for one selected revision without writing
+    /// bytes or advancing the cipher.
+    pub fn validate_for_revision(
+        &self,
+        revision: ClientRevision,
+    ) -> Result<PacketMetadata, PacketError> {
+        if self
+            .catalog_revision
+            .is_some_and(|selected| selected != revision)
+        {
+            return Err(PacketError::RevisionMismatch);
+        }
+        let selected = map_client_prot(revision, self.named);
+        let framing = match selected.length {
+            -1 => PacketLength::VarByte,
+            -2 => PacketLength::VarShort,
+            length if length >= 0 => PacketLength::Fixed(length as usize),
+            _ => return Err(PacketError::InvalidShape("unsupported framing")),
+        };
+        framing.validate(self.body().len())?;
+        let opcode = u8::try_from(selected.id)
+            .map_err(|_| PacketError::InvalidShape("opcode is outside one byte"))?;
+        packet_metadata(revision, opcode)
+            .ok_or(PacketError::InvalidShape("unsupported selected packet"))
+    }
+
     /// Validate the selected row and append through the normal encrypted sink.
     /// Refusals precede every output write, including opcode encryption.
     /// Product builds accept only the concrete client `Packet`. The `test-support`
@@ -595,22 +707,15 @@ impl Send {
     }
 
     fn write_to(&self, revision: ClientRevision, out: &mut dyn Out) -> Result<(), PacketError> {
-        if self
-            .catalog_revision
-            .is_some_and(|selected| selected != revision)
-        {
-            return Err(PacketError::RevisionMismatch);
-        }
-        let row = map_client_prot(revision, self.named);
-        let framing = match row.length {
+        let metadata = self.validate_for_revision(revision)?;
+        let framing = match metadata.length {
             -1 => PacketLength::VarByte,
             -2 => PacketLength::VarShort,
             length if length >= 0 => PacketLength::Fixed(length as usize),
             _ => return Err(PacketError::InvalidShape("unsupported framing")),
         };
         let body = self.body();
-        framing.validate(body.len())?;
-        out.p1_enc(row.id);
+        out.p1_enc(i32::from(metadata.opcode));
         match framing {
             PacketLength::VarByte => out.p1(body.len() as i32),
             PacketLength::VarShort => out.p2(body.len() as i32),
@@ -635,6 +740,7 @@ impl Send {
         } else {
             out.pbytes(body);
         }
+        out.finish_packet();
         Ok(())
     }
 
