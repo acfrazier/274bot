@@ -84,13 +84,15 @@
 //! after the final read-back is a later change, not a false receipt: the
 //! acknowledged bytes were durable, and the next write sees the change.
 //!
-//! Host-only entry points re-read a store on the writer thread, bounded,
-//! where the old code read the file synchronously: a script Start
-//! ([`LocalStateService::readback_lease`]), a session boundary, a frontend
-//! form, and the shared preferences ([`Preferences`]).
+//! Host-only entry points that need a fresh file read submit bounded
+//! writer-thread readbacks where the old code read synchronously: script
+//! Start ([`LocalStateService::readback_lease`]), a session boundary and a
+//! loadout form. Preferences read their cached document; a stale cache queues
+//! a refresh without waiting, and accepted patches settle separately.
 
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Write as _;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -115,12 +117,13 @@ mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
-pub use frontend::{Preferences, QueuedUpdate, ServiceLoadouts, Update};
+pub use frontend::{
+    PreferenceError, PreferencePatch, Preferences, QueuedUpdate, ServiceLoadouts, Update,
+};
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
 const OPERATOR_QUEUE_CAP: usize = 8;
-
 /// How many bank-hint identities the service holds at once. A new one
 /// evicts the least recently used idle store (nothing queued, in flight
 /// or being read); with none idle it is refused `Busy`.
@@ -144,6 +147,10 @@ pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 /// ([`LocalStateService::set_write_stall_for_test`]).
 #[cfg(any(test, feature = "test-support"))]
 pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
+/// A test's stall before the writer starts a store hydration or readback.
+#[cfg(any(test, feature = "test-support"))]
+pub type ReadStall = Arc<dyn Fn() + Send + Sync>;
+
 
 /// A test's stand-in for the file publication step: run on the writer
 /// thread with no state lock held (the file's write lock is held), so a
@@ -327,6 +334,8 @@ struct Shared {
     root: StateRoot,
     open: [bool; 4],
     minter: Arc<RequestIdMinter>,
+    preference_path: Arc<str>,
+    preference_not_ready: PreferenceError,
     state: Mutex<State>,
     /// Signalled on every submission and readback request: the writer
     /// thread parks on it while nothing is queued.
@@ -338,12 +347,30 @@ struct Shared {
     writer: Mutex<Option<JoinHandle<()>>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PreferenceWatchPoll {
+    Pending,
+    Settled(WriteSettlement),
+    Missing,
+}
+
+struct PreferenceWatch {
+    settlement: Option<WriteSettlement>,
+    queued_bytes: usize,
+}
+
 #[derive(Default)]
 struct State {
     stores: HashMap<StoreKey, Store>,
     /// Every accepted request whose settlement is not yet forgotten, and
     /// the store it belongs to.
     requests: HashMap<RequestId, StoreKey>,
+    /// Preference terminals retained until the frontend projects them.
+    preference_watches: HashMap<RequestId, PreferenceWatch>,
+    /// Accepted preference intent bytes until terminal settlement.
+    preference_queue_bytes: usize,
+    /// The default document/view is prepared before the writer starts.
+    preference_default: files::PreferenceProjection,
     /// The last version issued, by any store.
     clock: Option<StoreVersion>,
     /// Orders readbacks and writes (FIFO across stores) and stamps store
@@ -365,6 +392,9 @@ struct State {
     /// with no lock held.
     #[cfg(any(test, feature = "test-support"))]
     write_stall: Option<WriteStall>,
+    /// A test stall before a worker read, installed before open queues hydration.
+    #[cfg(any(test, feature = "test-support"))]
+    read_stall: Option<ReadStall>,
 }
 
 #[cfg(test)]
@@ -439,10 +469,15 @@ enum Readback {
     InFlightAgain,
 }
 
+#[derive(Clone)]
 struct Cached {
     version: StoreVersion,
     at: DurableTimestamp,
     snapshot: LeaseSnapshot,
+    /// The worker-parsed preference document and typed walk view.
+    preferences: Option<files::PreferenceProjection>,
+    /// When this snapshot was last checked on the writer.
+    refreshed_at: Instant,
     /// The digest of the file's bytes, `None` when there is no file.
     digest: Option<ContentDigest>,
     /// Whether this service made these bytes durable itself: flushed, and
@@ -476,18 +511,6 @@ struct Terminal {
 }
 
 impl Terminal {
-    fn of(edit: &DomainEdit, request: RequestId) -> Self {
-        Self {
-            identity: edit.identity().clone(),
-            action: match edit {
-                DomainEdit::Preferences(_) => CommitAction::PreferencesWrite,
-                DomainEdit::Loadout(_) => CommitAction::LoadoutWrite,
-                DomainEdit::Bank(_) => CommitAction::BankHintWrite,
-                DomainEdit::Knowledge(_) => CommitAction::KnowledgeWrite,
-            },
-            request,
-        }
-    }
 
     /// The write's terminal line, when it is not a durable commit (that one
     /// is the [`AuditCommit`] line): the audit line's fields and the
@@ -532,12 +555,47 @@ impl Terminal {
 
 struct Rejection {
     reason: FailureReason,
-    detail: String,
+    detail: Arc<str>,
+}
+
+enum WriteIntent {
+    Port(DomainEdit),
+    Preference {
+        identity: DomainIdentity,
+        patch: PreferencePatch,
+    },
+}
+
+impl WriteIntent {
+    fn identity(&self) -> &DomainIdentity {
+        match self {
+            Self::Port(edit) => edit.identity(),
+            Self::Preference { identity, .. } => identity,
+        }
+    }
+
+    fn action(&self) -> CommitAction {
+        match self {
+            Self::Port(DomainEdit::Preferences(_)) | Self::Preference { .. } => {
+                CommitAction::PreferencesWrite
+            }
+            Self::Port(DomainEdit::Loadout(_)) => CommitAction::LoadoutWrite,
+            Self::Port(DomainEdit::Bank(_)) => CommitAction::BankHintWrite,
+            Self::Port(DomainEdit::Knowledge(_)) => CommitAction::KnowledgeWrite,
+        }
+    }
+
+    fn expected(&self) -> Option<StoreVersion> {
+        match self {
+            Self::Port(edit) => edit.expected(),
+            Self::Preference { .. } => None,
+        }
+    }
 }
 
 struct Queued {
     request: RequestId,
-    edit: DomainEdit,
+    intent: WriteIntent,
     /// Acceptance order, for FIFO across stores.
     seq: u64,
     /// The store's version when the edit was accepted.
@@ -546,6 +604,16 @@ struct Queued {
     external: u64,
     /// What the edit may add to the file, for the budget.
     growth: Growth,
+}
+
+impl Queued {
+    fn terminal(&self) -> Terminal {
+        Terminal {
+            identity: self.intent.identity().clone(),
+            action: self.intent.action(),
+            request: self.request,
+        }
+    }
 }
 
 /// An upper bound of what one queued edit adds to the loadouts file.
@@ -580,16 +648,36 @@ impl LocalStateService {
         domains: &[LocalStateDomain],
         minter: Arc<RequestIdMinter>,
     ) -> Arc<Self> {
+        Self::open_with_state(root, domains, minter, State::default())
+    }
+
+    fn open_with_state(
+        root: StateRoot,
+        domains: &[LocalStateDomain],
+        minter: Arc<RequestIdMinter>,
+        state: State,
+    ) -> Arc<Self> {
         let mut open = [false; 4];
         for domain in domains {
             open[domain_index(*domain)] = true;
         }
+        let preference_path: Arc<str> =
+            Arc::from(root.preferences_file().display().to_string());
+        let preference_not_ready = PreferenceError::from_cached(
+            Arc::clone(&preference_path),
+            Arc::from("preference document is not ready yet"),
+            Some(ErrorCode::NotReady {
+                domain: LocalStateDomain::Preferences,
+            }),
+        );
         let service = Arc::new(Self {
             shared: Arc::new(Shared {
                 root,
                 open,
                 minter,
-                state: Mutex::new(State::default()),
+                preference_path,
+                preference_not_ready,
+                state: Mutex::new(state),
                 wake: Condvar::new(),
                 settled: Condvar::new(),
                 writer: Mutex::new(None),
@@ -620,6 +708,27 @@ impl LocalStateService {
         service
     }
 
+    /// Open the process stores with a read stall installed before any worker
+    /// hydration can begin. Used to exercise cold cache-only readers.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_process_with_read_stall_for_test(
+        root: StateRoot,
+        read_stall: ReadStall,
+    ) -> Arc<Self> {
+        let mut state = State::default();
+        state.read_stall = Some(read_stall);
+        Self::open_with_state(
+            root,
+            &[
+                LocalStateDomain::Preferences,
+                LocalStateDomain::LoadoutsReferences,
+                LocalStateDomain::BankHints,
+            ],
+            Arc::new(RequestIdMinter::new()),
+            state,
+        )
+    }
+
     /// The process service a frontend's composition root opens once at
     /// `root`: every domain with a current file (preferences, loadouts,
     /// bank hints), with its own request ids. The same service is handed
@@ -637,6 +746,235 @@ impl LocalStateService {
         )
     }
 
+    /// Return the cached immutable preference document without file I/O.
+    pub(super) fn preferences_document(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<Arc<serde_json::Map<String, serde_json::Value>>, PreferenceError> {
+        if !self.is_open(identity.domain()) {
+            return Err(self.shared.preference_not_ready.clone());
+        }
+        let key = StoreKey::Preferences;
+        let mut state = self.shared.state.lock();
+        let Some(store) = state.stores.get(&key) else {
+            return Err(self.shared.preference_not_ready.clone());
+        };
+        let (document, stale) = match &store.file {
+            FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
+            FileState::Rejected(rejection) => {
+                return Err(PreferenceError::from_cached(
+                    Arc::clone(&self.shared.preference_path),
+                    Arc::clone(&rejection.detail),
+                    Some(ErrorCode::Failed {
+                        domain: LocalStateDomain::Preferences,
+                        reason: rejection.reason,
+                    }),
+                ));
+            }
+            FileState::Read(cached) => {
+                let document = cached
+                    .preferences
+                    .as_ref()
+                    .map(|projection| Arc::clone(&projection.document))
+                    .unwrap_or_else(|| Arc::clone(&state.preference_default.document));
+                (document, cached.refreshed_at.elapsed() >= freshness)
+            }
+        };
+        if stale {
+            self.shared.request_readback(&mut state, &key);
+        }
+        Ok(document)
+    }
+
+    pub(super) fn preferences_walk_globals(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<crate::walk_permissions::WalkGlobals, PreferenceError> {
+        if !self.is_open(identity.domain()) {
+            return Err(self.shared.preference_not_ready.clone());
+        }
+        let key = StoreKey::Preferences;
+        let mut state = self.shared.state.lock();
+        let Some(store) = state.stores.get(&key) else {
+            return Err(self.shared.preference_not_ready.clone());
+        };
+        let (walk_globals, stale) = match &store.file {
+            FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
+            FileState::Rejected(rejection) => {
+                return Err(PreferenceError::from_cached(
+                    Arc::clone(&self.shared.preference_path),
+                    Arc::clone(&rejection.detail),
+                    Some(ErrorCode::Failed {
+                        domain: LocalStateDomain::Preferences,
+                        reason: rejection.reason,
+                    }),
+                ));
+            }
+            FileState::Read(cached) => {
+                let projection = cached
+                    .preferences
+                    .as_ref()
+                    .unwrap_or(&state.preference_default);
+                (
+                    projection.walk_globals.clone(),
+                    cached.refreshed_at.elapsed() >= freshness,
+                )
+            }
+        };
+        if stale {
+            self.shared.request_readback(&mut state, &key);
+        }
+        walk_globals.map_err(|cause| {
+            PreferenceError::from_cached(
+                Arc::clone(&self.shared.preference_path),
+                cause,
+                None,
+            )
+        })
+    }
+
+    pub(super) fn has_preference_watch(&self, request: RequestId) -> bool {
+        self.shared
+            .state
+            .lock()
+            .preference_watches
+            .contains_key(&request)
+    }
+
+    pub(super) fn unprojected_preference_requests(&self) -> Vec<RequestId> {
+        self.shared
+            .state
+            .lock()
+            .preference_watches
+            .iter()
+            .filter_map(|(request, watch)| watch.settlement.is_some().then_some(*request))
+            .collect()
+    }
+
+    pub(super) fn poll_preference_watch(&self, request: RequestId) -> PreferenceWatchPoll {
+        let mut state = self.shared.state.lock();
+        match state
+            .preference_watches
+            .get(&request)
+            .and_then(|watch| watch.settlement.clone())
+        {
+            Some(settlement) => {
+                state.preference_watches.remove(&request);
+                PreferenceWatchPoll::Settled(settlement)
+            }
+            None if state.preference_watches.contains_key(&request) => PreferenceWatchPoll::Pending,
+            None => PreferenceWatchPoll::Missing,
+        }
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn wait_preference_watch(
+        &self,
+        request: RequestId,
+        wait: Duration,
+    ) -> PreferenceWatchPoll {
+        let deadline = Instant::now() + wait;
+        let mut state = self.shared.state.lock();
+        loop {
+            match state
+                .preference_watches
+                .get(&request)
+                .and_then(|watch| watch.settlement.clone())
+            {
+                Some(settlement) => {
+                    state.preference_watches.remove(&request);
+                    return PreferenceWatchPoll::Settled(settlement);
+                }
+                None if !state.preference_watches.contains_key(&request) => {
+                    return PreferenceWatchPoll::Missing;
+                }
+                None => {}
+            }
+            if wait.is_zero()
+                || self
+                    .shared
+                    .settled
+                    .wait_until(&mut state, deadline)
+                    .timed_out()
+            {
+                return PreferenceWatchPoll::Pending;
+            }
+        }
+    }
+
+    pub(super) fn enqueue_preference_patch(
+        &self,
+        identity: &DomainIdentity,
+        patch: PreferencePatch,
+    ) -> Result<RequestId, ErrorCode> {
+        let domain = LocalStateDomain::Preferences;
+        let key = StoreKey::Preferences;
+        if !self.is_open(domain) {
+            return Err(ErrorCode::NotReady { domain });
+        }
+        let mut state = self.shared.state.lock();
+        if state.shutdown {
+            return Err(ErrorCode::Busy { domain });
+        }
+        if state.preference_queue_bytes.saturating_add(patch.encoded_bytes)
+            > files::MAX_PREFERENCES_BYTES as usize
+        {
+            return Err(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::TooLong,
+            });
+        }
+        let store = state.stores.get(&key).ok_or(ErrorCode::NotReady { domain })?;
+        if store.queue.len() >= OPERATOR_QUEUE_CAP {
+            return Err(ErrorCode::Busy { domain });
+        }
+        if let FileState::Rejected(rejection) = &store.file {
+            return Err(ErrorCode::Failed {
+                domain,
+                reason: rejection.reason,
+            });
+        }
+        if !self.shared.start_writer(&mut state) {
+            return Err(ErrorCode::Busy { domain });
+        }
+        let request = self
+            .shared
+            .minter
+            .mint()
+            .map_err(|_| ErrorCode::Busy { domain })?;
+        let seq = state.next_seq();
+        let accepted_at = state.clock.unwrap_or(StoreVersion::INITIAL);
+        let queued_bytes = patch.encoded_bytes;
+        let store = state
+            .stores
+            .get_mut(&key)
+            .expect("the preference store was opened before admission");
+        let external = store.external;
+        store.queue.push_back(Queued {
+            request,
+            intent: WriteIntent::Preference {
+                identity: identity.clone(),
+                patch,
+            },
+            seq,
+            accepted_at,
+            external,
+            growth: Growth::default(),
+        });
+        state.preference_queue_bytes += queued_bytes;
+        state.preference_watches.insert(
+            request,
+            PreferenceWatch {
+                settlement: None,
+                queued_bytes,
+            },
+        );
+        state.requests.insert(request, key);
+        drop(state);
+        self.shared.wake.notify_one();
+        Ok(request)
+    }
     /// The operator preferences (`panel-ui.json`) through this service.
     pub fn preferences(self: &Arc<Self>) -> Preferences {
         Preferences::new(Arc::clone(self))
@@ -1020,16 +1358,13 @@ impl LocalStatePort for LocalStateService {
         let superseded = match &key {
             // A newer hint of the same account makes a queued one moot: at
             // most one waits behind the one in flight.
-            StoreKey::BankHint { .. } => store
-                .queue
-                .pop_front()
-                .map(|queued| Terminal::of(&queued.edit, queued.request)),
+            StoreKey::BankHint { .. } => store.queue.pop_front().map(|queued| queued.terminal()),
             StoreKey::Loadouts | StoreKey::Preferences => None,
         };
         let external = store.external;
         store.queue.push_back(Queued {
             request,
-            edit,
+            intent: WriteIntent::Port(edit),
             seq,
             accepted_at,
             external,
@@ -1333,10 +1668,18 @@ impl State {
         successor: Option<RequestId>,
     ) -> bool {
         let State {
-            stores, requests, ..
+            stores,
+            requests,
+            preference_watches,
+            preference_queue_bytes,
+            ..
         } = self;
-        let Some(store) = stores.get_mut(key) else {
+        let Some(store) = stores.get(key) else {
             requests.remove(&request);
+            if let Some(watch) = preference_watches.remove(&request) {
+                *preference_queue_bytes =
+                    preference_queue_bytes.saturating_sub(watch.queued_bytes);
+            }
             return false;
         };
         if store
@@ -1346,6 +1689,15 @@ impl State {
         {
             return false;
         }
+        if let Some(watch) = preference_watches.get_mut(&request) {
+            if watch.settlement.is_none() {
+                *preference_queue_bytes =
+                    preference_queue_bytes.saturating_sub(watch.queued_bytes);
+                watch.queued_bytes = 0;
+                watch.settlement = Some(settlement.clone());
+            }
+        }
+        let store = stores.get_mut(key).expect("the store was checked above");
         store.settled.push_back(Settled {
             request,
             settlement,
@@ -1354,6 +1706,7 @@ impl State {
         while store.settled.len() > SETTLED_PER_STORE {
             if let Some(forgotten) = store.settled.pop_front() {
                 requests.remove(&forgotten.request);
+                preference_watches.remove(&forgotten.request);
             }
         }
         true
@@ -1371,7 +1724,7 @@ impl State {
         let mut cancelled = Vec::new();
         for (key, store) in &mut self.stores {
             for queued in store.queue.drain(..) {
-                terminals.push(Terminal::of(&queued.edit, queued.request));
+                terminals.push(queued.terminal());
                 cancelled.push((key.clone(), queued.request));
             }
             match &store.in_flight {
@@ -1437,29 +1790,29 @@ impl State {
             return;
         };
         let known = !matches!(store.file, FileState::Cold);
-        let (next, rejected_detail) = match &read {
-            Ok(Some(document)) => {
-                if matches!(&store.file, FileState::Read(cached) if cached.digest == Some(document.digest))
-                {
-                    return;
-                }
-                (true, None)
-            }
-            Ok(None) => {
-                if matches!(&store.file, FileState::Read(cached) if cached.digest.is_none()) {
-                    return;
-                }
-                (true, None)
-            }
-            Err(error) => {
-                let detail = error.to_string();
-                if matches!(&store.file, FileState::Rejected(rejection) if rejection.detail == detail)
-                {
-                    return;
-                }
-                (false, Some(detail))
-            }
+        let rejected_detail = match &read {
+            Err(error) => Some(Arc::<str>::from(error.to_string())),
+            _ => None,
         };
+        let unchanged = match (&read, &store.file) {
+            (Ok(Some(document)), FileState::Read(cached)) => {
+                cached.digest == Some(document.digest)
+            }
+            (Ok(None), FileState::Read(cached)) => cached.digest.is_none(),
+            (Err(_), FileState::Rejected(rejection)) => {
+                Some(&rejection.detail) == rejected_detail.as_ref()
+            }
+            _ => false,
+        };
+        if unchanged {
+            if let Some(FileState::Read(cached)) =
+                self.stores.get_mut(key).map(|store| &mut store.file)
+            {
+                cached.refreshed_at = Instant::now();
+            }
+            return;
+        }
+        let next = !matches!(&read, Err(_));
         let version = if next { self.next_version() } else { None };
         let store = self.stores.get_mut(key).expect("checked above");
         let file = match read {
@@ -1495,6 +1848,8 @@ impl State {
                             version,
                             at: document.at,
                             snapshot: document.snapshot,
+                            preferences: document.preferences,
+                            refreshed_at: Instant::now(),
                             digest: Some(document.digest),
                             durable: false,
                             written_len: document.written_len,
@@ -1514,6 +1869,9 @@ impl State {
                             version,
                             at: read_at,
                             snapshot: empty_snapshot(key),
+                            preferences: matches!(key, StoreKey::Preferences)
+                                .then(|| self.preference_default.clone()),
+                            refreshed_at: Instant::now(),
                             digest: None,
                             durable: false,
                             written_len: empty_len(key),
@@ -1543,17 +1901,23 @@ impl State {
     }
 }
 
-/// What the writer staged for one edit, decided under the lock.
+/// What the writer staged for one edit, decided outside the service lock.
 struct Staged {
     bytes: Vec<u8>,
     snapshot: LeaseSnapshot,
     at: DurableTimestamp,
     action: CommitAction,
+    /// A worker-parsed preference projection, when this write changed that file.
+    preferences: Option<files::PreferenceProjection>,
     /// The version the edit applies to, and the one it commits.
     previous: StoreVersion,
     version: StoreVersion,
     /// Whether these bytes are already durable as the file's content.
     unchanged: bool,
+    /// Whether this request changed the saved state and needs a new version.
+    advance_version: bool,
+    /// The one saved-write audit line to emit after durability, if any.
+    audit: Option<AuditKind>,
     /// The digest of what the file held when the write was decided (`None`
     /// for no file): the last check before the rename compares against it.
     precondition: Option<ContentDigest>,
@@ -1561,6 +1925,477 @@ struct Staged {
     /// not (no file yet, another writer's file, or an earlier write whose
     /// directory chain did not finish), the whole chain is flushed.
     durable_before: bool,
+}
+
+enum AuditKind {
+    Plain,
+    Preferences(PreferenceAuditSummary),
+}
+
+struct PreferenceAuditSummary {
+    text: String,
+}
+
+impl std::fmt::Display for PreferenceAuditSummary {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.text)
+    }
+}
+
+const PREFERENCE_AUDIT_MAX_BYTES: usize = 4_096;
+const PREFERENCE_AUDIT_MAX_CHANGES: usize = 32;
+
+#[derive(Clone, Copy)]
+enum PreferenceAuditScalarKind {
+    Boolean,
+    MapBake,
+    ServerRevision,
+}
+
+enum PreferenceAuditScalar<'a> {
+    Absent,
+    Boolean(bool),
+    MapBake(&'a str),
+    ServerRevision(u64),
+}
+
+struct PreferenceAuditChange<'a> {
+    path: Vec<&'a str>,
+    old: Option<&'a serde_json::Value>,
+    new: Option<&'a serde_json::Value>,
+    scalar: Option<PreferenceAuditScalarKind>,
+    count: usize,
+}
+
+fn preference_audit_summary(
+    before: &serde_json::Map<String, serde_json::Value>,
+    after: &serde_json::Map<String, serde_json::Value>,
+) -> Option<PreferenceAuditSummary> {
+    let mut changes = Vec::new();
+    let mut total = 0;
+    let mut path = Vec::new();
+    collect_preference_audit_map(before, after, &mut path, &mut changes, &mut total);
+    if total == 0 {
+        return None;
+    }
+    changes.sort_unstable_by(|left, right| compare_audit_paths(&left.path, &right.path));
+
+    let mut text = String::new();
+    let mut entry = String::new();
+    let mut emitted = 0;
+    for change in &changes {
+        entry.clear();
+        write_preference_audit_change(change, &mut entry);
+        let remaining_after = total.saturating_sub(emitted + 1);
+        let suffix_bytes = if remaining_after == 0 {
+            0
+        } else {
+            omitted_audit_suffix_bytes(remaining_after, true)
+        };
+        let separator_bytes = usize::from(emitted > 0) * 2;
+        let next_len = text
+            .len()
+            .saturating_add(separator_bytes)
+            .saturating_add(entry.len())
+            .saturating_add(suffix_bytes);
+        if next_len > PREFERENCE_AUDIT_MAX_BYTES {
+            break;
+        }
+        if emitted > 0 {
+            text.push_str("; ");
+        }
+        text.push_str(&entry);
+        emitted += 1;
+        if emitted == PREFERENCE_AUDIT_MAX_CHANGES {
+            break;
+        }
+    }
+
+    let omitted = total.saturating_sub(emitted);
+    if omitted > 0 {
+        if !text.is_empty() {
+            text.push_str("; ");
+        }
+        write!(text, "+{omitted} omitted").expect("writing to a String cannot fail");
+    }
+    Some(PreferenceAuditSummary { text })
+}
+
+fn omitted_audit_suffix_bytes(count: usize, has_entry: bool) -> usize {
+    let separator = if has_entry { 2 } else { 0 };
+    separator + 1 + count.ilog10() as usize + " omitted".len()
+}
+
+fn collect_preference_audit_map<'a>(
+    before: &'a serde_json::Map<String, serde_json::Value>,
+    after: &'a serde_json::Map<String, serde_json::Value>,
+    path: &mut Vec<&'a str>,
+    changes: &mut Vec<PreferenceAuditChange<'a>>,
+    total: &mut usize,
+) {
+    for (key, old) in before {
+        path.push(key);
+        collect_preference_audit_change(Some(old), after.get(key), path, changes, total);
+        path.pop();
+    }
+    for (key, new) in after {
+        if before.contains_key(key) {
+            continue;
+        }
+        path.push(key);
+        collect_preference_audit_change(None, Some(new), path, changes, total);
+        path.pop();
+    }
+}
+
+fn collect_preference_audit_change<'a>(
+    old: Option<&'a serde_json::Value>,
+    new: Option<&'a serde_json::Value>,
+    path: &mut Vec<&'a str>,
+    changes: &mut Vec<PreferenceAuditChange<'a>>,
+    total: &mut usize,
+) {
+    if old == new {
+        return;
+    }
+    if !(path.len() == 1
+        && matches!(
+            path[0],
+            "collapsed" | "debug_panel" | "profile_order" | "rail_preview"
+        ))
+    {
+        if let (Some(before), Some(after)) = (
+            old.and_then(serde_json::Value::as_object),
+            new.and_then(serde_json::Value::as_object),
+        ) {
+            collect_preference_audit_map(before, after, path, changes, total);
+            return;
+        }
+    }
+    *total = (*total).saturating_add(1);
+    if changes.len() < PREFERENCE_AUDIT_MAX_CHANGES {
+        changes.push(PreferenceAuditChange {
+            path: path.clone(),
+            old,
+            new,
+            scalar: preference_audit_scalar_kind(path),
+            count: count_preference_audit_values(old, new),
+        });
+        return;
+    }
+    let Some((largest, _)) = changes
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| compare_audit_paths(&left.path, &right.path))
+    else {
+        return;
+    };
+    if compare_audit_paths(path, &changes[largest].path).is_lt() {
+        changes[largest] = PreferenceAuditChange {
+            path: path.clone(),
+            old,
+            new,
+            scalar: preference_audit_scalar_kind(path),
+            count: count_preference_audit_values(old, new),
+        };
+    }
+}
+
+fn count_preference_audit_values(
+    old: Option<&serde_json::Value>,
+    new: Option<&serde_json::Value>,
+) -> usize {
+    if old == new {
+        return 0;
+    }
+    match (old, new) {
+        (Some(serde_json::Value::Object(before)), Some(serde_json::Value::Object(after))) => {
+            count_preference_audit_map(before, after)
+        }
+        (Some(serde_json::Value::Array(before)), Some(serde_json::Value::Array(after))) => {
+            let paired = before
+                .iter()
+                .zip(after)
+                .fold(0usize, |count, (old, new)| {
+                    count.saturating_add(count_preference_audit_values(
+                        Some(old),
+                        Some(new),
+                    ))
+                });
+            let removed = before[after.len().min(before.len())..]
+                .iter()
+                .fold(0usize, |count, value| {
+                    count.saturating_add(count_preference_audit_payload(value))
+                });
+            let added = after[before.len().min(after.len())..]
+                .iter()
+                .fold(0usize, |count, value| {
+                    count.saturating_add(count_preference_audit_payload(value))
+                });
+            paired.saturating_add(removed).saturating_add(added)
+        }
+        _ => old
+            .map_or(0, count_preference_audit_payload)
+            .max(new.map_or(0, count_preference_audit_payload)),
+    }
+    .max(1)
+}
+
+fn count_preference_audit_map(
+    before: &serde_json::Map<String, serde_json::Value>,
+    after: &serde_json::Map<String, serde_json::Value>,
+) -> usize {
+    let changed_before = before.iter().fold(0usize, |count, (key, old)| {
+        count.saturating_add(count_preference_audit_values(
+            Some(old),
+            after.get(key),
+        ))
+    });
+    after
+        .iter()
+        .filter(|(key, _)| !before.contains_key(*key))
+        .fold(changed_before, |count, (_, value)| {
+            count.saturating_add(count_preference_audit_payload(value))
+        })
+}
+
+fn count_preference_audit_payload(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(members) if !members.is_empty() => members
+            .values()
+            .fold(0usize, |count, value| {
+                count.saturating_add(count_preference_audit_payload(value))
+            }),
+        serde_json::Value::Array(members) if !members.is_empty() => {
+            members.iter().fold(0usize, |count, value| {
+                count.saturating_add(count_preference_audit_payload(value))
+            })
+        }
+        _ => 1,
+    }
+}
+
+fn compare_audit_paths(left: &[&str], right: &[&str]) -> std::cmp::Ordering {
+    left.iter().cmp(right.iter())
+}
+
+fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKind> {
+    if path.iter().any(|member| sensitive_audit_key(member)) {
+        return None;
+    }
+    match path {
+        [key]
+            if matches!(
+                *key,
+                "background_bots_ack"
+                    | "capture"
+                    | "focused_50"
+                    | "lowmem"
+                    | "raster"
+                    | "render_all_warning_ack"
+                    | "session_log_file"
+                    | "sidecar_50"
+            ) =>
+        {
+            Some(PreferenceAuditScalarKind::Boolean)
+        }
+        ["nav", key]
+            if matches!(
+                *key,
+                "allow_bank_fetch"
+                    | "allow_danger_zones"
+                    | "allow_teleports"
+                    | "allow_wilderness"
+                    | "pause_script_on_manual_walk_abort"
+                    | "script_scope_notice_ack"
+                    | "show_special_areas"
+                    | "survivable_routing"
+                    | "survivable_routing_notice_ack"
+            ) =>
+        {
+            Some(PreferenceAuditScalarKind::Boolean)
+        }
+        ["quester_paths", "enabled"] => Some(PreferenceAuditScalarKind::Boolean),
+        ["map_bake"] => Some(PreferenceAuditScalarKind::MapBake),
+        ["server_revision"] => Some(PreferenceAuditScalarKind::ServerRevision),
+        _ => None,
+    }
+}
+
+fn sensitive_audit_key(key: &str) -> bool {
+    [
+        "secret", "password", "passwd", "token", "credential", "auth", "cookie", "bearer",
+    ]
+    .iter()
+    .any(|needle| {
+        key.as_bytes()
+            .windows(needle.len())
+            .any(|part| {
+                part.iter()
+                    .zip(needle.as_bytes())
+                    .all(|(left, right)| left.eq_ignore_ascii_case(right))
+            })
+    })
+}
+
+fn write_preference_audit_change(change: &PreferenceAuditChange<'_>, output: &mut String) {
+    let redacted = change.path.iter().any(|member| sensitive_audit_key(member));
+    let key_bytes = change
+        .path
+        .iter()
+        .map(|member| member.len())
+        .sum::<usize>()
+        .saturating_add(change.path.len().saturating_sub(1));
+    if redacted {
+        output.push_str("<redacted-key>");
+    } else if key_bytes > api::local_state::MAX_PREF_KEY_CHARS {
+        output.push_str("<long-key>");
+    } else {
+        frontend::write_preference_path(&change.path, output);
+    }
+    let old = change
+        .scalar
+        .and_then(|kind| preference_audit_scalar(kind, change.old));
+    let new = change
+        .scalar
+        .and_then(|kind| preference_audit_scalar(kind, change.new));
+    if let (Some(old), Some(new)) = (old, new) {
+        output.push_str(": ");
+        write_preference_audit_scalar(old, output);
+        output.push_str(" -> ");
+        write_preference_audit_scalar(new, output);
+    } else {
+        let action = match (change.old, change.new) {
+            (None, Some(_)) => "set",
+            (Some(_), None) => "removed",
+            _ => "changed",
+        };
+        write!(output, ": {action} (count={})", change.count)
+            .expect("writing to a String cannot fail");
+    }
+}
+
+
+fn preference_audit_scalar<'a>(
+    kind: PreferenceAuditScalarKind,
+    value: Option<&'a serde_json::Value>,
+) -> Option<PreferenceAuditScalar<'a>> {
+    match (kind, value) {
+        (_, None) => Some(PreferenceAuditScalar::Absent),
+        (PreferenceAuditScalarKind::Boolean, Some(serde_json::Value::Bool(value))) => {
+            Some(PreferenceAuditScalar::Boolean(*value))
+        }
+        (PreferenceAuditScalarKind::MapBake, Some(serde_json::Value::String(value)))
+            if matches!(value.as_str(), "ask" | "always") =>
+        {
+            Some(PreferenceAuditScalar::MapBake(value))
+        }
+        (
+            PreferenceAuditScalarKind::ServerRevision,
+            Some(serde_json::Value::Number(value)),
+        ) => value
+            .as_u64()
+            .filter(|revision| *revision <= u16::MAX.into())
+            .map(PreferenceAuditScalar::ServerRevision),
+        _ => None,
+    }
+}
+
+fn write_preference_audit_scalar(value: PreferenceAuditScalar<'_>, output: &mut String) {
+    match value {
+        PreferenceAuditScalar::Absent => output.push_str("absent"),
+        PreferenceAuditScalar::Boolean(value) => {
+            write!(output, "{value}").expect("writing to a String cannot fail");
+        }
+        PreferenceAuditScalar::MapBake(value) => output.push_str(value),
+        PreferenceAuditScalar::ServerRevision(value) => {
+            write!(output, "{value}").expect("writing to a String cannot fail");
+        }
+    }
+}
+
+#[cfg(test)]
+mod preference_audit_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn summary_shows_approved_scalars_and_hides_payloads() {
+        let before = json!({
+            "capture": false,
+            "legacy.key": false,
+            "map_bake": "ask",
+            "quester_paths": { "enabled": false, "folder": "/private/source" },
+            "debug_panel": { "pins": ["old pin"], "recent": [] },
+            "secret_token": "old-sensitive-value",
+            "unknown": "old-unknown-value",
+            "weird": { "bad\nkey;": "old-payload" },
+        });
+        let after = json!({
+            "capture": true,
+            "legacy.key": true,
+            "map_bake": "always",
+            "quester_paths": { "enabled": true, "folder": "/private/changed" },
+            "debug_panel": { "pins": ["new pin"], "recent": ["new recent"] },
+            "secret_token": "new-sensitive-value",
+            "unknown": "new-unknown-value",
+            "weird": { "bad\nkey;": "new-payload" },
+        });
+
+        let summary = preference_audit_summary(
+            before.as_object().expect("an object"),
+            after.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(summary.text.contains("capture: false -> true"));
+        assert!(summary.text.contains("legacy\\.key: changed (count=1)"));
+        assert!(summary
+            .text
+            .contains("weird.bad\\nkey\\;: changed (count=1)"));
+        assert!(!summary.text.contains('\n'));
+        assert!(summary.text.contains("map_bake: ask -> always"));
+        assert!(summary
+            .text
+            .contains("quester_paths.enabled: false -> true"));
+        assert!(summary.text.contains("quester_paths.folder: changed"));
+        assert!(summary.text.contains("<redacted-key>: changed (count=1)"));
+        assert!(summary.text.contains("debug_panel: changed (count=2)"));
+        assert!(!summary.text.contains("old pin"));
+        assert!(!summary.text.contains("new recent"));
+        assert!(!summary.text.contains("/private/"));
+        assert!(!summary.text.contains("sensitive-value"));
+        assert!(!summary.text.contains("unknown-value"));
+        assert!(
+            preference_audit_summary(
+                before.as_object().expect("an object"),
+                before.as_object().expect("an object"),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn summary_stays_within_byte_and_change_limits() {
+        let before: serde_json::Map<String, serde_json::Value> = (0..40)
+            .map(|index| (format!("key{index:02}"), json!(0)))
+            .collect();
+        let after: serde_json::Map<String, serde_json::Value> = (0..40)
+            .map(|index| (format!("key{index:02}"), json!(1)))
+            .collect();
+
+        let summary = preference_audit_summary(&before, &after).expect("changed keys");
+        assert!(summary.text.len() <= PREFERENCE_AUDIT_MAX_BYTES);
+        assert!(summary.text.ends_with("+8 omitted"));
+        let long_before: serde_json::Map<String, serde_json::Value> = (0..40)
+            .map(|index| (format!("{}-{index:02}", "k".repeat(120)), json!(0)))
+            .collect();
+        let long_after: serde_json::Map<String, serde_json::Value> = (0..40)
+            .map(|index| (format!("{}-{index:02}", "k".repeat(120)), json!(1)))
+            .collect();
+        let long = preference_audit_summary(&long_before, &long_after).expect("long keys");
+        assert!(long.text.len() <= PREFERENCE_AUDIT_MAX_BYTES);
+        assert!(long.text.ends_with(" omitted"));
+    }
 }
 
 impl Shared {
@@ -1692,7 +2527,7 @@ impl Shared {
                 // and those queued behind it (accepted against that state),
                 // and read the file again.
                 let domain = key.domain();
-                let mut failed = vec![Terminal::of(&queued.edit, queued.request)];
+                let mut failed = vec![queued.terminal()];
                 if let Some(store) = state.stores.get_mut(key) {
                     store.in_flight = None;
                     store.file = FileState::Cold;
@@ -1700,7 +2535,7 @@ impl Shared {
                         store
                             .queue
                             .drain(..)
-                            .map(|queued| Terminal::of(&queued.edit, queued.request)),
+                            .map(|queued| queued.terminal()),
                     );
                 }
                 let settlement = Settlement::Failed(ErrorCode::Failed {
@@ -1775,6 +2610,13 @@ impl Shared {
         recover: bool,
         held: Option<&files::WriteLock>,
     ) -> Result<Option<ReadDocument>, ReadError> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let read_stall = self.state.lock().read_stall.clone();
+            if let Some(stall) = read_stall {
+                stall();
+            }
+        }
         let read = files::read(key, &self.root, read_at);
         let Some(repair) = Repair::of(key, &read, recover) else {
             return read;
@@ -2066,37 +2908,57 @@ impl Shared {
         // this edit is never decided against them).
         let read_at = DurableTimestamp::now();
         let read = self.read_repairing(key, read_at, false, Some(&guard));
-        let staged = {
+        let decision = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
-            let decided = decide(key, &state, queued);
-            match decided {
-                Ok(mut staged) => {
-                    if !staged.unchanged {
-                        match state.next_version() {
-                            Some(version) => staged.version = version,
-                            None => {
-                                drop(state);
-                                // The version space is spent: refuse, never wrap.
-                                self.finish(
-                                    key,
-                                    queued,
-                                    Settlement::Failed(ErrorCode::Busy { domain }),
-                                    false,
-                                );
-                                return;
-                            }
-                        }
+            state.stores.get(key).map(|store| {
+                let file = match &store.file {
+                    FileState::Read(cached) => {
+                        DecisionFile::Read(CachedDecision::from_cached(cached, key.domain()))
                     }
-                    staged
-                }
-                Err(settlement) => {
-                    drop(state);
-                    self.finish(key, queued, settlement, false);
+                    FileState::Rejected(rejection) => {
+                        DecisionFile::Rejected(rejection.reason)
+                    }
+                    FileState::Cold => DecisionFile::Cold,
+                };
+                (file, store.external)
+            })
+        };
+        let Some((file, external)) = decision else {
+            self.finish(
+                key,
+                queued,
+                Settlement::Failed(ErrorCode::Failed {
+                    domain,
+                    reason: FailureReason::Dirty,
+                }),
+                false,
+            );
+            return;
+        };
+        let mut staged = match decide(key, &file, external, queued) {
+            Ok(staged) => staged,
+            Err(settlement) => {
+                self.finish(key, queued, settlement, false);
+                return;
+            }
+        };
+        if staged.advance_version {
+            let version = self.state.lock().next_version();
+            match version {
+                Some(version) => staged.version = version,
+                None => {
+                    // The version space is spent: refuse, never wrap.
+                    self.finish(
+                        key,
+                        queued,
+                        Settlement::Failed(ErrorCode::Busy { domain }),
+                        false,
+                    );
                     return;
                 }
             }
-        };
+        }
         if staged.unchanged {
             // These bytes are already durable, written by this service: no
             // write, and no commit to audit.
@@ -2104,7 +2966,7 @@ impl Shared {
                 key,
                 queued,
                 Settlement::Completed(DurableReceipt::new(
-                    queued.edit.identity().clone(),
+                    queued.intent.identity().clone(),
                     staged.previous,
                     DurableTimestamp::now(),
                     Some(request),
@@ -2181,6 +3043,8 @@ impl Shared {
                     version: staged.version,
                     at: staged.at,
                     snapshot: staged.snapshot,
+                    preferences: staged.preferences,
+                    refreshed_at: Instant::now(),
                     digest: Some(written),
                     durable: synced.is_ok(),
                     written_len: staged.bytes.len(),
@@ -2200,15 +3064,20 @@ impl Shared {
             return;
         }
         let now = DurableTimestamp::now();
-        let identity = queued.edit.identity().clone();
-        self.audit(AuditCommit::after_commit(
-            identity.clone(),
-            staged.action,
-            staged.previous,
-            staged.version,
-            AuditOrigin::Submitted { request },
-            now,
-        ));
+        let identity = queued.intent.identity().clone();
+        if let Some(audit) = &staged.audit {
+            self.audit(
+                AuditCommit::after_commit(
+                    identity.clone(),
+                    staged.action,
+                    staged.previous,
+                    staged.version,
+                    AuditOrigin::Submitted { request },
+                    now,
+                ),
+                audit,
+            );
+        }
         self.finish(
             key,
             queued,
@@ -2278,7 +3147,7 @@ impl Shared {
             state.adopt(key, read, read_at, path);
             match state.stores.get(key).map(|store| &store.file) {
                 Some(FileState::Read(cached)) => Settlement::Failed(ErrorCode::Conflict {
-                    expected: queued.edit.expected().unwrap_or(queued.accepted_at),
+                    expected: queued.intent.expected().unwrap_or(queued.accepted_at),
                     found: cached.version,
                 }),
                 Some(FileState::Rejected(rejection)) => Settlement::Failed(ErrorCode::Failed {
@@ -2324,7 +3193,7 @@ impl Shared {
         if state.settle(key, queued.request, settlement.clone(), None) && !committed {
             drop(state);
             self.terminal(
-                &Terminal::of(&queued.edit, queued.request),
+                &queued.terminal(),
                 &settlement,
                 None,
             );
@@ -2363,8 +3232,15 @@ impl Shared {
         Ok(())
     }
 
-    fn audit(&self, audit: AuditCommit) {
-        host_log!(Category::Lifecycle, Level::Info, "{audit}");
+    fn audit(&self, audit: AuditCommit, kind: &AuditKind) {
+        match kind {
+            AuditKind::Plain => host_log!(Category::Lifecycle, Level::Info, "{audit}"),
+            AuditKind::Preferences(summary) => host_log!(
+                Category::Lifecycle,
+                Level::Info,
+                "{audit}; preferences: {summary}"
+            ),
+        }
         #[cfg(test)]
         {
             let hook = self.state.lock().hooks.audit.clone();
@@ -2474,57 +3350,90 @@ fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
     })
 }
 
-/// Decide `queued` against what the store holds now (after the
-/// precondition read was adopted): the staged write, or the settlement it
-/// ends with untouched.
-fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, WriteSettlement> {
+/// Decide `queued` against a worker-owned copy of the latest file state.
+/// Preference cloning, patching, serialization and typed projection run
+/// after the service lock is released.
+struct CachedDecision {
+    version: StoreVersion,
+    snapshot: Option<LeaseSnapshot>,
+    preferences: Option<files::PreferenceProjection>,
+    digest: Option<ContentDigest>,
+    durable: bool,
+    written_len: usize,
+    rewrite: Rewrite,
+}
+
+impl CachedDecision {
+    fn from_cached(cached: &Cached, domain: LocalStateDomain) -> Self {
+        let needs_snapshot =
+            domain == LocalStateDomain::LoadoutsReferences
+                || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
+        Self {
+            version: cached.version,
+            snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
+            preferences: cached.preferences.clone(),
+            digest: cached.digest,
+            durable: cached.durable,
+            written_len: cached.written_len,
+            rewrite: cached.rewrite.clone(),
+        }
+    }
+}
+
+enum DecisionFile {
+    Read(CachedDecision),
+    Rejected(FailureReason),
+    Cold,
+}
+
+fn decide(
+    key: &StoreKey,
+    file: &DecisionFile,
+    external: u64,
+    queued: &Queued,
+) -> Result<Staged, WriteSettlement> {
     let domain = key.domain();
-    let Some(store) = state.stores.get(key) else {
-        return Err(Settlement::Failed(ErrorCode::Failed {
-            domain,
-            reason: FailureReason::Dirty,
-        }));
-    };
-    let cached = match &store.file {
-        FileState::Read(cached) => cached,
-        FileState::Rejected(rejection) => {
+    let cached = match file {
+        DecisionFile::Read(cached) => cached,
+        DecisionFile::Rejected(reason) => {
             return Err(Settlement::Failed(ErrorCode::Failed {
                 domain,
-                reason: rejection.reason,
+                reason: *reason,
             }))
         }
-        FileState::Cold => {
+        DecisionFile::Cold => {
             return Err(Settlement::Failed(ErrorCode::Failed {
                 domain,
                 reason: FailureReason::Dirty,
             }))
         }
     };
-    if store.external != queued.external {
-        // The file changed outside this service after the edit was
-        // accepted: what the edit was written against is gone.
+    if matches!(&queued.intent, WriteIntent::Port(_)) && external != queued.external {
+        // Port edits are versioned against the observed file; preference
+        // patches are member intents and rebase on the worker's latest read.
         return Err(Settlement::Failed(ErrorCode::Conflict {
-            expected: queued.edit.expected().unwrap_or(queued.accepted_at),
+            expected: queued.intent.expected().unwrap_or(queued.accepted_at),
             found: cached.version,
         }));
     }
-    if !queued.edit.applies_to(cached.version) {
-        return Err(Settlement::Failed(ErrorCode::Conflict {
-            expected: queued
-                .edit
-                .expected()
-                .expect("a blind write applies to any version"),
-            found: cached.version,
-        }));
+    if let WriteIntent::Port(edit) = &queued.intent {
+        if !edit.applies_to(cached.version) {
+            return Err(Settlement::Failed(ErrorCode::Conflict {
+                expected: edit
+                    .expected()
+                    .expect("a blind write applies to any version"),
+                found: cached.version,
+            }));
+        }
     }
-    if let Rewrite::Refused { .. } = cached.rewrite {
+    if matches!(&cached.rewrite, Rewrite::Refused { .. }) {
         return Err(Settlement::Failed(ErrorCode::Failed {
             domain,
             reason: FailureReason::Schema,
         }));
     }
-    let (bytes, snapshot, at, action) = match &queued.edit {
-        DomainEdit::Bank(hint) => {
+    let (bytes, snapshot, at, action, preferences, audit) = match &queued.intent {
+        WriteIntent::Port(DomainEdit::Bank(hint)) => {
             let bytes = files::hint_bytes(key, hint.rows(), hint.observed_at())
                 .map_err(|_| schema_failure(domain))?;
             let snapshot = LeaseSnapshot::bank_hints(hint.rows().to_vec())
@@ -2534,19 +3443,22 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
                 snapshot,
                 hint.observed_at(),
                 CommitAction::BankHintWrite,
+                None,
+                Some(AuditKind::Plain),
             )
         }
-        DomainEdit::Loadout(edit) => {
-            let rows = cached.snapshot.as_loadouts().unwrap_or(&[]);
+        WriteIntent::Port(DomainEdit::Loadout(edit)) => {
+            let rows = cached
+                .snapshot
+                .as_ref()
+                .and_then(LeaseSnapshot::as_loadouts)
+                .unwrap_or(&[]);
             let next = files::apply_loadout_edit(rows, edit).map_err(|refusal| {
                 Settlement::Failed(match refusal {
-                    // The row the rename was written against is gone.
                     RenameRefusal::MissingSource => ErrorCode::Conflict {
                         expected: edit.expected().unwrap_or(cached.version),
                         found: cached.version,
                     },
-                    // Names key the rows: taking another row's name would
-                    // replace it.
                     RenameRefusal::NameTaken => ErrorCode::Validation {
                         domain,
                         reason: ValidationReason::DuplicateId,
@@ -2554,7 +3466,6 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
                 })
             })?;
             let bytes = files::loadouts_bytes(&next).map_err(|_| schema_failure(domain))?;
-            // Admission projected an upper bound; this is the exact check.
             if next.len() > files::MAX_LOADOUT_ROWS && next.len() > rows.len() {
                 return Err(Settlement::Failed(ErrorCode::Validation {
                     domain,
@@ -2572,59 +3483,172 @@ fn decide(key: &StoreKey, state: &State, queued: &Queued) -> Result<Staged, Writ
                 LeaseSnapshot::loadouts(next),
                 DurableTimestamp::now(),
                 CommitAction::LoadoutWrite,
+                None,
+                Some(AuditKind::Plain),
             )
         }
-        DomainEdit::Preferences(edit) => {
-            let rows = cached.snapshot.as_preferences().unwrap_or(&[]);
-            let mut document =
-                files::preference_document(rows).ok_or_else(|| schema_failure(domain))?;
+        WriteIntent::Port(DomainEdit::Preferences(edit)) => {
+            let before =
+                current_preference_document(cached).ok_or_else(|| schema_failure(domain))?;
+            let mut document = before.as_ref().clone();
             if files::apply_preferences_edit(&mut document, edit.changes()).is_none() {
-                // Every value is JSON (admission checked); a nested key
-                // whose member is not an object cannot be written, and
-                // then no change of the edit is.
                 return Err(Settlement::Failed(ErrorCode::Validation {
                     domain,
                     reason: ValidationReason::Schema,
                 }));
             }
-            let (next, unrepresentable) = files::preference_rows(&document);
-            if unrepresentable > 0 {
-                return Err(Settlement::Failed(ErrorCode::Validation {
-                    domain,
-                    reason: ValidationReason::TooLong,
-                }));
-            }
-            let bytes = files::preferences_bytes(&document).map_err(|_| schema_failure(domain))?;
-            if bytes.len() as u64 > files::MAX_PREFERENCES_BYTES && bytes.len() > cached.written_len
-            {
-                return Err(Settlement::Failed(ErrorCode::Validation {
-                    domain,
-                    reason: ValidationReason::TooLong,
-                }));
-            }
+            let (bytes, snapshot, projection, summary) =
+                stage_preference_document(document, &before, cached, domain)?;
             (
                 bytes,
-                LeaseSnapshot::preferences(next),
+                snapshot,
                 DurableTimestamp::now(),
                 CommitAction::PreferencesWrite,
+                Some(projection),
+                summary.map(AuditKind::Preferences),
             )
         }
-        DomainEdit::Knowledge(_) => {
+        WriteIntent::Preference { patch, .. } => {
+            let before =
+                current_preference_document(cached).ok_or_else(|| schema_failure(domain))?;
+            let mut document = before.as_ref().clone();
+            if apply_preference_patch(&mut document, patch).is_err() {
+                return Err(Settlement::Failed(ErrorCode::Validation {
+                    domain,
+                    reason: ValidationReason::Schema,
+                }));
+            }
+            let (bytes, snapshot, projection, summary) =
+                stage_preference_document(document, &before, cached, domain)?;
+            (
+                bytes,
+                snapshot,
+                DurableTimestamp::now(),
+                CommitAction::PreferencesWrite,
+                Some(projection),
+                summary.map(AuditKind::Preferences),
+            )
+        }
+        WriteIntent::Port(DomainEdit::Knowledge(_)) => {
             unreachable!("knowledge has no current file, so no store admits it")
         }
     };
     let unchanged = cached.durable && cached.digest == Some(files::digest(&bytes));
+    let advance_version = !unchanged && audit.is_some();
     Ok(Staged {
         bytes,
         snapshot,
         at,
         action,
+        preferences,
         previous: cached.version,
         version: cached.version,
         unchanged,
+        advance_version,
+        audit,
         precondition: cached.digest,
         durable_before: cached.durable,
     })
+}
+
+fn current_preference_document(cached: &CachedDecision) -> Option<Arc<serde_json::Map<String, serde_json::Value>>> {
+    cached
+        .preferences
+        .as_ref()
+        .map(|projection| Arc::clone(&projection.document))
+        .or_else(|| {
+            files::preference_document(
+                cached
+                    .snapshot
+                    .as_ref()
+                    .and_then(LeaseSnapshot::as_preferences)
+                    .unwrap_or(&[]),
+            )
+            .map(Arc::new)
+        })
+}
+
+fn stage_preference_document(
+    document: serde_json::Map<String, serde_json::Value>,
+    before: &Arc<serde_json::Map<String, serde_json::Value>>,
+    cached: &CachedDecision,
+    domain: LocalStateDomain,
+) -> Result<
+    (
+        Vec<u8>,
+        LeaseSnapshot,
+        files::PreferenceProjection,
+        Option<PreferenceAuditSummary>,
+    ),
+    WriteSettlement,
+> {
+    let projection = files::project_preferences(document);
+    let summary = preference_audit_summary(before, &projection.document);
+    let (rows, unrepresentable) = files::preference_rows(&projection.document);
+    if unrepresentable > 0 {
+        return Err(Settlement::Failed(ErrorCode::Validation {
+            domain,
+            reason: ValidationReason::TooLong,
+        }));
+    }
+    let bytes = files::preferences_bytes(&projection.document)
+        .map_err(|_| schema_failure(domain))?;
+    if bytes.len() as u64 > files::MAX_PREFERENCES_BYTES && bytes.len() > cached.written_len {
+        return Err(Settlement::Failed(ErrorCode::Validation {
+            domain,
+            reason: ValidationReason::TooLong,
+        }));
+    }
+    Ok((
+        bytes,
+        LeaseSnapshot::preferences(rows),
+        projection,
+        summary,
+    ))
+}
+
+fn apply_preference_patch(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    patch: &PreferencePatch,
+) -> Result<(), ()> {
+    use serde_json::Value;
+
+    for member in &patch.members {
+        let Some((leaf, parents)) = member.path.split_last() else {
+            return Err(());
+        };
+        let mut object = &mut *document;
+        let mut skipped = false;
+        for segment in parents {
+            match object.get_mut(segment) {
+                Some(Value::Object(child)) => object = child,
+                Some(_) => return Err(()),
+                None if member.value.is_some() => {
+                    object.insert(segment.clone(), Value::Object(serde_json::Map::new()));
+                    let Some(Value::Object(child)) = object.get_mut(segment) else {
+                        unreachable!("the object member was inserted above")
+                    };
+                    object = child;
+                }
+                None => {
+                    skipped = true;
+                    break;
+                }
+            }
+        }
+        if skipped {
+            continue;
+        }
+        match &member.value {
+            Some(value) => {
+                object.insert(leaf.clone(), value.clone());
+            }
+            None => {
+                object.remove(leaf);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {
@@ -2667,7 +3691,7 @@ fn take_job(state: &mut State) -> Option<Job> {
     let store = state.stores.get_mut(&key).expect("found above");
     let queued = store.queue.pop_front().expect("found above");
     store.in_flight = Some(InFlight {
-        terminal: Terminal::of(&queued.edit, queued.request),
+        terminal: queued.terminal(),
         publishing: false,
     });
     Some(Job::Write(key, queued))
