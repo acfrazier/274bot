@@ -361,9 +361,7 @@ fn current_probe(session: &Session, name: &str) -> Result<serde_json::Value, Str
             arm.route_generation,
             arm.queued_tile().map(|tile| [tile.x, tile.z, tile.level]),
             arm.route.is_some() || arm.bank_fetch.is_some(),
-            arm.traveller
-                .current_aim()
-                .map(|tile| [tile.x, tile.z, tile.level]),
+            arm.current_aim().map(|tile| [tile.x, tile.z, tile.level]),
         )
     }) {
         proof["walk_arm"] = serde_json::json!({

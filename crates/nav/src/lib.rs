@@ -1,3 +1,7 @@
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+#![deny(clippy::disallowed_macros)]
+
 //! Nav: whole-world collision bake, transport graph, Dijkstra router
 //! (`find` / `find_with`), WalkTo grid, arrival detection, and the
 //! content-derived bank stand table. The `nav-executor` crate drives routes.

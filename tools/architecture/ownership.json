@@ -5735,6 +5735,46 @@
       "owner": "T1"
     },
     {
+      "path": "tools/architecture/nav_clippy.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/i1.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/i2.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/i3.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/i4.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/i5.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/lib.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/m2.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_external_facade/src/review.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "tools/architecture/nav_clippy_probes.rs",
+      "owner": "T5"
+    },
+    {
       "path": "tools/architecture/run.sh",
       "owner": "T1"
     },

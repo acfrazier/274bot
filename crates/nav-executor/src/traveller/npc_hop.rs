@@ -9,7 +9,7 @@ pub(super) struct NpcRecovery {
     pub last_tick: Option<u32>,
     pub failed: [Option<(usize, WorldTile)>; NPC_HOP_ATTEMPTS as usize],
     pub dialog_started: bool,
-    pub detail: Option<&'static str>,
+    pub detail: Option<NpcHopBlockReason>,
 }
 
 fn cardinal_stand(snapshot: &GameSnapshot, npc: &NpcView, stand: WorldTile) -> bool {
@@ -158,17 +158,21 @@ impl FollowRun {
             unreachable!()
         };
         let missing = find_transport_target_instance(snapshot, edge, hop.npc_index).is_none();
-        if let Some(detail) = missing
-            .then_some("tracked target missing")
-            .or(hop.npc_recovery.detail)
-        {
+        let reason = if missing {
+            Some(NpcHopBlockReason::TrackedTargetMissing)
+        } else {
+            hop.npc_recovery.detail
+        };
+        if let Some(reason) = reason {
             TravelOutcome::Blocked {
                 at: here(snapshot),
                 leg: self.leg_index,
-                detail: format!(
-                    "npc hop {}: {detail}; {} attempts, leg budget {} ticks exhausted",
-                    edge.loc_id, hop.tries, self.budget
-                ),
+                why: BlockedWhy::NpcHopExpired {
+                    loc_id: edge.loc_id,
+                    reason,
+                    attempts: hop.tries,
+                    budget: self.budget,
+                },
             }
         } else {
             TravelOutcome::Stalled {
@@ -218,16 +222,18 @@ impl FollowRun {
             &hop.npc_recovery.failed,
         ) else {
             hop.npc_recovery.detail = Some(if current.is_none() {
-                "tracked target missing"
+                NpcHopBlockReason::TrackedTargetMissing
             } else {
-                "no reachable operable stand"
+                NpcHopBlockReason::NoReachableOperableStand
             });
             return Poll::Watching;
         };
         hop.npc_index = Some(npc.index);
         hop.npc_recovery.detail = None;
         if here != stand || !npc_interaction_ready(snapshot, here, npc) {
-            let old = hop.approach.as_mut().unwrap();
+            let Some(old) = hop.approach.as_mut() else {
+                unreachable!("NPC approach selection requires its current approach state");
+            };
             if old.tile == stand && old.at == npc.network && !old.retry_pending {
                 return Poll::Watching;
             }
@@ -251,7 +257,7 @@ impl FollowRun {
                     ..
                 } => {
                     old.retry_pending = true;
-                    hop.npc_recovery.detail = Some("approach route refused");
+                    hop.npc_recovery.detail = Some(NpcHopBlockReason::ApproachRouteRefused);
                 }
                 SendResult::Refused { reason, .. } => {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -300,10 +306,10 @@ impl FollowRun {
             return Poll::Terminal(TravelOutcome::Blocked {
                 at: here(snapshot),
                 leg: self.leg_index,
-                detail: format!(
-                    "npc hop {} gave up after {} attempts: reach failure",
-                    edge.loc_id, hop.tries
-                ),
+                why: BlockedWhy::NpcReachRetriesExhausted {
+                    loc_id: edge.loc_id,
+                    attempts: hop.tries,
+                },
             });
         }
         if let Some(index) = hop.npc_index {
@@ -311,7 +317,7 @@ impl FollowRun {
                 Some((index, hop.sent_tile.unwrap_or_else(|| here(snapshot))));
         }
         hop.chat_seq = chat_seq(snapshot);
-        hop.npc_recovery.detail = Some("reach failure");
+        hop.npc_recovery.detail = Some(NpcHopBlockReason::ReachFailure);
         hop.approach = Some(ApproachHop {
             tile: here(snapshot),
             at: here(snapshot),
