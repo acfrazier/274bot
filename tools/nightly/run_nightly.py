@@ -984,6 +984,51 @@ def _short_line(text: object, limit: int = 200) -> str:
     return " ".join(str(text).split())[:limit] or "unknown reason"
 
 
+def _run_fetch_group(cmd: list[str], env: dict | None, timeout: float | None) -> subprocess.CompletedProcess:
+    """Run one fetch in its own process group and capture its output.
+
+    POSIX (`start_new_session=True` in `popen_group`) puts the fetch in a new
+    session, so `kill_tree` (`killpg`) reaches `git-remote-https` and any other
+    child. This is safe because the new group holds only this fetch subtree;
+    the runner keeps its own group. Windows (`CREATE_NEW_PROCESS_GROUP` in
+    `popen_group`) isolates the fetch the same way and `kill_tree`
+    (`taskkill /T /F`) ends the fetch tree by PID, so only that subtree stops.
+    The caller polls `note_quiet_lock` (the runner's existing lock check)
+    while the fetch runs; a lock or the timeout kills the whole group.
+    """
+    proc = popen_group(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    track(proc.pid, lambda: kill_tree(proc.pid, proc))
+    started = time.monotonic()
+    out = ""
+    try:
+        while True:
+            remaining = None if timeout is None else timeout - (time.monotonic() - started)
+            if remaining is not None and remaining <= 0:
+                kill_tree(proc.pid, proc)
+                proc.wait()
+                out, _ = proc.communicate()
+                raise subprocess.TimeoutExpired(cmd, timeout, output=out)
+            wait_s = 5.0 if remaining is None else min(5.0, remaining)
+            try:
+                out, _ = proc.communicate(timeout=wait_s)
+                break
+            except subprocess.TimeoutExpired:
+                if note_quiet_lock():
+                    kill_tree(proc.pid, proc)
+                    proc.wait()
+                    out, _ = proc.communicate()
+                    raise QuietLockError(f"quiet lock held: {_quiet_lock_reason}") from None
+                if timeout is not None and time.monotonic() - started >= timeout:
+                    kill_tree(proc.pid, proc)
+                    proc.wait()
+                    out, _ = proc.communicate()
+                    raise subprocess.TimeoutExpired(cmd, timeout, output=out)
+    finally:
+        untrack(proc.pid)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, None)
+
+
 def fetch_upstream_main(catalog: Path, repository: str,
                         timeout: float = RS2B0T_FETCH_TIMEOUT_S) -> str:
     """Fetch upstream `main` into `refs/nightly/upstream-main`; return the tip.
@@ -991,13 +1036,18 @@ def fetch_upstream_main(catalog: Path, repository: str,
     The fetch moves no branch and no checkout: it only adds objects and that
     one namespaced ref, so the catalog's checked-out commit never changes.
     One fetch per process: later branches reuse the cached tip or failure.
+    A held quiet lock stops the fetch before it starts; the timeout and a lock
+    that appears during the fetch stop the whole process group.
     """
     key = (str(catalog), repository)
     if key not in _api_upstream:
         try:
-            fetched = run(git_cmd("-C", str(catalog), "fetch", "--no-tags", repository,
-                                  f"+refs/heads/main:{RS2B0T_UPSTREAM_REF}"),
-                          env=git_env(), check=False, timeout=timeout)
+            locked = note_quiet_lock()
+            if locked:
+                raise QuietLockError(f"quiet lock held: {locked}")
+            fetched = _run_fetch_group(git_cmd("-C", str(catalog), "fetch", "--no-tags", repository,
+                                              f"+refs/heads/main:{RS2B0T_UPSTREAM_REF}"),
+                                      env=git_env(), timeout=timeout)
             if fetched.returncode != 0:
                 detail = _short_line(fetched.stdout)
                 suffix = f": {detail}" if detail != "unknown reason" else ""
@@ -1097,12 +1147,16 @@ def _check_rs2b0t_api_drift(tree: Path | None, catalog: Path, timeout: float) ->
         return {**base, "status": "unchanged", "files": {}, "commits": [], "commit_count": 0}
     logged = run(git_cmd("-C", str(catalog), "log", "--format=%H%x00%s", f"{freeze_rev}..{tip}",
                          "--", *RS2B0T_API_FILES), env=git_env(), check=False)
+    if logged.returncode != 0:
+        detail = _short_line(logged.stdout)
+        suffix = f": {detail}" if detail != "unknown reason" else ""
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"commit list failed (exit {logged.returncode}){suffix}"}
     entries = []
-    if logged.returncode == 0:
-        for line in logged.stdout.splitlines():
-            sha, _, subject = line.partition("\x00")
-            if sha:
-                entries.append({"sha": sha[:8], "subject": subject})
+    for line in logged.stdout.splitlines():
+        sha, _, subject = line.partition("\x00")
+        if sha:
+            entries.append({"sha": sha[:8], "subject": subject})
     return {**base, "status": "changed", "files": files,
             "commits": entries[:RS2B0T_MAX_COMMITS], "commit_count": len(entries)}
 
