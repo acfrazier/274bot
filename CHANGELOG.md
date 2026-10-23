@@ -1,25 +1,12 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.5` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.6` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
 
-### Panel and TUI
+### Panel and terminal app
 
-- Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
-- A bot's **Start** in the panel runs the script its Script section shows. In 0.2.5, after **Assign** from Fleet, it could start an older pick from the script browser instead.
-- Player and NPC movement, action poses, map effects, projectile flight, and
-  cutscene cameras keep their animation time between bot views and after late
-  frames. Old smoke no longer starts only when a bot’s game view is first drawn.
-- Script settings no longer leave Start blocked after a failed or cancelled
-  save. Failed saves restore the saved value, show the error at the field,
-  and can be retried. The panel names the card and field of hidden unsaved
-  edits and offers **Discard unsaved settings**. Script prefs labels wrap,
-  number fields show their valid ranges, and invalid values show an error
-  before the form closes. The panel and TUI wait for settings saves before
-  Start. Each successful save logs the card, field, old and new values,
-  action and operation id.
 - Script paint in the panel now follows rs2b0t's layout. The paint has a title bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's colours. Pause and Stop are compact buttons side by side. Only the small square at the right end of the title bar collapses the paint. The built-in Gatherer and Sherlock scripts now show the same Pause and Stop buttons on their paint. With input capture on, a click on the paint no longer also clicks the game under it.
 - With input capture on, the slot that receives a game press also receives its release. This still holds if the pointer leaves the Game Image. A focus change releases the held button from the slot that received the press.
 - The terminal app can now add a profile. Start `tui-play` on an empty vault to open a **New profile**
@@ -32,28 +19,148 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
 - The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
 
+### Fixed during development
+
+- `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
+
+## [0.2.6] — 2026-10-23 — Beta 2
+
+### Panel and terminal app
+
+- Switching the log view from **all bots** to **bot** now shows only the focused
+  bot's lines in the panel and terminal app.
+- After you use **Assign** in the Fleet toolbar, **Start** runs the card shown
+  in that bot's **Script** section.
+- Animations keep moving while you view another bot or after a slow frame. This
+  includes player and NPC movement, action poses, map effects, projectiles, and
+  cutscenes.
+- Script settings no longer leave **Start** blocked after a failed or cancelled
+  save. Failed saves restore the saved value and show the error by the field.
+  You can retry the save. The panel names the card and field of hidden unsaved
+  edits and offers **Discard unsaved settings**. **Script prefs** labels wrap.
+  Number fields show their valid ranges. The form shows an error before it
+  closes when a value is invalid. The panel and terminal app wait for settings
+  saves before **Start**. Each successful save adds a log entry with the card,
+  field, old and new values, and action.
+- Loading a bot profile no longer stalls while 274bot prepares its quest data.
+
 ### Scripts
 
-- With "Pause script on manual movement" on, moving the bot yourself now pauses
-  any running rs2b0t script. It also pauses a built-in script while it acts in
-  place, such as fighting or gathering. Resume continues the script.
-- Examine and Cancel from a game-world menu no longer count as manual movement.
-- Grinch makes one fresh return attempt if its walk back to the Start tile
-  stalls. A second stall still stops the script and keeps the failure detail.
-- Catalog scripts with many imports, including JiveKQ, no longer fail Start
-  when the host is busy. Scripts that never finish loading still fail Start.
+- With **Pause script on manual movement** on, moving the bot yourself pauses
+  running rs2b0t scripts. It also pauses a built-in script while it acts in
+  place, such as fighting or gathering. **Resume** continues the script.
+- **Examine** and **Cancel** from a game-world menu no longer count as manual
+  movement.
+- Grinch makes one return attempt if its walk back to the Start tile stalls.
+  A second stall stops the script and keeps the failure detail.
+- Catalog scripts with many imports, including JiveKQ, can finish loading when
+  the host is busy. **Start** still stops with a timeout if a script never
+  finishes loading.
 
-### Nav
+### Documentation
 
-- Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
+- New guides help you start 274bot, set up an account, and choose a server and
+  world. A glossary explains common terms.
+- New guides explain how to use scripts and the built-in cards.
 
 ### Fixed during development
 
-#### Panel and TUI
+#### Panel and terminal app
 
-- Apply to all now logs one script-settings info line for each profile that it saves.
-- The panel clears a script-setting error from the dock banner when the operator discards the draft or fixes the field.
-- `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
+- Apply to all adds one save entry to the log for each bot.
+- The panel clears a script-setting error after you discard the edit or fix
+  the field.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4 to
+  0.2.5 have the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 to 0.2.5 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.5 have the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+  0.2.5 has the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 has the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.5 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 has the same
+  problem.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a Ryzen
+  with built-in graphics plus a separate graphics card), the panel can close
+  right after it starts with "importing the supplied dmabufs failed". Start it
+  with `WGPU_POWER_PREF=high ./panel-play` until this is fixed. 0.2.0.2 to 0.2.5
+  have the same problem.
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.5 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.5 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.5 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for a later release. 0.2.4 to
+  0.2.5 have the same problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.5 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 has the same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions.
+- **Scripts:** In the FlaxRunner script, the Spinner banking step does not check
+  whether the walk to the Seers' Village bank or the bank opening succeeded
+  before it tries to deposit. If either step fails once, the deposit does
+  nothing for that trip and the trip counter still increases. The script retries
+  on the next loop, so work continues, but a trip can be wasted. The fix belongs
+  to the upstream script. 0.2.5 has the same problem.
+- **Scripts:** The rs2b0t HerbloreSecondaries script does not eat while it
+  walks, and its eat rule refuses a lobster above 5 hitpoints because the
+  12-point heal does not fit a low-Hitpoints account. On a low-level account the
+  red spiders' eggs trip through Edgeville dungeon can kill the bot with food
+  still in its pack. Run this script on an account with mid-level combat stats
+  (the script's own tests use level 40) until the script is fixed upstream.
+  0.2.5 has the same problem.
+- **Scripts:** The rs2b0t GnomeMagicChopper script looks for the Gnome
+  Stronghold bank's north staircase in the wrong place, a few tiles from the
+  real stairs. If its first walk to the bank fails and it switches to the north
+  staircase, that bank trip can fail. The south staircase works, and the script
+  usually recovers on a later trip. If a fletching bank trip gets stuck, move
+  the bot beside the south staircase and restart the script. The fix belongs to
+  the upstream script. 0.2.5 has the same problem.
+- **Panel:** If WalkTo is open while you change Fleet marks, WalkTo keeps the
+  earlier selection until you click **Walk N bots**. **Workaround:** after
+  changing Fleet marks, click **Walk N bots**, or close and reopen WalkTo.
 
 ## [0.2.5] — 2026-10-22 — Beta 2
 
