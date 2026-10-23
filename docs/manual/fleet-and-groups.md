@@ -29,13 +29,13 @@ script by category.
 
 Picking a card changes nothing by itself. While the card is **Each bot's
 own card**, **Assign**, **Assign & restart** and **Copy settings to** stay
-dimmed with the tip `pick a card above`, and **Start** runs each bot's own
+dimmed with the tip `pick a card above`. **Start** then runs each bot's own
 saved script.
 
 ## What each button does
-+
+
 For the nine buttons, see [the Fleet actions list](../reference/fleet-actions.md).
-+
+
 With marks, an action covers every marked profile, even one the filter hides. With no marks, every action but **Walk** and **Switch world** covers the loaded shown bots, and asks you to click **Confirm** first. **Walk** opens **WalkTo** in group mode instead. **Switch world** opens the world picker first, and **Confirm** comes after you pick a world. **Cancel** writes nothing.
 
 ## The Fleet window
@@ -57,7 +57,8 @@ bot. **Grid** sits behind it and divides the game view into equal cells,
 one per shown bot. It hides the rail and needs **MultiBox** on first.
 
 **only render focused** starts ticked on every launch, so only the focused
-bot paints. Unticking it asks for confirm first, unless **Don't show again** is ticked.
+bot paints. Unticking it opens a warning first, unless you once pressed
+**Don't show again** in that warning.
 
 ## Walk as a group
 
@@ -68,21 +69,25 @@ bot paints. Unticking it asks for confirm first, unless **Don't show again** is 
    the count, such as `Walk 3 bots`.
 3. Click it to walk them at once. Each walking bot gets its own
    command. A bot that cannot walk is skipped with its reason: `not logged
-   in`, `no position yet` or `running a script (stop the script to include it)`.
+   in`, `no position yet` or `running a script`.
 
 On a server with public worlds, **Switch world** opens the world picker. A
 confirmed switch saves the new world on the moving profiles, then relogs
 each bot that is in game on another world through the login queue. A running
-script carries on after its bot reconnects. A bot that is `not loaded`,
-`already on this world`, `queued for login`, `logging in` or `not logged in`
-is skipped. The switch still completes for the other bots. On a server with
-one world, the button stays dimmed with the reason `this server has one world`.
+script carries on after its bot reconnects.
+
+A bot that is `not loaded`, `already on this world`, `queued for login`,
+`logging in` or `not logged in` is skipped. The switch still completes for
+the other bots. On a server with one world, the button stays dimmed with the
+reason `this server has one world`.
 
 ## In the terminal app
 
 The terminal app shares the marks, filter and sort. Its Fleet pane holds
-**Load + log in fleet** and **Log out fleet**. **Start fleet** and **Stop
-fleet** sit on the Script screen, with keys `T` and `E`. The Fleet pane keys
-are `c` for the card, `s` for the sort, `a` to mark shown rows and `A` to
-unmark them. `m` logs in the marked bots, `U` logs them out and `W` picks a
-world. On the Overview screen, `i` logs in the picked bot and `u` logs it out.
+the **Load+login** and **Logout** buttons. **Start fleet** and **Stop
+fleet** sit on the Script screen, with keys `T` and `E`.
+
+The Fleet pane keys are `c` for the card, `s` for the sort, `a` to mark
+shown rows and `A` to unmark them. `m` logs in the marked bots, `U` logs them
+out and `W` picks a world. On the Overview screen, `i` logs in the picked bot
+and `u` logs it out.
