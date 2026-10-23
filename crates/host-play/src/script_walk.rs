@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
+use api::condition::BotCondition;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -497,11 +498,12 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
+    condition: Option<&BotCondition>,
     account: Option<&str>,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
     let view = guard_view(snapshot);
-    let op = guard.tick(&view)?;
+    let op = guard.tick(&view, condition)?;
     if apply_guard_op(driver, snapshot, &op, account) {
         guard.admitted(&op, &view);
     }
@@ -1122,7 +1124,17 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     // A later route may follow while the old off-click is
                     // watched, but cannot raise a protect that debt could clear.
                     let guard_op = if bot.walk_guard_off.is_none() {
-                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                        let condition = bot
+                            .condition
+                            .current()
+                            .filter(|fact| fact.tick == snapshot.tick());
+                        tick_walk_guard(
+                            driver,
+                            snapshot,
+                            &mut bot.walk_guard,
+                            condition,
+                            Some(name),
+                        )
                     } else {
                         None
                     };

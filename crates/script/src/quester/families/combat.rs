@@ -923,7 +923,7 @@ impl NativeMachine for AbortHold {
         let live_attacker = has_live_attacker(&snapshot, &self.tables);
         self.observe_threat_free(cx.evidence().tick, live_attacker);
         if let Some(guard) = self.guard.as_mut() {
-            if let Some(op) = guard.tick(&snapshot) {
+            if let Some(op) = guard.tick(&snapshot, cx.condition()) {
                 if matches!(&op, GuardOp::Unprotectable { .. }) {
                     self.protect_unavailable = true;
                 }
