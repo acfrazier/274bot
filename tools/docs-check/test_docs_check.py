@@ -35,6 +35,22 @@ def paragraph(*counts: int) -> str:
     return " ".join(sentence(count) for count in counts)
 
 
+def prose_blocks(total: int) -> str:
+    """Return `total` words as paragraphs of at most 75 words."""
+    blocks: list[str] = []
+    remaining = total
+    while remaining:
+        take = min(75, remaining)
+        counts: list[int] = []
+        while take:
+            part = min(25, take)
+            counts.append(part)
+            take -= part
+        blocks.append(paragraph(*counts))
+        remaining -= sum(counts)
+    return "\n\n".join(blocks)
+
+
 class DocsCheckTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -289,6 +305,71 @@ class DocsCheckTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assert_finding(result, "docs/reference/page.md", 3, "section-words")
 
+    def test_sentence_words_ignore_punctuation(self) -> None:
+        self.write("docs/manual/page.md", "# Page\n\n" + words(29) + " `code`,.\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("sentence-words", result.stdout)
+
+        self.write("docs/manual/page.md", "# Page\n\n" + words(30) + " `code`,.\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assert_finding(result, "docs/manual/page.md", 3, "sentence-words")
+        self.assertIn("sentence has 31 words", result.stdout)
+
+    def test_paragraph_words_ignore_detached_punctuation(self) -> None:
+        line = " ".join([sentence(26), sentence(26), words(28) + " , : , : , ."])
+        self.write("docs/manual/page.md", "# Page\n\n" + line + "\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("paragraph-words", result.stdout)
+
+    def test_page_words_ignore_table_pipes(self) -> None:
+        rows = ["| t%d | %s |" % (number, words(12)) for number in range(59)]
+        rows.append("| t59 | %s |" % words(20))
+        table = "\n".join(["| Term | Meaning |", "| --- | --- |", *rows])
+        self.write("docs/manual/page.md", "# Page\n\n" + table + "\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("page-words", result.stdout)
+
+    def test_banned_phrase_version_case(self) -> None:
+        self.write("docs/manual/page.md", "# Page\n\nThis is From 0.2.5 today.\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assert_finding(result, "docs/manual/page.md", 3, "banned-phrase")
+
+    def test_scripting_section_words(self) -> None:
+        body = prose_blocks(300)
+        self.write(
+            "docs/scripting/page.md",
+            "# Scripting\n\n## One\n\n" + body + "\n\n## Two\n\n" + body + "\n\n## Three\n\n" + body + "\n",
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("section-words", result.stdout)
+        self.assertNotIn("page-words", result.stdout)
+
+        self.write("docs/scripting/page.md", "# Scripting\n\n## One\n\n" + prose_blocks(401) + "\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assert_finding(result, "docs/scripting/page.md", 3, "section-words")
+        self.assertIn("section has 401 words", result.stdout)
+
+    def test_page_words_exemptions(self) -> None:
+        self.write(
+            "docs/manual/page.md",
+            "# Page\n\n## When something goes wrong\n\n" + prose_blocks(900) + "\n",
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("page-words", result.stdout)
+
+        self.write("docs/manual/glossary.md", "# Glossary\n\n" + prose_blocks(900) + "\n")
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("page-words", result.stdout)
+
     def test_file_lines(self) -> None:
         self.write("docs/manual/page.md", "\n" * 1000)
         result = self.run_check()
@@ -419,6 +500,23 @@ class DocsCheckTest(unittest.TestCase):
         result = self.run_check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("glossary-avoid", result.stdout)
+
+    def test_warnings_skip_code_and_link_targets(self) -> None:
+        self._glossary_fixture()
+        self.write("docs/manual/widget.md", "# Widget\n\nA helper page.\n")
+        self.write(
+            "docs/manual/page.md",
+            "# Page\n\n"
+            "The `widget` is fine.\n\n"
+            "[guide](widget.md)\n\n"
+            "[widget guide](widget.md)\n",
+        )
+        result = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("docs/manual/page.md:3: glossary-avoid:", result.stdout)
+        self.assertNotIn("docs/manual/page.md:5: glossary-avoid:", result.stdout)
+        self.assertIn("docs/manual/page.md:7: glossary-avoid:", result.stdout)
+        self.assertEqual(result.stdout.count("glossary-avoid"), 1, result.stdout)
 
     def test_now_word(self) -> None:
         self.write(
