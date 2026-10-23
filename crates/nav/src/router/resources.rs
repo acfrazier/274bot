@@ -674,6 +674,22 @@ impl PackedMinMaxHeap {
             min_max: false,
         })
     }
+    /// Grow to the record table's capacity without reallocating the heap in place.
+    ///
+    /// Each growth allocates an exact-capacity buffer, copies only live entries,
+    /// then drops the old buffer.
+    pub(super) fn try_grow_to(&mut self, capacity: usize) -> Result<(), SearchCursorError> {
+        if capacity <= self.entries.capacity() {
+            return Ok(());
+        }
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        entries.extend_from_slice(&self.entries);
+        self.entries = entries;
+        Ok(())
+    }
 
     pub(super) fn len(&self) -> usize {
         self.entries.len()
@@ -687,6 +703,9 @@ impl PackedMinMaxHeap {
     // caller's bounded expansion or transport unit.
     pub(super) fn push(&mut self, table: &mut PackedSearchTable, node: u32, parent: u32) {
         let position = self.entries.len();
+        // The caller grows the heap with the record table before a push
+        // (`try_grow_to`), so a push never reallocates the buffer in place.
+        debug_assert!(position < self.entries.capacity());
         self.entries.push(PackedHeapEntry::new(node, parent));
         table.slot_mut(node).set_open(position);
         if self.min_max {
@@ -1927,8 +1946,9 @@ mod packed_search_tests {
     fn packed_growth_keeps_the_expanding_node_and_queued_parents_stable() {
         super::super::drive_to_completion(async {
             let mut table = PackedSearchTable::try_new_capacity(32).expect("small table");
-            let mut heap = PackedMinMaxHeap::try_new(64).expect("bounded heap");
+            let mut heap = PackedMinMaxHeap::try_new(32).expect("small heap");
             let heap_storage = heap.entries.as_ptr();
+            let initial_heap_capacity = heap.capacity();
             let grown_buckets = PackedSearchTable::bucket_count_for(64);
             let origin = (0..100)
                 .map(tile)
@@ -1956,10 +1976,39 @@ mod packed_search_tests {
             }
             let old_current = current;
             assert!(table.try_grow(64).expect("grow packed table"));
-            assert_eq!(heap.entries.as_ptr(), heap_storage);
-            assert_eq!(heap.capacity(), 64);
-            assert_eq!(table.buckets, grown_buckets);
+            heap.try_grow_to(table.capacity())
+                .expect("grow packed heap");
+            assert!(heap.capacity() >= table.capacity());
+            if table.capacity() > initial_heap_capacity {
+                assert_ne!(
+                    heap.entries.as_ptr(),
+                    heap_storage,
+                    "heap growth must allocate a fresh buffer"
+                );
+            } else {
+                assert_eq!(heap.entries.as_ptr(), heap_storage);
+            }
+            assert_eq!(heap.len(), 1);
             assert_eq!(current, old_current, "the local expanding id stays valid");
+            let heap_storage = heap.entries.as_ptr();
+            heap.try_grow_to(table.capacity())
+                .expect("repeat heap growth");
+            assert_eq!(heap.entries.as_ptr(), heap_storage);
+            let previous_heap_capacity = heap.capacity();
+            assert!(table.try_grow(128).expect("grow packed table again"));
+            heap.try_grow_to(table.capacity())
+                .expect("grow packed heap again");
+            assert!(heap.capacity() >= table.capacity());
+            if table.capacity() > previous_heap_capacity {
+                assert_ne!(
+                    heap.entries.as_ptr(),
+                    heap_storage,
+                    "each required heap growth must allocate a fresh buffer"
+                );
+            } else {
+                assert_eq!(heap.entries.as_ptr(), heap_storage);
+            }
+            assert_eq!(heap.len(), 1);
             assert_eq!(table.slot(current).tile(), origin);
             assert_eq!(table.slot(current).parent(), PACKED_ROOT_ID);
             assert_eq!(table.locate_sync(origin, 0), Some(current));

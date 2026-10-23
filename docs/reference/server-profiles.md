@@ -1,8 +1,9 @@
 # Server profiles (revision + world)
 
 > **Audience:** anyone who chooses a game server or edits `~/.274bot/servers.json`.
-> This text moved here from the README unchanged. A plain-words rewrite is planned.
-> If you only want to play, start at [FIRST-START.md](../../FIRST-START.md).
+> This text moved here from the README unchanged. For a plain-words guide, read
+> [Choose a game server and a world](../manual/servers-and-worlds.md). If you
+> only want to play, start at [Install and first run](../manual/install-and-first-run.md).
 
 A session binds one entry from `~/.274bot/servers.json` for the whole process.
 The file is created on first use with these built-ins:
