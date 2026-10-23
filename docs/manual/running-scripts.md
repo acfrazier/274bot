@@ -62,10 +62,11 @@ settings.` In the MultiBox rail, the bot's row shows `[restart]`. A window can
 also ask, for example, `Restart Gatherer on alice to apply the new settings?`
 Click **Restart** or **Later**.
 
-A script can have a **Walk permissions** group. It holds **Allow teleports**,
-**Allow wilderness** and **Allow danger zones** for that script's own walks. If a
-permission is already on in **Nav config**, the window says it is inherited, and
-the script cannot turn it off.
+A script can have a **Walk permissions** group. It holds permissions for
+teleports, the wilderness and danger zones on that script's own walks. Some
+scripts show them by their ids, such as `allowTeleports`. If a permission is
+already on in **Nav config**, the window says it is inherited, and the script
+cannot turn it off.
 
 **Apply to same-card members…** copies the settings of this script to the other
 bots that use the same script. A confirmation names the bots first.
@@ -83,10 +84,10 @@ Click **Pause** to hold the script. Click **Resume** to let it go on. Click
 **Stop** to end it. **Pause** works only while the script is starting, running or
 paused.
 
-Your own movement can also pause a script. Clicking in the game view, clicking the
-minimap, or choosing a walk from the world menu counts as movement. Choosing
-**Examine** or **Cancel** from that menu does not. In the terminal app, a manual
-step counts.
+Your own movement can also pause a script. Clicking in the game view or on the
+minimap counts as movement. Choosing an entry such as Walk or Talk-to from the
+world menu also counts. Choosing **Examine** or **Cancel** from that menu does
+not. In the terminal app, a manual step counts.
 
 With **Pause script on manual movement** on (the default), such a click pauses
 any running file script or catalog script. It also pauses a built-in script
