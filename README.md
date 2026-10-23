@@ -62,9 +62,9 @@ save a profile.
 | Fix a first-start problem | [FIRST-START.md](FIRST-START.md) |
 | Learn the window and what its buttons do | [Panel guide](docs/api/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](docs/api/tui.md) |
-| Move my accounts over from rs2b0t | [Importing rs2b0t profiles](docs/api/vault.md#importing-profiles-from-rs2b0t) |
+| Move my accounts over from rs2b0t | [Import accounts from rs2b0t](docs/manual/profiles-and-accounts.md#import-accounts-from-rs2b0t) |
 | Use or write quest guides | [Quest guides](docs/quester-paths.md) |
-| Choose a game server, world or revision | [Server profiles](docs/reference/server-profiles.md) |
+| Choose a game server, world or revision | [Choose a game server and a world](docs/manual/servers-and-worlds.md) |
 | Look up a word | [Glossary](docs/manual/glossary.md) |
 | See what changed | [CHANGELOG.md](CHANGELOG.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](docs/upgrade-0.2.0.md) |
