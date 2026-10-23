@@ -48,6 +48,7 @@
 | **Script prefs** | The window with a script's settings. The terminal app calls the same settings **Parameters**. | Params |
 | **random-event handling** | How 274bot answers random events, such as the sandwich lady or the genie. You switch it with the profile option **random events**. | Guardian |
 | **loadout** | A saved list of equipment and inventory items, which all profiles share. You edit it in **Loadouts**. | preset |
+| **Combat** | The fighting that the Quester, Sherlock and loaded scripts use. You do not start it from **Browse…**. | combat script |
 
 The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**,
 **Resume** and **Stop**.
