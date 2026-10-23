@@ -13,7 +13,7 @@
 | **vault** | The encrypted file that holds your profiles. Each server has its own vault file. | store, wallet |
 | **passphrase** | The text that unlocks the vault. It is not the game password. | master password, vault password |
 | **game password** | The password of the game account. It is stored in the vault. | account password |
-| **Log in**, **Log out** | The buttons that connect a bot to the game and disconnect it. The panel's login row says **Logout**. The Fleet toolbar and the terminal app say **Log out**. | login (as a verb), logon |
+| **Log in**, **Log out** | The buttons that connect a bot to the game and disconnect it. The panel's login row says **Logout**; the Fleet toolbar and the terminal app say **Log out**. | login (as a verb), logon |
 | **Log in automatically** | The profile option that logs a bot in when it starts and again after a disconnect. | auto-login |
 | **login queue** | The line that bots wait in. Bots log in one at a time. | FIFO, admission |
 | **repeat guard** | The stop that follows three unexpected drops within ten minutes. The bot stays logged out until you click **Log in**. | latch |
@@ -26,7 +26,7 @@
 | **server** | A game server entry from `servers.json` that you pick with `--profile`: `local-274`, `local-289` or `rs2b2t`. The flag is named `--profile`, but it picks a server, not a profile. | server profile |
 | **rs2b2t** | The public game server. It has the worlds w1, w2 and w3. | prod, production |
 | **local engine** | A game server that you run on your own computer. The servers `local-274` and `local-289` connect to it. | local server, LC server |
-| **world** | One game world on a server, such as w1, w2 or w3. The profile form shows it as `w1`. The world list shows it as `World 1`. | node |
+| **world** | One game world on a server, such as w1, w2 or w3. The profile form shows it as `w1`, and the world list shows it as `World 1`. | node |
 | **auto** | The world setting that lets a bot move to the next world when its world is full. | automatic world |
 | **pinned world** | A profile set to w1, w2 or w3. The bot stays on that world and waits when it is full. | fixed world |
 | **members world** | A world that allows members areas. A world that does not is a **free world**. | P2P, F2P |
@@ -42,12 +42,12 @@
 | **script** | Anything you can **Start** on a bot. | card (unless you quote a label) |
 | **built-in script** | A script that comes with 274bot: Quester, Gatherer, Grinch and Sherlock. | compiled card, native script |
 | **catalog script** | A script from your rs2b0t folder. | compat script |
-| **rs2b0t folder** | Your copy of rs2b0t. Its scripts appear in **Browse…**. You set it with `$RS2B0T`, with `--catalog`, or in the window that asks for it. | catalog root, clone root |
+| **rs2b0t folder** | Your copy of rs2b0t, whose scripts appear in **Browse…**. You set it with `$RS2B0T`, with `--catalog`, or in the window that asks for it. | catalog root, clone root |
 | **file script** | A `.js` or `.ts` script that you open with **Load**. | file card |
 | **quest guide** | The step list for one quest that the Quester follows. Guides that are not fully tested are marked `[draft]`. | Path |
 | **Script prefs** | The window with a script's settings. The terminal app calls the same settings **Parameters**. | Params |
 | **random-event handling** | How 274bot answers random events, such as the sandwich lady or the genie. You switch it with the profile option **random events**. | Guardian |
-| **loadout** | A saved list of equipment and inventory items. All profiles share one list. You edit it in **Loadouts**. | preset |
+| **loadout** | A saved list of equipment and inventory items, which all profiles share. You edit it in **Loadouts**. | preset |
 
 The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**,
 **Resume** and **Stop**.
@@ -58,7 +58,7 @@ The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**
 | --- | --- | --- |
 | **Fleet** | The bots you control together, in the **Fleet** window and its toolbar. | wall |
 | **mark** | The tick that picks a bot for a Fleet action. The marked bots you send to one place are a **group**. | selection |
-| **fleet action** | A button of the Fleet toolbar: **Start**, **Stop**, **Assign**, **Assign & restart**, **Log in**, **Log out**, **Walk**, **Switch world** and **Copy settings to**. It acts on the marked bots. With no marks, it acts on the loaded bots that the filter shows. | bulk action |
+| **fleet action** | A button of the Fleet toolbar: **Start**, **Stop**, **Assign**, **Assign & restart**, **Log in**, **Log out**, **Walk**, **Switch world** and **Copy settings to**. It acts on the marked bots; with no marks, it acts on the loaded bots that the filter shows, and asks you to click **Confirm** first. | bulk action |
 | **Switch world** | The fleet action that moves logged-in bots to another world. It logs each bot out and in again through the login queue. | world hop |
 | **MultiBox** | The view that shows many bots at once, as a **rail** (a side strip) or a **grid**. | wall, sidecar |
 
@@ -77,7 +77,7 @@ The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**
 | Term | What it means | Do not use |
 | --- | --- | --- |
 | **WalkTo** | The map where you pick a destination and send a bot or a group. | map picker |
-| **Danger routing** | The option that decides whether a walk may pass dangerous monsters. It has three levels: **Never**, **When survivable** and **Always**. **When survivable** acts as **Never** until the bot can track poison. | danger zones |
+| **Danger routing** | The option that decides whether a walk may pass dangerous monsters, with three levels: **Never**, **When survivable** and **Always**. **When survivable** acts as **Never** until the bot can track poison. | danger zones |
 
 ## Words for the same thing
 
