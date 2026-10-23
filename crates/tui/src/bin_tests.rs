@@ -5009,16 +5009,48 @@ fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
         .join("\n")
 }
 
+/// The screen's words at `w`x`h`: borders and padding collapse to single
+/// spaces, so a prompt that wraps across rows still reads as one line.
+fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
+    screen_text(app, w, h)
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || "│─┌┐└┘├┤┬┴┼".contains(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The command palette's *Apply focused bot's settings to marked* copies the
 /// focused bot's parameters to the marked same-card bots only: the frozen
 /// scope is confirmed first (Esc drops it), an unmarked same-card bot keeps
-/// its own, and the report names the marked bot that could not take it.
+/// its own, and the report names the marked bot that could not take it. The
+/// card lives under a long path so the confirm text wraps at both sizes
+/// (the Windows nightly condition on every OS); the screen check reads the
+/// words without requiring one unbroken row.
 #[test]
 fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     let iso = IsolatedStores::enter("tui-apply-marked");
     let (mut session, mut app) =
         tui_with_profiles(&iso, &["alice", "bob", "carol", "dave", "erin"]);
-    let thiever = iso.dir().join("thiever.ts");
+    // One long word, like the Windows nightly temporary path: the prompt is
+    // hundreds of cells, so it wraps to several rows at both sizes on every
+    // OS. The over-long path starts on a fresh row; this padding puts
+    // `2 marked bots` across the wrap at 80x24 and at 120x40 (the popup is
+    // 80/90 wide with a 2-cell border).
+    let deep = iso.dir().join(["nested-0123456789"; 8].join("/"));
+    let deep = deep
+        .join("n".repeat(11))
+        .join("n".repeat(225))
+        .join("n".repeat(224));
+    std::fs::create_dir_all(&deep).unwrap();
+    let thiever = deep.join("thiever.ts");
     std::fs::write(&thiever, THIEVER_TS).unwrap();
     let card = session.scripts.load_card(&thiever).unwrap();
     let looping = iso.dir().join("looping.ts");
@@ -5096,11 +5128,20 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
         prompt.contains("to 2 marked bots: bob, carol") && prompt.contains("erin"),
         "{prompt}"
     );
-    let shown = screen_text(&mut app, 80, 24);
-    assert!(
-        shown.contains("2 marked bots") && shown.contains("Run y"),
-        "{shown}"
-    );
+    // The words are all shown even when the long path wraps them across
+    // rows: borders and padding collapse, so no unbroken row is required.
+    for (w, h) in SIZES {
+        let shown = screen_words(&mut app, w, h);
+        assert!(
+            shown.contains("Copy alice's")
+                && shown.contains("2 marked bots")
+                && shown.contains("bob, carol")
+                && shown.contains("erin: assigned another card")
+                && shown.contains("Run y")
+                && shown.contains("Cancel n"),
+            "{w}x{h}: {shown}"
+        );
+    }
     let cancel = app.on_key(settings_key(crossterm::event::KeyCode::Esc));
     dispatch(&mut session, &mut app, cancel);
     assert!(session.core.fleet_plan().is_none(), "Esc leaves no plan");
