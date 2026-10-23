@@ -11,6 +11,7 @@
       "api::interact::Driver::count_dialog_open",
       "api::interact::Driver::count_dialog_submitted",
       "api::interact::Driver::do_action",
+      "api::interact::Driver::finish_pending_packet",
       "api::interact::Driver::handle_chat_input",
       "api::interact::Driver::loc_typecode",
       "api::interact::Driver::local_route",
@@ -69,6 +70,7 @@
       "api::interact::driver::Driver::count_dialog_open",
       "api::interact::driver::Driver::count_dialog_submitted",
       "api::interact::driver::Driver::do_action",
+      "api::interact::driver::Driver::finish_pending_packet",
       "api::interact::driver::Driver::handle_chat_input",
       "api::interact::driver::Driver::loc_typecode",
       "api::interact::driver::Driver::local_route",
@@ -1049,10 +1051,12 @@
       "client::CheatAdmission",
       "client::CheatRefusal",
       "client::CheatSend",
+      "client::ClientAdoptionError",
       "client::client::CheatAdmission",
       "client::client::CheatRefusal",
       "client::client::CheatSend",
       "client::client::Client",
+      "client::client::ClientAdoptionError",
       "client::client::ClientBuild",
       "client::client::ClientConfig",
       "client::client::ClientGens",
@@ -1076,6 +1080,7 @@
       "client::client::client::CheatRefusal",
       "client::client::client::CheatSend",
       "client::client::client::Client",
+      "client::client::client::ClientAdoptionError",
       "client::client::client::ClientGens",
       "client::client::client::ClientNpc",
       "client::client::client::ClientPlayer",
@@ -1385,6 +1390,11 @@
       "target": "client::client::client::CheatSend"
     },
     {
+      "kind": "type",
+      "path": "client::ClientAdoptionError",
+      "target": "client::client::client::ClientAdoptionError"
+    },
+    {
       "kind": "value",
       "path": "client::client::APPLET_H",
       "target": "client::client::client::APPLET_H"
@@ -1413,6 +1423,11 @@
       "kind": "type",
       "path": "client::client::Client",
       "target": "client::client::client::Client"
+    },
+    {
+      "kind": "type",
+      "path": "client::client::ClientAdoptionError",
+      "target": "client::client::client::ClientAdoptionError"
     },
     {
       "kind": "type",
@@ -1719,6 +1734,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::Driver::do_action",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::Driver::finish_pending_packet",
       "rustdoc_kind": "function"
     },
     {
@@ -2603,6 +2624,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::driver::Driver::do_action",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::driver::Driver::finish_pending_packet",
       "rustdoc_kind": "function"
     },
     {
@@ -7551,6 +7578,36 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "type",
+      "lint": "type",
+      "path": "client::ClientAdoptionError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::ClientAdoptionError::NoLiveStream",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::ClientAdoptionError::ProfileMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::ClientAdoptionError::SourcePacketNotOutbound",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::ClientAdoptionError::TargetPacketNotOutbound",
+      "rustdoc_kind": "variant"
+    },
+    {
       "kind": "module",
       "lint": "inventory_only",
       "path": "client::client",
@@ -10288,6 +10345,36 @@
       "lint": "inventory_only",
       "path": "client::client::Client::zone_update_z",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "client::client::ClientAdoptionError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::ClientAdoptionError::NoLiveStream",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::ClientAdoptionError::ProfileMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::ClientAdoptionError::SourcePacketNotOutbound",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::ClientAdoptionError::TargetPacketNotOutbound",
+      "rustdoc_kind": "variant"
     },
     {
       "kind": "type",
@@ -15217,6 +15304,36 @@
       "lint": "inventory_only",
       "path": "client::client::client::Client::zone_update_z",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "client::client::client::ClientAdoptionError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientAdoptionError::NoLiveStream",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientAdoptionError::ProfileMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientAdoptionError::SourcePacketNotOutbound",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientAdoptionError::TargetPacketNotOutbound",
+      "rustdoc_kind": "variant"
     },
     {
       "kind": "type",
@@ -23299,7 +23416,7 @@
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "94496b1bbd1d41488d17553c4b394b78991a18acca848d8ae567ee9546cc5015"
+      "sha256": "499b4b54971aab82478aa23d0b2cf34eaea53374c82de4e1df1907c047a2392d"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
@@ -23315,7 +23432,7 @@
     },
     {
       "path": "crates/api/src/interact/server_ordered/request.rs",
-      "sha256": "4fbcddf8e2771e87e88820a3f9e5af808b2fc58f562a00b12004c5c5d292a8b4"
+      "sha256": "35a1381f169e794ee40884974bafe935509b996112022f16cf2d8a66270f7e01"
     },
     {
       "path": "crates/api/src/lib.rs",
@@ -23335,11 +23452,11 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/client.rs",
-      "sha256": "95daca5a6dcc7ac951ef7a3ce73bf2d89646f200542da4474bec4aa4f1e5decc"
+      "sha256": "a216dc528193017214abd18c57a6e8b5c2e39c83e07d3819514082d9a32644cf"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/mod.rs",
-      "sha256": "038544e9232bc212c15825c9065a85fe7ba5be9b83efb37b2f8fee0649729d93"
+      "sha256": "e27283ae17f0be1986e2790e0e9c4f3dbd0dd471d6be0ff26b1148da8d2c7c7b"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/io/client_prot.rs",
@@ -23359,7 +23476,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/lib.rs",
-      "sha256": "26f287a426eec2b4ee46a48ba9f2f2fd8547f73d120087ced8d9c98ec321520b"
+      "sha256": "a2f840498551359c605ee7abb699e4648f153337dce594a2b082786fe96b1a9b"
     }
   ],
   "source_subtrees": [
@@ -23372,7 +23489,7 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "aa436fb675f7766b855a47335a3f3bd3a93c53e5f7d92426c64d8ba88acd0e25"
+      "sha256": "f2877f0f9f3d369305e1b9efd1107677c860dbfcaa1d43e9176f7648eff642a0"
     },
     {
       "files": [

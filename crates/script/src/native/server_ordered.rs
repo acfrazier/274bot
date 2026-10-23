@@ -401,7 +401,7 @@ mod tests {
             std::mem::size_of::<Option<Box<ServerOrderedCompletion>>>(),
             8
         );
-        // One boxed 72 B terminal envelope per ledger, allocated only on first admission.
+        // One boxed 72 B terminal envelope per ledger, allocated only on completion.
         assert_eq!(std::mem::size_of::<ServerOrderedCompletion>(), 72);
         // The 32 B dispatch receipt stays Copy on the stack: prefix results without heap growth.
         assert_eq!(std::mem::size_of::<ServerOrderedDispatch>(), 32);

@@ -281,6 +281,9 @@ pub(crate) fn dispatch_native_server_ordered(
             ServerOrderedError::ObservationUnavailable,
         );
     };
+    // A legacy encoder can leave its last variable-length packet open. Observe
+    // it under its original lineage before capturing this request's input proof.
+    driver.finish_pending_packet();
     let observed = input.with_server_ordered_input(|state| state.snapshot());
     let mut live = || {
         authority

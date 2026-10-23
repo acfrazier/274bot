@@ -530,7 +530,7 @@ fn ordered_housekeeping_is_not_counted_as_dispatched_input() {
 #[test]
 fn ordered_foreign_emission_tick_traffic_never_charges_native_batch_allowance_a2_r4() {
     let mut rig = Rig::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         rig.client
             .send_packet(&Send::if_button(3651).unwrap())
             .unwrap();
@@ -541,8 +541,8 @@ fn ordered_foreign_emission_tick_traffic_never_charges_native_batch_allowance_a2
     let receipt = rig.receipt();
     assert!(receipt.terminal.is_none());
     assert_eq!(receipt.wire_events, 1);
-    assert_eq!(rig.decoded().len(), 5);
-    assert_eq!(rig.client.out.committed_packet_count(), Some(5));
+    assert_eq!(rig.decoded().len(), 6);
+    assert_eq!(rig.client.out.committed_packet_count(), Some(6));
 }
 
 #[test]
@@ -1048,6 +1048,208 @@ fn ordered_foreign_movement_checked_owner_manual_and_zero_wire_edits_fence_depen
             );
         }
     }
+}
+
+#[derive(Debug)]
+struct LegacyCommit {
+    opcode: u8,
+    encoded_length: usize,
+    tick: Option<u32>,
+    invalidation_epoch: u64,
+}
+
+struct LegacyObserver {
+    input: Arc<SlotInput>,
+    commits: Mutex<Vec<LegacyCommit>>,
+}
+
+impl client::io::PacketObserver for LegacyObserver {
+    fn packet_body_length(&self, opcode: u8) -> i16 {
+        client::io::PacketObserver::packet_body_length(self.input.as_ref(), opcode)
+    }
+
+    fn packet_committed(&self, opcode: u8, encoded_length: usize) {
+        client::io::PacketObserver::packet_committed(self.input.as_ref(), opcode, encoded_length);
+        let snapshot = self
+            .input
+            .with_server_ordered_input(|state| state.snapshot());
+        self.commits.lock().unwrap().push(LegacyCommit {
+            opcode,
+            encoded_length,
+            tick: snapshot.observed_tick(),
+            invalidation_epoch: snapshot.invalidation_epoch(),
+        });
+    }
+
+    fn committed_packet_count(&self) -> Option<u64> {
+        client::io::PacketObserver::committed_packet_count(self.input.as_ref())
+    }
+
+    fn observed_tick(&self, tick: u64, session: u64) {
+        client::io::PacketObserver::observed_tick(self.input.as_ref(), tick, session);
+    }
+}
+
+fn legacy_observer(rig: &mut Rig) -> Arc<LegacyObserver> {
+    let observer = Arc::new(LegacyObserver {
+        input: Arc::clone(&rig.input),
+        commits: Mutex::new(Vec::new()),
+    });
+    rig.client.out.set_observer(Some(observer.clone()));
+    observer
+}
+
+fn legacy_foreign_packet_fences_at_flush(minimap: bool) {
+    let mut rig = Rig::new();
+    let dependent = bind_waiting_bank(&mut rig);
+    let observer = legacy_observer(&mut rig);
+    let before = rig
+        .input
+        .with_server_ordered_input(|state| state.snapshot());
+    let opcode = if minimap {
+        for row in &mut rig.client.collision[0].flags {
+            row.fill(0);
+        }
+        rig.client.shell.mouse_click_button = 1;
+        rig.client.shell.mouse_click_x = 688;
+        rig.client.shell.mouse_click_y = 83;
+        rig.client.minimap_loop();
+        rig.client.shell.mouse_click_button = 0;
+        client::io::ClientProt289::MOVE_MINIMAPCLICK.id as u8
+    } else {
+        rig.client
+            .set_cheat_admission(client::CheatAdmission::Granted);
+        assert_eq!(
+            rig.client.send_cheat("give coins 1"),
+            client::CheatSend::Sent
+        );
+        client::io::ClientProt289::CLIENT_CHEAT.id as u8
+    };
+    let encoded = rig.client.out.data()[..rig.client.out.pos].to_vec();
+    assert_eq!(encoded.len(), 2 + usize::from(encoded[1]));
+    if minimap {
+        assert_eq!(
+            encoded.len(),
+            21,
+            "seven movement bytes plus the 14-byte trailer"
+        );
+        assert_eq!(encoded.last(), Some(&63));
+    }
+    assert!(observer.commits.lock().unwrap().is_empty());
+    rig.client.game_loop();
+    assert_eq!(
+        rig.client.out.pos, 0,
+        "the actual socket flush reset the cursor"
+    );
+    {
+        let commits = observer.commits.lock().unwrap();
+        assert_eq!(
+            commits.len(),
+            1,
+            "last legacy packet must commit at this flush"
+        );
+        assert_eq!(commits[0].opcode, opcode);
+        assert_eq!(commits[0].encoded_length, encoded.len());
+        assert_eq!(commits[0].tick, Some(1));
+        assert_eq!(
+            commits[0].invalidation_epoch,
+            before.invalidation_epoch() + 1,
+            "the manual packet keeps foreign lineage"
+        );
+    }
+    rig.input.with_server_ordered_input(|state| {
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.input_epoch(), before.input_epoch() + 1);
+        assert!(state
+            .require_expectation(42, ContractKey::BankDepositX, BANK_COUNT_PHASE, 900, 1)
+            .is_err());
+    });
+    rig.start([Emission::Content(dependent)]);
+    rig.pump(1);
+    rig.pump(1);
+    let receipt = rig.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert!(receipt.terminal.is_some());
+    assert_eq!(
+        rig.client.out.pos, 0,
+        "the invalidated dependent writes nothing"
+    );
+}
+
+#[test]
+fn ordered_legacy_cheat_last_at_flush_fences_dependent_with_foreign_lineage_and_tick() {
+    legacy_foreign_packet_fences_at_flush(false);
+}
+
+#[test]
+fn ordered_legacy_manual_minimap_last_at_flush_fences_dependent_with_full_trailer() {
+    legacy_foreign_packet_fences_at_flush(true);
+}
+
+#[test]
+fn ordered_legacy_cheat_then_content_row_keeps_packet_attribution_and_succeeds() {
+    let mut rig = Rig::new();
+    let observer = legacy_observer(&mut rig);
+    // Bind to the actual row owner. Misattributing the pending cheat to that
+    // owner would leave the invalidation epoch unchanged at its callback.
+    let input = Arc::clone(&rig.input);
+    crate::script_runtime::install_ordered_dispatch_hook(Box::new(move |authority| {
+        input.with_server_ordered_input(|state| {
+            state
+                .bind_expectation(
+                    42,
+                    authority.request_id().get(),
+                    ContractKey::BankDepositX,
+                    BANK_COUNT_PHASE,
+                    8,
+                )
+                .unwrap();
+        });
+    }));
+    let before = rig
+        .input
+        .with_server_ordered_input(|state| state.snapshot());
+    rig.client
+        .set_cheat_admission(client::CheatAdmission::Granted);
+    assert_eq!(
+        rig.client.send_cheat("give coins 1"),
+        client::CheatSend::Sent
+    );
+    assert!(observer.commits.lock().unwrap().is_empty());
+    rig.start([Emission::Content(close_request())]);
+    rig.pump(1);
+    rig.pump(1);
+    let receipt = rig.receipt();
+    assert_eq!(
+        (receipt.dispatched_prefix, receipt.wire_events),
+        (1, 1),
+        "{receipt:?}"
+    );
+    assert!(receipt.terminal.is_none(), "{receipt:?}");
+    let decoded = rig.decoded();
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(
+        decoded[0].0,
+        client::io::ClientProt289::CLIENT_CHEAT.id as u8
+    );
+    let close = Send::close_modal()
+        .validate_for_revision(rig.client.revision())
+        .unwrap()
+        .opcode;
+    assert_eq!(decoded[1].0, close);
+    let commits = observer.commits.lock().unwrap();
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].opcode, decoded[0].0);
+    assert_eq!(commits[0].encoded_length, decoded[0].1.len() + 2);
+    assert_eq!(commits[0].tick, Some(1));
+    assert_eq!(
+        commits[0].invalidation_epoch,
+        before.invalidation_epoch() + 1
+    );
+    assert_eq!(commits[1].opcode, close);
+    assert_eq!(commits[1].encoded_length, 1);
+    assert_eq!(commits[1].tick, Some(1));
+    assert_eq!(rig.client.out.committed_packet_count(), Some(2));
 }
 
 fn knife_request(rig: &mut Rig, continuing: bool) -> ServerOrderedRequest {
@@ -1566,7 +1768,7 @@ fn ordered_observation_survives_real_client_socket_adoption_without_reset() {
         .input
         .with_server_ordered_input(|state| state.snapshot());
     assert_eq!(before.packet_count(), 1);
-    assert_eq!(receiving.client.adopt_from(&mut prepared.client), Some(()));
+    assert_eq!(receiving.client.adopt_from(&mut prepared.client), Ok(()));
     receiving.client.send_packet(&Send::close_modal()).unwrap();
     let after = receiving
         .input
