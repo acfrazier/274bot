@@ -1,5 +1,54 @@
 //! Profile preparation on the shared worker and vault passphrases.
 
+const PROFILE_PREPARATION_CHILD: &str = "FRONTEND_CORE_PROFILE_PREPARATION_TEST_CHILD";
+
+/// The child's exact filter: the full test path that runs the checks.
+const PROFILE_PREPARATION_TEST: &str =
+    "launch::tests::profile_preparation_with_embedded_289_game_data_completes_on_shared_worker";
+
+/// Run one test from this binary in a child process and require that it ran.
+///
+/// libtest exits 0 when `--exact` matches nothing, so the exit status alone
+/// does not prove the child executed its checks. Require libtest's summary for
+/// exactly one passed test as well; a filter that matches nothing is reported
+/// as a failure that names the filter.
+fn run_child_test(filter: &str) -> Result<(), String> {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", filter, "--nocapture"])
+        .env(PROFILE_PREPARATION_CHILD, "1")
+        .output()
+        .map_err(|error| format!("could not start the child for filter {filter:?}: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(format!(
+            "child for filter {filter:?} exited with {}:\n{stdout}\n{stderr}",
+            output.status
+        ));
+    }
+    if !stdout.contains("test result: ok. 1 passed;") {
+        return Err(format!(
+            "child for filter {filter:?} ran no passing test (libtest exits 0 when a filter \
+             matches nothing), expected \"test result: ok. 1 passed;\":\n{stdout}\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn child_runner_reports_a_filter_that_matches_no_test() {
+    let filter = "launch::tests::this_test_does_not_exist";
+    let error = run_child_test(filter).expect_err("a filter that matches no test must fail");
+    assert!(
+        error.contains(filter),
+        "the failure names the filter: {error}"
+    );
+    assert!(
+        error.contains("ran no passing test"),
+        "the failure names the zero-test case: {error}"
+    );
+}
+
 #[test]
 fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
     let dir = std::env::temp_dir().join(format!(
@@ -31,6 +80,11 @@ fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
 
 #[test]
 fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() {
+    if std::env::var_os(PROFILE_PREPARATION_CHILD).is_none() {
+        run_child_test(PROFILE_PREPARATION_TEST)
+            .unwrap_or_else(|error| panic!("profile preparation test child failed: {error}"));
+        return;
+    }
     use super::{ProfileArgs, ProfileEnv, ProfileLauncher};
     use std::time::{Duration, Instant};
 
