@@ -939,6 +939,15 @@ pub(crate) fn script_observe_cached_with_channels(
                         walk_permissions,
                     )
                 });
+                // Copy only the small fact, not the slot owner or its tables.
+                let (condition, poison_unknown_pulse) = {
+                    let navs = navs.lock().unwrap();
+                    let bot = navs.get(name);
+                    (
+                        bot.and_then(|bot| bot.condition.current().copied()),
+                        bot.map(|bot| bot.condition.unknown_pulse()),
+                    )
+                };
                 let mut ctx = ScriptCtx {
                     driver,
                     tick,
@@ -954,6 +963,8 @@ pub(crate) fn script_observe_cached_with_channels(
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         reach_flood: packed.as_ref().and_then(|packed| packed.flood.as_deref()),
                         bank_memory: bank_memory.as_deref(),
+                        condition,
+                        poison_unknown_pulse,
                         collision: world
                             .as_deref()
                             .and_then(|world| nav::producer::collision_view(world).ok()),

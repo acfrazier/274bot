@@ -1011,7 +1011,8 @@ fn c1_unknown_poison_refuses_crossing_but_not_safe_only_and_silence_does_not_cle
     let mut poisoned = input(99);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 6,
-        last_tick: 31,
+        last_mark: 31,
+        hit_since_mark: false,
     };
     let poisoned_admission = make_admission(RiskPolicy::Proceed, poisoned);
     let (already_poisoned, poisoned_kernels) = count_kernels(|| {
@@ -1235,7 +1236,8 @@ fn u11_fresh_ignores_only_clock_age() {
     let mut poison = input;
     poison.poison = PoisonState::Poisoned {
         per_tick: 2,
-        last_tick: 12,
+        last_mark: 12,
+        hit_since_mark: false,
     };
     changed.push(poison);
     let mut off_debt = input;
@@ -1690,7 +1692,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     });
 
     let snapshot = api::snapshot::GameSnapshot::new();
-    let _ = capture(&snapshot, false, PoisonState::Clear, false);
+    let _ = capture(&snapshot, false, None, false);
     let publish_world = empty_corridor();
     let publish_from = tile(0, 1);
     let publish_to = tile(8, 1);
@@ -2700,7 +2702,7 @@ mod compact_final_route_tests {
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, before.input.poison, false)
+            capture(&snapshot, false, bot.condition.current(), false)
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
@@ -2729,7 +2731,7 @@ mod compact_final_route_tests {
         assert!(!Arc::ptr_eq(&before, after));
         assert_eq!(
             after.input,
-            capture(&snapshot, false, before.input.poison, false)
+            capture(&snapshot, false, bot.condition.current(), false)
         );
         assert!(
             after.input.missing_facts,

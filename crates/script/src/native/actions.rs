@@ -919,6 +919,8 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(None, evidence),
@@ -1281,6 +1283,8 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(snapshot, evidence),

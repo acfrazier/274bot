@@ -4028,6 +4028,8 @@ fn captured_route_quests(
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
+    /// The slot-thread condition owner, also read by admission at arm time.
+    pub(crate) condition: super::slot_condition::SlotCondition,
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
     pub(crate) quest_context: Option<RouteQuestContext>,
@@ -4466,16 +4468,15 @@ impl ScriptWalkArm {
                 return;
             }
         };
-        let mut input = crate::admission::capture(
-            snapshot,
-            state.map_members,
-            script::combat::risk::PoisonState::default(),
-            false,
-        );
         let admission = {
             let navs = self.navs.lock().unwrap();
             let bot = navs.get(&self.name);
-            input.off_debt = bot.is_some_and(|bot| bot.walk_guard_off.is_some());
+            let input = crate::admission::capture(
+                snapshot,
+                state.map_members,
+                bot.and_then(|bot| bot.condition.current()),
+                bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
+            );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
             let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
@@ -4628,14 +4629,18 @@ impl ScriptWalkArm {
         );
         // A v1 card keeps frozen danger routing on the machine-owned native
         // walks too (Banking.open's stand walk), as on its compiled walks.
-        let (off_debt, compat_v1) = self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .map_or((false, false), |bot| {
-                (bot.walk_guard_off.is_some(), bot.compat_v1)
-            });
+        let (off_debt, compat_v1, condition) =
+            self.navs
+                .lock()
+                .unwrap()
+                .get(&self.name)
+                .map_or((false, false, None), |bot| {
+                    (
+                        bot.walk_guard_off.is_some(),
+                        bot.compat_v1,
+                        bot.condition.current().copied(),
+                    )
+                });
         let admission = crate::admission::Admission {
             policy,
             enforce: enforce || !request.cross.is_empty(),
@@ -4644,7 +4649,7 @@ impl ScriptWalkArm {
             input: crate::admission::capture(
                 snapshot,
                 self.state.as_ref().is_some_and(|state| state.map_members),
-                script::combat::risk::PoisonState::default(),
+                condition.as_ref(),
                 off_debt,
             ),
             generation: 0,
@@ -5253,7 +5258,12 @@ impl ScriptWalkArm {
                     crate::admission::capture(
                         snapshot,
                         state.as_ref().is_some_and(|state| state.map_members),
-                        Default::default(),
+                        self.navs
+                            .lock()
+                            .unwrap()
+                            .get(&self.name)
+                            .and_then(|bot| bot.condition.current().copied())
+                            .as_ref(),
                         false,
                     )
                 })

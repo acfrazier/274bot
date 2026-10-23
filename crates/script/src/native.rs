@@ -625,6 +625,8 @@ pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
+    pub(crate) condition: Option<api::condition::BotCondition>,
+    pub(crate) poison_unknown_pulse: u8,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
@@ -903,6 +905,54 @@ pub enum WalkEnd {
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
 }
+// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
+// Traveller's 60-call bound (equal to observed ticks in the current host);
+// §3 records the normal content-derived stand succeeding. One fresh plan
+// from the observed position is the supported recovery.
+const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+
+#[derive(Default)]
+pub(crate) struct ReturnStallRecovery {
+    actions: u8,
+    pending: bool,
+}
+
+impl ReturnStallRecovery {
+    pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
+        let transient = matches!(
+            end,
+            WalkEnd::Stalled(stall)
+                if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
+        );
+        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+            self.pending = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.pending
+    }
+
+    pub(crate) fn action_submitted(&mut self) {
+        if self.pending {
+            self.actions = self.actions.saturating_add(1);
+            self.pending = false;
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.actions = 0;
+        self.pending = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn actions(&self) -> u8 {
+        self.actions
+    }
+}
 #[derive(Debug, Clone)]
 pub struct WalkReceipt {
     pub request_id: u64,
@@ -1021,6 +1071,14 @@ impl<'a> ActionContext<'a> {
     }
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
+    }
+    /// The host's complete live condition, checked against the frame at entry.
+    pub fn condition(&self) -> Option<&api::condition::BotCondition> {
+        self.condition.as_ref()
+    }
+    /// Strongest poison pulse in the selected content, or the saturated bound.
+    pub fn poison_unknown_pulse(&self) -> u8 {
+        self.poison_unknown_pulse
     }
     pub fn retained(&mut self) -> &mut RetainedMemory {
         self.retained
