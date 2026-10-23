@@ -266,10 +266,8 @@ pub(crate) fn header(ui: &Ui, session: &mut Session, label: &str) -> bool {
     record(|layout| layout.fold_header = item_rect(ui));
     if open != want {
         session.ui.fleet_toolbar_open = open;
-        let _ = session.persist_panel_member(
-            &["fleet_toolbar_open"],
-            Some(serde_json::Value::Bool(open)),
-        );
+        let _ = session
+            .persist_panel_member(&["fleet_toolbar_open"], Some(serde_json::Value::Bool(open)));
     }
     open
 }

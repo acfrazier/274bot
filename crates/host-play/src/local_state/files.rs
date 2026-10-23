@@ -41,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
 use api::loadout::{parse_loadout, Loadout};
@@ -52,7 +53,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use vault::read_private_file;
-use crate::walk_permissions::WalkGlobals;
 /// The explicit state root, `<home>/.274bot`, resolved once by the
 /// composition root and handed to the service. Nothing below it is
 /// discovered: the service derives every path from this root and a

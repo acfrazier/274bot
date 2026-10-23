@@ -421,6 +421,10 @@ impl CommandDesk {
         &mut self.pref_writes
     }
 
+    pub(super) fn preferences_pending(&self) -> bool {
+        !self.pref_writes.is_empty()
+    }
+
     pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
         self.settled_walk_globals = Some(view);
     }

@@ -612,6 +612,14 @@ from the wall keeps its place. **Name** and **Status** only sort the view:
 they never change the saved order, and reordering needs **Load order**. A
 reorder stays pending until the file is written; if the write fails, the
 error is shown and the last saved order comes back.
+
+Shared preferences still use `panel-ui.json`. Reads use the latest cached
+saved state. Saves run on the process writer, so a slow disk does not block
+the panel, TUI or bot thread. Closing a settings window does not cancel an
+accepted save. Reopening it retains the pending save. Until the first read
+finishes, displayed defaults are provisional and walk permissions stay closed.
+Refresh preserves unsaved checkbox and folder entries when their saved values
+did not change.
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.

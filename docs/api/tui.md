@@ -78,6 +78,11 @@ label in its border. Everything is plain text as well as colour.
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
 
+The Settings border shows **Saving preferences…** while a shared save is
+pending. The process writer keeps the accepted save after you close the popup.
+Refresh does not replace an unsaved checkbox or folder draft with an unchanged
+saved value.
+
 ## Keys
 
 One routing model: an open popup or overlay takes every key (the Script

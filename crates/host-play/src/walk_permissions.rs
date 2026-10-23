@@ -964,16 +964,17 @@ mod tests {
 
         let (entered_tx, entered_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
         let read_stall: super::super::local_state::ReadStall = Arc::new(move || {
             let _ = entered_tx.send(());
-            let _ = release_rx.recv();
+            let _ = release_rx.lock().unwrap().recv();
         });
         let service =
             super::super::local_state::LocalStateService::open_process_with_read_stall_for_test(
                 super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
                 read_stall,
             );
-        let mut held = HeldHydration {
+        let held = HeldHydration {
             release: Some(release_tx),
             released: false,
         };
@@ -1013,6 +1014,16 @@ mod tests {
         result
     }
 
+    fn measured_walk_call<T>(path: &str, operation: impl FnOnce() -> T) -> T {
+        let started = std::time::Instant::now();
+        let result = operation();
+        eprintln!(
+            "walk-cache path={path} elapsed_ns={}",
+            started.elapsed().as_nanos()
+        );
+        result
+    }
+
     fn another_bot_acquires_navs_before_release(
         held: &mut HeldHydration,
         navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
@@ -1045,17 +1056,20 @@ mod tests {
     }
 
     #[test]
-    fn walk_permission_paths_fail_closed_without_waiting_for_cold_hydration() {
-        let scratch = script::IsolatedEnv::enter("walk-globals-cold-no-wait");
+    fn walk_globals_read_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("walk-globals-read-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        assert!(completes_before_release(&mut held, move || {
+            measured_walk_call("WalkGlobals::read", || WalkGlobals::read(&preferences))
+        })
+        .is_err());
+        held.release();
+    }
 
-        let read_preferences = preferences.clone();
-        assert!(
-            completes_before_release(&mut held, move || WalkGlobals::read(&read_preferences))
-                .is_err()
-        );
-
-        let play_preferences = preferences.clone();
+    #[test]
+    fn play_walk_globals_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("play-walk-globals-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         let options = super::super::PlayOptions {
             host: "127.0.0.1".into(),
             transport: client::Transport::Tcp,
@@ -1071,12 +1085,18 @@ mod tests {
         assert_eq!(
             completes_before_release(&mut held, move || {
                 let mut play = super::super::Play::new(&options);
-                play.set_walk_globals_store(play_preferences);
-                play.walk_globals()
+                play.set_walk_globals_store(preferences);
+                measured_walk_call("Play::walk_globals", || play.walk_globals())
             }),
             WalkGlobals::fail_closed()
         );
+        held.release();
+    }
 
+    #[test]
+    fn native_admission_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("native-admission-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         let navs = Arc::new(Mutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
@@ -1087,7 +1107,9 @@ mod tests {
         )])));
         let native_navs = Arc::clone(&navs);
         let (native, policy, _) = completes_before_release(&mut held, move || {
-            native_admission(&native_navs, "alice", WalkOptions::default(), None)
+            measured_walk_call("native_admission", || {
+                native_admission(&native_navs, "alice", WalkOptions::default(), None)
+            })
         });
         assert_eq!(policy, RiskPolicy::Avoid);
         assert!(!native.allow_teleports);
@@ -1095,17 +1117,32 @@ mod tests {
         assert!(!native.allow_bank_fetch);
         assert!(!native.zones.is_all());
         another_bot_acquires_navs_before_release(&mut held, &navs);
+        held.release();
+    }
 
+    #[test]
+    fn compiled_options_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("compiled-options-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                walk_globals_store: Some(preferences),
+                native_permissions: Some(WalkPermissions::default()),
+                ..Default::default()
+            },
+        )])));
         let compiled_navs = Arc::clone(&navs);
         let compiled = completes_before_release(&mut held, move || {
-            compiled_options(&compiled_navs, "alice", FindOptions::default())
+            measured_walk_call("compiled_options", || {
+                compiled_options(&compiled_navs, "alice", FindOptions::default())
+            })
         });
         assert!(!compiled.allow_teleports);
         assert!(!compiled.allow_wilderness);
         assert!(!compiled.allow_bank_fetch);
         assert!(!compiled.zones.is_all());
         another_bot_acquires_navs_before_release(&mut held, &navs);
-
         held.release();
     }
     /// Retry the globals write while it stays queued past the frontend's

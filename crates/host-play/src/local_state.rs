@@ -124,6 +124,8 @@ pub use frontend::{
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
 const OPERATOR_QUEUE_CAP: usize = 8;
+/// Live preference requests and unprojected results, separate from neutral history.
+const PREFERENCE_WATCH_CAP: usize = OPERATOR_QUEUE_CAP + 1;
 /// How many bank-hint identities the service holds at once. A new one
 /// evicts the least recently used idle store (nothing queued, in flight
 /// or being read); with none idle it is refused `Busy`.
@@ -151,7 +153,6 @@ pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
 #[cfg(any(test, feature = "test-support"))]
 pub type ReadStall = Arc<dyn Fn() + Send + Sync>;
 
-
 /// A test's stand-in for the file publication step: run on the writer
 /// thread with no state lock held (the file's write lock is held), so a
 /// test can stall or fail it. It replaces the real publication, including
@@ -170,8 +171,8 @@ pub(crate) type PublishHook = Arc<dyn Fn(&Path) + Send + Sync>;
 pub(crate) type SyncHook = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
 
 /// A test's witness of each audit line, called where the line is logged.
-#[cfg(test)]
-pub(crate) type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
+#[cfg(any(test, feature = "test-support"))]
+pub type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
 
 /// A test's witness of each terminal line, called where the line is logged.
 #[cfg(test)]
@@ -347,7 +348,7 @@ struct Shared {
     writer: Mutex<Option<JoinHandle<()>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PreferenceWatchPoll {
     Pending,
     Settled(WriteSettlement),
@@ -365,7 +366,7 @@ struct State {
     /// Every accepted request whose settlement is not yet forgotten, and
     /// the store it belongs to.
     requests: HashMap<RequestId, StoreKey>,
-    /// Preference terminals retained until the frontend projects them.
+    /// At most nine live requests or terminals, retained until frontend projection.
     preference_watches: HashMap<RequestId, PreferenceWatch>,
     /// Accepted preference intent bytes until terminal settlement.
     preference_queue_bytes: usize,
@@ -385,7 +386,7 @@ struct State {
     /// test shortens it).
     #[cfg(test)]
     shutdown_timeout: Option<Duration>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     hooks: Hooks,
     /// A front end's test stall at the start of each file write (it holds
     /// a write to watch a command stay pending), run on the writer thread
@@ -397,14 +398,19 @@ struct State {
     read_stall: Option<ReadStall>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default, Clone)]
 struct Hooks {
+    #[cfg(test)]
     write: Option<WriteHook>,
+    #[cfg(test)]
     publish: Option<PublishHook>,
+    #[cfg(test)]
     sync: Option<SyncHook>,
     audit: Option<AuditHook>,
+    #[cfg(test)]
     terminal: Option<TerminalHook>,
+    #[cfg(test)]
     notice: Option<NoticeHook>,
 }
 
@@ -511,7 +517,6 @@ struct Terminal {
 }
 
 impl Terminal {
-
     /// The write's terminal line, when it is not a durable commit (that one
     /// is the [`AuditCommit`] line): the audit line's fields and the
     /// settlement, at its level. A completed write that changed nothing is
@@ -661,8 +666,7 @@ impl LocalStateService {
         for domain in domains {
             open[domain_index(*domain)] = true;
         }
-        let preference_path: Arc<str> =
-            Arc::from(root.preferences_file().display().to_string());
+        let preference_path: Arc<str> = Arc::from(root.preferences_file().display().to_string());
         let preference_not_ready = PreferenceError::from_cached(
             Arc::clone(&preference_path),
             Arc::from("preference document is not ready yet"),
@@ -715,8 +719,10 @@ impl LocalStateService {
         root: StateRoot,
         read_stall: ReadStall,
     ) -> Arc<Self> {
-        let mut state = State::default();
-        state.read_stall = Some(read_stall);
+        let state = State {
+            read_stall: Some(read_stall),
+            ..State::default()
+        };
         Self::open_with_state(
             root,
             &[
@@ -827,11 +833,7 @@ impl LocalStateService {
             self.shared.request_readback(&mut state, &key);
         }
         walk_globals.map_err(|cause| {
-            PreferenceError::from_cached(
-                Arc::clone(&self.shared.preference_path),
-                cause,
-                None,
-            )
+            PreferenceError::from_cached(Arc::clone(&self.shared.preference_path), cause, None)
         })
     }
 
@@ -914,10 +916,12 @@ impl LocalStateService {
             return Err(ErrorCode::NotReady { domain });
         }
         let mut state = self.shared.state.lock();
-        if state.shutdown {
+        if state.shutdown || state.preference_watches.len() >= PREFERENCE_WATCH_CAP {
             return Err(ErrorCode::Busy { domain });
         }
-        if state.preference_queue_bytes.saturating_add(patch.encoded_bytes)
+        if state
+            .preference_queue_bytes
+            .saturating_add(patch.encoded_bytes)
             > files::MAX_PREFERENCES_BYTES as usize
         {
             return Err(ErrorCode::Validation {
@@ -925,7 +929,10 @@ impl LocalStateService {
                 reason: ValidationReason::TooLong,
             });
         }
-        let store = state.stores.get(&key).ok_or(ErrorCode::NotReady { domain })?;
+        let store = state
+            .stores
+            .get(&key)
+            .ok_or(ErrorCode::NotReady { domain })?;
         if store.queue.len() >= OPERATOR_QUEUE_CAP {
             return Err(ErrorCode::Busy { domain });
         }
@@ -1198,8 +1205,8 @@ impl LocalStateService {
     }
 
     /// Call `hook` with every audit record where its line is logged.
-    #[cfg(test)]
-    pub(crate) fn set_audit_hook(&self, hook: AuditHook) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_audit_hook(&self, hook: AuditHook) {
         self.shared.state.lock().hooks.audit = Some(hook);
     }
 
@@ -1677,8 +1684,7 @@ impl State {
         let Some(store) = stores.get(key) else {
             requests.remove(&request);
             if let Some(watch) = preference_watches.remove(&request) {
-                *preference_queue_bytes =
-                    preference_queue_bytes.saturating_sub(watch.queued_bytes);
+                *preference_queue_bytes = preference_queue_bytes.saturating_sub(watch.queued_bytes);
             }
             return false;
         };
@@ -1686,13 +1692,15 @@ impl State {
             .settled
             .iter()
             .any(|settled| settled.request == request)
+            || preference_watches
+                .get(&request)
+                .is_some_and(|watch| watch.settlement.is_some())
         {
             return false;
         }
         if let Some(watch) = preference_watches.get_mut(&request) {
             if watch.settlement.is_none() {
-                *preference_queue_bytes =
-                    preference_queue_bytes.saturating_sub(watch.queued_bytes);
+                *preference_queue_bytes = preference_queue_bytes.saturating_sub(watch.queued_bytes);
                 watch.queued_bytes = 0;
                 watch.settlement = Some(settlement.clone());
             }
@@ -1706,7 +1714,6 @@ impl State {
         while store.settled.len() > SETTLED_PER_STORE {
             if let Some(forgotten) = store.settled.pop_front() {
                 requests.remove(&forgotten.request);
-                preference_watches.remove(&forgotten.request);
             }
         }
         true
@@ -1795,9 +1802,7 @@ impl State {
             _ => None,
         };
         let unchanged = match (&read, &store.file) {
-            (Ok(Some(document)), FileState::Read(cached)) => {
-                cached.digest == Some(document.digest)
-            }
+            (Ok(Some(document)), FileState::Read(cached)) => cached.digest == Some(document.digest),
             (Ok(None), FileState::Read(cached)) => cached.digest.is_none(),
             (Err(_), FileState::Rejected(rejection)) => {
                 Some(&rejection.detail) == rejected_detail.as_ref()
@@ -1812,7 +1817,7 @@ impl State {
             }
             return;
         }
-        let next = !matches!(&read, Err(_));
+        let next = read.is_ok();
         let version = if next { self.next_version() } else { None };
         let store = self.stores.get_mut(key).expect("checked above");
         let file = match read {
@@ -2113,15 +2118,9 @@ fn count_preference_audit_values(
             count_preference_audit_map(before, after)
         }
         (Some(serde_json::Value::Array(before)), Some(serde_json::Value::Array(after))) => {
-            let paired = before
-                .iter()
-                .zip(after)
-                .fold(0usize, |count, (old, new)| {
-                    count.saturating_add(count_preference_audit_values(
-                        Some(old),
-                        Some(new),
-                    ))
-                });
+            let paired = before.iter().zip(after).fold(0usize, |count, (old, new)| {
+                count.saturating_add(count_preference_audit_values(Some(old), Some(new)))
+            });
             let removed = before[after.len().min(before.len())..]
                 .iter()
                 .fold(0usize, |count, value| {
@@ -2146,10 +2145,7 @@ fn count_preference_audit_map(
     after: &serde_json::Map<String, serde_json::Value>,
 ) -> usize {
     let changed_before = before.iter().fold(0usize, |count, (key, old)| {
-        count.saturating_add(count_preference_audit_values(
-            Some(old),
-            after.get(key),
-        ))
+        count.saturating_add(count_preference_audit_values(Some(old), after.get(key)))
     });
     after
         .iter()
@@ -2161,11 +2157,11 @@ fn count_preference_audit_map(
 
 fn count_preference_audit_payload(value: &serde_json::Value) -> usize {
     match value {
-        serde_json::Value::Object(members) if !members.is_empty() => members
-            .values()
-            .fold(0usize, |count, value| {
+        serde_json::Value::Object(members) if !members.is_empty() => {
+            members.values().fold(0usize, |count, value| {
                 count.saturating_add(count_preference_audit_payload(value))
-            }),
+            })
+        }
         serde_json::Value::Array(members) if !members.is_empty() => {
             members.iter().fold(0usize, |count, value| {
                 count.saturating_add(count_preference_audit_payload(value))
@@ -2224,17 +2220,22 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
 
 fn sensitive_audit_key(key: &str) -> bool {
     [
-        "secret", "password", "passwd", "token", "credential", "auth", "cookie", "bearer",
+        "secret",
+        "password",
+        "passwd",
+        "token",
+        "credential",
+        "auth",
+        "cookie",
+        "bearer",
     ]
     .iter()
     .any(|needle| {
-        key.as_bytes()
-            .windows(needle.len())
-            .any(|part| {
-                part.iter()
-                    .zip(needle.as_bytes())
-                    .all(|(left, right)| left.eq_ignore_ascii_case(right))
-            })
+        key.as_bytes().windows(needle.len()).any(|part| {
+            part.iter()
+                .zip(needle.as_bytes())
+                .all(|(left, right)| left.eq_ignore_ascii_case(right))
+        })
     })
 }
 
@@ -2275,7 +2276,6 @@ fn write_preference_audit_change(change: &PreferenceAuditChange<'_>, output: &mu
     }
 }
 
-
 fn preference_audit_scalar<'a>(
     kind: PreferenceAuditScalarKind,
     value: Option<&'a serde_json::Value>,
@@ -2290,13 +2290,12 @@ fn preference_audit_scalar<'a>(
         {
             Some(PreferenceAuditScalar::MapBake(value))
         }
-        (
-            PreferenceAuditScalarKind::ServerRevision,
-            Some(serde_json::Value::Number(value)),
-        ) => value
-            .as_u64()
-            .filter(|revision| *revision <= u16::MAX.into())
-            .map(PreferenceAuditScalar::ServerRevision),
+        (PreferenceAuditScalarKind::ServerRevision, Some(serde_json::Value::Number(value))) => {
+            value
+                .as_u64()
+                .filter(|revision| *revision <= u16::MAX.into())
+                .map(PreferenceAuditScalar::ServerRevision)
+        }
         _ => None,
     }
 }
@@ -2365,13 +2364,11 @@ mod preference_audit_tests {
         assert!(!summary.text.contains("/private/"));
         assert!(!summary.text.contains("sensitive-value"));
         assert!(!summary.text.contains("unknown-value"));
-        assert!(
-            preference_audit_summary(
-                before.as_object().expect("an object"),
-                before.as_object().expect("an object"),
-            )
-            .is_none()
-        );
+        assert!(preference_audit_summary(
+            before.as_object().expect("an object"),
+            before.as_object().expect("an object"),
+        )
+        .is_none());
     }
 
     #[test]
@@ -2531,12 +2528,7 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(key) {
                     store.in_flight = None;
                     store.file = FileState::Cold;
-                    failed.extend(
-                        store
-                            .queue
-                            .drain(..)
-                            .map(|queued| queued.terminal()),
-                    );
+                    failed.extend(store.queue.drain(..).map(|queued| queued.terminal()));
                 }
                 let settlement = Settlement::Failed(ErrorCode::Failed {
                     domain,
@@ -2916,9 +2908,7 @@ impl Shared {
                     FileState::Read(cached) => {
                         DecisionFile::Read(CachedDecision::from_cached(cached, key.domain()))
                     }
-                    FileState::Rejected(rejection) => {
-                        DecisionFile::Rejected(rejection.reason)
-                    }
+                    FileState::Rejected(rejection) => DecisionFile::Rejected(rejection.reason),
                     FileState::Cold => DecisionFile::Cold,
                 };
                 (file, store.external)
@@ -3192,11 +3182,7 @@ impl Shared {
         }
         if state.settle(key, queued.request, settlement.clone(), None) && !committed {
             drop(state);
-            self.terminal(
-                &queued.terminal(),
-                &settlement,
-                None,
-            );
+            self.terminal(&queued.terminal(), &settlement, None);
         }
     }
 
@@ -3241,7 +3227,7 @@ impl Shared {
                 "{audit}; preferences: {summary}"
             ),
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         {
             let hook = self.state.lock().hooks.audit.clone();
             if let Some(hook) = hook {
@@ -3365,9 +3351,8 @@ struct CachedDecision {
 
 impl CachedDecision {
     fn from_cached(cached: &Cached, domain: LocalStateDomain) -> Self {
-        let needs_snapshot =
-            domain == LocalStateDomain::LoadoutsReferences
-                || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
+        let needs_snapshot = domain == LocalStateDomain::LoadoutsReferences
+            || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
         Self {
             version: cached.version,
             snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
@@ -3375,7 +3360,7 @@ impl CachedDecision {
             digest: cached.digest,
             durable: cached.durable,
             written_len: cached.written_len,
-            rewrite: cached.rewrite.clone(),
+            rewrite: cached.rewrite,
         }
     }
 }
@@ -3551,7 +3536,9 @@ fn decide(
     })
 }
 
-fn current_preference_document(cached: &CachedDecision) -> Option<Arc<serde_json::Map<String, serde_json::Value>>> {
+fn current_preference_document(
+    cached: &CachedDecision,
+) -> Option<Arc<serde_json::Map<String, serde_json::Value>>> {
     cached
         .preferences
         .as_ref()
@@ -3591,54 +3578,28 @@ fn stage_preference_document(
             reason: ValidationReason::TooLong,
         }));
     }
-    let bytes = files::preferences_bytes(&projection.document)
-        .map_err(|_| schema_failure(domain))?;
+    let bytes =
+        files::preferences_bytes(&projection.document).map_err(|_| schema_failure(domain))?;
     if bytes.len() as u64 > files::MAX_PREFERENCES_BYTES && bytes.len() > cached.written_len {
         return Err(Settlement::Failed(ErrorCode::Validation {
             domain,
             reason: ValidationReason::TooLong,
         }));
     }
-    Ok((
-        bytes,
-        LeaseSnapshot::preferences(rows),
-        projection,
-        summary,
-    ))
+    Ok((bytes, LeaseSnapshot::preferences(rows), projection, summary))
 }
 
 fn apply_preference_patch(
     document: &mut serde_json::Map<String, serde_json::Value>,
     patch: &PreferencePatch,
 ) -> Result<(), ()> {
-    use serde_json::Value;
-
     for member in &patch.members {
         let Some((leaf, parents)) = member.path.split_last() else {
             return Err(());
         };
-        let mut object = &mut *document;
-        let mut skipped = false;
-        for segment in parents {
-            match object.get_mut(segment) {
-                Some(Value::Object(child)) => object = child,
-                Some(_) => return Err(()),
-                None if member.value.is_some() => {
-                    object.insert(segment.clone(), Value::Object(serde_json::Map::new()));
-                    let Some(Value::Object(child)) = object.get_mut(segment) else {
-                        unreachable!("the object member was inserted above")
-                    };
-                    object = child;
-                }
-                None => {
-                    skipped = true;
-                    break;
-                }
-            }
-        }
-        if skipped {
+        let Some(object) = preference_parent_mut(document, parents, member.value.is_some()) else {
             continue;
-        }
+        };
         match &member.value {
             Some(value) => {
                 object.insert(leaf.clone(), value.clone());
@@ -3649,6 +3610,29 @@ fn apply_preference_patch(
         }
     }
     Ok(())
+}
+
+fn preference_parent_mut<'a>(
+    mut object: &'a mut serde_json::Map<String, serde_json::Value>,
+    parents: &[String],
+    create: bool,
+) -> Option<&'a mut serde_json::Map<String, serde_json::Value>> {
+    use serde_json::Value;
+
+    for segment in parents {
+        if create && !object.contains_key(segment) {
+            object.insert(segment.clone(), Value::Object(serde_json::Map::new()));
+        }
+        let value = object.get_mut(segment)?;
+        if !value.is_object() {
+            if !create {
+                return None;
+            }
+            *value = Value::Object(serde_json::Map::new());
+        }
+        object = value.as_object_mut()?;
+    }
+    Some(object)
 }
 
 fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {

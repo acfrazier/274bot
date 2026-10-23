@@ -5,6 +5,7 @@
 //! (T5.2 r3, [`crate::local_state::Preferences`]); nothing here reads or
 //! writes the file.
 
+#[cfg(test)]
 use std::io;
 
 use crate::local_state::Preferences;
@@ -93,7 +94,7 @@ pub fn background_bots_acked(preferences: &Preferences) -> bool {
         .unwrap_or(false)
 }
 
-pub fn background_bots_ack_error(err: &io::Error) -> String {
+pub fn background_bots_ack_error(err: &impl std::fmt::Display) -> String {
     format!("background bots: {err}")
 }
 
@@ -106,17 +107,16 @@ pub fn clear_background_bots_ack_error(error: &mut Option<String>) {
     }
 }
 
-/// Record the acknowledgement, durably, keeping every other preference.
+/// Fixture-only durable acknowledgement. Product callers submit asynchronously.
+#[cfg(test)]
 pub fn persist_background_bots_ack(preferences: &Preferences) -> io::Result<()> {
     preferences.set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
 }
 
-/// [`persist_background_bots_ack`] for the operator command that reports
-/// its outcome: a write still queued when the bounded wait ends comes
-/// back [`crate::local_state::Update::Queued`].
+/// Submit the acknowledgement without waiting for storage.
 pub fn begin_persist_background_bots_ack(
     preferences: &Preferences,
-) -> io::Result<crate::local_state::Update> {
+) -> Result<crate::local_state::Update, crate::local_state::PreferenceError> {
     preferences.begin_set(BACKGROUND_BOTS_ACK_KEY, serde_json::Value::Bool(true))
 }
 

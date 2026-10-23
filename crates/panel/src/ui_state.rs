@@ -207,10 +207,7 @@ pub(crate) fn load_snapshot(document: &Map<String, Value>) -> PanelUiState {
 /// write the store, never the stand-in, so a key the store holds wins over
 /// the stand-in's (seeded) value, and a key it lacks keeps it.
 #[cfg(test)]
-fn with_core_owned_keys(
-    state: PanelUiState,
-    document: &Map<String, Value>,
-) -> PanelUiState {
+fn with_core_owned_keys(state: PanelUiState, document: &Map<String, Value>) -> PanelUiState {
     let mut merged = serde_json::to_value(&state).expect("PanelUiState serializes");
     let keys = merged
         .as_object_mut()
@@ -223,17 +220,10 @@ fn with_core_owned_keys(
     serde_json::from_value(merged).unwrap_or(state)
 }
 
-/// Save the session's preferences (the per-thread stand-in under
-/// `cfg(test)`, like [`load`]). A refused write is logged, not returned.
+/// Seed the per-thread fixture for the panel's own preferences.
 #[cfg(test)]
-pub fn save(preferences: &Preferences, state: &PanelUiState) {
-    #[cfg(test)]
-    {
-        let _ = preferences;
-        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
-    }
-    #[cfg(not(test))]
-    save_to(preferences, state);
+pub fn save(_preferences: &Preferences, state: &PanelUiState) {
+    TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
 }
 
 /// The panel preferences `preferences` holds: defaults when the file is
@@ -270,18 +260,14 @@ pub(crate) fn apply_pending_members(
     for (path, value) in members {
         apply_json_member(root, path, value);
     }
-    if let Ok(mut updated) = serde_json::from_value(serialized) {
+    if let Ok(mut updated) = serde_json::from_value::<PanelUiState>(serialized) {
         updated.debug_panel.normalize();
         state = updated;
     }
     state
 }
 
-fn apply_json_member(
-    root: &mut Map<String, Value>,
-    path: &[String],
-    value: &Option<Value>,
-) {
+fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
     let Some((leaf, parents)) = path.split_last() else {
         return;
     };
@@ -413,21 +399,11 @@ pub fn save_to(preferences: &Preferences, state: &PanelUiState) {
     let _ = save_to_checked(preferences, state);
 }
 
-/// Persist panel preferences and return write failures to the caller that
-/// needs to display an inline notice (the per-thread stand-in under
-/// `cfg(test)`, like [`load`]).
+/// Seed the per-thread panel fixture through the checked fixture API.
 #[cfg(test)]
-pub fn save_checked(preferences: &Preferences, state: &PanelUiState) -> io::Result<()> {
-    #[cfg(test)]
-    {
-        let _ = preferences;
-        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
-        Ok(())
-    }
-    #[cfg(not(test))]
-    {
-        save_to_checked(preferences, state)
-    }
+pub fn save_checked(_preferences: &Preferences, state: &PanelUiState) -> io::Result<()> {
+    TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
+    Ok(())
 }
 
 /// Persist the panel's own keys into `preferences` through the same
@@ -452,7 +428,7 @@ pub fn save_to_checked(preferences: &Preferences, state: &PanelUiState) -> io::R
             return Err(io::Error::new(io::ErrorKind::InvalidData, error));
         }
     };
-    match preferences.update(|document| merge_saved_panel_state(document, &replacement)) {
+    match preferences.update(move |document| merge_saved_panel_state(document, &replacement)) {
         Ok(()) => Ok(()),
         Err(error) => {
             refused(&error);

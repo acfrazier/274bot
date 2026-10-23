@@ -258,7 +258,7 @@ pub fn session_log_setting(preferences: &crate::prefs::UiPreferences) -> bool {
 pub(crate) fn persist_session_log_setting(
     preferences: &crate::prefs::UiPreferences,
     on: bool,
-) -> io::Result<host_play::local_state::Update> {
+) -> Result<host_play::local_state::Update, crate::prefs::PreferenceError> {
     preferences.begin_set(SESSION_LOG_KEY, serde_json::Value::Bool(on))
 }
 
