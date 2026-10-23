@@ -37,7 +37,7 @@ impl Driver for HeldDriver {
     fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
         panic!("held follow must not run");
     }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
+    fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         panic!("held bank walk wrote a packet");
     }
     fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
