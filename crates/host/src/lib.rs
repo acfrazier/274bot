@@ -536,7 +536,9 @@ impl Host {
         let random_events = slot.random_events.load(Ordering::Relaxed);
         slot.settings.random_events = random_events;
         let t_loop = std::time::Instant::now();
+        slot.recover_entity_cycles(client, slot.pacing_now(t_loop));
         client.mainloop();
+        client.advance_hosted_animations(false);
         // The hosted title's `mainloop` changes nothing it draws, so the only
         // title paint owed ahead of its cadence is the in-game → title edge:
         // it replaces the last game frame now and starts a fresh title
@@ -1242,9 +1244,9 @@ struct SlotLoop {
     /// when it is ≥1 s old, and a fast title keeps its flame deadline here.
     raster_last: Option<Instant>,
     raster_was_on: bool,
-    /// Tests pin the instant the paint cadence is measured at, so which
-    /// ticks paint does not depend on how long a loaded machine takes to
-    /// run them.
+    /// Elapsed entity time, independent of packet and render cadence.
+    entity_cycle_at: Option<Instant>,
+    /// Tests pin the host clock so paint and entity cycles are deterministic.
     #[cfg(test)]
     pacing_now: Option<Instant>,
     /// `client.draw` from the previous frame. The draw-off detach
@@ -1314,6 +1316,7 @@ impl SlotLoop {
             game_data: None,
             raster_last: None,
             raster_was_on: false,
+            entity_cycle_at: None,
             #[cfg(test)]
             pacing_now: None,
             draw_was_on: false,
@@ -1343,6 +1346,45 @@ impl SlotLoop {
             return now;
         }
         tick_start
+    }
+
+    /// Recover missed 20 ms cycles on every slot, including late focused
+    /// and busy frames, before new packets replace routes or animations.
+    /// Advance only entity and presentation state, including cutscene camera
+    /// updates. Never replay I/O or input timers.
+    fn recover_entity_cycles(&mut self, client: &mut Client, now: Instant) {
+        if !client.ingame || client.error_loading || client.gens.session != self.pump.last().session
+        {
+            self.entity_cycle_at = None;
+            return;
+        }
+        let Some(last) = self.entity_cycle_at else {
+            self.entity_cycle_at = Some(now);
+            return;
+        };
+        let due = now.saturating_duration_since(last).as_nanos() / FRAME_MS.as_nanos();
+        // mainloop supplies the current cycle. One second is the longest
+        // intentional park; longer scheduler stalls must stay bounded too.
+        let missed = due
+            .saturating_sub(1)
+            .min(WATCH_PARK_MS.as_nanos() / FRAME_MS.as_nanos()) as u32;
+        for _ in 0..missed {
+            client.loop_cycle = client.loop_cycle.wrapping_add(1);
+            client.move_players();
+            client.move_npcs();
+            client.timeout_chat();
+            client.advance_hosted_animations(true);
+            for cycle in &mut client.cam_shake_cycle {
+                *cycle = cycle.wrapping_add(1);
+            }
+        }
+        // Retain fractional periods and account for early control wakes.
+        // Do not carry capped stall debt across newly received packets.
+        self.entity_cycle_at = Some(if due > u128::from(missed + 1) {
+            now
+        } else {
+            last + FRAME_MS * (missed + 1)
+        });
     }
 
     #[cfg(feature = "performance-profile")]
