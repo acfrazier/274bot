@@ -1,17 +1,19 @@
 # Nightly live run
 
-The nightly runs the main (non-quest) cells and a separate quest job. The Linux
-VM `malbec` runs both jobs on local Engine A and Engine Q copies; Windows runs
-both jobs on its existing Engine B (without changing its tick rate); macOS
-`merlot` runs the main job against Engine A and quest cells against Engine Q.
-Results are summarized per job. The archive host collects the Linux and Windows
-runs; merlot also keeps the finished malbec runs in its `NIGHTLY/` mirror.
+The nightly runs main (non-quest) cells and a separate quest job. Linux
+`malbec` runs both jobs on private Engine A and Engine Q copies. Windows runs
+both jobs on Engine B without changing its tick rate. Mac `merlot` starts a
+fresh Tart clone and runs client work there: main uses the helper's Engine A
+forward, while quest uses a private Engine Q copy.
+Each job writes its own summary. The archive host collects Linux and Windows
+runs. Merlot also stores finished malbec runs in its `NIGHTLY/` mirror.
 
 ```
 merlot macOS user LaunchAgent (20:00 America/New_York)
+  Tart clone from baked base: 8 vCPU, 24 GiB RAM, 160 GiB disk
+  main Engine A via helper forward (44594/1080); private Engine Q for quest
   /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac/
   /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac-quest/
-  Engine A 127.0.0.1:44594/1080; Engine Q 127.0.0.1:44694/1180
   FLOOR status: /Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
 
 malbec nightly (02:00 America/New_York)
@@ -58,20 +60,23 @@ Jobs run sequentially and share the runner's lock and build tree:
   `QUESTER_TICK_MS=300` and `local-289q`.
   Non-Windows quest cells write `local-289q` into each isolated HOME, so they
   do not use the operator's `~/.274bot/servers.json`.
-- **macOS, merlot:** the `local.274bot-nightly-mac` user LaunchAgent runs main
-  with `lanes,panel,tui` against already-running Engine A (`44594/1080`). It
-  then runs quest with `panel,tui` against Engine Q (`44694/1180`). Quest cells
-  use one connection because Q sets `maxConnected=1`. The launcher never starts,
-  stops or changes either engine. `panel-play` runs in the logged-in Aqua session.
-  The launcher adds `$CARGO_HOME/bin` to `PATH` (`$HOME/.cargo` by default),
-  because launchd uses a fixed `PATH`.
-  Before either job starts, the launcher fetches `dev` once into
-  `NIGHTLY_MAC_ROOT/dev-pin.git`. Both jobs read that local pin. The status file
-  records its commit as `dev_commit`.
-  The runner checks `MAC-QUIET.lock` every 250 ms while a live cell runs. It
-  stops only that cell's recorded process group. It records a stopped cell as
-  `UNAVAILABLE` with a `MAC-QUIET` reason. FLOOR can check
-  `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
+- **macOS, merlot:** the `local.274bot-nightly-mac` LaunchAgent starts a fresh
+  clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
+  runs macOS 27.0.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GiB disk.
+  The host stages the runner, catalog, fixtures and Engine A/Q source data.
+  The guest checks out each exact branch commit from `branches.conf` and runs
+  main with `lanes,panel,tui`, then quest with `panel,tui`. Each branch uses a
+  fresh source tree. Quest cells use one connection because Engine Q sets
+  `maxConnected=1`. Main connects to host Engine A through `mac_vm.py`'s
+  loopback forward on `44594/1080`; quest starts private Engine Q in the guest.
+  The runner and TUI run inside the clone; `panel-play` uses its Aqua session.
+  The base includes the needed privacy grants. The host checks the 120 GiB
+  free-space floor before and during the run. After stopping the clone, it
+  verifies `SHA256SUMS` and publishes completed run folders to `NIGHTLY/`.
+  The controller mirrors `MAC-QUIET.lock` into the guest. The runner stops an
+  active live cell at its next boundary. It records that cell as `UNAVAILABLE`
+  with a `MAC-QUIET` reason. It does not start another job.
+  FLOOR can read `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
 - **Windows, BotTest:** the task runs main with `lanes,panel,tui`, then quest
   with `panel,tui`, both against existing Engine B (`47594/3080`). Engine Q is
   bound to merlot's loopback and is not reachable from Windows without changing
@@ -169,8 +174,8 @@ Only some branches, cells or a different parallelism (as user `bot`, outside the
 ```sh
 cd /srv/nightly
 PATH=$HOME/.cargo/bin:$PATH python3 runner/tools/nightly/run_nightly.py \
-  --branch release/0.2.4 --cells shop_buyout_aubury,walk --parallel 2
-python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.4   # cell list only
+  --branch release/0.2.5 --cells shop_buyout_aubury,walk --parallel 2
+python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.5   # cell list only
 ```
 
 Settings can also go in `/etc/274bot-nightly.env` on the VM (read by the unit):
@@ -197,11 +202,14 @@ Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
 guard's cap and floor (`NIGHTLY_TARGET_CAP_GB`, `NIGHTLY_MIN_FREE_GB`) can be set
 there too.
 
-On merlot, the user LaunchAgent and hand runs both use `nightly-mac.sh`. It
-reads `~/.config/274bot-nightly/mac-nightly.env`, checks `MAC-QUIET.lock`, and
-updates the FLOOR status file. Before either job starts, it fetches `dev` once
-from `NIGHTLY_MAC_SOURCE_REPO` or the public repository default. It records the
-commit in the status file and points both jobs at the local pin.
+On merlot, `nightly-mac.sh` reads
+`~/.config/274bot-nightly/mac-nightly.env` and starts
+`nightly-mac-guest.py`. The controller starts one Tart clone from the baked
+`274bot-mac-base` image. Main uses `mac_vm.py`'s host Engine A forward; quest
+starts a private Engine Q in the clone. Both jobs' clients run in the guest.
+The host fetches each branch in `branches.conf` from `NIGHTLY_MAC_SOURCE_REPO`.
+It pins every branch to the fetched commit before it starts the guest.
+The status file records the branch commits and the Tart session ID.
 
 Run a hand night through the granted launcher:
 
@@ -211,11 +219,12 @@ NIGHTLY274_ACTION=nightly-mac \
   "$HOME/.local/libexec/274bot-nightly/nightly274-launch"
 ```
 
-The two job summaries land directly in `NIGHTLY/` with `-mac` and
-`-mac-quest`. `NIGHTLY/.mac-nightly-running` exists while either job is active.
-If a measurement creates `MAC-QUIET.lock`, the runner stops active live cells
-and records them as `UNAVAILABLE (MAC-QUIET)`. It records later cells the same
-way and skips the next job.
+The guest writes `-mac` and `-mac-quest` run folders. The controller copies
+completed folders to `NIGHTLY/` and checks each `SHA256SUMS` file. The host
+status file is `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
+If `MAC-QUIET.lock` appears, the controller creates the matching guest lock.
+The runner stops an active live cell at its next boundary. The controller
+exports completed folders, then stops and deletes the clone.
 
 Pull at once instead of waiting for the hour:
 `systemctl start 274bot-nightly-pull.service` (Windows runs:
@@ -234,11 +243,14 @@ starts the read-only malbec mirror immediately (after its key is installed).
 - Stop mirroring: `systemctl --user disable --now 274bot-nightly-mirror.timer` on the
   review machine.
 - macOS on merlot: `cat /Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
-  shows the active job while it is running. Create
-  `/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` to stop it from starting
-  another cell at the next boundary. Unload the schedule with
-  `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-mac.plist`;
-  unload the malbec mirror similarly with
+  shows the active job. Create `/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock`
+  to stop the guest at the next cell boundary and prevent the next job. The
+  controller copies completed run folders, then stops and deletes the clone.
+  To stop it immediately, run
+  `launchctl kill SIGTERM gui/$(id -u)/local.274bot-nightly-mac`.
+  To unload the schedule, run
+  `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-mac.plist`.
+  Unload the malbec mirror similarly with
   `local.274bot-nightly-malbec-pull.plist`.
 - Windows: `Stop-ScheduledTask -TaskName 274bot-nightly` stops tonight's run (the task
   ends the runner without a summary; that night has no `DONE` and is never pulled).
@@ -251,9 +263,10 @@ starts the read-only malbec mirror immediately (after its key is installed).
 
 ## Change the branches
 
-Edit [`branches.conf`](branches.conf) (first line = the fix line), commit, and update
-the VM's runner checkout (`git -C /srv/nightly/runner pull --ff-only`). The next night
-reads the new list. No unit changes are needed.
+Edit [`branches.conf`](branches.conf), commit, and update each runner checkout.
+The first line is the fix line. Linux reads the list from
+`/srv/nightly/runner`. Mac reads it from the worktree in `NIGHTLY_MAC_RUNNER`.
+The next run reads the updated list.
 
 ## Deployment
 
@@ -429,25 +442,28 @@ carries no machine-specific path.
 
 ### Merlot macOS nightly and malbec mirror
 
-The Mac LaunchAgent starts at **20:00 America/New_York**. It is an evening
-desktop window, six hours before the existing 02:00 Linux timer and 5½ hours
-before the 01:30 standby pull; the malbec mirror itself runs hourly at minute
-51, offset from the existing 274 pull at minute 41. The Aqua user agent can run
-`panel-play` in its logged-in desktop session; it does not run when no user is
-logged in. Before either job it checks
-`/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock`, and `run_nightly.py`
-checks that lock at every cell/lane boundary. While either job runs,
-`/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running` contains
-the PID, job and state for FLOOR controllers.
+The Mac user LaunchAgent starts at **20:00 America/New_York**. It starts one
+Tart clone from `274bot-mac-base`, runs both Mac jobs, then stops and deletes the
+clone before verifying and publishing completed run archives to `NIGHTLY/`.
+The clone uses 8 vCPU, 24 GiB RAM and a 160 GiB disk. The controller protects
+a 120 GiB free-space floor on `/Volumes/dev-scratch`.
+`panel-play` runs in the guest's Aqua session. The user must be logged in.
+The controller checks
+`/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` before it starts work.
+The runner checks the guest copy at each cell and lane boundary. While the
+LaunchAgent runs, `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
+contains the PID, job, state, branch commits and Tart session ID.
 
-1. Write `~/.config/274bot-nightly/mac-nightly.env` with the paths for this
-   merlot. The runner worktree and the two private engine source trees are local
-   inputs; neither engine is started or changed by this LaunchAgent:
+1. Write `~/.config/274bot-nightly/mac-nightly.env` with the paths for merlot.
+   The host stages the runner, catalog, fixtures, engines and isohome helper
+   as read-only inputs. Main uses the host Engine A forward; quest runs private
+   Engine Q in the clone.
    ```sh
    mkdir -p ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
-     ~/.local/state/274bot-nightly-mac ~/Library/LaunchAgents
+     ~/.local/state/274bot-nightly-mac ~/.local/state/274bot-nightly-malbec-pull \
+     ~/Library/LaunchAgents
    cat > ~/.config/274bot-nightly/mac-nightly.env <<EOF
-   NIGHTLY_MAC_RUNNER=/Volumes/dev-scratch/274bot-worktrees/nightly-mac-quest
+   NIGHTLY_MAC_RUNNER=/Volumes/dev-scratch/274bot-worktrees/nightly-tart
    NIGHTLY_MAC_ROOT=/Volumes/dev-scratch/274bot-nightly
    NIGHTLY_MAC_RUNS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY
    NIGHTLY_MAC_STATUS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
@@ -457,6 +473,10 @@ the PID, job and state for FLOOR controllers.
    NIGHTLY_MAC_QUIET_LOCK=/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
    NIGHTLY_MAC_ISOHOME=$HOME/experiments/274bot/.superpowers/bin/isohome
    NIGHTLY_MAC_PYTHON=/opt/homebrew/bin/python3
+   NIGHTLY_MAC_VM_TOOL=$HOME/experiments/274bot/.superpowers/release-0.1.9/tools/headed/mac_vm.py
+   NIGHTLY_MAC_BASE=274bot-mac-base
+   NIGHTLY_MAC_SOURCE_REPO=https://github.com/acfrazier/274bot
+   NIGHTLY_MAC_MIN_FREE_GIB=120
    EOF
    chmod 600 ~/.config/274bot-nightly/mac-nightly.env
    ```
@@ -500,19 +520,19 @@ the PID, job and state for FLOOR controllers.
    plutil -lint ~/Library/LaunchAgents/local.274bot-nightly-mac.plist \
      ~/Library/LaunchAgents/local.274bot-nightly-malbec-pull.plist
    ```
-4. Bootstrap both agents after the hand acceptance run. Confirm that Main installed
+4. Enable both agents after the hand acceptance run. Confirm that Main installed
    the restricted key on malbec and that both env files are ready.
    ```sh
+   launchctl enable gui/$(id -u)/local.274bot-nightly-mac
+   launchctl enable gui/$(id -u)/local.274bot-nightly-malbec-pull
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-mac.plist
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.274bot-nightly-malbec-pull.plist
    launchctl print gui/$(id -u)/local.274bot-nightly-mac
    launchctl print gui/$(id -u)/local.274bot-nightly-malbec-pull
    ```
-   The existing launcher already has merlot's removable-volume privacy grant,
-   so these additions do not create a new launcher binary or prompt. If that
-   grant is unexpectedly requested, stop and have the operator inspect it
-   before approving anything. `RunAtLoad=false` keeps installation from
-   starting an unscheduled nightly or pull.
+   Keep both services enabled and loaded in the Aqua user domain. The Mac job
+   keeps its 20:00 schedule. `RunAtLoad=false` prevents an extra run when
+   launchd loads the agent.
 
 ### Windows nightly host (BotTest, no elevation)
 
@@ -732,8 +752,10 @@ Enable it on malbec (orchestrator only, never during a run):
    Read `measured` in each `latency.json`. The p50 values must sit within
    10 ms of 75 ms.
 
-Tests: `python3 -B tools/nightly/test_latency_proxy.py` for the proxy,
-`python3 -B tools/nightly/test_run_nightly.py` for the runner.
+Tests use Python 3.10+ (`/opt/homebrew/bin/python3` on Merlot):
+`python3 -B tools/nightly/test_latency_proxy.py` for the proxy,
+`python3 -B tools/nightly/test_run_nightly.py` for the runner and launcher,
+and `python3 -B tools/nightly/test_nightly_mac_guest.py` for the Tart controller.
 
 ## Windows nightly
 
