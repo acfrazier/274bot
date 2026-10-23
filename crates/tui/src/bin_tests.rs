@@ -3572,6 +3572,12 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
     let mut session = TuiSession::new(dummy_options());
     session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
+    dispatch(&mut session, &mut app, AppAction::SetSessionLog(false));
+    settle_preferences(&mut session, &mut app);
+    assert!(!frontend_core::log_file::session_log_setting(
+        &session.preferences
+    ));
+    assert!(frontend_core::log_file::session_log_path().is_none());
 
     let (write_entered_tx, write_entered_rx) = std::sync::mpsc::sync_channel(2);
     let (write_release_tx, write_release_rx) = std::sync::mpsc::channel();
