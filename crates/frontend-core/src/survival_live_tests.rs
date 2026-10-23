@@ -17,7 +17,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::{
     mint_live_entries, mint_live_names, run_with_template, InstancePermit, ProfileOptions,
-    ScriptNavPaint, SharedClientTemplate, SlotArm,
+    SharedClientTemplate, SlotArm,
 };
 use parking_lot::Mutex;
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
@@ -75,6 +75,7 @@ struct Trace {
     arm_when_needed_frame: Option<u64>,
     host_never_frame: Option<u64>,
     host_when_needed_frame: Option<u64>,
+    host_policy_after_copy: bool,
     setting_operation: Option<u64>,
     setting_submit_tick: Option<u32>,
     setting_submit_frame: Option<u64>,
@@ -204,6 +205,7 @@ impl Trace {
                 "disk_error": self.disk_error,
                 "arm_when_needed_frame": self.arm_when_needed_frame,
                 "host_when_needed_frame": self.host_when_needed_frame,
+                "host_policy_after_copy": self.host_policy_after_copy,
                 "native_when_needed_tick": self.native_when_needed_tick,
                 "native_when_needed_frame": self.native_when_needed_frame,
                 "onset_policy": self.onset_policy,
@@ -258,7 +260,6 @@ struct LiveState {
     last_tile: Option<WorldTile>,
     last_hitmark_cycles: [i32; 4],
     arm: Option<Arc<SlotArm>>,
-    host_policy_probe: Option<ScriptNavPaint>,
     action: Option<FixtureAction>,
     previous_food_count: Option<i32>,
     previous_dose_count: Option<i32>,
@@ -708,7 +709,6 @@ fn run_guard_cure_live(
         last_tile: None,
         last_hitmark_cycles: [-1; 4],
         arm: None,
-        host_policy_probe: None,
         action: None,
         previous_food_count: None,
         previous_dose_count: None,
@@ -716,7 +716,7 @@ fn run_guard_cure_live(
     let frame_state = Arc::clone(&state);
     let frame_trace = Arc::clone(&trace);
     let frame_account = account.to_owned();
-    let play = run_with_template(
+    let mut play = run_with_template(
         template,
         true,
         vec![],
@@ -738,34 +738,9 @@ fn run_guard_cure_live(
                 .snapshot
                 .local_player()
                 .map(|player| player.player.network);
-            let host_policy = state
-                .host_policy_probe
-                .as_ref()
-                .and_then(|probe| probe.native_walk_cure_poison_for_test(name));
 
             {
                 let mut trace = frame_trace.lock();
-                if host_policy == Some(ScriptCurePoison::Never) && trace.host_never_frame.is_none()
-                {
-                    trace.host_never_frame = Some(frame_number);
-                    trace.event(
-                        "host-guard-policy-never-observed",
-                        frame_number,
-                        tick,
-                        json!({ "policy": "never" }),
-                    );
-                }
-                if host_policy == Some(ScriptCurePoison::WhenNeeded)
-                    && trace.host_when_needed_frame.is_none()
-                {
-                    trace.host_when_needed_frame = Some(frame_number);
-                    trace.event(
-                        "host-guard-policy-mirrored",
-                        frame_number,
-                        tick,
-                        json!({ "policy": "when_needed" }),
-                    );
-                }
                 if ingame && !state.was_ingame {
                     trace.login_ticks.push(tick);
                     trace.final_login_tick = Some(tick);
@@ -918,7 +893,39 @@ fn run_guard_cure_live(
     )
     .map_err(|error| format!("start Engine A Play: {error}"))?;
     state.lock().runner.set_obj_names(play.obj_names());
-    state.lock().host_policy_probe = Some(play.script_nav_paint());
+    let post_frame_state = Arc::clone(&state);
+    let post_frame_trace = Arc::clone(&trace);
+    let post_frame_account = account.to_owned();
+    let host_policy_probe = play.script_nav_paint();
+    play.set_post_host_frame_observer(move |_, name| {
+        if name != post_frame_account {
+            return;
+        }
+        let state = post_frame_state.lock();
+        let frame = state.frame_count;
+        let tick = state.snapshot.tick();
+        let policy = host_policy_probe.native_walk_cure_poison_for_test(name);
+        let mut trace = post_frame_trace.lock();
+        if policy == Some(ScriptCurePoison::Never) && trace.host_never_frame.is_none() {
+            trace.host_never_frame = Some(frame);
+            trace.event(
+                "host-guard-policy-never-observed",
+                frame,
+                tick,
+                json!({ "policy": "never", "after_copy": true }),
+            );
+        }
+        if policy == Some(ScriptCurePoison::WhenNeeded) && trace.host_when_needed_frame.is_none() {
+            trace.host_when_needed_frame = Some(frame);
+            trace.host_policy_after_copy = true;
+            trace.event(
+                "host-guard-policy-mirrored",
+                frame,
+                tick,
+                json!({ "policy": "when_needed", "after_copy": true }),
+            );
+        }
+    });
 
     let mut session: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
     session.declare_headless_render();
@@ -1332,6 +1339,9 @@ fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
     let host_frame = trace
         .host_when_needed_frame
         .ok_or("host guard never mirrored WhenNeeded")?;
+    if !trace.host_policy_after_copy {
+        return Err("host policy was read before the per-frame copy".into());
+    }
     if durable_frame.abs_diff(arm_frame) > 1 || durable_frame.abs_diff(host_frame) > 1 {
         return Err(format!(
             "running policy missed one-frame mirror: durable={durable_frame}, arm={arm_frame}, host={host_frame}, native_poll={native_frame}"
@@ -1448,6 +1458,7 @@ mod oracle_tests {
             arm_when_needed_frame: Some(31),
             host_never_frame: Some(10),
             host_when_needed_frame: Some(31),
+            host_policy_after_copy: true,
             setting_operation: Some(2),
             setting_submit_tick: Some(132),
             setting_submit_frame: Some(28),
@@ -1493,6 +1504,17 @@ mod oracle_tests {
     fn oracle_accepts_durable_mirror_drink_and_arrived_walk() {
         assert_eq!(verify_guard_cure(&passing_trace()), Ok(()));
     }
+
+    #[test]
+    fn oracle_rejects_host_policy_read_before_the_copy() {
+        let mut trace = passing_trace();
+        trace.host_policy_after_copy = false;
+        assert_eq!(
+            verify_guard_cure(&trace),
+            Err("host policy was read before the per-frame copy".into())
+        );
+    }
+
     #[test]
     fn oracle_rejects_wrong_start_tile_and_low_hitpoints() {
         let mut wrong_start = passing_trace();

@@ -516,6 +516,8 @@ impl Play {
             per_frame: Arc::new(|_: &mut Client, _: &str, _: crate::SlotFrameInput| {}),
             #[cfg(any(test, feature = "test-support"))]
             post_native_player_info: None,
+            #[cfg(feature = "test-support")]
+            post_host_frame: None,
             spawned: HashSet::new(),
             arms: HashMap::new(),
             profiles: HashMap::new(),

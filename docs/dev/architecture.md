@@ -764,6 +764,11 @@ atomic mirror and writes its audit line. Each observed frame reads that mirror
 once, then posts the policy to native action contexts and the host walk guard.
 The script policy type remains `script::survival::CurePoison`.
 
+The live mirror proof reads the real host policy after that per-frame copy.
+Its read-only post-host-frame observer exists only with `test-support`; product
+builds have neither its storage nor its callback. A pre-copy read cannot prove
+the one-frame deadline and is rejected by the proof oracle.
+
 Map-cache census retains at most 1,030 root summaries. Completion transfers that
 allocation without a replacement. A new scan releases previous census storage
 first. Mutation generations fence census, publication and bounded pruning. Entry
