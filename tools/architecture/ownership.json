@@ -6907,6 +6907,10 @@
       "owner": "T4"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_standalone_omit.rs",
+      "owner": "T4"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
       "owner": "T1"
     },
