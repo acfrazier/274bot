@@ -1528,11 +1528,11 @@ fn failed_pending_survival_write_then_success_logs_only_the_durable_transition()
         .expect("the failed write reaches the writer");
     assert!(failed_write.result.is_err());
 
+    unblock_writes(blocked);
     let successful = s
         .set_survival_settings(name, crate::CurePoison::Always)
         .unwrap();
     s.settle_write(failed_write);
-    unblock_writes(blocked);
     let successful_write = s
         .writer
         .as_mut()
