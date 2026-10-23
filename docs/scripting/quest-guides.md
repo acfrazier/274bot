@@ -2,98 +2,13 @@
 
 A Path is a compiled, restartable description of one quest. The compiler validates its typed document structure and content references before a run; the runner uses the live quest tab and journal as progress evidence. This guide describes the Path format and authoring workflow.
 
-## Migrating a Path to schema 3
 
-For Paths authored against schema 2, make this clean cutover before adding new work:
 
-1. Change the top-level `"schema"` value from `2` to `3`.
-2. Add `"$schema": "../path.schema.json"` to every file in `crates/script/paths/289/` (or the corresponding relative path in another Path directory).
-3. Add `"advances": true` or `"advances": false` to every Explicit step kind: `talk`, `interact`, `use_on`, `make`, `combat`, `gather`, and `thieve`. Use `true` when the server changes quest progress; use `false` when it does not. Default-class kinds can omit the key, which compiles as `false`.
-
-A direct progress fact (`stage_in`, `flag`, or `quest_colour`) anywhere inside a step's `settle` requires `advances: true`. A journal count used as an item quantity (`qty: { "progress": ... }`) is inventory evidence, not a direct progress fact, and does not require it. The schema does not accept version 2; do not mix schemas in a release. Validate the shape with the pinned AJV command in §4.6 and compile every indexed Path with `cargo test -p script bundled_paths_decode_and_compile` before asking for a live run.
-
-## Loading draft Paths without rebuilding
-
-In the panel, select the Quester card and open **Script prefs**. In the TUI, open
-**settings** (`o` on Overview). Enable **Load quest Paths from folder** and choose a
-folder. The setting is off by
-default. Changing it refreshes the picker. A saved enabled folder reloads
-automatically when selected game data is ready at startup. The default is
-`<profile data directory>/quester/paths/289`; a checkout's
-`crates/script/paths/289` also works. These documents are for revision **289**.
-The default folder is not created automatically.
-
-Put each Path in `<folder>/<id>.json`, with the same `id` inside the document.
-An optional `index.json` uses the shipped index's schema:
-
-```json
-{"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"my-draft","file":"my-draft.json"}]}
-```
-
-Bundled rows retain their shipped order. A valid folder document replaces the
-bundled document with the same id; new ids are appended as **draft** rows, in
-folder-index order when an index is present, then filename order for unindexed
-files. Picker labels and running status distinguish **folder** overrides and
-**draft** Paths from bundled ones. The active Path's source, SHA-256 digest,
-and initial step comment are written to the log when it starts. Folder status
-also shows the current step comment in the existing script chrome.
-
-Use **Reload Paths** to reread and validate the folder without starting a quest.
-Every Quester Start also rereads it. Stop/Start to run edits; Reload does not
-replace a Path that is already running. Delete an override and Reload (or Start)
-to restore the bundled document. Turning the setting off ignores the folder
-entirely.
-
-Files are limited to 1 MiB each. The loader sorts valid folder filenames and
-loads at most the first 256 in filename order; later files are omitted.
-Validation reports the filename, step, error code, and detail. An invalid
-override falls back to its bundled Path; an invalid draft remains visible but
-unavailable, with the validation error as its reason. Other documents still
-load. Shipped server-unavailable quests retain their server-content restriction.
-
-Symlinked JSON files are followed; the opened target must be a regular file
-within the size limit. The report is capped at 32 diagnostic lines and ends
-with an `N more` summary when details are omitted. The TUI shows only the
-summary; per-file details are available in Logs.
-
-Before asking for a live run, use the pinned AJV commands in §4.6 for document
-shape and `cargo test -p script bundled_paths_decode_and_compile` for bundled
-selected-data compilation. Every folder document within the 256-file cap is
-decoded and compiled on every Reload and Start, including overrides to bundled
-ids. JSON Schema validation alone cannot resolve content aliases or validate
-runtime handler semantics.
-For a paired document, validation compiles each declared gang role before making
-the Path available. Every role must compile; a failing role rejects the whole
-document, and its gang is named alongside the original per-file compile error.
-Reload applies the same validation to edited roles. Runtime activation still
-chooses only the account's effective gang after owned membership admission.
-Validation and content-family preparation run on the existing preparation worker.
-The `gather` step supports Woodcutting, Mining and Fishing through the same
-selected gathering catalog and native action as bundled Paths. Acquisition
-recipes and typed progress readers use that catalog as well.
 
 ---
 
 ## 4. Authoring guide
 
-### 4.1 Questionable → Path
-
-| Questionable concept | Path concept | Notes |
-| --- | --- | --- |
-| `QuestRoot` | `PathDocument { $schema, schema, id, display_name, kind, required, tested_stats, partner, quest, roles[] }` | Source ownership belongs in git history. A Path ships when it is indexed and embedded by id. `kind` is `Quest` by default or `Miniquest` for an owned-reader miniquest. `roles[]` supports partner quest declarations; solo Paths use `role: null`. |
-| `QuestSequence { Sequence, Steps[] }` | `SequenceDocument { stage, required, terminal, recovery_entry, order?, steps[] }` | `stage` is a symbolic key such as `"cook:1"`, not an ordered number. Use one sequence per stage; `terminal: true` with no steps marks completion. `order` picks how the next step is chosen (§4.3 item 3). |
-| Flat `QuestStep` with an `InteractionType` and optional fields | `StepDocument { id, kind, version, args, comment?, advances?, skip_if, settle }` | Each registered `kind@version` has its own typed `args` schema. Unknown fields are rejected. |
-| `InteractionType` values such as `WalkTo`, `Interact`, `UseItem`, `AcceptQuest`, `CompleteQuest` | `kind` values such as `walk`, `interact`, `use_on`, `talk` | Accepting or completing a quest is an ordinary `talk` step with `advances: true`. |
-| `DataId`, `Position`, `TerritoryId`, `StopDistance` | Config names such as `args.npc`, `args.target.loc`, `args.item`; sourced `anchor.tile`; `radius` or `leash` | Targets use content config names, not numeric ids. `bank.keep_ids` is an explicit raw-id exception; `tested_stats[].skill` is generated by a live PASS. Authored destination tiles carry a `source`; observed `near.tile` facts do not. |
-| Dialogue and point-menu choices | `talk.prefer[]` or `talk.choose` | `prefer` matches text fragments in order; `choose` is a 1-based menu index. |
-| Step skip conditions | `skip_if`: `All` / `Any` / `Not` over `Fact` | Only proven `True` skips. `Unknown` blocks selection; it is never treated as `False`. `{"Any":[]}` means never skip; `{"All":[]}` is rejected as always-skipped. |
-| Completion flags or QuestWork conditions | `settle` | `settle` is an observable predicate checked after the step's machine finishes. Direct progress facts require `advances: true`; reading a journal count as an item quantity does not. |
-| Required QuestWork values | Sequence membership plus `skip_if` | The stage selects the sequence; use `Not(stage_in/flag)` in `skip_if` for sub-stage branching. |
-| `PickUpQuestId`, `TurnInQuestId`, `NextQuestId` | No Path fields | The quest itself is the Path; queue order is in `paths/289/index.json`. |
-| Disabled step | Remove the step | Do not leave inert steps in the document. |
-| Comment | `comment` | Optional human-readable note; it does not affect execution. |
-| Per-quest hand-written schema | `crates/script/paths/path.schema.json` | Generated from the Rust document and handler types; each Path points to it with `$schema`. |
-| Controller cursor | Runner stage and step-boundary selection | The runner derives the stage from quest colour and journal evidence, then selects the first eligible step at each boundary. The cursor is diagnostic, not a durable completion marker. |
 
 ### 4.2 Document anatomy (schema 3)
 
@@ -478,19 +393,4 @@ The schema checks document shape, exact per-kind `args`, and which `kind@version
 
 Compilation failures keep the Path and step identifiers. Unresolved `obj`, `npc`, and `loc` references include the authored alias in `detail`; the queue message preserves that alias and the failing step id.
 
-### 4.6 Checking a Path before asking for a live run
-
-1. Editor: no red squiggles under the `$schema` line's document.
-2. Shape, quick form (prints `<file> valid` or the failing data path):
-   `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
-   Numeric constraints use the standard JSON Schema `type`, `minimum`, and `maximum`; no custom format plugin or disabled format checks are needed. For a failing large Path, rerun with `--errors=json --verbose`: JSON gives `instancePath`, `schemaPath`, and data, plus the applicable schema fragment (`parentSchema`) that identifies the Args shape; the text form only names the data path.
-3. **Facts and embedding:** add every bundled Path to `paths/289/index.json`; `bundled_paths_decode_and_compile` reads each indexed row's `file` from disk, not through `path_bytes`. Add the file to the `path_bytes` match in `compile.rs` for runtime embedding, then run `cargo test -p script bundled_paths_decode_and_compile` to compile every indexed Path. Errors include the Path, step, code, and detail. A shipped draft guide carries `"status": "draft"` in its index row. A quest the server can't run gets a row with `name` and an end-user `unavailable` reason (keep `file` if a Path was authored, so it stays compiled); see `docs/api/script.md`.
-4. **Rule shadows and selection probes** (`script::quester::probe`, available to `crates/script/tests` through the `test-hooks` dev-dependency): `assert_no_shadowed_rules(&compiled)` feeds every `progress.rules` entry exactly its own needles (its `all` plus each `any` in turn) through first-win resolution and fails on any rule that resolves to an earlier stage or to nothing; a rule that only wins through a `not` needle present in the live journal but absent from the later rule's needles is reported too, so pin that text in the later rule's `all`. `Probe { path, selected, quests, progress, bank }.choice(stage, cursor, &snapshot)` returns the `Choice` that `select` makes for a seeded `GameSnapshot` (inventory, local player tile, locs, chat) and `progress_for_stage`/`known_empty_bank` build the evidence; probe every multi-step sequence at each state it is expected to resume from, and every `ordered` sequence at cursors 0..n, to prove no step is selected forever.
-5. **Live fixture:** compare the Path with captured journal text and world evidence, especially after a settle timeout. Compilation cannot prove that `advances` reflects the server's actual behavior; a false declaration for an advancing action can leave the cached stage stale and repeat the action until timeout, while a true declaration for a non-advancing action causes an unnecessary progress read.
-
-## Reading a run
-
-Quester writes its run trace to the operator log (and to the per-session log file when enabled). `info` lines show the Path start, stage changes, step begins/skips/settles, acquisition-child activity, combat outcomes, and finish/Stop. `warn` lines name step failures and the parked reason. A skip line includes the `skip_if` predicate that evaluated true. Identical retry events are written once, with a later summary such as `(repeated 4 additional times)` rather than one line per retry. The trace retains at most 32 distinct events.
-
-Preparation may run acquisition recipes before an authored quest step begins. These use the same acquisition-child trace as an authored `acquire` step, including their final settle or failure. A root `step ... begin` line therefore appears only when that authored step actually starts, not while the provisioner is collecting its prerequisites. Items gated by `from_stage` stay out until their stage, so a quest that gates every item (Cook gates all three on `cook:1`) talks first and scans later.
 
