@@ -8904,6 +8904,7 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     hydrate_panel_preferences(&mut s);
     s.select("bob");
     assert!(s.background_ack_open);
+    await_preference(&mut s, "last_focus", serde_json::json!("bob"));
     let parent = s.preferences.path().parent().unwrap().to_path_buf();
     let _ = std::fs::remove_dir_all(&parent);
     std::fs::write(&parent, b"not-a-dir").unwrap();
