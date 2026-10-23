@@ -20,6 +20,7 @@ it, or work on its code.
 | Start, pause and stop scripts, and set their options | [Run scripts on your bots](manual/running-scripts.md) |
 | Learn what the Quester, Gatherer, Grinch and Sherlock do, and their settings | [The built-in scripts](manual/built-in-scripts.md) |
 | Control many bots together, walk them as a group, move them to another world | [Work with many bots](manual/fleet-and-groups.md) |
+| Look up what each Fleet button does | [Fleet actions](reference/fleet-actions.md) |
 | Change the app, walking and script options | [Change the settings](manual/settings.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
