@@ -13,7 +13,7 @@ controls in collapsible sections: **status**, **fleet**, **resource**,
 starts closed. Click its heading to open it.
 
 The top rows hold the buttons you use most. **Log in** connects the focused
-bot, and **Logout** disconnects it. **WalkTo** toggles the map: an open map
+bot, and **Log out** disconnects it. **WalkTo** toggles the map: an open map
 closes. **Fleet** opens the wide view of all your bots. Below them sit
 **General config**, **Nav config**, **Loadouts** and **Script prefs**, then
 the **Profiles** button. **MultiBox** and **Grid** toggle the many-bots views.
@@ -64,6 +64,6 @@ the checkbox. The file lives under `~/.274bot/logs/`.
 
 | You see | Cause | What to do |
 | --- | --- | --- |
-| **Log in** or **Logout** stays dimmed | The vault is locked or no profile is focused. **Logout** also needs the focused bot connected, queued or guard-parked. | Unlock the vault and focus a profile. |
+| **Log in** or **Log out** stays dimmed | The vault is locked or no profile is focused. **Log out** also needs the focused bot connected, queued or guard-parked. | Unlock the vault and focus a profile. |
 | The map reads `terrain not baked · catalogue only` | The ground pictures are not baked yet. | Click **Bake terrain**. |
 | The panel closes at once on Linux with "importing the supplied dmabufs failed" | The computer has two graphics chips. | Start it with `WGPU_POWER_PREF=high ./panel-play`. See the [known issues](../known-issues.toml). |

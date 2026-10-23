@@ -395,7 +395,9 @@ username/password; **New profile** is a blank edit. The editor stays on
 the profile it opened on while other rows are loaded or focused. **Save**
 upserts and selects; changing the username renames the profile. A new
 profile or a rename onto a username another profile already has is
-refused with an error and nothing is written. The row **✕** deletes the
+refused with an error and nothing is written. A new profile with an empty
+password is refused with `credentials: password required` and nothing is
+written. The row **✕** deletes the
 **vault profile only** — a live wall member keeps running and stays on
 the rail (Save re-creates the row).
 **Import from rs2b0t…** (vault unlocked) reads rs2b0t's
