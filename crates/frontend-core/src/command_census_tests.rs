@@ -208,6 +208,9 @@ const CORE: &[(&str, Decision)] = &[
     ("profile_draft.rs::SettingsDraft::lamp_auto_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SettingsDraft::clue_duel_partner_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SettingsDraft::set_random_event_policy", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::survival_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SurvivalDraft::set_cure_poison", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SurvivalSettings::cure_poison_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     // profile_editor.rs: the profile edit form (moved from the panel chooser).
     ("profile_editor.rs::ProfileEditor::draft_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_editor.rs::ProfileEditor::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
@@ -226,6 +229,7 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
     ("session/commands.rs::OperatorSession::stage_new_profile", Staged(C::CreateProfile)),
     ("session/commands.rs::OperatorSession::stage_guardian", Staged(C::SetGuardian)),
+    ("session/commands.rs::OperatorSession::stage_survival", Staged(C::SetSurvival)),
     (
         "surface.rs::SpawnProfile::set_lowmem",
         Excluded("a surface adjusts its disposable spawn copy (session-only memory override); never written back"),
@@ -955,6 +959,16 @@ const SURFACE: &[(&str, Decision)] = &[
         ),
     ),
     (
+        "panel/app.rs::slot_survival_section",
+        Rows(
+            &[
+                C::SetSurvival,
+                C::EditProfileDraft(ProfileDraftField::Settings),
+            ],
+            "the cure poison control stages the survival edit",
+        ),
+    ),
+    (
         "panel/session/chooser.rs::Session::clear_credentials",
         Rows(
             &[
@@ -1105,8 +1119,8 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::persist_settings",
         Rows(
-            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian],
-            "the settings popup's profile rows: guardian fields and memory mode, written through the profile row",
+            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian, C::SetSurvival],
+            "the settings popup's profile rows: guardian fields, memory mode and cure poison, written through the profile row",
         ),
     ),
     (

@@ -1393,6 +1393,108 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
 }
 
 #[test]
+fn survival_mirror_reaches_running_slot_within_one_frame() {
+    let name = "survival-mirror-alice";
+    let mut s = session("survival-mirror", &[(name, 1, false)]);
+    let mut surface = Recorder::default();
+    s.load(name, &mut surface);
+    let alice = arm(&s, name);
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::WhenNeeded,
+        "a fresh arm mirrors the default"
+    );
+    let op = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::WhenNeeded,
+        "a running slot changes only after the profile write is durable"
+    );
+
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::Never,
+        "the durable write is on the arm for the next frame the slot observes"
+    );
+    let saved = Vault::unlock(&vault_path("survival-mirror"), "test-passphrase-01").unwrap();
+    assert_eq!(
+        saved.get(name).unwrap().settings.survival.cure_poison,
+        vault::CurePoison::Never
+    );
+}
+
+#[test]
+fn set_survival_logs_one_audit_line() {
+    let name = "survival-audit-alice";
+    let mut s = session("survival-audit", &[(name, 1, false)]);
+    let first = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    s.flush_writes();
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> never; profile {name}; action survival; op#{}",
+                first.0
+            ),
+        )],
+        "one durable survival write logs one audit line"
+    );
+
+    let second = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    s.flush_writes();
+    assert_eq!(
+        slot_log(name).len(),
+        2,
+        "each write logs its own line, no more"
+    );
+    assert_eq!(
+        slot_log(name).last().unwrap(),
+        &(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison never -> always; profile {name}; action survival; op#{}",
+                second.0
+            ),
+        ),
+        "the old value is the row the write replaced"
+    );
+}
+
+#[test]
+fn random_settings_write_path_unchanged() {
+    // Regression pin: the guardian write path still persists through
+    // save_profile and mirrors the running arm. This test names no
+    // survival type, so it also passes on the base commit.
+    let name = "survival-pin-alice";
+    let mut s = session("survival-pin", &[(name, 1, false)]);
+    let mut surface = Recorder::default();
+    s.load(name, &mut surface);
+    let alice = arm(&s, name);
+    s.set_random_settings(name, false, "Magic", false).unwrap();
+    s.flush_writes();
+    assert!(!alice.random_events.load(Ordering::Relaxed));
+    assert_eq!(alice.lamp_skill.lock().unwrap().as_str(), "Magic");
+    let saved = Vault::unlock(&vault_path("survival-pin"), "test-passphrase-01").unwrap();
+    let settings = &saved.get(name).unwrap().settings;
+    assert!(!settings.random_events);
+    assert_eq!(settings.lamp_skill, "Magic");
+}
+
+#[test]
 fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     let mut s = session("write-fail", &[("alice", 1, false)]);
     let mut surface = Recorder::default();

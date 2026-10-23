@@ -240,6 +240,22 @@ impl GuardianEdit {
     }
 }
 
+/// A survival edit staged for [`OperatorCommand::SetSurvival`]: the
+/// profile's Cure poison setting.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SurvivalEdit {
+    cure_poison: crate::profile_draft::CurePoison,
+}
+
+impl SurvivalEdit {
+    /// The Cure poison setting the write stores.
+    pub fn cure_poison(policy: crate::profile_draft::CurePoison) -> Self {
+        Self {
+            cure_poison: policy,
+        }
+    }
+}
+
 /// A member settled by its operation outcome.
 struct OwnedMember {
     request: RequestId,
@@ -310,6 +326,8 @@ pub(super) struct CommandDesk {
     profile_write: Option<StagedProfileWrite>,
     /// The guardian edit the next SetGuardian commits.
     guardian: Option<GuardianEdit>,
+    /// The survival edit the next SetSurvival commits.
+    survival: Option<SurvivalEdit>,
     /// Member names of the command being opened (reused buffer).
     names: Vec<String>,
     /// Name buffers behind `names` and the admitted-member lists.
@@ -550,6 +568,12 @@ impl<Io> OperatorSession<Io> {
     /// commits.
     pub fn stage_guardian(&mut self, edit: GuardianEdit) {
         self.commands.guardian = Some(edit);
+    }
+
+    /// Stage the survival edit the next [`OperatorCommand::SetSurvival`]
+    /// commits.
+    pub fn stage_survival(&mut self, edit: SurvivalEdit) {
+        self.commands.survival = Some(edit);
     }
 
     /// Stage that the next [`OperatorCommand::Select`] also brings the
@@ -1449,6 +1473,26 @@ impl<Io> OperatorSession<Io> {
                             self.set_random_event_policy(name, event, *policy)
                         }
                         None => Err("random: nothing staged".to_string()),
+                    };
+                    submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
+                    if let Some(form_save) = models.form_save.as_deref_mut() {
+                        match &result {
+                            Ok(op) => form_save.submitted(self, *op, Some(name), name),
+                            Err(reason) => form_save.refused(format!("settings: {reason}")),
+                        }
+                    }
+                    self.owner_result(request, command, name, result);
+                }
+                self.release_names(names);
+            }
+            OperatorCommand::SetSurvival => {
+                let edit = self.commands.survival.take();
+                let mut models = surface.models();
+                let names = self.admitted_names(request);
+                for name in &names {
+                    let result = match edit.as_ref() {
+                        Some(edit) => self.set_survival_settings(name, edit.cure_poison),
+                        None => Err("survival: nothing staged".to_string()),
                     };
                     submitted.operation = result.as_ref().ok().copied().or(submitted.operation);
                     if let Some(form_save) = models.form_save.as_deref_mut() {

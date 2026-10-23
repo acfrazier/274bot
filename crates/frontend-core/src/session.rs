@@ -381,6 +381,13 @@ enum ArmMirrorKind {
         event: String,
         policy: RandomEventPolicy,
     },
+    /// The Cure poison setting: the durable value this write replaced
+    /// and the value it stores, so the settle can mirror the new policy
+    /// onto a running slot's arm and log one audit line for the write.
+    Survival {
+        old: crate::CurePoison,
+        new: crate::CurePoison,
+    },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
     /// write resets the arm to the restored durable value. No client state
@@ -433,6 +440,10 @@ impl ArmMirror {
         Self(ArmMirrorKind::RandomEventPolicy { event, policy })
     }
 
+    pub fn survival(old: crate::CurePoison, new: crate::CurePoison) -> Self {
+        Self(ArmMirrorKind::Survival { old, new })
+    }
+
     pub fn memory(lowmem: bool) -> Self {
         Self(ArmMirrorKind::Memory(lowmem))
     }
@@ -481,6 +492,7 @@ impl ArmMirror {
         match (&self.0, &earlier.0) {
             (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
             | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
+            | (ArmMirrorKind::Survival { .. }, ArmMirrorKind::Survival { .. })
             | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
             | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_))
             | (ArmMirrorKind::ScriptAssignment, ArmMirrorKind::ScriptAssignment) => true,
@@ -586,7 +598,7 @@ mod scripts;
 mod vault_rows;
 mod world_switch;
 pub(crate) use commands::StagedProfileWrite;
-pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
+pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
@@ -3144,6 +3156,27 @@ impl<Io> OperatorSession<Io> {
         )
     }
 
+    /// Persist a profile's Cure poison setting through `save_profile`
+    /// (the only write path); a running slot's arm follows once the
+    /// write is durable, so the slot sees the change within one frame
+    /// and never before it is saved.
+    pub(crate) fn set_survival_settings(
+        &mut self,
+        name: &str,
+        cure_poison: crate::CurePoison,
+    ) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "survival: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("survival: no profile {name}"))?;
+        let old = crate::CurePoison::from_vault(profile.settings.survival.cure_poison);
+        profile.settings.survival.cure_poison = cure_poison.to_vault();
+        self.save_profile(profile, ArmMirror::survival(old, cure_poison), "survival")
+    }
+
     /// The profile a form's Save writes: the draft's credentials over the
     /// existing row's uid and settings (a form edits only its world and clue
     /// partner), or a new row with a fresh uid and the draft's settings.
@@ -3418,6 +3451,23 @@ impl<Io> OperatorSession<Io> {
                         );
                     }
                 }
+                // One audit line per durable survival write: profile,
+                // action, operation id, old to new. A superseded write
+                // settles as Cancelled above and writes no line, and a
+                // failed write restores the row without one.
+                if let ArmMirrorKind::Survival { old, new } = &pending.mirror.0 {
+                    crate::log::global().slot_line(
+                        &member,
+                        Source::Host,
+                        Level::Info,
+                        &format!(
+                            "survival cure_poison {} -> {}; profile {member}; action survival; op#{}",
+                            old.key(),
+                            new.key(),
+                            written.op.0
+                        ),
+                    );
+                }
 
                 if tracked {
                     let saved = if durable_row {
@@ -3576,6 +3626,11 @@ impl<Io> OperatorSession<Io> {
                         .lock()
                         .unwrap()
                         .insert(event, policy);
+                }
+            }
+            ArmMirrorKind::Survival { new, .. } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.set_cure_poison(new.to_vault());
                 }
             }
             ArmMirrorKind::Memory(lowmem) => {
