@@ -4051,12 +4051,29 @@ impl api::hostlog::Sink for TakeoverLog {
 }
 
 static TAKEOVER_LOG: TakeoverLog = TakeoverLog(Mutex::new(Vec::new()));
-static TAKEOVER_LOG_INSTALLED: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| api::hostlog::install_sink(&TAKEOVER_LOG));
 
 #[test]
 fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
-    assert!(*TAKEOVER_LOG_INSTALLED);
+    const CHILD: &str = "S2_NATIVE_TAKEOVER_LOG_TEST";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::native_walk::takeover_is_taken_for_a_live_native_owner_without_a_walk",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated takeover sink test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "takeover child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    assert!(api::hostlog::install_sink(&TAKEOVER_LOG));
     let (rig, command) = in_place_rig(0);
     assert_eq!(command.load(std::sync::atomic::Ordering::Relaxed), 4);
     let slot = rig.slot();

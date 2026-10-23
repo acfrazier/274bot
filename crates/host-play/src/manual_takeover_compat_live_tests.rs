@@ -389,7 +389,7 @@ impl LiveState {
                 handle.start_load_with_loadouts(
                     &self.account,
                     self.catalog.source.clone(),
-                    self.catalog.shape.clone(),
+                    self.catalog.shape,
                     self.catalog.settings_bag.clone(),
                     self.catalog.siblings.clone(),
                     &self.catalog.loadouts,
@@ -1044,21 +1044,23 @@ fn run_live_sequence(
             let xp = observation
                 .thieving_xp
                 .ok_or("running compatibility script has no observed Thieving XP")?;
-            if start_xp.is_none() {
+            if let Some(baseline) = start_xp {
+                if xp > baseline {
+                    let tx = click_tx.clone();
+                    tx.send(host::InputEv::Down {
+                        button: 1,
+                        x: VIEWPORT_CLICK_X,
+                        y: VIEWPORT_CLICK_Y,
+                    })
+                    .map_err(|error| format!("send world-view mouse Down: {error}"))?;
+                    tx.send(host::InputEv::Up)
+                        .map_err(|error| format!("send world-view mouse Up: {error}"))?;
+                    pre_click = Some(observation.clone());
+                    click_sent = true;
+                }
+            } else {
                 start_xp = Some(xp);
                 start = Some(observation.clone());
-            } else if xp > start_xp.expect("set above") {
-                let tx = click_tx.clone();
-                tx.send(host::InputEv::Down {
-                    button: 1,
-                    x: VIEWPORT_CLICK_X,
-                    y: VIEWPORT_CLICK_Y,
-                })
-                .map_err(|error| format!("send world-view mouse Down: {error}"))?;
-                tx.send(host::InputEv::Up)
-                    .map_err(|error| format!("send world-view mouse Up: {error}"))?;
-                pre_click = Some(observation.clone());
-                click_sent = true;
             }
         } else if click_sent && click.is_none() && observation.manual_move_intent.is_some() {
             if observation.manual_move_intent.as_deref() != Some("Viewport") {
@@ -1077,8 +1079,7 @@ fn run_live_sequence(
                 paused_frame_oracle(&line, before, &observation)?;
                 play.script_resume(account);
             }
-        } else if click.is_some() && post_action.is_none() {
-            let click_frame = click.as_ref().expect("click set");
+        } else if let Some(click_frame) = click.as_ref().filter(|_| post_action.is_none()) {
             if observation.callback > click_frame.callback
                 && observation.host_tick > click_frame.host_tick
                 && observation.script_state.as_deref() == Some("Running")
