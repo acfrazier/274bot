@@ -878,6 +878,51 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     );
 }
 
+/// A missing vault rejects `--user` before it can request a passphrase or
+/// create the vault file.
+#[test]
+fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
+    let _iso = IsolatedStores::enter("tui-user-missing-vault");
+    let vault_path = frontend_core::scripts::paths::bot_file("vault-289");
+    assert!(!vault_path.exists(), "the test starts without a vault");
+    let nav_dir = std::env::current_exe()
+        .expect("test binary path")
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("target debug directory")
+        .join("nav/289");
+    let args = parse_args_from([
+        "--profile".to_string(),
+        "local-289".to_string(),
+        "--nav-pack".to_string(),
+        nav_dir
+            .join("274bot.navpack")
+            .to_string_lossy()
+            .into_owned(),
+        "--nav-flags".to_string(),
+        nav_dir
+            .join("274bot.navflags")
+            .to_string_lossy()
+            .into_owned(),
+        "--user".to_string(),
+        "ghost".to_string(),
+    ])
+    .unwrap();
+
+    let error = run(&args, RunMode::Interactive).unwrap_err();
+    assert_eq!(
+        error,
+        "no profile named ghost in the vault: --user only selects existing \
+         profiles and creates none (start tui-play without --user and add \
+         it with New profile: press N in the Fleet pane, then type its \
+         username and password)"
+    );
+    assert!(
+        !vault_path.exists(),
+        "a rejected user must not create a vault"
+    );
+}
+
 /// `--user` selects an existing profile as the boot focus, and an
 /// existing vault keeps its profiles: no seeding, no wipe, nothing
 /// created for a later unknown name either.
@@ -918,12 +963,53 @@ fn type_new_profile(session: &mut TuiSession, app: &mut TuiApp, text: &str) {
     }
 }
 
-/// An empty vault does not exit: the boot opens the New profile form,
-/// the operator types a username and a password, and Save creates
-/// the profile with that typed password through the shared form
-/// (`OpenNewProfileForm` / `CreateProfile`). Esc first proves a
-/// closed form creates nothing. The form is drawn at both terminal
-/// sizes with its full labels before the save.
+#[test]
+fn new_profile_form_refuses_empty_password_without_login() {
+    let iso = IsolatedStores::enter("tui-empty-profile-password");
+    let path = iso.dir().join("vault");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .start_play(VaultFixture::create(&path, "test-passphrase-01"))
+        .unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+
+    type_new_profile(&mut session, &mut app, "alice");
+    let tab = app.on_key(settings_key(crossterm::event::KeyCode::Tab));
+    dispatch(&mut session, &mut app, tab);
+    let enter = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, enter);
+
+    assert_eq!(session.profile_editor.target(), Some(""));
+    let Some(Modal::NewProfile(view)) = app.modal.as_ref() else {
+        panic!("the refused save keeps the New profile form open");
+    };
+    assert_eq!(
+        view.error.as_deref(),
+        Some("credentials: password required")
+    );
+    assert!(session.core.profile("alice").is_none());
+    assert!(
+        !session
+            .core
+            .commands()
+            .reports()
+            .any(|report| report.command() == frontend_core::command::OperatorCommand::Login),
+        "a refused save must not attempt a login"
+    );
+    session.core.flush_writes();
+    assert!(
+        VaultFixture::unlock(&path, "test-passphrase-01")
+            .usernames()
+            .is_empty(),
+        "the rejected profile must not be written"
+    );
+}
+
+/// An empty vault does not exit: `interactive_landing`, which `run` also
+/// calls, opens the New profile form. This test types and saves a profile
+/// through the shared form. It also checks Esc and `N` at both UI sizes.
 #[test]
 fn new_profile_form_saves_the_typed_password() {
     let iso = IsolatedStores::enter("tui-new-profile-form");
@@ -933,13 +1019,8 @@ fn new_profile_form_saves_the_typed_password() {
     session
         .start_play(VaultFixture::create(&path, "test-passphrase-01"))
         .unwrap();
-    assert_eq!(session.bootstrap_interactive_profiles(&[]).unwrap(), None);
-    let mut app = TuiApp::new("new profile");
-    // The empty-vault boot: open the overlay, then the editor behind it.
-    app.open_modal(Modal::NewProfile(
-        crate::new_profile::NewProfileView::default(),
-    ));
-    session.open_new_profile(&mut app);
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
     assert_eq!(session.profile_editor.target(), Some(""));
     // Esc closes the form and creates nothing.
     type_new_profile(&mut session, &mut app, "ghost");
@@ -948,6 +1029,13 @@ fn new_profile_form_saves_the_typed_password() {
     assert!(app.modal.is_none(), "Esc closes the form");
     assert!(session.core.profile("ghost").is_none());
     assert_eq!(session.profile_editor.target(), None);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "no profiles: press N to add one").is_some(),
+            "{w}x{h}: the empty Fleet row must name `N`"
+        );
+    }
     // Reopen through the Fleet pane's command, as `N` and the palette do.
     let open = app.run_command(crate::commands::Command::NewProfile);
     assert_eq!(open, AppAction::OpenNewProfile);
