@@ -5,7 +5,7 @@ use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 impl ActionContext<'_> {
-    fn owner(&self) -> Result<Arc<Owner>, ActionError> {
+    pub(super) fn owner(&self) -> Result<Arc<Owner>, ActionError> {
         let owner = self
             .ledger
             .as_ref()

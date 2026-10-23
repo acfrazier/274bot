@@ -77,6 +77,8 @@ pub mod settings_store;
 pub mod shim;
 mod shop_open;
 pub mod slot;
+/// Sealed external-script authority and shared server-ordered host input.
+pub mod surface;
 /// Pure condition derivation and survival arithmetic.
 pub mod survival;
 pub mod trade_screen;
