@@ -8,9 +8,9 @@ use crate::gatherer::WorkArea;
 use crate::ground_take::{FailureLedger, FailureStatus};
 use crate::native::{
     walk::Walk, ActionError, ActionHandle, CompiledCard, ConfigError, Interrupt, NativePhase,
-    NativeTick, PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure, ScriptFlow,
-    ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue, StopReason,
-    WalkOptions, WalkRequest,
+    NativeTick, PrepareContext, PreparedConfig, RetainedMemory, ReturnStallRecovery, Script,
+    ScriptFailure, ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField,
+    StatusValue, StopReason, WalkOptions, WalkRequest,
 };
 use crate::quester::families::reach::{
     choose_ground, Avoid, GroundIds, GroundTake, ReachArgs, ReachKind,
@@ -263,6 +263,7 @@ fn create(
         banked: 0,
         bank_required: false,
         return_required: false,
+        return_recovery: ReturnStallRecovery::default(),
         paused: false,
         held: false,
         death: Default::default(),
@@ -339,6 +340,7 @@ struct Grinch {
     banked: u64,
     bank_required: bool,
     return_required: bool,
+    return_recovery: ReturnStallRecovery,
     paused: bool,
     held: bool,
     death: crate::native::death::DeathLatch,
@@ -583,6 +585,7 @@ impl Grinch {
             ));
         }
         self.bank_required = true;
+        self.return_recovery.reset();
         self.return_required = true;
         self.clear_target();
         let request = AcquireRequest {
@@ -728,6 +731,7 @@ impl Grinch {
                 &format!("collecting {}", item_label(key.id)),
             );
         } else if watch.here != anchor {
+            self.return_recovery.reset();
             self.return_required = true;
             self.phase = Phase::Return(None);
             self.set_status(NativePhase::Working, "returning to start");
@@ -857,16 +861,21 @@ impl Grinch {
                     match tick.actions.poll(&handle, &mut tick.cx) {
                         Poll::Pending => self.phase = Phase::Return(Some(handle)),
                         Poll::Ready(Ok(receipt)) => {
-                            receipt
-                                .into_arrival()
-                                .map_err(|error| self.action_failure(error))?;
-                            if watch.here != anchor {
-                                return Err(self.fail(
-                                    "return-incomplete",
-                                    "arrival receipt did not place the player at the Start tile",
-                                ));
+                            if self.return_recovery.observe(&receipt.end) {
+                                self.phase = Phase::Return(None);
+                            } else {
+                                receipt
+                                    .into_arrival()
+                                    .map_err(|error| self.action_failure(error))?;
+                                if watch.here != anchor {
+                                    return Err(self.fail(
+                                        "return-incomplete",
+                                        "arrival receipt did not place the player at the Start tile",
+                                    ));
+                                }
+                                self.return_required = false;
+                                self.return_recovery.reset();
                             }
-                            self.return_required = false;
                         }
                         Poll::Ready(Err(
                             ActionError::Stale | ActionError::Cancelled | ActionError::Held,
@@ -889,8 +898,14 @@ impl Grinch {
                         allow: Default::default(),
                     };
                     match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-                        Ok(handle) => self.phase = Phase::Return(Some(handle)),
-                        Err(ActionError::BudgetExhausted) => self.phase = Phase::Return(None),
+                        Ok(handle) => {
+                            self.return_recovery.action_submitted();
+                            self.phase = Phase::Return(Some(handle));
+                        }
+                        Err(ActionError::BudgetExhausted) => {
+                            self.phase = Phase::Return(None);
+                            return Ok(());
+                        }
                         Err(error) => return Err(self.action_failure(error)),
                     }
                 } else {
