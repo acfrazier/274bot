@@ -391,13 +391,16 @@ macros by compiler identity. `tools/architecture/nav_clippy.py --write`
 generates the lists and their inventory from rustdoc JSON.
 `python3 -B tools/architecture/nav_clippy.py --check` checks the inventory
 and runs the external-crate probes. The Clippy CI job runs this check.
+The inventory reads `api` with default features and `client` with default and
+`test-support` features. This includes feature-gated seed items such as
+`client::io::client_stream::connect_ws_plain` in the generated deny list.
 
 The inventory includes public constants and statics, which Clippy cannot
 deny as values. The compiler check rejects new wrappers of denied types
 that these lints cannot detect. Source hashes also detect changes to
 inactive, feature-gated seed code.
 
-The exact remaining limit is a value-only read of an external constant
+The exact compiler-lint limit is a value-only read of an external constant
 or static: `let _ = &api::S`, `let _ = api::C`, or
 `let _ = api::S::C`. These expressions cannot act. Calls through the
 resulting values remain subject to the method deny list.
@@ -412,8 +415,19 @@ World-state unit tests use import- and function-level expects to construct
 a cache-less client and populate snapshot families. These method expects
 are test-only. The production planner has no method-lint exception.
 
-The source scanner checks unattached files, test scope, and the executor's
-planner allowlist. It does not resolve the action capability boundary.
+Both scans read the standard Cargo roots: `build.rs`, `src/main.rs`,
+`src/lib.rs`, each direct `src/bin/*.rs`, each direct `examples/*.rs`, and
+each direct `tests/*.rs`. They also follow attached modules and `include!`
+files. They report unsupported source forms and unattached Rust files under
+`src`.
+
+The `nav` scan rejects production paths to const, static, and associated-
+constant values in the generated `api` and `client` seed inventory. It
+ignores those value paths in test scope. It does not replace Clippy's
+compiler-resolved action checks.
+
+The `nav-executor` scan enforces separate production and test allowlists for
+`nav` paths in executor source. It does not scan planner source in `nav`.
 
 ### nav-executor
 

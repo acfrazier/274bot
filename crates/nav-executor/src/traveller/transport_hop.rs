@@ -107,14 +107,19 @@ pub(super) fn uses_held_on_loc(edge: &TransportEdge) -> bool {
     edge.option == 0 && !edge.item_req.is_empty()
 }
 
+/// Whether this transport kind resolves its target through an NPC.
+pub(super) fn is_npc_backed_kind(kind: TransportKind) -> bool {
+    matches!(
+        kind,
+        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
+    )
+}
+
 /// Dock sailors / cart drivers: `loc_id` is the npc.pack type. Boat was
 /// packed as `TransportKind::Boat` with that id; looking it up as a loc
 /// (Port Sarim seaman 378) is why live Follow died on the pier.
 pub(super) fn npc_backed(edge: &TransportEdge) -> bool {
-    matches!(
-        edge.kind,
-        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
-    )
+    is_npc_backed_kind(edge.kind)
 }
 
 /// The edge's closed loc or packed open leaf within chebyshev 3 of
@@ -777,7 +782,8 @@ impl FollowRun {
                             why: BlockedWhy::UnrecognizedJourneyDialogue,
                         });
                     } else {
-                        hop.npc_recovery.detail = Some("unrecognized journey dialogue");
+                        hop.npc_recovery.detail =
+                            Some(NpcHopBlockReason::UnrecognizedJourneyDialogue);
                     }
                 }
             } else if snapshot.modals().main == GLIDER_MAP_ROOT {

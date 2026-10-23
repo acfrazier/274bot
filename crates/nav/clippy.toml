@@ -841,6 +841,7 @@ disallowed-methods = [
     { path = "client::io::client_stream::LoginCancel::cancel", reason = "The planner must use nav-executor for action capabilities." },
     { path = "client::io::client_stream::LoginCancel::is_cancelled", reason = "The planner must use nav-executor for action capabilities." },
     { path = "client::io::client_stream::LoginCancel::new", reason = "The planner must use nav-executor for action capabilities." },
+    { path = "client::io::client_stream::connect_ws_plain", reason = "The planner must use nav-executor for action capabilities.", allow-invalid = true },
     { path = "client::io::client_stream::set_transport_wait_hook", reason = "The planner must use nav-executor for action capabilities." },
     { path = "client::io::map_client_prot", reason = "The planner must use nav-executor for action capabilities." },
     { path = "client::io::revision::ClientRevision::as_i32", reason = "The planner must use nav-executor for action capabilities." },

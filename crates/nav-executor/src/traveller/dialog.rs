@@ -176,10 +176,7 @@ pub(super) fn hop_dialog_choice(
     if edge.kind == TransportKind::SpiritTree {
         return Some(spirit_tree_choice(leg, edge, packed, chat_options));
     }
-    if matches!(
-        edge.kind,
-        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
-    ) {
+    if npc_backed(edge) {
         return npc_hop_dialog_choice(edge, packed, chat_options);
     }
     if edge.kind == TransportKind::Door {

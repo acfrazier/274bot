@@ -9,18 +9,7 @@ pub(super) struct NpcRecovery {
     pub last_tick: Option<u32>,
     pub failed: [Option<(usize, WorldTile)>; NPC_HOP_ATTEMPTS as usize],
     pub dialog_started: bool,
-    pub detail: Option<&'static str>,
-}
-
-fn npc_hop_block_reason(detail: &'static str) -> NpcHopBlockReason {
-    match detail {
-        "tracked target missing" => NpcHopBlockReason::TrackedTargetMissing,
-        "no reachable operable stand" => NpcHopBlockReason::NoReachableOperableStand,
-        "approach route refused" => NpcHopBlockReason::ApproachRouteRefused,
-        "reach failure" => NpcHopBlockReason::ReachFailure,
-        "unrecognized journey dialogue" => NpcHopBlockReason::UnrecognizedJourneyDialogue,
-        _ => unreachable!("every NPC hop recovery detail has a typed block reason"),
-    }
+    pub detail: Option<NpcHopBlockReason>,
 }
 
 fn cardinal_stand(snapshot: &GameSnapshot, npc: &NpcView, stand: WorldTile) -> bool {
@@ -172,7 +161,7 @@ impl FollowRun {
         let reason = if missing {
             Some(NpcHopBlockReason::TrackedTargetMissing)
         } else {
-            hop.npc_recovery.detail.map(npc_hop_block_reason)
+            hop.npc_recovery.detail
         };
         if let Some(reason) = reason {
             TravelOutcome::Blocked {
@@ -233,9 +222,9 @@ impl FollowRun {
             &hop.npc_recovery.failed,
         ) else {
             hop.npc_recovery.detail = Some(if current.is_none() {
-                "tracked target missing"
+                NpcHopBlockReason::TrackedTargetMissing
             } else {
-                "no reachable operable stand"
+                NpcHopBlockReason::NoReachableOperableStand
             });
             return Poll::Watching;
         };
@@ -268,7 +257,7 @@ impl FollowRun {
                     ..
                 } => {
                     old.retry_pending = true;
-                    hop.npc_recovery.detail = Some("approach route refused");
+                    hop.npc_recovery.detail = Some(NpcHopBlockReason::ApproachRouteRefused);
                 }
                 SendResult::Refused { reason, .. } => {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -328,7 +317,7 @@ impl FollowRun {
                 Some((index, hop.sent_tile.unwrap_or_else(|| here(snapshot))));
         }
         hop.chat_seq = chat_seq(snapshot);
-        hop.npc_recovery.detail = Some("reach failure");
+        hop.npc_recovery.detail = Some(NpcHopBlockReason::ReachFailure);
         hop.approach = Some(ApproachHop {
             tile: here(snapshot),
             at: here(snapshot),

@@ -133,9 +133,9 @@ struct Resolution<'a> {
 
 /// Scan all assigned Rust roots in a crate directory.
 ///
-/// Roots are `src/lib.rs`, each direct `src/bin/*.rs`, `build.rs`, each direct
-/// `examples/*.rs`, and each direct `tests/*.rs`. Files under `src` that no root
-/// reaches are findings.
+/// Roots are `src/main.rs`, `src/lib.rs`, each direct `src/bin/*.rs`, `build.rs`,
+/// each direct `examples/*.rs`, and each direct `tests/*.rs`. Files under `src`
+/// that no root reaches are findings.
 pub fn scan_package(
     package_root: &Path,
     package_name: &str,
@@ -267,6 +267,7 @@ fn cargo_roots(files: &SourceMap, package_name: &str) -> Vec<Entry> {
             });
         }
     };
+    add(PathBuf::from("build.rs"), Scope::Production);
     add(PathBuf::from("src/main.rs"), Scope::Production);
     add(PathBuf::from("src/lib.rs"), Scope::Production);
     let mut bins: Vec<_> = files

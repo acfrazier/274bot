@@ -278,6 +278,20 @@ fn attached_test_path_scope_and_unattached_files_are_enforced() {
 }
 
 #[test]
+fn build_script_is_a_production_root() {
+    let mut files = SourceMap::new();
+    files.insert(
+        PathBuf::from("build.rs"),
+        "use nav::producer::Producer;".to_owned(),
+    );
+    let report = scan_sources(&files, "nav-executor", &[PLANNER_ROOT], &[]);
+    assert!(report.findings.is_empty(), "{:#?}", report.findings);
+    let violations = surface_violations(&report);
+    assert_eq!(violations.len(), 1, "{violations:#?}");
+    assert_eq!(violations[0].path, "nav::producer::Producer");
+}
+
+#[test]
 fn section_469_examples_are_enforced() {
     let aliased_allowed = scan_fixture(
         "use nav::executor_adapter::plan_leg_count as lc; fn f(x: &RoutePlanLease) { let _ = lc(x); }",

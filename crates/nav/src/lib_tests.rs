@@ -52,3 +52,31 @@ fn contains_is_bounds_and_level_only() {
         level: 1
     }));
 }
+
+#[test]
+fn planner_source_scanner_rejects_production_seed_value_reads() {
+    use crate::test_support::source_scan::scan_package;
+    use std::path::Path;
+
+    let inventory: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tools/architecture/nav-clippy-inventory.json"
+    ))
+    .expect("the generated Clippy inventory is valid JSON");
+    let value_paths = inventory["value_items"]
+        .as_array()
+        .expect("the generated inventory lists seed values")
+        .iter()
+        .map(|item| item["path"].as_str().expect("each seed value has a path"))
+        .collect::<Vec<_>>();
+    let report = scan_package(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        "nav",
+        &["api", "client"],
+        &value_paths,
+    );
+    assert!(
+        report.findings.is_empty(),
+        "planner source has unsupported, unattached, or production seed-value paths: {:#?}",
+        report.findings
+    );
+}
