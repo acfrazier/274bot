@@ -483,6 +483,18 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
+    /// Native seed deposit through the open bank window: like
+    /// [`StepKind::Repeat`], it re-attempts once per observed game tick
+    /// until `wait.arm` holds, but the runner owns the send
+    /// ([`native_seed_deposit_attempt`]) so a failed branch — missing
+    /// bank-side row, missing Deposit All operation, refused send —
+    /// names itself in the step failure instead of collapsing to a
+    /// bare driver rejection. Pending bank-side data soft-waits.
+    NativeSeedDeposit {
+        unnoted_id: i32,
+        quantity: i32,
+        note_id: Option<i32>,
+    },
     /// Host-only fleet observation. Sends no game action and advances only
     /// when `ready` accepts the evolving driven-slot snapshot. Companion
     /// closures may feed the same shared witness. `evidence` is the named
@@ -959,58 +971,143 @@ fn native_bank_seed(
     }
 }
 
+/// Progress of one native seed-deposit attempt. Every variant keeps
+/// the step armed: the runner re-attempts on the next observed game
+/// tick until the wait arm (a fresh bank holding the seed) holds or
+/// the step's game-tick budget runs out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedDepositProgress {
+    /// The fresh bank already holds the seed and the pack no longer
+    /// does. The attempt sent nothing.
+    AlreadyDeposited,
+    /// Bank-side data is not ready yet, or the dispatch raced the
+    /// client's live state. The attempt sent no deposit.
+    BankPending,
+    /// The attempt sent the Deposit All interaction for the seed row.
+    DepositSent,
+}
+
+/// The branch of a native seed-deposit attempt that failed after the
+/// bank reported ready. The runner puts this text in the step
+/// failure, so the receipt names the branch instead of a bare
+/// driver rejection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedDepositFailure {
+    /// No bank-side row matches the seed's inventory id.
+    MissingRow { inv_id: i32 },
+    /// A matching bank-side row exists, but none carries Deposit All.
+    MissingOperation { inv_id: i32 },
+    /// The Deposit All interaction was refused before dispatch.
+    SendRefused { inv_id: i32, reason: SendReason },
+}
+
+impl std::fmt::Display for SeedDepositFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SeedDepositFailure::MissingRow { inv_id } => write!(
+                f,
+                "native seed deposit: no bank-side row for item {inv_id} after bank-side readiness"
+            ),
+            SeedDepositFailure::MissingOperation { inv_id } => write!(
+                f,
+                "native seed deposit: bank-side row for item {inv_id} has no Deposit All operation"
+            ),
+            SeedDepositFailure::SendRefused { inv_id, reason } => write!(
+                f,
+                "native seed deposit: Deposit All send for item {inv_id} refused: {reason:?}"
+            ),
+        }
+    }
+}
+
+/// True while the deposit pane cannot yet be judged: the bank is
+/// closed or its main table has no current full, the side root is
+/// down, or no packet for the side component has been observed.
+/// These are the signals the native snapshot view uses to decide
+/// that bank-side rows are posted (open withdraw component, raised
+/// side root, side packet generation), plus the main table's own
+/// loaded flag. A pending bank is never accepted as ready and never
+/// hard-fails the deposit. The step's game-tick budget bounds the
+/// wait.
+fn native_seed_bank_side_pending(snapshot: &GameSnapshot) -> bool {
+    snapshot.bank_component_id() < 0
+        || !snapshot.bank_loaded()
+        || snapshot.modals().side < 0
+        || snapshot.bank_side_packet_generation().is_none()
+}
+
+/// One native seed-deposit attempt against the open bank window.
+/// Pending bank-side data returns [`SeedDepositProgress::BankPending`]
+/// and sends nothing. Once the readiness signals report complete
+/// data, a missing row, a missing Deposit All operation, or a
+/// refused send is a real failure and names its branch. The deposit
+/// itself keeps the exact-id row match: bulk fixtures sit in the
+/// bank-side pack as certificates, not as unnoted bases.
+pub(crate) fn native_seed_deposit_attempt(
+    c: &mut Client,
+    snapshot: &GameSnapshot,
+    unnoted_id: i32,
+    quantity: i32,
+    note_id: Option<i32>,
+) -> Result<SeedDepositProgress, SeedDepositFailure> {
+    let inv_id = note_id.unwrap_or(unnoted_id);
+    if (Proof::BankItemId {
+        id: unnoted_id,
+        count: quantity,
+    })
+    .check(snapshot, None)
+        && (Proof::ItemIdAtMost {
+            id: inv_id,
+            count: 0,
+        })
+        .check(snapshot, None)
+    {
+        return Ok(SeedDepositProgress::AlreadyDeposited);
+    }
+    if native_seed_bank_side_pending(snapshot) {
+        return Ok(SeedDepositProgress::BankPending);
+    }
+    let mut rows = snapshot.bank_side().iter().filter(|item| {
+        item.def.id == inv_id
+            && match note_id {
+                Some(_) => item.def.noted && item.def.certificate_link == unnoted_id,
+                None => !item.def.noted,
+            }
+    });
+    let Some(first) = rows.next() else {
+        return Err(SeedDepositFailure::MissingRow { inv_id });
+    };
+    let Some((item, op)) = std::iter::once(first)
+        .chain(rows)
+        .find_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
+    else {
+        return Err(SeedDepositFailure::MissingOperation { inv_id });
+    };
+    let mut ix = Interactions::new(snapshot, c);
+    match ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)) {
+        SendResult::Sent { .. } => Ok(SeedDepositProgress::DepositSent),
+        // The snapshot raced the client's live state between rebuild
+        // and dispatch. Retry on the next observed game tick. The
+        // shop-banker opener treats the same reasons as transient.
+        SendResult::Refused {
+            reason: SendReason::SceneUnavailable | SendReason::OffScene | SendReason::StaleTarget,
+            ..
+        } => Ok(SeedDepositProgress::BankPending),
+        SendResult::Refused { reason, .. } => {
+            Err(SeedDepositFailure::SendRefused { inv_id, reason })
+        }
+    }
+}
+
 fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> {
     seeds
         .into_iter()
         .map(|seed| Step {
             name,
-            kind: StepKind::Repeat {
-                send: Box::new(move |c, snapshot| {
-                    let inv_id = seed.note_id.unwrap_or(seed.unnoted_id);
-                    if (Proof::BankItemId {
-                        id: seed.unnoted_id,
-                        count: seed.quantity,
-                    })
-                    .check(snapshot, None)
-                        && (Proof::ItemIdAtMost {
-                            id: inv_id,
-                            count: 0,
-                        })
-                        .check(snapshot, None)
-                    {
-                        return true;
-                    }
-                    // Open bank UI without a current full is not ready:
-                    // bank_side is empty and deposit would hard-fail the
-                    // Repeat send. Soft-wait on existing session signals;
-                    // never invent rows or accept a closed/stale bank.
-                    if snapshot.bank_component_id() >= 0 && !snapshot.bank_loaded() {
-                        return true;
-                    }
-                    let mut ix = Interactions::new(snapshot, c);
-                    snapshot
-                        .bank_side()
-                        .iter()
-                        .filter(|item| {
-                            // Bank-side rows are the pack: bulk fixtures sit
-                            // there as certificates, not as unnoted bases.
-                            item.def.id == inv_id
-                                && match seed.note_id {
-                                    Some(_) => {
-                                        item.def.noted
-                                            && item.def.certificate_link == seed.unnoted_id
-                                    }
-                                    None => !item.def.noted,
-                                }
-                        })
-                        .filter_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
-                        .any(|(item, op)| {
-                            matches!(
-                                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                                SendResult::Sent { .. }
-                            )
-                        })
-                }),
+            kind: StepKind::NativeSeedDeposit {
+                unnoted_id: seed.unnoted_id,
+                quantity: seed.quantity,
+                note_id: seed.note_id,
             },
             wait: Wait {
                 arm: Proof::BankItemId {
