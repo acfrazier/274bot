@@ -10,7 +10,7 @@ runs. Merlot also stores finished malbec runs in its `NIGHTLY/` mirror.
 
 ```
 merlot macOS user LaunchAgent (20:00 America/New_York)
-  Tart clone from baked base: 8 vCPU, 24 GiB RAM, 160 GiB disk
+  Tart clone from baked base: 8 vCPU, 24 GiB RAM, 160 GB disk
   main Engine A via helper forward (44594/1080); private Engine Q for quest
   /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac/
   /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac-quest/
@@ -62,7 +62,7 @@ Jobs run sequentially and share the runner's lock and build tree:
   do not use the operator's `~/.274bot/servers.json`.
 - **macOS, merlot:** the `local.274bot-nightly-mac` LaunchAgent starts a fresh
   clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
-  runs macOS 27.0.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GiB disk.
+  runs macOS 27.0.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk.
   The host stages the runner, catalog, fixtures and Engine A/Q source data.
   The guest checks out each exact branch commit from `branches.conf` and runs
   main with `lanes,panel,tui`, then quest with `panel,tui`. Each branch uses a
@@ -208,7 +208,7 @@ On merlot, `nightly-mac.sh` reads
 `274bot-mac-base` image. Main uses `mac_vm.py`'s host Engine A forward; quest
 starts a private Engine Q in the clone. Both jobs' clients run in the guest.
 The host fetches each branch in `branches.conf` from `NIGHTLY_MAC_SOURCE_REPO`.
-It pins every branch to the fetched commit before it starts the guest.
+It pins every branch to the fetched commit before it starts the guest jobs.
 The status file records the branch commits and the Tart session ID.
 
 Run a hand night through the granted launcher:
@@ -445,7 +445,7 @@ carries no machine-specific path.
 The Mac user LaunchAgent starts at **20:00 America/New_York**. It starts one
 Tart clone from `274bot-mac-base`, runs both Mac jobs, then stops and deletes the
 clone before verifying and publishing completed run archives to `NIGHTLY/`.
-The clone uses 8 vCPU, 24 GiB RAM and a 160 GiB disk. The controller protects
+The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk. The controller protects
 a 120 GiB free-space floor on `/Volumes/dev-scratch`.
 `panel-play` runs in the guest's Aqua session. The user must be logged in.
 The controller checks
@@ -453,6 +453,9 @@ The controller checks
 The runner checks the guest copy at each cell and lane boundary. While the
 LaunchAgent runs, `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
 contains the PID, job, state, branch commits and Tart session ID.
+From 20:00, reserve one macOS VM slot for the nightly. Agents can use only
+the other slot until the nightly stops its clone. Tart permits two macOS VMs
+on this host. Do not stop another agent's guest to obtain the nightly slot.
 
 1. Write `~/.config/274bot-nightly/mac-nightly.env` with the paths for merlot.
    The host stages the runner, catalog, fixtures, engines and isohome helper
