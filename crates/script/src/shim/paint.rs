@@ -9,6 +9,24 @@ pub const HOST_PAUSE_CONTROL_ID: &str = "__rs2b0t.pause";
 /// [`HOST_PAUSE_CONTROL_ID`]).
 pub const HOST_STOP_CONTROL_ID: &str = "__rs2b0t.stop";
 
+/// The two host controls as advertised paint buttons, Pause then Stop,
+/// with the labels `HOST_CONTROLS` in `_kernel.js` writes. A native
+/// script's paint advertises these so its paint shows the same Pause
+/// and Stop as a compat helper paint. The front ends own the labels
+/// they draw and the commands the controls issue.
+pub fn host_control_buttons() -> Vec<ScriptPaintButton> {
+    vec![
+        ScriptPaintButton {
+            id: HOST_PAUSE_CONTROL_ID.to_string(),
+            label: "Pause".to_string(),
+        },
+        ScriptPaintButton {
+            id: HOST_STOP_CONTROL_ID.to_string(),
+            label: "Stop".to_string(),
+        },
+    ]
+}
+
 /// One advertised script-local paint control. `id` is the one-shot click
 /// token; `label` is display-only and never implies a walk, pause, or packet.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]

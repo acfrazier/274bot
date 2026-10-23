@@ -14,6 +14,8 @@
 mod loadouts;
 mod native;
 mod paint;
+mod paint_layout;
+pub mod paint_style;
 pub mod paths;
 mod vocab;
 pub(crate) use loadouts::Refused;
@@ -26,6 +28,10 @@ pub(crate) use paint::{
 pub use paint::{
     map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
     PaintControl, PaintFrame, PaintView,
+};
+pub use paint_layout::{
+    clipped_prefix, ButtonItem, ChromeItem, FooterLayout, PaintLayout, PaintRect, PaintSlot,
+    RowItem, TabItem,
 };
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,

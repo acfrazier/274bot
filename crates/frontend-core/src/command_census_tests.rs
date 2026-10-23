@@ -385,6 +385,12 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/paint.rs::map_applet_rect", Excluded(FORMAT)),
     ("scripts/paint.rs::CanvasCache::store", Excluded(PROJECTION)),
     ("scripts/paint.rs::CanvasCache::clear", Excluded(PROJECTION)),
+    (
+        "scripts/paint_layout.rs::PaintLayout::compute",
+        Excluded(PROJECTION),
+    ),
+    ("scripts/paint_layout.rs::clipped_prefix", Excluded(FORMAT)),
+    ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
