@@ -89,7 +89,7 @@ const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long setup waits for V8 creation and startup evaluation before the
 /// owning isolate handle interrupts it.
-const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Validation uses a shorter independent deadline because it is a
 /// throwaway candidate check, not a live Start.
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);

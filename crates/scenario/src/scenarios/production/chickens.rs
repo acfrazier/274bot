@@ -203,7 +203,10 @@ pub(crate) fn chicken_killer_bank_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            // NIGHTLY-C7-1023: three complete Engine A cycles took 169, 197,
+            // and 308 ticks (maximum 199.993s). Keep 20% wall-clock headroom
+            // for this full bank-and-return cycle, not the shared gold cap.
+            deadline: Duration::from_secs(240),
             start_script: Some("ChickenKiller"),
             script_settings_inject: Some(CHICKEN_KILLER_BANK_INJECT),
             terminal_shot: Some("chicken_killer_bank"),

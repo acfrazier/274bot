@@ -53,6 +53,7 @@
       "api::interact::Interactions::walk",
       "api::interact::Interactions::walk_nearest",
       "api::interact::Interactions::wear",
+      "api::interact::PacketCheckpoint::capture",
       "api::interact::answer_count",
       "api::interact::cheat",
       "api::interact::cheat_allowed",
@@ -82,6 +83,7 @@
       "api::interact::driver::Driver::trace_packets",
       "api::interact::driver::Driver::try_move",
       "api::interact::driver::Driver::unread_keys_pending",
+      "api::interact::driver::PacketCheckpoint::capture",
       "api::interact::driver::answer_count",
       "api::interact::driver::cheat",
       "api::interact::driver::cheat_allowed",
@@ -338,6 +340,7 @@
       "client::client::Client::add_player_options",
       "client::client::Client::add_world_options",
       "client::client::Client::adopt_from",
+      "client::client::Client::advance_hosted_animations",
       "client::client::Client::apply_cam_lookat",
       "client::client::Client::apply_cam_moveto",
       "client::client::Client::apply_cam_reset",
@@ -539,6 +542,7 @@
       "client::client::client::Client::add_player_options",
       "client::client::client::Client::add_world_options",
       "client::client::client::Client::adopt_from",
+      "client::client::client::Client::advance_hosted_animations",
       "client::client::client::Client::apply_cam_lookat",
       "client::client::client::Client::apply_cam_moveto",
       "client::client::client::Client::apply_cam_reset",
@@ -1814,6 +1818,12 @@
       "rustdoc_kind": "struct"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::PacketCheckpoint::capture",
+      "rustdoc_kind": "function"
+    },
+    {
       "declared_type": {
         "primitive": "i32"
       },
@@ -2432,6 +2442,12 @@
       "lint": "type",
       "path": "api::interact::driver::PacketCheckpoint",
       "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::driver::PacketCheckpoint::capture",
+      "rustdoc_kind": "function"
     },
     {
       "declared_type": {
@@ -5340,6 +5356,12 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::advance_hosted_animations",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::Client::already_started",
@@ -8084,6 +8106,12 @@
     {
       "kind": "field",
       "lint": "inventory_only",
+      "path": "client::client::ClientGens::npc_info",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
       "path": "client::client::ClientGens::player",
       "rustdoc_kind": "struct_field"
     },
@@ -10254,6 +10282,12 @@
       "kind": "method",
       "lint": "method",
       "path": "client::client::client::Client::adopt_from",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::advance_hosted_animations",
       "rustdoc_kind": "function"
     },
     {
@@ -12852,6 +12886,12 @@
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::ClientGens::npc",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "client::client::client::ClientGens::npc_info",
       "rustdoc_kind": "struct_field"
     },
     {
@@ -20881,7 +20921,7 @@
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "cb3e8f74d5f8efaaa62cc2927f83ed08669682d58f0a290029c09af323a30622"
+      "sha256": "7536d15674f86de1854f2d5b1c89542ea7d56ed55195c114fcd7698f5f20ed60"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
@@ -20893,7 +20933,7 @@
     },
     {
       "path": "crates/api/src/lib.rs",
-      "sha256": "f46165ae24311f1a46cfb7ab95551eb9ad5218349a9dbc48e66af2381d5f32c2"
+      "sha256": "ff2c1203af01ebbd95d93e72d6ca0fff6ef113664272e5676b87d2a531f00766"
     },
     {
       "path": "crates/api/src/prot.rs",
@@ -20909,7 +20949,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/client.rs",
-      "sha256": "5c319a87e9822880dc25f1b473ad0af417b868fd8d19adcba759c87b89dc5469"
+      "sha256": "03779e1abacd463610ed227763d8bc1784e0b8bcdf01d8362d83fad64be8bcd2"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/mod.rs",
@@ -20944,7 +20984,7 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "a7c802ed6fa827a7842aebd39587d87f0d37dde94d0f52e7fa86270688017db9"
+      "sha256": "d017a4b3945c8d57eac189e669e25e3d4e30c76f45c92ac10e0fc8bab8cef8be"
     },
     {
       "files": [
