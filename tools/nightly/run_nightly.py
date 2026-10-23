@@ -82,15 +82,23 @@ RUNNER_REPO = HERE.parent.parent
 NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
 
 
+# Engine A is the non-Windows revision-289 pack. Engine B has its own
+# verified revision-289 identity after content patch 0002.
+ENGINE_A_289_CRC_SHA256 = (
+    "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623"
+)
+ENGINE_B_289_CRC_SHA256 = (
+    "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69"
+)
+
+
 def revision_defaults(revision: str, windows: bool) -> dict:
     """The settings a game revision implies, before any specific override.
 
-    289 is the production revision: its defaults are the values this script
-    has always used. 274 (the zinfandel lane) differs in the built-in launch
-    profile, the folder under a cell HOME's `.274bot` that holds the decoded
-    cache (`unpack`, where 289 uses `unpack-289`), the run-folder suffix,
-    and the remote engine's /crc identity (the pinned hash is the 289
-    engine's, so a 274 remote engine is not compared against it).
+    289 is the production revision. Non-Windows jobs keep the established
+    289 pack identity. Windows jobs use Engine B's rebuilt identity. Revision
+    274 has a separate launch profile, cache directory (`unpack` instead of
+    `unpack-289`), and run-folder suffix. It has no pinned CRC identity.
     """
     if revision not in ("274", "289"):
         raise ValueError(f"revision must be 274 or 289, got {revision!r}")
@@ -101,8 +109,9 @@ def revision_defaults(revision: str, windows: bool) -> dict:
         "profile": f"local-{revision}",
         "unpack_dir": "unpack-289" if revision == "289" else "unpack",
         "run_suffix": suffix,
-        "engine_crc_sha256": ("687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623"
-                              if revision == "289" else ""),
+        "engine_crc_sha256": (
+            (ENGINE_B_289_CRC_SHA256 if windows else ENGINE_A_289_CRC_SHA256)
+            if revision == "289" else ""),
     }
 
 
@@ -1140,12 +1149,20 @@ def engine_check() -> tuple[bool, str]:
         return False, f"{url}: {error}"
     digest = hashlib.sha256(body).hexdigest()
     if ENGINE_CRC_SHA256 and (len(body) != 40 or digest != ENGINE_CRC_SHA256):
-        return False, f"{url}: {len(body)} bytes, sha256 {digest}, expected 40 bytes {ENGINE_CRC_SHA256}"
+        return False, (f"identity mismatch: {url}: {len(body)} bytes, sha256 {digest}, "
+                       f"expected 40 bytes {ENGINE_CRC_SHA256}")
     try:
         socket.create_connection((ENGINE_HOST, GAME_PORT), timeout=15).close()
     except OSError as error:
         return False, f"{ENGINE_HOST}:{GAME_PORT}: {error}"
     return True, f"{ENGINE_LABEL} at {ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}, /crc sha256 {digest[:16]}"
+
+
+def remote_engine_failure(detail: str) -> str:
+    """Keep an answered HTTP identity mismatch separate from an unreachable engine."""
+    if detail.startswith("identity mismatch:"):
+        return f"{ENGINE_LABEL} {detail}"
+    return f"{ENGINE_LABEL} not reachable: {detail}"
 
 
 def copy_engine(run_dir: Path | None) -> None:
@@ -2051,7 +2068,7 @@ def run_latency_pass(branch: str, binary: Path | None, cells: list[str], bands: 
         elif note_quiet_lock():
             block_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
         elif ENGINE_MODE == "remote":
-            block_unavailable = f"{ENGINE_LABEL} not reachable: {detail}"
+            block_unavailable = remote_engine_failure(detail)
         else:
             block_not_run = f"engine {detail}"
 
@@ -2741,7 +2758,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                 if note_quiet_lock():
                     reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
                 elif ENGINE_MODE == "remote":
-                    reason_unavailable = f"{ENGINE_LABEL} not reachable: {detail}"
+                    reason_unavailable = remote_engine_failure(detail)
                 else:
                     reason_not_run = f"engine {detail}"
         rows, runnable = cell_rows(frontend, cells, run_dir, cell_base, skips, reason_unavailable, reason_not_run)

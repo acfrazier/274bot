@@ -290,7 +290,10 @@ reads the new list. No unit changes are needed.
    sudo install -d -o bot -g bot /srv/nightly/engine-q-pristine
    sudo -u bot rsync -a /srv/nightly/engine-pristine/ /srv/nightly/engine-q-pristine/
    sudo install -o bot -g bot -m 0644 /srv/nightly/runner/tools/nightly/engine-q/world.json \
-     /srv/nightly/engine-q-pristine/engine/world.json
+     /srv/nightly/engine-q-pristine/engine/data/config/world.json
+   sudo -u bot sh -c 'cd /srv/nightly/engine-q-pristine/engine &&
+     node --import tsx /srv/nightly/runner/tools/nightly/engine-q/check-world-config.mjs \
+       /srv/nightly/engine-q-pristine/engine'
    sudo install -o bot -g bot -m 0755 /srv/nightly/runner/tools/nightly/engine-q/start-289q.sh \
      /srv/nightly/engine-q-pristine/start-289q.sh
    sudo install -o bot -g bot -m 0755 /srv/nightly/runner/tools/nightly/engine-q/stop-289q.sh \
@@ -299,12 +302,14 @@ reads the new list. No unit changes are needed.
      /srv/nightly/engine-q-pristine/status-289q.sh
    sudo -u bot sh -c 'cd /srv/nightly/engine-q-pristine/engine && npm run sqlite:migrate'
    ```
-   The Engine Q process works in `/srv/nightly/engine-q-run/engine`. Its
-   `db.sqlite` stays separate from Engine A's database. The engine reads
-   `world.json` for database settings, but SQLite always opens `db.sqlite` from
-   the process working directory. The engine uses `db.name` only for MySQL.
-   This engine does not support a `world.json` SQLite filename selector. Do not
-   use `db.name` as that selector.
+   The Engine Q process works in `/srv/nightly/engine-q-run/engine`. The
+   runner copies the full pristine tree to each run directory, so this config
+   reaches the run copy at `engine/data/config/world.json`. Its `db.sqlite`
+   stays separate from Engine A's database. The engine reads `world.json` for
+   database settings, but SQLite always opens `db.sqlite` from the process
+   working directory. The engine uses `db.name` only for MySQL. This engine
+   does not support a `world.json` SQLite filename selector. Do not use
+   `db.name` as that selector.
    The runner sets `QUESTER_TICK_MS=300` only in quest-cell environments, so
    the harness's world-wide `::speed` command cannot affect Engine A.
    Keep global quest ports, profile, run suffix and tick variables out of
