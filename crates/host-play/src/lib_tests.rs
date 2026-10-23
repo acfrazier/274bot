@@ -633,19 +633,39 @@ fn live_vault_passphrase_is_fresh_and_accepted() {
     vault::check_new_passphrase(&second).unwrap();
 }
 
-/// A login against a closed local port: a real refused connection.
+/// Loopback port for the refused-connection login. 23456 is a non-ephemeral,
+/// unprivileged port in 20000-29999: merlot allocates ephemeral ports from
+/// 49152-65535 and chardonnay from 32768-60999, so a sibling
+/// `bind("127.0.0.1:0")` listener can never be assigned it. Unlike 1023 it can
+/// be bound by the test, so an occupied port fails fast and is named instead
+/// of stalling the login.
+const REFUSED_LOGIN_PORT: u16 = 23456;
+
+/// Serialize the bind-check/drop/connect window between the two tests that
+/// call the helper; they run in parallel and would otherwise see each other's
+/// listener as an occupied port.
+static REFUSED_LOGIN_PORT_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Refuse a login: bind the port first to prove nothing listens on it, then
+/// drop the listener and connect so the login sees `ConnectionRefused`.
 fn refused_login_error() -> LoginError {
-    let port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    let _guard = REFUSED_LOGIN_PORT_GUARD.lock().unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", REFUSED_LOGIN_PORT)).unwrap_or_else(|error| {
+        panic!("refused-login port {REFUSED_LOGIN_PORT} is in use: {error}")
+    });
+    drop(listener);
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
-        port,
+        port: REFUSED_LOGIN_PORT,
         cache_dir: "/tmp".into(),
         members: true,
         lowmem: false,
     });
+    // `Client::set_login_deadline` stops the next login's socket I/O at the
+    // deadline (vendor/fr-client-rust/crates/client/src/client/client.rs:3417-3424),
+    // so a listener that appears between the drop and the connect cannot make
+    // the hello read wait without limit.
+    client.set_login_deadline(Instant::now() + Duration::from_secs(5));
     client.login("alice", "secret", false).unwrap_err()
 }
 
