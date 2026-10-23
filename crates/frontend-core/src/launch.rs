@@ -1333,6 +1333,24 @@ impl ProfileLauncher {
         }
     }
 
+    /// The vault path the configured profile will bind with, resolved as
+    /// [`Self::bind_with`] resolves it (`saved_revision` as given), without
+    /// binding: no engine key is read and no cache is prepared.
+    pub fn unbound_vault_path(
+        &self,
+        saved_revision: Option<u16>,
+    ) -> Result<std::path::PathBuf, ProfileError> {
+        if let Some(profile) = &self.bound {
+            return Ok(profile.vault_path().to_path_buf());
+        }
+        let (options, environment) = self.inputs()?;
+        options
+            .0
+            .resolve_with_env(saved_revision, &environment.0)
+            .map(|selection| selection.vault_path().to_path_buf())
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
+    }
+
     /// The catalogue root: the bound profile's, else the configured one at
     /// `saved_revision`.
     pub fn catalog_root(
