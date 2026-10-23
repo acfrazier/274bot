@@ -55,6 +55,16 @@ impl WalkArm {
 }
 
 impl WalkArm {
+    /// The current follow target, or `None` when no hop is active.
+    pub fn current_aim(&self) -> Option<WorldTile> {
+        self.traveller.current_aim()
+    }
+
+    /// The latched essence-mine return session, if one is known.
+    pub fn essence(&self) -> Option<nav::essence::EssenceSession> {
+        self.traveller.essence()
+    }
+
     /// The armed route's dest as a tile, `None` when idle.
     pub fn queued_tile(&self) -> Option<Tile> {
         self.route.as_ref().map(|r| Tile {

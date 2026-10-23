@@ -80,7 +80,7 @@ impl<'a> RouteProjection<'a> {
                 destination: route.dest,
             },
             route: RouteProjectionPath::Legacy(route),
-            aim: arm.traveller.current_aim(),
+            aim: arm.current_aim(),
         })
     }
     fn script(bot: &'a crate::script_runtime::NavBot) -> Option<Self> {

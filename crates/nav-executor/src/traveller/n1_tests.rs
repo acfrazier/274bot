@@ -69,7 +69,7 @@ fn npc_fare_is_rechecked_after_the_approach() {
         plant_choice_dialog(&mut c, &["Yes please.", "No, thank you."]);
         bump_rebuild(&mut c, &mut snapshot);
         assert!(
-            matches!(traveller.follow(&mut driver, &snapshot, route, &mut options), Some(TravelOutcome::Blocked { detail, .. }) if detail.contains("30") && detail.contains("29"))
+            matches!(traveller.follow(&mut driver, &snapshot, route, &mut options), Some(TravelOutcome::Blocked { why, .. }) if why.to_string().contains("30") && why.to_string().contains("29"))
         );
         assert_eq!(
             driver.if_buttons, 0,
@@ -140,7 +140,7 @@ fn jewellery_teleport_refuses_a_depleted_charge_before_rubbing() {
         ..FollowRec::default()
     };
     assert!(
-        matches!(traveller.follow(&mut driver, &snapshot, web_route(glory_edge()), &mut TravelOptions::default()), Some(TravelOutcome::Blocked { detail, .. }) if detail.contains("1712"))
+        matches!(traveller.follow(&mut driver, &snapshot, web_route(glory_edge()), &mut TravelOptions::default()), Some(TravelOutcome::Blocked { why, .. }) if why.to_string().contains("1712"))
     );
     assert_eq!(driver.held_ops, 0);
 }
@@ -236,7 +236,7 @@ fn unbound_jewellery_control_is_named_instead_of_blaming_the_scene() {
     bump_rebuild(&mut c, &mut snapshot);
     let outcome = traveller.follow(&mut driver, &snapshot, route, &mut options);
     assert!(
-        matches!(outcome, Some(TravelOutcome::Blocked { detail, .. }) if detail.contains("2552") && detail.contains("inventory control") && !detail.contains("loaded scene"))
+        matches!(outcome, Some(TravelOutcome::Blocked { why, .. }) if why.to_string().contains("2552") && why.to_string().contains("inventory control") && !why.to_string().contains("loaded scene"))
     );
     assert_eq!(driver.held_ops, 0);
 }

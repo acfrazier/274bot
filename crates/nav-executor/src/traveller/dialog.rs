@@ -379,7 +379,7 @@ pub(super) fn door_hop_choice_blocked(
     edge: &TransportEdge,
     snapshot: &GameSnapshot,
     choice: i32,
-) -> Option<String> {
+) -> Option<BlockedWhy> {
     let index = usize::try_from(choice.checked_sub(1)?).ok()?;
     let text = snapshot.chat_options().get(index)?.text.as_str();
     let pays = if edge.kind == TransportKind::Door {
@@ -394,10 +394,12 @@ pub(super) fn door_hop_choice_blocked(
         let carried = snapshot.inv_count(id);
         let count = edge.consumption_count(id, packed_count, carried);
         if carried < count {
-            return Some(format!(
-                "transport {} needs {count} of item {id} to pay the fare; carrying {carried}",
-                edge.loc_id
-            ));
+            return Some(BlockedWhy::FareUnavailable {
+                loc_id: edge.loc_id,
+                count,
+                item_id: id,
+                carried,
+            });
         }
     }
     None
@@ -512,9 +514,8 @@ pub(super) enum TeleportSend {
     /// dropped the spell-button press. The wait names the actual missing
     /// control, never a scene loc that teleports do not use.
     Wait(TeleportWait),
-    /// The edge can never be executed (a spell landing outside the seven
-    /// standard spellbook teleports).
-    Blocked(String),
+    /// A packed prerequisite is unmet or a spell landing is unsupported.
+    Blocked(BlockedWhy),
 }
 
 pub(super) enum TeleportWait {
@@ -522,15 +523,13 @@ pub(super) enum TeleportWait {
     SpellButton(i32),
 }
 
-impl TeleportWait {
-    pub(super) fn detail(self) -> String {
-        match self {
-            Self::InventoryItem(id) => {
-                format!("charged teleport item {id} never acquired a usable inventory control")
+impl From<TeleportWait> for BlockedWhy {
+    fn from(wait: TeleportWait) -> Self {
+        match wait {
+            TeleportWait::InventoryItem(item_id) => {
+                Self::TeleportInventoryControlUnavailable { item_id }
             }
-            Self::SpellButton(id) => {
-                format!("teleport spell button {id} was not accepted by the driver")
-            }
+            TeleportWait::SpellButton(button_id) => Self::TeleportSpellButtonRejected { button_id },
         }
     }
 }
@@ -585,17 +584,21 @@ pub(super) fn teleport_send<D: Driver>(
             .find(|stat| stat.index == skill)
             .map(|stat| stat.effective);
         if effective.is_none_or(|effective| effective < level) {
-            return TeleportSend::Blocked(format!(
-                "teleport needs skill {skill} level {level}; observed {effective:?}"
-            ));
+            return TeleportSend::Blocked(BlockedWhy::TeleportSkillRequirementUnmet {
+                skill,
+                level,
+                observed: effective,
+            });
         }
     }
     for &(id, count) in edge.item_req.iter().chain(&edge.consumed_req) {
         let carried = snapshot.inv_count(id);
         if carried < count {
-            return TeleportSend::Blocked(format!(
-                "teleport needs {count} of item {id} (runes or a charged item); carrying {carried}"
-            ));
+            return TeleportSend::Blocked(BlockedWhy::TeleportItemRequirementUnmet {
+                count,
+                item_id: id,
+                carried,
+            });
         }
     }
     if edge.loc_id > 0 {
@@ -613,10 +616,7 @@ pub(super) fn teleport_send<D: Driver>(
         };
     }
     let Some(com_id) = spell_button(snapshot, edge) else {
-        return TeleportSend::Blocked(format!(
-            "packed spell teleport to ({}, {}, {}) is not one of the seven standard spellbook teleports",
-            edge.to.x, edge.to.z, edge.to.level
-        ));
+        return TeleportSend::Blocked(BlockedWhy::UnsupportedSpellTeleport { to: edge.to });
     };
     match find_component(snapshot, com_id) {
         Some(widget) => {

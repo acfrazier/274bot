@@ -96,6 +96,14 @@
         "non_test": 0,
         "test": 2
       },
+      "clippy::disallowed_methods": {
+        "non_test": 0,
+        "test": 4
+      },
+      "clippy::disallowed_types": {
+        "non_test": 1,
+        "test": 4
+      },
       "clippy::large_enum_variant": {
         "non_test": 2,
         "test": 0
@@ -120,10 +128,10 @@
     "nav-executor": {
       "clippy::too_many_arguments": {
         "non_test": 0,
-        "test": 1
+        "test": 0
       },
       "clippy::type_complexity": {
-        "non_test": 1,
+        "non_test": 0,
         "test": 0
       }
     },

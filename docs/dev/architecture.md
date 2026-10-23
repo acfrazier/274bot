@@ -386,12 +386,41 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
 
+The planner's `clippy.toml` denies action types, functions, methods, and
+macros by compiler identity. `tools/architecture/nav_clippy.py --write`
+generates the lists and their inventory from rustdoc JSON.
+`python3 -B tools/architecture/nav_clippy.py --check` checks the inventory
+and runs the external-crate probes. The Clippy CI job runs this check.
+
+The inventory includes public constants and statics, which Clippy cannot
+deny as values. The compiler check rejects new wrappers of denied types
+that these lints cannot detect. Source hashes also detect changes to
+inactive, feature-gated seed code.
+
+The exact remaining limit is a value-only read of an external constant
+or static: `let _ = &api::S`, `let _ = api::C`, or
+`let _ = api::S::C`. These expressions cannot act. Calls through the
+resulting values remain subject to the method deny list.
+
+The read-only cache loader has one narrow type-lint exception on its
+`ClientRevision` import in `nav/src/map/catalogue.rs`. The revision enum
+is public through a seed module, but this import only selects cache
+data. The import-level `#[expect]` does not exempt any action method.
+The real-pack integration tests use the same import-level exception to
+select 289 fixture data. These test imports do not exempt action methods.
+World-state unit tests use import- and function-level expects to construct
+a cache-less client and populate snapshot families. These method expects
+are test-only. The production planner has no method-lint exception.
+
+The source scanner checks unattached files, test scope, and the executor's
+planner allowlist. It does not resolve the action capability boundary.
+
 ### nav-executor
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
-| `lib.rs` | crate facade and re-exports | `mod traveller;` plus the six root re-exports; the `traveller` module stays private |
-| `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state |
+| `lib.rs` | crate facade and re-exports | `mod traveller;` plus the root re-exports, including `BlockedWhy`; the `traveller` module stays private |
+| `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state, typed blocked reasons |
 | `traveller/snapshot.rs` | snapshot-query helpers | scene reads for hops |
 | `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
 | `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
@@ -1052,6 +1081,10 @@ it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
 to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
 1.98 offers no per-lint test exemption for the other lints, so opted-in
 crates keep their tests clean too.
+
+`nav-executor` also opts in. Its callback type alias and grouped test
+geometry remove the `type_complexity` and `too_many_arguments`
+suppressions. Its suppression baseline is zero.
 
 **Suppression-count ratchet.** `tools/lint-ratchet/lint_ratchet.py`
 (Python 3, stdlib only; run as `python3 -B`) counts `#[allow(...)]`,

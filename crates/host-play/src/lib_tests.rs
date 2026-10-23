@@ -5175,7 +5175,10 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
         Some(nav_executor::TravelOutcome::Blocked {
             at: dest,
             leg: 0,
-            detail: "missing loc".into(),
+            why: nav_executor::BlockedWhy::TrollDoorMissing {
+                loc_id: 1,
+                tile: dest,
+            },
         }),
         true,
     );

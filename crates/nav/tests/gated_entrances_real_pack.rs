@@ -5,7 +5,12 @@ use std::sync::{Arc, LazyLock};
 use api::game_data;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestListEvidenceProvider};
-use api::selected::{ClientRevision, QuestGate, RunKey, Truth};
+#[expect(
+    clippy::disallowed_types,
+    reason = "read-only revision value selects real-pack fixture data and does not perform an action"
+)]
+use api::selected::ClientRevision;
+use api::selected::{QuestGate, RunKey, Truth};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, WorldTile};
 use nav::quest_gates::{QuestEvidence, QuestFamilyId};
 use nav::router::{

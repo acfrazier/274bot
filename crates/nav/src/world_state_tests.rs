@@ -5,6 +5,10 @@ use super::*;
 use crate::router::{find_with, FindOptions, Leg};
 use crate::transport::{TransportEdge, TransportKind};
 use api::snapshot::{GameSnapshot, WorldTile};
+#[expect(
+    clippy::disallowed_types,
+    reason = "world-state snapshot tests need a cache-less client fixture, not a production action capability"
+)]
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::config::varp_type::VarpType;
@@ -15,6 +19,11 @@ use client::io::ServerProt;
 /// cache dir is a unique scratch dir — a real cache (e.g. stray
 /// `config`/`interface` jags under `/tmp`) would seed real ifaces
 /// and break the first-`TYPE_INV` reads.
+#[expect(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    reason = "world-state tests construct a real client; production nav must not use it"
+)]
 fn client() -> Client {
     let cache_dir = std::env::temp_dir().join(format!(
         "274bot-nav-worldstate-{}-{}",
@@ -72,6 +81,10 @@ fn gated_edge() -> TransportEdge {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the cache-less client fixture supplies quest-journal data for snapshot conversion"
+)]
 #[test]
 fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
@@ -595,6 +608,10 @@ fn empty_state_allows_nothing_gated() {
 /// `from_snapshot` maps the snapshot's inv, equipment, stats, varps,
 /// and quest-status views into the gating facts; an in-progress quest
 /// (red journal text) is not complete.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the cache-less client fixture supplies each snapshot family for conversion"
+)]
 #[test]
 fn from_snapshot_builds_inv_worn_stats_varps_and_quests() {
     let mut c = client();
@@ -757,6 +774,10 @@ fn members_req_refuses_until_map_members_is_true() {
     );
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the cache-less client fixture supplies stat updates for snapshot conversion"
+)]
 #[test]
 fn combat_level_uses_ready_base_rows_not_boosts() {
     let mut c = client();

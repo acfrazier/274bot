@@ -205,7 +205,7 @@ fn approach_completion_walks_a_leaf_opened_meanwhile_instead_of_closing_it() {
     bump_rebuild(&mut c, &mut snapshot);
     snapshot.seed_locs(vec![leaf(&loc, &edge, true)]);
     assert!(traveller
-        .follow(&mut driver, &snapshot, route.clone(), &mut options)
+        .follow(&mut driver, &snapshot, route, &mut options)
         .is_none());
     assert_eq!(driver.loc_ops, 0);
     assert_eq!(
@@ -269,9 +269,7 @@ fn open_leaf_door_does_not_step_into_a_closed_wall_from_the_door_tile() {
     // The Open fires: the leaf reads open, so the kept probe steps through.
     plant_door_at(&mut c, true, 6, 6);
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.sink.steps,
         vec![client::io::ClientProt::MOVE_GAMECLICK.id, 5, 0, 3207, 3206]

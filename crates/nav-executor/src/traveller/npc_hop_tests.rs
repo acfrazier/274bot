@@ -94,10 +94,13 @@ fn npc_recovery_exhaustion_reports_three_attempts() {
         let result = traveller.follow(&mut rec, &snap, route.clone(), &mut options);
         if attempt == 3 {
             match result {
-                Some(TravelOutcome::Blocked { detail, .. }) => assert!(
-                    detail.contains("3 attempts") && detail.contains("reach"),
-                    "{detail}"
-                ),
+                Some(TravelOutcome::Blocked { why, .. }) => {
+                    let detail = why.to_string();
+                    assert!(
+                        detail.contains("3 attempts") && detail.contains("reach"),
+                        "{detail}"
+                    )
+                }
                 other => panic!("expected honest retry exhaustion, got {other:?}"),
             }
         } else {
@@ -241,10 +244,13 @@ fn tracked_npc_vanished_expiry_names_the_missing_target() {
         }
     }
     match outcome {
-        Some(TravelOutcome::Blocked { detail, .. }) => assert!(
-            detail.contains("tracked target missing") && detail.contains("7"),
-            "{detail}"
-        ),
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
+            assert!(
+                detail.contains("tracked target missing") && detail.contains("7"),
+                "{detail}"
+            )
+        }
         other => panic!("expected missing-target terminal detail, got {other:?}"),
     }
 }
