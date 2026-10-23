@@ -48,7 +48,9 @@ use frontend_core::launch::{
 };
 use frontend_core::process::debug_enabled;
 
-use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
+use crate::input_capture::{
+    discard_unconsumed_native_capture, stream_capture, KeyboardOwner, MouseButtons, PaintMouseGate,
+};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_stop_enabled, PanelWindow, Session,
@@ -153,6 +155,9 @@ struct PanelState {
     game_view: Option<GameView>,
     session: Session,
     keyboard: KeyboardOwner,
+    /// Press-origin routing for captured mouse buttons at the paint
+    /// boundary, shared by the single-bot pane and the grid pane.
+    mouse_gate: PaintMouseGate,
     dock_inited: bool,
     /// Which dock layout the tree was last built with; `None` before the
     /// first init. A MultiBox toggle rebuilds the tree when this differs.
@@ -631,6 +636,7 @@ impl PanelState {
             game_view: None,
             session,
             keyboard: KeyboardOwner::default(),
+            mouse_gate: PaintMouseGate::default(),
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -1085,9 +1091,10 @@ fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
 
 /// Draw the focused slot's script paint over the Game Image and apply
 /// its hit, if any. Returns whether the pointer is inside the drawn
-/// paint panel: the panes then hold back the frame's mouse buttons
-/// from the game, so a press on the paint never also clicks the game
-/// under it.
+/// paint panel this frame. The panes give that to the mouse gate,
+/// which decides where a press that starts now belongs: a press on
+/// the paint never also clicks the game under it. A release follows
+/// the press that started it, not this frame's pointer place.
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
@@ -1470,21 +1477,31 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         let pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
-        // also None). While the pointer is inside the paint panel
-        // the press belongs to the paint, so this frame's mouse
-        // buttons do not reach the game under it.
+        // also None). The gate routes each button by where its
+        // press started: a press inside the paint and its release
+        // stay with the paint, and a press on the game keeps its
+        // release over the paint.
         if capture && image_hovered {
             let mouse = ui.io().mouse_pos();
+            let buttons = state.mouse_gate.route(
+                pointer_in_paint,
+                MouseButtons {
+                    left_down: ui.is_mouse_clicked(MouseButton::Left),
+                    right_down: ui.is_mouse_clicked(MouseButton::Right),
+                    left_up: ui.is_mouse_released(MouseButton::Left),
+                    right_up: ui.is_mouse_released(MouseButton::Right),
+                },
+            );
             stream_capture(
                 &mut state.session.map_desk,
                 mouse[0] - min[0],
                 mouse[1] - min[1],
                 size[0],
                 size[1],
-                ui.is_mouse_clicked(MouseButton::Left) && !pointer_in_paint,
-                ui.is_mouse_clicked(MouseButton::Right) && !pointer_in_paint,
-                ui.is_mouse_released(MouseButton::Left) && !pointer_in_paint,
-                ui.is_mouse_released(MouseButton::Right) && !pointer_in_paint,
+                buttons.left_down,
+                buttons.right_down,
+                buttons.left_up,
+                buttons.right_up,
                 &[],
             );
             state.keyboard.capture_keys(ui, &mut state.session.map_desk);
@@ -1611,21 +1628,31 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             } else {
                 false
             };
-            // The paint runs before capture: while the pointer is
-            // inside its panel the press belongs to the paint, so
-            // this frame's mouse buttons do not reach the game.
+            // The paint runs before capture. The gate routes each
+            // button by where its press started: a press inside the
+            // paint and its release stay with the paint, and a press
+            // on the game keeps its release over the paint.
             if is_focused && capture && image_hovered {
                 let mouse = ui.io().mouse_pos();
+                let buttons = state.mouse_gate.route(
+                    pointer_in_paint,
+                    MouseButtons {
+                        left_down: ui.is_mouse_clicked(MouseButton::Left),
+                        right_down: ui.is_mouse_clicked(MouseButton::Right),
+                        left_up: ui.is_mouse_released(MouseButton::Left),
+                        right_up: ui.is_mouse_released(MouseButton::Right),
+                    },
+                );
                 stream_capture(
                     &mut state.session.map_desk,
                     mouse[0] - image_min[0],
                     mouse[1] - image_min[1],
                     size[0],
                     size[1],
-                    ui.is_mouse_clicked(MouseButton::Left) && !pointer_in_paint,
-                    ui.is_mouse_clicked(MouseButton::Right) && !pointer_in_paint,
-                    ui.is_mouse_released(MouseButton::Left) && !pointer_in_paint,
-                    ui.is_mouse_released(MouseButton::Right) && !pointer_in_paint,
+                    buttons.left_down,
+                    buttons.right_down,
+                    buttons.left_up,
+                    buttons.right_up,
                     &[],
                 );
                 state.keyboard.capture_keys(ui, &mut state.session.map_desk);

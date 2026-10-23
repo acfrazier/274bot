@@ -395,6 +395,88 @@ impl KeyboardOwner {
     }
 }
 
+/// Which surface received one mouse button's press. The matching
+/// release belongs to that surface, wherever the pointer is when the
+/// button goes up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PressOrigin {
+    Game,
+    Paint,
+}
+
+/// One frame's mouse-button edges, in the order [`stream_capture`]
+/// stages them.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MouseButtons {
+    pub(crate) left_down: bool,
+    pub(crate) right_down: bool,
+    pub(crate) left_up: bool,
+    pub(crate) right_up: bool,
+}
+
+/// Routes mouse buttons between the script paint and the game under
+/// it by where each press started. One instance lives at the frame
+/// owner, outside either Game-pane layout, so the single-bot pane
+/// and the focused grid cell share it. A press inside the paint
+/// never reaches the game, and neither does its release. A press on
+/// the game keeps its release even when the pointer has moved over
+/// the paint, or the paint has gone, by the time the button goes up.
+#[derive(Debug, Default)]
+pub(crate) struct PaintMouseGate {
+    left: Option<PressOrigin>,
+    right: Option<PressOrigin>,
+}
+
+impl PaintMouseGate {
+    /// Filter one hovered capture frame's button edges for the game.
+    /// `pointer_in_paint` is the pointer's place this frame. It
+    /// decides a press that starts now. It never decides a release:
+    /// the press that started the button decides the release.
+    pub(crate) fn route(&mut self, pointer_in_paint: bool, buttons: MouseButtons) -> MouseButtons {
+        let (left_down, left_up) = Self::route_button(
+            &mut self.left,
+            pointer_in_paint,
+            buttons.left_down,
+            buttons.left_up,
+        );
+        let (right_down, right_up) = Self::route_button(
+            &mut self.right,
+            pointer_in_paint,
+            buttons.right_down,
+            buttons.right_up,
+        );
+        MouseButtons {
+            left_down,
+            right_down,
+            left_up,
+            right_up,
+        }
+    }
+
+    fn route_button(
+        origin: &mut Option<PressOrigin>,
+        pointer_in_paint: bool,
+        down: bool,
+        up: bool,
+    ) -> (bool, bool) {
+        if down {
+            // A new press replaces any origin whose release this gate
+            // never saw (the pane was not capture-hovered that frame),
+            // so a stale origin cannot route the new press's release.
+            *origin = Some(if pointer_in_paint {
+                PressOrigin::Paint
+            } else {
+                PressOrigin::Game
+            });
+        }
+        let game_owned = *origin == Some(PressOrigin::Game);
+        if up {
+            *origin = None;
+        }
+        (down && game_owned, up && game_owned)
+    }
+}
+
 /// Click-through helper: maps a click inside the Game Image (local coords,
 /// Image widget size) to applet coords and stages `InputEv::Down`.
 pub fn maybe_send_click(map_desk: &mut MapDesk, lx: f32, ly: f32, w: f32, h: f32) {

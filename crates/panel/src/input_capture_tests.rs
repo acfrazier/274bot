@@ -7,7 +7,7 @@ use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 use super::{
     add_shifted_key_event, capture_key_ch, discard_unconsumed_native_capture,
     game_keyboard_available, maybe_send_click, shifted_imgui_key, shifted_imgui_key_at_location,
-    stream_capture, KeyboardOwner,
+    stream_capture, KeyboardOwner, MouseButtons, PaintMouseGate,
 };
 
 struct KeyCapture {
@@ -518,6 +518,118 @@ fn stream_capture_stages_right_up_and_key() {
     ));
     assert!(matches!(events[2], InputEv::Up));
     assert!(matches!(events[3], InputEv::Key { down: true, ch: 10 }));
+}
+
+fn buttons(left_down: bool, right_down: bool, left_up: bool, right_up: bool) -> MouseButtons {
+    MouseButtons {
+        left_down,
+        right_down,
+        left_up,
+        right_up,
+    }
+}
+
+/// A press that starts on the game reaches the game, and its release
+/// reaches the game even when the pointer is inside the paint by
+/// then. The release is sent once: a later release edge with no
+/// press behind it sends nothing.
+#[test]
+fn a_game_press_keeps_its_release_inside_the_paint() {
+    let mut gate = PaintMouseGate::default();
+    assert_eq!(
+        gate.route(false, buttons(true, false, false, false)),
+        buttons(true, false, false, false),
+        "the left press starts on the game"
+    );
+    assert_eq!(
+        gate.route(true, buttons(false, false, true, false)),
+        buttons(false, false, true, false),
+        "the left release inside the paint still reaches the game"
+    );
+    assert_eq!(
+        gate.route(false, buttons(false, false, true, false)),
+        MouseButtons::default(),
+        "the origin is spent, so a second release sends nothing"
+    );
+    assert_eq!(
+        gate.route(false, buttons(false, true, false, false)),
+        buttons(false, true, false, false),
+        "the right press starts on the game"
+    );
+    assert_eq!(
+        gate.route(true, buttons(false, false, false, true)),
+        buttons(false, false, false, true),
+        "the right release inside the paint still reaches the game"
+    );
+}
+
+/// A press that starts on the paint never reaches the game, and its
+/// release sends nothing either, even over the game. The game gets
+/// no release for a press it never saw.
+#[test]
+fn a_paint_press_sends_neither_its_press_nor_its_release() {
+    let mut gate = PaintMouseGate::default();
+    assert_eq!(
+        gate.route(true, buttons(true, true, false, false)),
+        MouseButtons::default(),
+        "both presses start on the paint"
+    );
+    assert_eq!(
+        gate.route(false, buttons(false, false, true, true)),
+        MouseButtons::default(),
+        "both releases over the game send nothing"
+    );
+}
+
+/// Two buttons held at once keep their own origins. The paint
+/// button's release over the game must not end the game button's
+/// hold, and the game button's release over the paint still ends it.
+#[test]
+fn two_held_buttons_keep_their_own_origins() {
+    let mut gate = PaintMouseGate::default();
+    assert_eq!(
+        gate.route(false, buttons(true, false, false, false)),
+        buttons(true, false, false, false),
+        "the left press starts on the game"
+    );
+    assert_eq!(
+        gate.route(true, buttons(false, true, false, false)),
+        MouseButtons::default(),
+        "the right press starts on the paint while the left is held"
+    );
+    assert_eq!(
+        gate.route(false, buttons(false, false, false, true)),
+        MouseButtons::default(),
+        "the right release sends nothing and leaves the left hold alone"
+    );
+    assert_eq!(
+        gate.route(true, buttons(false, false, true, false)),
+        buttons(false, false, true, false),
+        "the left release inside the paint ends the game hold"
+    );
+}
+
+/// If a release is never routed (the pane is not capture-hovered
+/// that frame), the next press of the same button sets a new
+/// origin. A stale game origin cannot give a later paint press a
+/// release into the game.
+#[test]
+fn a_new_press_replaces_an_origin_whose_release_was_never_routed() {
+    let mut gate = PaintMouseGate::default();
+    assert_eq!(
+        gate.route(false, buttons(true, false, false, false)),
+        buttons(true, false, false, false)
+    );
+    assert_eq!(
+        gate.route(true, buttons(true, false, false, false)),
+        MouseButtons::default(),
+        "the new press starts on the paint"
+    );
+    assert_eq!(
+        gate.route(false, buttons(false, false, true, false)),
+        MouseButtons::default(),
+        "its release over the game follows the paint press, not the stale origin"
+    );
 }
 
 #[test]
