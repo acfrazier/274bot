@@ -616,6 +616,10 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("session/map.rs::MapDesk::stage_game_input", Staged(C::GameInput)),
     (
+        "session/map.rs::MapDesk::stage_captured_input_to",
+        Staged(C::GameInput),
+    ),
+    (
         "session/map.rs::MapDesk::set_input_sender",
         Excluded("device plumbing: attaches the capture channel; no operator decision"),
     ),
@@ -844,6 +848,14 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/input_capture.rs::maybe_send_click", Excluded(GAME_INPUT_STAGING)),
     ("panel/input_capture.rs::stream_capture", Excluded(GAME_INPUT_STAGING)),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route",
+        Excluded(GAME_INPUT_STAGING),
+    ),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route_button",
+        Excluded(GAME_INPUT_STAGING),
+    ),
     (
         "panel/session.rs::Session::maybe_drain_getvar_dialogue",
         Excluded(GAME_INPUT_STAGING),
