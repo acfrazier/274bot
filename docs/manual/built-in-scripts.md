@@ -141,7 +141,7 @@ The four places for `location`:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `disposition` | Bank | **Bank** carries the haul to a bank and deposits it. **Power** drops it. |
-| `bank` | Nearest | **Nearest** uses the nearest bank the bot can reach. A bank you pick is always used. |
+| Bank: Nearest (default), or always use the bank you pick | Nearest | **Nearest** uses the nearest bank the bot can reach. A bank you pick is always used. |
 | `useMageBank`, `useZanarisBank` | off | Allow those two banks when `disposition` is **Bank**. |
 | `baitTarget` | 100 | For Fishing: the bait to carry, from 1 to 10,000. |
 | `food`, `foodTarget`, `eatBelow` | none, 0, 0 | The food to carry, how many, and the hit points at which to eat. 0 for `eatBelow` means half your maximum hit points. |
