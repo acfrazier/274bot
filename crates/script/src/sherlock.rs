@@ -70,7 +70,7 @@ use crate::native::{
     NativePhase, NativeTick, PrepareContext, PreparedConfig, RetainedMemory, Script, ScriptFailure,
     ScriptFlow, ScriptStatus, SettingsApply, SettingsBag, StartError, StatusField, StatusValue,
 };
-use crate::shim::{InteractReq, ScriptPaint};
+use crate::shim::{host_control_buttons, InteractReq, ScriptPaint};
 use crate::{CompiledId, SettingDef};
 use api::selected::RunKey;
 use std::task::Poll;
@@ -610,6 +610,9 @@ impl Sherlock {
         output.paint(Arc::new(ScriptPaint {
             title: Some(CARD.name.into()),
             lines: vec![text.to_string(), format!("Clues solved: {}", self.solved)],
+            // The host Pause and Stop controls, as a compat helper
+            // paint advertises them.
+            buttons: host_control_buttons(),
             generation: run.run,
             ..Default::default()
         }));
@@ -2112,6 +2115,37 @@ mod tests {
             "{page}"
         );
         assert!(page.get("reach_flood").is_none(), "{page}");
+    }
+
+    /// The native Sherlock paint advertises the host Pause and Stop
+    /// controls, in the order a compat helper paint advertises them.
+    #[test]
+    fn paint_advertises_host_pause_and_stop() {
+        // A started run's first publish is dirty (see the card factory).
+        let mut script = Sherlock {
+            run: Some(RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            }),
+            dirty: true,
+            ..Default::default()
+        };
+        let mut output = crate::slot::compiled::TestOutput::default();
+        script.publish(&mut output);
+        assert_eq!(output.paints.len(), 1, "one paint frame is published");
+        let ids: Vec<(&str, &str)> = output.paints[0]
+            .buttons
+            .iter()
+            .map(|button| (button.id.as_str(), button.label.as_str()))
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                (crate::shim::HOST_PAUSE_CONTROL_ID, "Pause"),
+                (crate::shim::HOST_STOP_CONTROL_ID, "Stop"),
+            ]
+        );
     }
 
     #[test]

@@ -7071,6 +7071,14 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_style.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/scripts/loadouts.rs",
       "owner": "T3"
     },
