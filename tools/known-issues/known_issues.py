@@ -12,9 +12,9 @@ deleted, so checks of already published releases keep passing. Never edit the
 ``### Known issues`` / ``### Not in this release`` blocks in ``CHANGELOG.md``
 by hand; regenerate them instead:
 
-    python3 tools/known-issues/known_issues.py render --release 0.2.5
-    python3 tools/known-issues/known_issues.py check --release 0.2.5
-    python3 tools/known-issues/known_issues.py carried --release 0.2.5
+    python3 tools/known-issues/known_issues.py render --release 0.2.6
+    python3 tools/known-issues/known_issues.py check --release 0.2.6
+    python3 tools/known-issues/known_issues.py carried --release 0.2.6
 
 ``render`` prints both blocks in CHANGELOG style (80-column wrap,
 ``- **Area:** text`` bullets for known issues). ``check`` diffs those blocks
