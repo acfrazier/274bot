@@ -1,10 +1,13 @@
 # Architecture
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+
 274bot is a Rust bot host over a vendored client library. Ownership is crate
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.4 is Beta 1. Revision 289 is the production revision: the product is
+0.2.5 is Beta 2. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
@@ -446,6 +449,14 @@ Legacy synchronous facades start with six settles and grow the same table
 only when needed. Their reverse proofs also retain demand-driven storage.
 Cooperative reverse proofs reserve their bounded capacities once, so an
 ordinary slice never grows or rehashes a complete proof.
+
+Both paths reserve the frontier's complete settle-cap capacity once, without
+initializing unused entries. Only live entries are written. The synchronous
+path still grows its record table on demand, but never reallocates the heap
+to follow that table. In the macOS probe, heap reallocation during table
+growth committed up to a whole new heap block, depending on earlier
+allocations. One reservation removes that reallocation. Admission already
+charges the complete heap backing, not its observed committed pages.
 
 The frontier starts as a binary min-heap. Only bounded-frontier eviction
 converts it to a min-max heap, in place and with one checkpoint per parent.

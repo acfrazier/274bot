@@ -612,6 +612,14 @@ const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
 /// whole-scenario cap (independent of game-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
+/// FlaxRunner pair cell whole-run cap. The worst of three measured passing
+/// runs took 170.6 s in total: 155.5 s of script plus 15.1 s of setup
+/// (`FIX-025/f/flax/report.md`). That is only 9.4 s under the shared 180 s
+/// [`SCRIPT_GOLD_DEADLINE`], and the nightly run was still spinning flax
+/// when that cap ended it. 240 s is about 1.4x the worst measured total,
+/// a 69.4 s margin. Only `flax_runner` uses this cap; the other pair
+/// cells keep [`SCRIPT_GOLD_DEADLINE`].
+const FLAX_RUNNER_DEADLINE: Duration = Duration::from_secs(240);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
 /// **Units:** this constant is a `budget_ticks` count of observed game
@@ -683,17 +691,23 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// The reverse dungeon wait remains 240 game ticks (144s). First-egg,
 /// empty, close and further-egg waits remain 150 game ticks.
 ///
-/// **Deadline:** the estimated run needs about 385s. The fixed deadline is
-/// 420s. The 600- and 240-game-tick waits allow 504s together, so the whole-run
-/// deadline can end the scenario before both waits exhaust. Keep that deadline
-/// unless live evidence shows the expected terminal predicate needs more time.
-/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged; diagnosis remains
-/// provisional. No product seed, forced post-Start bank, debug command or
-/// engine acceleration was used. The prior 1755 ladder stall (empty-pack cell)
-/// is not included.
+/// **Deadline:** the text above sizes the cycle for the old fresh-account
+/// seed (HP 10), which FIX-025-F-HERBLORE replaced with upstream's level-40
+/// account. At 40 the script spends its lobsters on pack-full eats instead
+/// of HP eats, so a trip gathers 26 to 27 eggs and the measured full cycle
+/// grew: four completed sizing runs took 627, 622, 627 and 627 game ticks
+/// (longest wall 403.05s), and a fifth had looted 26 eggs, banked and
+/// returned but was still short of the terminal egg at 656 game ticks when
+/// the old 420s wall expired (420.73s). The fixed deadline is 600s: 196.95s
+/// above the longest complete run and 179.27s above the expired run. The
+/// per-watch budgets can still sum past it (deposit 360s, empty and close
+/// 90s each, return 144s), so on a stall the whole-run deadline ends the
+/// scenario first. Script `walkTo` `timeoutMs` 180_000 per hop is unchanged. No
+/// forced post-Start bank, debug command or engine acceleration was used.
+/// The prior 1755 ladder stall (empty-pack cell) is not included.
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
-const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
+const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(600);
 /// B2's completed HerbloreSecondaries cycle needed 412 observed game ticks
 /// (`FIX-025/integrate-b2/engine-a-600ms-b2/cells/herblore_secondaries/receipt.json`).
 /// The newt branch still returned from Draynor at its old 180s deadline.
@@ -787,8 +801,7 @@ const ARDY_THIEVER_FIGHT_DEADLINE: Duration = Duration::from_secs(240);
 /// **Deadline:** pre-Start about 12s. Gear trip about 30s. Fletch about 5s.
 /// Deposit trip and return about 35s. Two geometric chops at 2.4s a roll.
 /// 420s leaves about 140 rolls for two logs, so P(fewer than 2) < 0.1%.
-/// The per-arm budgets are the binding limit. Same 420s pattern as
-/// [`HERBLORE_EGG_DEADLINE`].
+/// The per-arm budgets are the binding limit.
 const MAGIC_TREE_CHOP_WATCH_GAME_TICKS: u32 = 450;
 const MAGIC_TREE_CHOP_DEADLINE: Duration = Duration::from_secs(420);
 

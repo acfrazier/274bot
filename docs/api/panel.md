@@ -11,7 +11,7 @@ window feature. The client rasters into a frame (wgpu GPU 3D by default,
 CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
 Bind one immutable entry from `~/.274bot/servers.json` for the process
-(`--profile NAME` or `--rs2b2t`; see [README.md](../../README.md)).
+(`--profile NAME` or `--rs2b2t`; see [server-profiles.md](../reference/server-profiles.md)).
 Shared flags match host-play (`--engine`, `--cache`, `--vault`, `--catalog`,
 `--lowmem`/`--highmem`, `--nav-paints on|off`, `--live`, optional
 `--external-ts` for the dedicated loader smoke).
@@ -683,7 +683,7 @@ keeping its gear and its place, with a warning and an audit line in the
 log; while that cannot be done the file is refused. Text and
 buttons wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
-is a live toggle), dim **build line** (`beta 1 ·` git short SHA,
+is a live toggle), dim **build line** (`beta 2 ·` git short SHA,
 `-dirty` when the tree was dirty; hover is crate version then full
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.

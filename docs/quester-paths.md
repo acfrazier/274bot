@@ -97,7 +97,7 @@ recipes and typed progress readers use that catalog as well.
 
 ### 4.2 Document anatomy (schema 3)
 
-- Top level: `$schema`, `schema: 3`, `id` (the content quest stem, e.g. `cook`), `display_name`, `kind` (`Quest` by default; `Miniquest` uses an owned typed `progress_reader` instead of a quest-list binding, and a `Miniquest` role without one is rejected), `required` (header requirement ids that gate Start), `tested_stats` (`null` until a live PASS writes it), `partner` (`null` in every bundled Beta 1 Path; Path authoring reserves the ids `blackarmgang` and `hero` for a two-role Shield of Arrav / Hero's Quest protocol), `quest`, and `roles`.
+- Top level: `$schema`, `schema: 3`, `id` (the content quest stem, e.g. `cook`), `display_name`, `kind` (`Quest` by default; `Miniquest` uses an owned typed `progress_reader` instead of a quest-list binding, and a `Miniquest` role without one is rejected), `required` (header requirement ids that gate Start), `tested_stats` (`null` until a live PASS writes it), `partner` (`null` in every bundled Beta 2 Path; Path authoring reserves the ids `blackarmgang` and `hero` for a two-role Shield of Arrav / Hero's Quest protocol), `quest`, and `roles`.
 - `quest`: provisioning and eligibility input: `members`, `quest_points`, `requirements[]` (quest-points, skill, quest, item, or members-world entries), `items[]` (`acquirable` with an optional `acquire` recipe, or `must_have`; an optional `from_stage` holds an item out until that stage), `acquire` recipes, `bank` (`"nearest"` or an authored tile with a `source`, plus `required: true` only when that particular bank is necessary), `coin_float`, `loadouts` (named entries: `worn` is a slot→item-alias map, `carry` is an item-alias/qty list), `areas` (named walk boxes with a `source`), `tools`, and `owns_inventory`. The compiler requires this header. A Path with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`; see §4.3 item 3), and `steps[]`.
@@ -128,7 +128,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `loadout` | Default | Apply a named `quest.loadouts` entry (`loadout`, `at: "quest_bank"` or `"nearest"`, `allow_lower_tier`, `strip`, `exclusive`); see below. `exclusive` requires exactly the listed worn items and cannot be combined with `strip` or `allow_lower_tier`. |
 | `setting` | Default | Flip an observed game setting, currently `retaliate` on or off. |
 | `combat` | Explicit | Native fight with a tactic (`melee_mode`, `ranged_style`, or mage `spells`), optional `cross`/`guard` walks, looting, and dialogue answers. |
-| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (Path-authoring reference; no bundled Beta 1 Path uses it). |
+| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (Path-authoring reference; no bundled Beta 2 Path uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
 
@@ -159,7 +159,7 @@ Combinators are `All`, `Any`, and `Not`, with the envelope from §4.2. Every fac
 
 A `quest.loadouts` entry names worn items and carried item/qty rows using selected item aliases; compilation resolves each row once into the display-name rows the bank runner consumes. A `loadout` step applies one entry at `quest_bank` or `nearest`: `allow_lower_tier` permits lower-tier alternatives, `strip` removes worn items outside the entry, and `exclusive` requires exactly the listed worn items (it cannot be combined with `strip` or `allow_lower_tier`). `loadout_ready` proves the entry is held. An active recipe's declared inputs can independently request the same items, and active-loadout carry floats join provisioning like coin floats.
 
-#### Paired Paths (Path-authoring reference; no bundled Beta 1 Path uses `partner`)
+#### Paired Paths (Path-authoring reference; no bundled Beta 2 Path uses `partner`)
 
 Shield of Arrav and Hero's Quest declare `partner` in Path authoring: a two-role protocol with reciprocal handoffs driven by `partner` steps on each account. The Path id must be `blackarmgang` or `hero`. Each account runs its own Quester with reciprocal `partner_account` settings and opposite gangs (see `docs/api/script.md`); validation compiles both gang roles, while a run activates only the account's effective gang after owned membership admission.
 
@@ -220,7 +220,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
   "display_name": "Cook's Assistant",          // UI only
   "required": [],                              // ids from quest.requirements that gate Start (none)
   "tested_stats": null,                        // written only by a live PASS; never a gate
-  "partner": null,                             // null in every bundled Beta 1 Path
+  "partner": null,                             // null in every bundled Beta 2 Path
   "quest": {
     "members": false,
     "quest_points": 1,

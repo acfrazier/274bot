@@ -1,12 +1,15 @@
 # Reusable live harness
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+
 The harness runs real revision clients against your local engine for the
 bound **server profile**. It keeps scenario preparation, proof predicates
 and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.4 is Beta 1. Revision 289 is the production revision: the harness cells
+0.2.5 is Beta 2. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 

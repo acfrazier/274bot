@@ -1,6 +1,14 @@
-# Agent API
+# Reference pages in `docs/api`
 
-Beta kernel surface a bot agent codes against in 0.2.4 Beta 1: reading world state,
+> **Which page do I need?** Using the app: the [panel](panel.md), the
+> [terminal app](tui.md), the [vault](vault.md) and [login](login.md) pages.
+> Writing scripts: [script.md](script.md) and [js-api-v2.md](js-api-v2.md).
+> Changing 274bot: everything else on this page, and the
+> [docs index](../README.md).
+
+## Developer overview: the Agent API
+
+Beta kernel surface a bot agent codes against in 0.2.5 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
 (`crates/api`) plus `nav` (`crates/nav`) and the host tick. The script
 crate is the runner kernel (compiled cards + Load isolate + catalog
