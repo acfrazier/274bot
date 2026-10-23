@@ -11,7 +11,10 @@ use api::interact::{
     WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
-use api::prot::{legal_sends_for, LegalSend, Send, LEGAL_SEND};
+use api::prot::{
+    legal_sends_for, AbuseReason, Base37Name, CycleLogic1, CycleLogic2, LegalSend, MinimapTrailer,
+    MouseMoveRecord, PacketError, Send, LEGAL_SEND,
+};
 use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
 };
@@ -22,7 +25,7 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::ClientObj;
 use client::datastruct::LinkList;
-use client::io::{ClientProt, Isaac, ServerProt};
+use client::io::{ClientProt, Isaac, Packet, ServerProt};
 use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
@@ -453,8 +456,8 @@ impl Driver for Recorder {
         self.scene_typecode
     }
 
-    fn out(&mut self) -> &mut dyn api::prot::Out {
-        &mut self.out
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.out)
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         self.logins += 1;
@@ -680,6 +683,1019 @@ fn client_driver_cheat_matches_java_client_cheat() {
     assert_eq!(&c.out.data()[2..7], b"ping\n");
 }
 
+// The expected bodies below are independent of the Send implementation.
+// E/network/game/client/codec/EventMouseClickDecoder.ts:10-13,
+// EventAppletFocusDecoder.ts:10-14, EventCameraPositionDecoder.ts:10-14,
+// ChatSetModeDecoder.ts:9-15, IfButtonDecoder.ts:9-13,
+// ResumePCountDialogDecoder.ts:9-13, TutClickSideDecoder.ts:9-13,
+// ReportAbuseDecoder.ts:9-15, IdkSaveDesignDecoder.ts:9-26,
+// FriendListAddDecoder.ts:9-13, FriendListDelDecoder.ts:9-13,
+// IgnoreListAddDecoder.ts:9-13, IgnoreListDelDecoder.ts:9-13,
+// MessagePrivateDecoder.ts:9-15, MessagePublicDecoder.ts:9-16,
+// ClientCheatDecoder.ts:9-12, MoveClickDecoder.ts:14-28,
+// OpObjDecoder.ts:14-19, OpObjTDecoder.ts:9-15, OpObjUDecoder.ts:9-17,
+// OpNpcDecoder.ts:14-18, OpNpcTDecoder.ts:9-14, OpNpcUDecoder.ts:9-15,
+// OpLocDecoder.ts:14-20, OpLocTDecoder.ts:9-15, OpLocUDecoder.ts:9-18,
+// OpPlayerDecoder.ts:14-18, OpPlayerTDecoder.ts:9-14,
+// OpPlayerUDecoder.ts:9-15, OpHeldDecoder.ts:14-20,
+// OpHeldTDecoder.ts:9-16, OpHeldUDecoder.ts:9-18,
+// InvButtonDecoder.ts:14-20, InvButtonDDecoder.ts:9-16.
+// Fork client encoders: client/outbound_289.rs:44-80,87-116;
+// client/render/draw.rs:1048-1076,3422-3442;
+// client/client.rs:3936-3964,4145-4158,4221-4238,4378-4381,
+// 4497-4517,4586-4593,4729-4748,5127-5163,6327-6329,7377-7379,
+// 11032-11039,11896-11909,11987-11988,12095-12172,12967-12968;
+// wordfilter/word_pack.rs:59-90.
+// R289 opcode ids and fixed/variable lengths use the independent pinned-client
+// fixture (`client/tests/fixtures/revision_289/outbound_lengths.rs:4-94`),
+// not `map_client_prot` or the Send implementation under test.
+fn assert_289_packet_golden(send: Send, prot: ClientProt, body: &[u8]) {
+    assert_eq!(send.named_packet(), prot);
+    assert_eq!(send.body(), body, "body golden for {prot:?}");
+    let row = ALL_CLIENT_PROTS_289
+        .iter()
+        .find(|(named, _)| *named == prot)
+        .map(|(_, row)| *row)
+        .expect("R289 source fixture contains this named packet");
+
+    let seed = [1, 2, 3, 4];
+    let mut packet = Packet::new(vec![0; body.len() + 3]);
+    packet.random = Some(Isaac::new(&seed));
+    send.write_for_revision(ClientRevision::R289, &mut packet)
+        .expect("typed packet is legal on R289");
+
+    let mut cipher = Isaac::new(&seed);
+    let mut expected = Vec::with_capacity(body.len() + 3);
+    expected.push(row.id.wrapping_add(cipher.next_int()) as u8);
+    if row.length == -1 {
+        expected.push(body.len() as u8);
+    } else {
+        assert_eq!(
+            row.length,
+            body.len() as i32,
+            "fixed body size for {prot:?}"
+        );
+    }
+    expected.extend_from_slice(body);
+    assert_eq!(
+        &packet.data()[..packet.pos],
+        expected,
+        "complete R289 Packet bytes for {prot:?}"
+    );
+}
+
+#[test]
+fn revision_289_typed_packets_match_primary_wire_goldens() {
+    let mut seen = Vec::with_capacity(ALL_CLIENT_PROTS_289.len());
+    macro_rules! golden {
+        ($prot:expr, $send:expr, $body:expr) => {{
+            let prot = $prot;
+            assert!(!seen.contains(&prot), "duplicate golden for {prot:?}");
+            assert_289_packet_golden($send, prot, $body);
+            seen.push(prot);
+        }};
+    }
+
+    golden!(ClientProt::NO_TIMEOUT, Send::no_timeout(), &[]);
+    golden!(ClientProt::IDLE_TIMER, Send::idle_timer(), &[]);
+    golden!(
+        ClientProt::EVENT_MOUSE_CLICK,
+        Send::event_mouse_click(0x123, true, 300, 200).unwrap(),
+        &[0x12, 0x3a, 0x56, 0xd4]
+    );
+    let mouse = [
+        MouseMoveRecord::Delta {
+            duplicates: 2,
+            dx: -3,
+            dy: 5,
+        },
+        MouseMoveRecord::Absolute {
+            duplicates: 1,
+            x: 10,
+            y: 20,
+        },
+        MouseMoveRecord::Repeated {
+            duplicates: 8,
+            x: 764,
+            y: 502,
+        },
+        MouseMoveRecord::Outside { duplicates: 7 },
+        MouseMoveRecord::Outside { duplicates: 8 },
+    ];
+    golden!(
+        ClientProt::EVENT_MOUSE_MOVE,
+        Send::event_mouse_move(&mouse).unwrap(),
+        &[
+            0x27, 0x65, 0x88, 0x3b, 0xce, 0xc0, 0x45, 0xdf, 0x1a, 0xbf, 0xff, 0xff, 0xc0, 0x47,
+            0xff, 0xff,
+        ]
+    );
+    golden!(
+        ClientProt::EVENT_APPLET_FOCUS,
+        Send::event_applet_focus(true),
+        &[1]
+    );
+    golden!(
+        ClientProt::EVENT_CAMERA_POSITION,
+        Send::event_camera_position(0x1234, 0xabcd).unwrap(),
+        &[0x12, 0x34, 0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC1,
+        Send::anticheat_oplogic1(-1),
+        &[0xff, 0xff, 0xff, 0xff]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC2,
+        Send::anticheat_oplogic2(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC3,
+        Send::anticheat_oplogic3(i32::MIN),
+        &[0x80, 0, 0, 0]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC4,
+        Send::anticheat_oplogic4(0xa5).unwrap(),
+        &[0xa5]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC5,
+        Send::anticheat_oplogic5(0x5a).unwrap(),
+        &[0x5a]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC6,
+        Send::anticheat_oplogic6(0x1234).unwrap(),
+        &[0x12, 0x34]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC7,
+        Send::anticheat_oplogic7(i32::MAX),
+        &[0x7f, 0xff, 0xff, 0xff]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC8,
+        Send::anticheat_oplogic8(0xe1).unwrap(),
+        &[0xe1]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_OPLOGIC9,
+        Send::anticheat_oplogic9(0x123456).unwrap(),
+        &[0x12, 0x34, 0x56]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC1,
+        Send::anticheat_cyclelogic1(CycleLogic1 {
+            prefix: true,
+            marker139: true,
+            marker94: true,
+            marker65: true,
+            random: 0xd7,
+        })
+        .unwrap(),
+        &[
+            0x2c, 0xeb, 0x29, 0x34, 0x8b, 0x5e, 0xc9, 0xed, 0x10, 0x3a, 0xbc, 0x41, 0xd7, 0x59,
+            0xce,
+        ]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC2,
+        Send::anticheat_cyclelogic2(CycleLogic2 {
+            prefix: true,
+            suffix: true,
+            random_word_a: 0x1234,
+            random_word_b: 0xabcd,
+            random_tail: 0xee,
+        })
+        .unwrap(),
+        &[
+            0x41, 0x97, 0xfe, 0x12, 0x34, 0x3f, 0, 0xcd, 0x82, 0xab, 0xcd, 0xd8, 0x7c, 0x88, 0xd1,
+            0xb6, 0x24, 0xee,
+        ]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC3,
+        Send::anticheat_cyclelogic3(0xa3).unwrap(),
+        &[0xa3]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC4,
+        Send::anticheat_cyclelogic4(0xb4).unwrap(),
+        &[0xb4]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC5,
+        Send::anticheat_cyclelogic5(),
+        &[]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC6,
+        Send::anticheat_cyclelogic6(0xc6).unwrap(),
+        &[0xc6]
+    );
+    golden!(
+        ClientProt::ANTICHEAT_CYCLELOGIC7,
+        Send::anticheat_cyclelogic7(),
+        &[]
+    );
+    golden!(
+        ClientProt::OPOBJ1,
+        Send::opobj1(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPOBJ2,
+        Send::opobj2(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPOBJ3,
+        Send::opobj3(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPOBJ4,
+        Send::opobj4(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPOBJ5,
+        Send::opobj5(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPOBJT,
+        Send::opobjt(0x1234, 0x5678, 0x9abc, 0xdef0).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]
+    );
+    golden!(
+        ClientProt::OPOBJU,
+        Send::opobju(0x1234, 0x5678, 0x9abc, 0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x13, 0x57, 0x24, 0x68, 0x36, 0x9a,]
+    );
+    golden!(
+        ClientProt::OPNPC1,
+        Send::opnpc1(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPNPC2,
+        Send::opnpc2(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPNPC3,
+        Send::opnpc3(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPNPC4,
+        Send::opnpc4(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPNPC5,
+        Send::opnpc5(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPNPCT,
+        Send::opnpct(0xabcd, 0x1234).unwrap(),
+        &[0xab, 0xcd, 0x12, 0x34]
+    );
+    golden!(
+        ClientProt::OPNPCU,
+        Send::opnpcu(0xabcd, 0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0xab, 0xcd, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOC1,
+        Send::oploc1(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOC2,
+        Send::oploc2(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOC3,
+        Send::oploc3(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOC4,
+        Send::oploc4(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOC5,
+        Send::oploc5(0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPLOCT,
+        Send::oploct(0x1234, 0x5678, 0x9abc, 0xdef0).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]
+    );
+    golden!(
+        ClientProt::OPLOCU,
+        Send::oplocu(0x1234, 0x5678, 0x9abc, 0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x13, 0x57, 0x24, 0x68, 0x36, 0x9a,]
+    );
+    golden!(
+        ClientProt::OPPLAYER1,
+        Send::opplayer1(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPPLAYER2,
+        Send::opplayer2(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPPLAYER3,
+        Send::opplayer3(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPPLAYER4,
+        Send::opplayer4(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPPLAYER5,
+        Send::opplayer5(0xabcd).unwrap(),
+        &[0xab, 0xcd]
+    );
+    golden!(
+        ClientProt::OPPLAYERT,
+        Send::opplayert(0xabcd, 0x1234).unwrap(),
+        &[0xab, 0xcd, 0x12, 0x34]
+    );
+    golden!(
+        ClientProt::OPPLAYERU,
+        Send::opplayeru(0xabcd, 0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0xab, 0xcd, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]
+    );
+    golden!(
+        ClientProt::OPHELD1,
+        Send::opheld1(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::OPHELD2,
+        Send::opheld2(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::OPHELD3,
+        Send::opheld3(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::OPHELD4,
+        Send::opheld4(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::OPHELD5,
+        Send::opheld5(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::OPHELDT,
+        Send::opheldt(0x1357, 0x2468, 0x369a, 0xdef0).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a, 0xde, 0xf0]
+    );
+    golden!(
+        ClientProt::OPHELDU,
+        Send::opheldu(0x1357, 0x2468, 0x369a, 0x1234, 0x5678, 0x9abc).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,]
+    );
+    golden!(
+        ClientProt::INV_BUTTON1,
+        Send::inv_button1(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::INV_BUTTON2,
+        Send::inv_button2(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::INV_BUTTON3,
+        Send::inv_button3(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::INV_BUTTON4,
+        Send::inv_button4(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::INV_BUTTON5,
+        Send::inv_button5(0x1357, 0x2468, 0x369a).unwrap(),
+        &[0x13, 0x57, 0x24, 0x68, 0x36, 0x9a]
+    );
+    golden!(
+        ClientProt::IF_BUTTON,
+        Send::if_button(0x4567).unwrap(),
+        &[0x45, 0x67]
+    );
+    golden!(
+        ClientProt::RESUME_PAUSEBUTTON,
+        Send::resume_pausebutton(0x89ab).unwrap(),
+        &[0x89, 0xab]
+    );
+    golden!(ClientProt::CLOSE_MODAL, Send::close_modal(), &[]);
+    golden!(
+        ClientProt::RESUME_P_COUNTDIALOG,
+        Send::count_dialog(-1),
+        &[0xff, 0xff, 0xff, 0xff]
+    );
+    golden!(
+        ClientProt::TUT_CLICKSIDE,
+        Send::tut_clickside(13).unwrap(),
+        &[13]
+    );
+    golden!(
+        ClientProt::MAP_BUILD_COMPLETE,
+        Send::map_build_complete(),
+        &[]
+    );
+    golden!(
+        ClientProt::MOVE_OPCLICK,
+        Send::move_opclick(true, 0x1234, 0x5678, &[(3, -4)]).unwrap(),
+        &[1, 0x12, 0x34, 0x56, 0x78, 3, 0xfc]
+    );
+    let name = Base37Name::new(1).unwrap();
+    golden!(
+        ClientProt::REPORT_ABUSE,
+        Send::report_abuse(name, AbuseReason::try_from(11).unwrap(), true),
+        &[0, 0, 0, 0, 0, 0, 0, 1, 11, 1]
+    );
+    golden!(
+        ClientProt::MOVE_MINIMAPCLICK,
+        Send::move_minimapclick(
+            true,
+            0x1234,
+            0x5678,
+            &[(-1, 2)],
+            MinimapTrailer {
+                click_x: -12,
+                click_y: 34,
+                camera_yaw: 0x1234,
+                camera_anticheat_angle: 0x56,
+                minimap_zoom: 0x78,
+                player_x: 0x9abc,
+                player_z: 0xdef0,
+                nearest: true,
+            },
+        )
+        .unwrap(),
+        &[
+            1, 0x12, 0x34, 0x56, 0x78, 0xff, 2, 0xf4, 0x22, 0x12, 0x34, 57, 0x56, 0x78, 89, 0x9a,
+            0xbc, 0xde, 0xf0, 1, 63,
+        ]
+    );
+    golden!(
+        ClientProt::INV_BUTTOND,
+        Send::inv_buttond(0x1234, 0x5678, 0x9abc, true).unwrap(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 1]
+    );
+    golden!(
+        ClientProt::IGNORELIST_DEL,
+        Send::ignorelist_del(name),
+        &[0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    golden!(
+        ClientProt::IGNORELIST_ADD,
+        Send::ignorelist_add(name),
+        &[0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    golden!(
+        ClientProt::IDK_SAVEDESIGN,
+        Send::idk_savedesign(
+            1,
+            [
+                None,
+                Some(0),
+                Some(1),
+                Some(127),
+                Some(128),
+                Some(254),
+                None
+            ],
+            [11, 12, 13, 4, 7],
+        )
+        .unwrap(),
+        &[1, 0xff, 0, 1, 127, 128, 254, 0xff, 11, 12, 13, 4, 7]
+    );
+    golden!(
+        ClientProt::CHAT_SETMODE,
+        Send::chat_setmode(3, 2, 1).unwrap(),
+        &[3, 2, 1]
+    );
+    golden!(
+        ClientProt::MESSAGE_PRIVATE,
+        Send::message_private(name, "hello!").unwrap(),
+        &[0, 0, 0, 0, 0, 0, 0, 1, 0x61, 0xbb, 0x4e, 0x90]
+    );
+    golden!(
+        ClientProt::FRIENDLIST_DEL,
+        Send::friendlist_del(name),
+        &[0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    golden!(
+        ClientProt::FRIENDLIST_ADD,
+        Send::friendlist_add(name),
+        &[0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    let catalog = api::debug_commands::DebugCatalog::decode(
+        include_bytes!("../data/game-data/289/debug.json"),
+        ClientRevision::R289,
+        api::game_data::for_revision(ClientRevision::R289).unwrap(),
+    )
+    .unwrap();
+    golden!(
+        ClientProt::CLIENT_CHEAT,
+        Send::client_cheat(&catalog, "~cat").unwrap(),
+        b"~cat\n"
+    );
+    golden!(
+        ClientProt::MESSAGE_PUBLIC,
+        Send::message_public(11, 5, "hello!").unwrap(),
+        &[11, 5, 0x61, 0xbb, 0x4e, 0x90]
+    );
+    golden!(
+        ClientProt::MOVE_GAMECLICK,
+        Send::move_gameclick(false, 0x1234, 0x5678, &[(-1, 2)]).unwrap(),
+        &[0, 0x12, 0x34, 0x56, 0x78, 0xff, 2]
+    );
+
+    let expected: Vec<_> = ALL_CLIENT_PROTS_289.iter().map(|(prot, _)| *prot).collect();
+    assert_eq!(seen, expected, "one golden for every named R289 row");
+}
+
+#[test]
+fn typed_packet_builders_refuse_invalid_domains_and_shapes() {
+    for invalid in [0, -1, 37, 6_582_952_005_840_035_281] {
+        assert!(
+            Base37Name::new(invalid).is_err(),
+            "invalid base-37 {invalid}"
+        );
+    }
+    assert_eq!(Base37Name::new(0), Err(PacketError::InvalidName(0)));
+    assert!(Base37Name::new(1).is_ok());
+    for invalid in [-1, 12, i32::MIN, i32::MAX] {
+        assert!(
+            AbuseReason::try_from(invalid).is_err(),
+            "invalid report reason"
+        );
+    }
+    assert_eq!(
+        AbuseReason::try_from(-1),
+        Err(PacketError::InvalidAbuseReason(-1))
+    );
+    for valid in 0..=11 {
+        assert!(AbuseReason::try_from(valid).is_ok());
+    }
+
+    assert!(matches!(
+        Send::if_button(65_536),
+        Err(PacketError::IntegerOutOfRange { .. })
+    ));
+    let invalid_fixed = [
+        Send::if_button(-1),
+        Send::if_button(65_536),
+        Send::resume_pausebutton(-1),
+        Send::resume_pausebutton(65_536),
+        Send::event_mouse_click(4096, false, 0, 0),
+        Send::event_mouse_click(-1, false, 0, 0),
+        Send::event_mouse_click(0, false, 765, 0),
+        Send::event_mouse_click(0, false, -1, 0),
+        Send::event_mouse_click(0, false, 0, 503),
+        Send::event_mouse_click(0, false, 0, -1),
+        Send::event_camera_position(-1, 0),
+        Send::event_camera_position(65_536, 0),
+        Send::event_camera_position(0, 65_536),
+        Send::event_camera_position(0, -1),
+        Send::anticheat_oplogic2(-1),
+        Send::anticheat_oplogic2(65_536),
+        Send::anticheat_oplogic4(-1),
+        Send::anticheat_oplogic4(256),
+        Send::anticheat_oplogic5(-1),
+        Send::anticheat_oplogic5(256),
+        Send::anticheat_oplogic6(-1),
+        Send::anticheat_oplogic6(65_536),
+        Send::anticheat_oplogic8(-1),
+        Send::anticheat_oplogic8(256),
+        Send::anticheat_oplogic9(-1),
+        Send::anticheat_oplogic9(16_777_216),
+        Send::anticheat_cyclelogic3(-1),
+        Send::anticheat_cyclelogic3(256),
+        Send::anticheat_cyclelogic4(-1),
+        Send::anticheat_cyclelogic4(256),
+        Send::anticheat_cyclelogic6(-1),
+        Send::anticheat_cyclelogic6(256),
+        Send::opobj1(-1, 0, 0),
+        Send::opobj2(0, -1, 0),
+        Send::opobj3(0, 0, 65_536),
+        Send::opobj4(65_536, 0, 0),
+        Send::opobj5(0, 65_536, 0),
+        Send::opobjt(0, 0, 0, -1),
+        Send::opobju(0, 0, 0, 0, 0, 65_536),
+        Send::opnpc1(-1),
+        Send::opnpc2(65_536),
+        Send::opnpc3(-1),
+        Send::opnpc4(65_536),
+        Send::opnpc5(-1),
+        Send::opnpct(0, 65_536),
+        Send::opnpcu(0, 0, 0, -1),
+        Send::oploc1(-1, 0, 0),
+        Send::oploc2(0, -1, 0),
+        Send::oploc3(0, 0, 65_536),
+        Send::oploc4(65_536, 0, 0),
+        Send::oploc5(0, 65_536, 0),
+        Send::oploct(0, 0, 0, -1),
+        Send::oplocu(0, 0, 0, 0, 0, 65_536),
+        Send::opplayer1(-1),
+        Send::opplayer2(65_536),
+        Send::opplayer3(-1),
+        Send::opplayer4(65_536),
+        Send::opplayer5(-1),
+        Send::opplayert(0, 65_536),
+        Send::opplayeru(0, 0, 0, -1),
+        Send::opheld1(-1, 0, 0),
+        Send::opheld2(0, -1, 0),
+        Send::opheld3(0, 0, 65_536),
+        Send::opheld4(65_536, 0, 0),
+        Send::opheld5(0, 65_536, 0),
+        Send::opheldt(0, 0, 0, -1),
+        Send::opheldu(0, 0, 0, 0, 0, 65_536),
+        Send::inv_button1(-1, 0, 0),
+        Send::inv_button2(0, -1, 0),
+        Send::inv_button3(0, 0, 65_536),
+        Send::inv_button4(65_536, 0, 0),
+        Send::inv_button5(0, 65_536, 0),
+        Send::inv_buttond(-1, 0, 0, false),
+        Send::inv_buttond(0, -1, 0, false),
+        Send::inv_buttond(0, 0, 65_536, false),
+        Send::tut_clickside(14),
+        Send::chat_setmode(-1, 0, 0),
+        Send::chat_setmode(0, -1, 0),
+        Send::chat_setmode(4, 0, 0),
+        Send::chat_setmode(0, 3, 0),
+        Send::chat_setmode(0, 0, -1),
+        Send::idk_savedesign(2, [None; 7], [0; 5]),
+        Send::idk_savedesign(-1, [None; 7], [0; 5]),
+        Send::idk_savedesign(0, [Some(255), None, None, None, None, None, None], [0; 5]),
+        Send::idk_savedesign(0, [None; 7], [12, 0, 0, 0, 0]),
+        Send::idk_savedesign(0, [None; 7], [-1, 0, 0, 0, 0]),
+        Send::idk_savedesign(0, [None; 7], [0, 16, 0, 0, 0]),
+        Send::idk_savedesign(0, [None; 7], [0, 0, 16, 0, 0]),
+        Send::idk_savedesign(0, [None; 7], [0, 0, 0, 6, 0]),
+        Send::idk_savedesign(0, [None; 7], [0, 0, 0, 0, 8]),
+        Send::message_private(Base37Name::new(1).unwrap(), &"a".repeat(81)),
+        Send::message_private(Base37Name::new(1).unwrap(), "é"),
+        Send::message_public(12, 0, "ok"),
+        Send::message_public(0, 6, "ok"),
+        Send::message_public(0, 0, "é"),
+    ];
+    for result in invalid_fixed {
+        assert!(result.is_err());
+    }
+    assert!(Send::message_private(Base37Name::new(1).unwrap(), &"a".repeat(80)).is_ok());
+    assert!(matches!(
+        Send::message_private(Base37Name::new(1).unwrap(), &"a".repeat(81)),
+        Err(PacketError::InvalidText)
+    ));
+    assert!(matches!(
+        Send::message_public(0, 0, "é"),
+        Err(PacketError::InvalidText)
+    ));
+
+    let invalid_offsets = [(0_i8, 0_i8); 25];
+    assert!(matches!(
+        Send::move_gameclick(false, 0, 0, &invalid_offsets),
+        Err(PacketError::InvalidShape(
+            "movement exceeds 24 offset pairs"
+        ))
+    ));
+    assert!(Send::move_opclick(false, 0, 0, &invalid_offsets).is_err());
+    assert!(Send::move_minimapclick(
+        false,
+        0,
+        0,
+        &invalid_offsets,
+        MinimapTrailer {
+            click_x: 0,
+            click_y: 0,
+            camera_yaw: 0,
+            camera_anticheat_angle: 0,
+            minimap_zoom: 0,
+            player_x: 0,
+            player_z: 0,
+            nearest: false,
+        },
+    )
+    .is_err());
+    assert!(Send::move_gameclick(false, -1, 0, &[]).is_err());
+    assert!(Send::move_opclick(false, 0, 65_536, &[]).is_err());
+
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Delta {
+        duplicates: 8,
+        dx: 0,
+        dy: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Delta {
+        duplicates: 0,
+        dx: -33,
+        dy: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Delta {
+        duplicates: 0,
+        dx: 32,
+        dy: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Delta {
+        duplicates: 0,
+        dx: 0,
+        dy: 32,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Delta {
+        duplicates: 0,
+        dx: 0,
+        dy: -33,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Absolute {
+        duplicates: 8,
+        x: 0,
+        y: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Absolute {
+        duplicates: 0,
+        x: 765,
+        y: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Absolute {
+        duplicates: 0,
+        x: 0,
+        y: 503,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Repeated {
+        duplicates: 7,
+        x: 0,
+        y: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Repeated {
+        duplicates: 2048,
+        x: 0,
+        y: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Repeated {
+        duplicates: 8,
+        x: 765,
+        y: 0,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Repeated {
+        duplicates: 8,
+        x: 0,
+        y: 503,
+    }])
+    .is_err());
+    assert!(Send::event_mouse_move(&[MouseMoveRecord::Outside { duplicates: 2048 }]).is_err());
+
+    let catalog = api::debug_commands::DebugCatalog::decode(
+        include_bytes!("../data/game-data/289/debug.json"),
+        ClientRevision::R289,
+        api::game_data::for_revision(ClientRevision::R289).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        Send::client_cheat(&catalog, "not-a-catalog-command"),
+        Err(PacketError::InvalidCheat(_))
+    ));
+    assert!(matches!(
+        Send::client_cheat(&catalog, "café"),
+        Err(PacketError::InvalidCheat(_))
+    ));
+    assert!(matches!(
+        Send::client_cheat(&catalog, "~cat\n"),
+        Err(PacketError::InvalidCheat(_))
+    ));
+    assert!(matches!(
+        Send::client_cheat(&catalog, "~addxp attack"),
+        Err(PacketError::InvalidCheat(_))
+    ));
+    assert!(matches!(
+        Send::client_cheat(&catalog, "~addxp attack 42 extra"),
+        Err(PacketError::InvalidCheat(_))
+    ));
+    assert!(matches!(
+        Send::client_cheat(&catalog, &format!("~cat {}", "x".repeat(81))),
+        Err(PacketError::BodyTooLong { .. })
+    ));
+
+    let catalog274 = api::debug_commands::DebugCatalog::decode(
+        include_bytes!("../data/game-data/274/debug.json"),
+        ClientRevision::R274,
+        api::game_data::for_revision(ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
+    let mismatched = Send::client_cheat(&catalog274, "~cat").unwrap();
+    let seed = [1, 2, 3, 4];
+    let mut packet = Packet::new(vec![0xa5; 32]);
+    packet.pos = 5;
+    packet.random = Some(Isaac::new(&seed));
+    let prefix = packet.data()[..packet.pos].to_vec();
+    assert_eq!(
+        mismatched.write_for_revision(ClientRevision::R289, &mut packet),
+        Err(PacketError::RevisionMismatch)
+    );
+    assert_eq!(packet.pos, 5);
+    assert_eq!(&packet.data()[..packet.pos], prefix);
+
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(ClientRevision::R289, &mut packet)
+        .unwrap();
+    let mut control = Packet::new(vec![0xa5; 32]);
+    control.pos = 5;
+    control.random = Some(Isaac::new(&seed));
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(ClientRevision::R289, &mut control)
+        .unwrap();
+    assert_eq!(
+        &packet.data()[..packet.pos],
+        &control.data()[..control.pos],
+        "revision mismatch consumes neither cursor nor ISAAC"
+    );
+}
+
+#[test]
+fn mouse_move_255_bytes_are_complete_and_256_refuses_before_packet_mutation() {
+    let full = (0..85)
+        .map(|_| MouseMoveRecord::Absolute {
+            duplicates: 0,
+            x: 0,
+            y: 0,
+        })
+        .collect::<Vec<_>>();
+    let send = Send::event_mouse_move(&full).unwrap();
+    let expected_body = [0x80, 0, 0].repeat(85);
+    assert_289_packet_golden(send, ClientProt::EVENT_MOUSE_MOVE, &expected_body);
+
+    let mut overflow = (0..84)
+        .map(|_| MouseMoveRecord::Absolute {
+            duplicates: 0,
+            x: 0,
+            y: 0,
+        })
+        .collect::<Vec<_>>();
+    overflow.extend([
+        MouseMoveRecord::Delta {
+            duplicates: 0,
+            dx: 0,
+            dy: 0,
+        },
+        MouseMoveRecord::Delta {
+            duplicates: 0,
+            dx: 0,
+            dy: 0,
+        },
+    ]);
+    let seed = [1, 2, 3, 4];
+    let mut packet = Packet::new(vec![0xa5; 32]);
+    packet.pos = 5;
+    packet.random = Some(Isaac::new(&seed));
+    let prefix = packet.data()[..packet.pos].to_vec();
+    let error = Send::event_mouse_move(&overflow).unwrap_err();
+    assert_eq!(
+        error,
+        PacketError::BodyTooLong {
+            length: 256,
+            max: 255,
+        }
+    );
+    assert_eq!(packet.pos, 5);
+    assert_eq!(&packet.data()[..packet.pos], prefix);
+
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(ClientRevision::R289, &mut packet)
+        .unwrap();
+    let mut control = Packet::new(vec![0xa5; 32]);
+    control.pos = 5;
+    control.random = Some(Isaac::new(&seed));
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(ClientRevision::R289, &mut control)
+        .unwrap();
+    assert_eq!(
+        &packet.data()[..packet.pos],
+        &control.data()[..control.pos],
+        "refusing 256 variable-body bytes consumes neither cursor nor ISAAC"
+    );
+}
+
+#[test]
+fn movement_accepts_24_signed_offsets_and_keeps_full_minimap_trailer() {
+    let offsets = [(-1_i8, 2_i8); 24];
+    let mut gameclick_body = vec![1, 0x12, 0x34, 0x56, 0x78];
+    for _ in &offsets {
+        gameclick_body.extend_from_slice(&[0xff, 2]);
+    }
+    assert_eq!(gameclick_body.len(), 53);
+    assert_289_packet_golden(
+        Send::move_gameclick(true, 0x1234, 0x5678, &offsets).unwrap(),
+        ClientProt::MOVE_GAMECLICK,
+        &gameclick_body,
+    );
+
+    let trailer = MinimapTrailer {
+        click_x: -12,
+        click_y: 34,
+        camera_yaw: 0x1234,
+        camera_anticheat_angle: 0x56,
+        minimap_zoom: 0x78,
+        player_x: 0x9abc,
+        player_z: 0xdef0,
+        nearest: true,
+    };
+    let mut minimap_body = gameclick_body;
+    minimap_body.extend_from_slice(&[
+        0xf4, 0x22, 0x12, 0x34, 57, 0x56, 0x78, 89, 0x9a, 0xbc, 0xde, 0xf0, 1, 63,
+    ]);
+    assert_eq!(minimap_body.len(), 67);
+    assert_289_packet_golden(
+        Send::move_minimapclick(true, 0x1234, 0x5678, &offsets, trailer).unwrap(),
+        ClientProt::MOVE_MINIMAPCLICK,
+        &minimap_body,
+    );
+}
+
+#[test]
+fn typed_sends_match_real_client_producers_on_both_revisions() {
+    let seed = [1, 2, 3, 4];
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut client = Client::new_with_revision(cfg(), revision);
+        client.ingame = true;
+        client.out.random = Some(Isaac::new(&seed));
+        client.set_menu(0, MiniMenuAction::IF_BUTTON, 0, 0, 0x1234);
+        assert!(client.do_action(0));
+        let client_bytes = client.out.data()[..client.out.pos].to_vec();
+        let mut typed = Client::new_with_revision(cfg(), revision);
+        typed.out.random = Some(Isaac::new(&seed));
+        Send::if_button(0x1234)
+            .unwrap()
+            .write_for_revision(revision, &mut typed.out)
+            .unwrap();
+        assert_eq!(&typed.out.data()[..typed.out.pos], client_bytes);
+
+        let mut client = Client::new_with_revision(cfg(), revision);
+        client.ingame = true;
+        client.out.random = Some(Isaac::new(&seed));
+        client.set_menu(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0);
+        assert!(client.do_action(0));
+        let client_bytes = client.out.data()[..client.out.pos].to_vec();
+        let mut typed = Client::new_with_revision(cfg(), revision);
+        typed.out.random = Some(Isaac::new(&seed));
+        Send::close_modal()
+            .write_for_revision(revision, &mut typed.out)
+            .unwrap();
+        assert_eq!(&typed.out.data()[..typed.out.pos], client_bytes);
+
+        let mut client = Client::new_with_revision(cfg(), revision);
+        client.dialog_input_open = true;
+        client.dialog_input = "-27".into();
+        client.out.random = Some(Isaac::new(&seed));
+        client.consume_chat_key(13);
+        let client_bytes = client.out.data()[..client.out.pos].to_vec();
+        let mut typed = Client::new_with_revision(cfg(), revision);
+        typed.out.random = Some(Isaac::new(&seed));
+        Send::count_dialog(-27)
+            .write_for_revision(revision, &mut typed.out)
+            .unwrap();
+        assert_eq!(&typed.out.data()[..typed.out.pos], client_bytes);
+        assert_eq!(&client_bytes[1..], &[0xff, 0xff, 0xff, 0xe5]);
+    }
+}
 /// Revision-289 direct host writers use the primary-source packet rows and
 /// preserve each existing payload builder.
 #[test]
@@ -688,7 +1704,10 @@ fn revision_289_direct_host_writers_match_primary_bytes() {
     c.ingame = true;
     c.set_cheat_admission(client::CheatAdmission::Granted);
 
-    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(c.revision(), &mut c.out)
+        .unwrap();
     assert_eq!(&c.out.data()[..c.out.pos], &[86, 0x12, 0x34]);
 
     c.out.pos = 0;
@@ -708,7 +1727,7 @@ fn revision_289_direct_host_writers_match_primary_bytes() {
 }
 
 #[test]
-fn revision_289_forged_typed_send_refuses_before_any_mutation() {
+fn revision_289_invalid_builder_refuses_before_any_mutation() {
     let seed = [1, 2, 3, 4];
     let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
     c.out.random = Some(Isaac::new(&seed));
@@ -716,22 +1735,27 @@ fn revision_289_forged_typed_send_refuses_before_any_mutation() {
     c.menu_param_a[0] = 7;
     c.local_player = Some(ClientPlayer::at(5, 6));
 
-    assert!(!Send {
-        prot: ClientProt::OPNPC1,
-        value: 99,
-    }
-    .write_for_revision(c.revision(), &mut c.out));
+    assert!(
+        Send::if_button(65_536).is_err(),
+        "child exceeds unsigned word"
+    );
     assert_eq!(c.out.pos, 0, "no packet bytes");
     assert_eq!(c.menu_action[0], MiniMenuAction::OP_PLAYER2);
     assert_eq!(c.menu_param_a[0], 7);
     assert_eq!(c.local_player.as_ref().unwrap().route_x[0], 5);
     assert_eq!(c.local_player.as_ref().unwrap().route_z[0], 6);
 
-    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(c.revision(), &mut c.out)
+        .unwrap();
     let actual = c.out.data()[..c.out.pos].to_vec();
     let mut control = Client::new_with_revision(cfg(), ClientRevision::R289);
     control.out.random = Some(Isaac::new(&seed));
-    assert!(Send::if_button(0x1234).write_for_revision(control.revision(), &mut control.out));
+    Send::if_button(0x1234)
+        .unwrap()
+        .write_for_revision(control.revision(), &mut control.out)
+        .unwrap();
     assert_eq!(
         actual,
         control.out.data()[..control.out.pos],
@@ -3806,16 +4830,21 @@ fn revision_289_pending_door_step_matches_primary_bytes() {
 
 #[test]
 fn pending_door_packet_matches_client_one_tile_walk() {
-    let mut c = Client::new(cfg());
-    c.ingame = true;
-    c.local_player = Some(ClientPlayer::at(5, 5));
-    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
-    assert!(walk(&mut c, 5, 6));
-    let expected = c.out.data()[..c.out.pos].to_vec();
-    c.out.pos = 0;
-    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
-    api::prot::WalkStep { x: 5, z: 6 }.write(&mut c.out);
-    assert_eq!(&c.out.data()[..c.out.pos], expected);
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut c = Client::new_with_revision(cfg(), revision);
+        c.ingame = true;
+        c.local_player = Some(ClientPlayer::at(5, 5));
+        c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+        assert!(walk(&mut c, 5, 6));
+        let expected = c.out.data()[..c.out.pos].to_vec();
+        c.out.pos = 0;
+        c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+        Send::move_gameclick(false, 5, 6, &[])
+            .unwrap()
+            .write_for_revision(revision, &mut c.out)
+            .unwrap();
+        assert_eq!(&c.out.data()[..c.out.pos], expected);
+    }
 }
 
 /// The shop main modal (3824) with its stock TYPE_INV (3900, two rows) and

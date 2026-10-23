@@ -10,4 +10,5 @@ nav = { path = "../nav" }
 client = { workspace = true }
 
 [dev-dependencies]
+api = { path = "../api", features = ["test-support"] }
 nav = { path = "../nav", features = ["test-support"] }

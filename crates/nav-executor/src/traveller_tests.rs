@@ -7794,8 +7794,8 @@ impl Driver for FollowRec {
         None
     }
 
-    fn out(&mut self) -> &mut dyn Out {
-        &mut self.sink
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.sink)
     }
 
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {

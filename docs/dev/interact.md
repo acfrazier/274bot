@@ -74,3 +74,72 @@ kernel's sends. Key opcodes on 274: `IF_BUTTON` 9, `CLOSE_MODAL` 51,
 `RESUME_P_COUNTDIALOG` 102; 289 remaps them (86 / 93 / 180 — see
 `client_prot_289.rs`). `OPNPC1..5`/`OPLOC1..5`/`OPOBJ1..5`/
 `OPPLAYER1..5`/`INV_BUTTON1..5` per the table in `api::prot`.
+
+All 82 named revision-289 rows have a closed `Send` builder. `Send` fields are
+private. Builders reject integers outside their wire domains, invalid base-37
+names, invalid abuse reasons and incomplete variable shapes. `PacketError`
+describes each refusal. Count resumes keep their signed `i32` domain.
+
+Use `Driver::send_packet` to emit a typed packet with the driver's bound
+revision. `Send::write_for_revision` also accepts the concrete client `Packet`
+and checks the full body before it changes the output cursor or ISAAC state.
+Neither method accepts an arbitrary opcode or a caller-supplied encoded body.
+Fixed packets and movement packets need no heap allocation.
+
+`Driver` has the same required and provided methods with every feature set.
+Every implementation supplies `send_packet`, including recording drivers.
+It has no raw sink accessor. The separate `api::prot::Out` recorder trait is
+available only to API unit tests or with `api/test-support`.
+Recorder crates enable that feature in dev-dependencies. Harnesses compiled
+outside `cfg(test)` forward it through their own `test-support` feature.
+In particular, `host-play/test-support` enables `api/test-support` for its
+Linux harness, including frontend test builds. Product builds enable neither
+feature and do not expose the raw recorder trait.
+The client fork still exposes its public `Client::out` field. This slice does
+not change the fork. The S3/S5 type fence controls access to that remaining
+product sink.
+
+The typed driver path remains available in product builds:
+
+```no_run
+use api::interact::Driver;
+use api::prot::{PacketError, Send};
+
+fn close(driver: &mut impl Driver) -> Result<(), PacketError> {
+    driver.send_packet(&Send::close_modal())
+}
+```
+
+These examples must fail against a product build without `api/test-support`:
+
+```compile_fail
+use api::prot::Out;
+```
+
+```compile_fail
+use api::interact::Driver;
+
+fn raw_write(driver: &mut impl Driver) {
+    driver.out().p1_enc(1);
+}
+```
+
+Movement builders accept at most 24 signed offset pairs. The minimap builder
+requires a `MinimapTrailer`. Mouse telemetry accepts complete typed records.
+Chat builders use the client `WordPack` codec. They refuse unsupported
+characters and text over its 80-character limit instead of losing text.
+Variable framing permits at most 255 body bytes. The framing validator also
+checks the engine's 1600-byte VAR_SHORT limit, although 289 defines no such row.
+
+Use `Base37Name` for every social, private-message and report name.
+`AbuseReason` contains the twelve report reasons. `prot::effects::effects`
+accepts a completed `Send`, never a revision-selected opcode row. Each effect
+is `Effect::Yes`, `Effect::No`, or `Effect::DependsOnContent`. A `No` requires
+handler evidence. Content-dependent effects remain unknown, not false.
+These classifications do not prove that a particular request succeeded.
+
+The `CLIENT_CHEAT` builder requires the selected debug catalog and validates
+the command with its formatter. Its catalog revision must match the session.
+This packet value does not grant cheat authority. Dispatch must still enforce
+the concrete driver's Local/loopback and live-session admission. The existing
+checked cheat helper retains that boundary and its byte encoding.
