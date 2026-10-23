@@ -7,7 +7,7 @@
 use client::client::{Client, MiniMenuAction};
 use client::io::ClientRevision;
 
-use crate::prot::{Out, Send};
+use crate::prot::Send;
 use crate::snapshot::{
     GameSnapshot, GroundItemView, ItemActionFamily, ItemContainer, ItemView, LocView, NpcView,
     PlayerView, ReadContext, SceneView, ToggleControlsView, WidgetView, WorldTile,
@@ -1214,14 +1214,9 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
-            WireCommand::DoorStep { tile } => {
-                let revision = self.driver.revision();
-                crate::prot::WalkStep {
-                    x: tile.x,
-                    z: tile.z,
-                }
-                .write_for_revision(revision, self.driver.out())
-            }
+            WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
+                .and_then(|send| self.driver.send_packet(&send))
+                .is_ok(),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)

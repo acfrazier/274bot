@@ -52,14 +52,12 @@ pub struct DebugName {
 
 /// Separately pinned, opt-in catalog. The panel owns its lifetime; normal
 /// selected facts never decode or retain this data.
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct DebugCatalog {
-    schema_version: u16,
-    revision: i32,
+    revision: ClientRevision,
     provenance: DebugProvenance,
     debug_commands: Vec<DebugCommand>,
     debug_names: std::collections::HashMap<String, Vec<DebugName>>,
-    #[serde(skip)]
     items: Option<std::sync::Arc<crate::game_data::SelectedGameData>>,
 }
 
@@ -88,12 +86,31 @@ impl DebugCatalog {
         revision: ClientRevision,
         items: std::sync::Arc<crate::game_data::SelectedGameData>,
     ) -> Result<Self, String> {
-        let mut catalog: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        #[derive(Deserialize)]
+        struct WireCatalog {
+            schema_version: u16,
+            revision: i32,
+            provenance: DebugProvenance,
+            debug_commands: Vec<DebugCommand>,
+            debug_names: std::collections::HashMap<String, Vec<DebugName>>,
+        }
+
+        let catalog: WireCatalog = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if catalog.schema_version != 1 || catalog.revision != revision.as_i32() {
             return Err("Debug catalog schema or revision mismatch".into());
         }
-        catalog.items = Some(items);
-        Ok(catalog)
+        Ok(Self {
+            revision,
+            provenance: catalog.provenance,
+            debug_commands: catalog.debug_commands,
+            debug_names: catalog.debug_names,
+            items: Some(items),
+        })
+    }
+
+    /// The revision authenticated when this catalog was decoded.
+    pub fn revision(&self) -> ClientRevision {
+        self.revision
     }
 
     pub fn commands(&self) -> &[DebugCommand] {
@@ -283,6 +300,27 @@ impl DebugCommand {
 #[cfg(test)]
 mod tests {
     use super::{DebugArgument, DebugCommand};
+
+    #[test]
+    fn decoded_catalog_retains_the_authenticated_revision() {
+        use client::io::ClientRevision;
+
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let bytes = format!(
+                r#"{{"schema_version":1,"revision":{},"provenance":{{"inputs":[],"content_inputs":[]}},"debug_commands":[],"debug_names":{{}}}}"#,
+                revision.as_i32()
+            );
+            let items = crate::game_data::for_revision(revision).unwrap();
+            let catalog = super::DebugCatalog::decode(bytes.as_bytes(), revision, items.clone())
+                .expect("the catalog matches the selected revision");
+            assert_eq!(catalog.revision(), revision);
+            let other = match revision {
+                ClientRevision::R274 => ClientRevision::R289,
+                ClientRevision::R289 => ClientRevision::R274,
+            };
+            assert!(super::DebugCatalog::decode(bytes.as_bytes(), other, items).is_err());
+        }
+    }
 
     fn command(args: Vec<DebugArgument>) -> DebugCommand {
         DebugCommand {
