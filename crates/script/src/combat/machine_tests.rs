@@ -1702,6 +1702,64 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
     assert!(harness.pending(&scene, 4).is_none());
 }
 
+/// Regression pin (`SURVIVAL-1.2`, design A12). With no poison and no cure
+/// held the cure arm stays silent, so the fight's prayer rows and their order
+/// against the eating branches must match the base `9cfa0d18e`: the restore
+/// is the only row when no bite is due, and it follows the bite when one is.
+#[test]
+fn combat_prayer_rows_unchanged() {
+    // No bite due: prayer recovery is the whole plan.
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    let prayer = scene
+        .data
+        .item_by_alias("1doseprayerrestore")
+        .and_then(|item| item.name.clone())
+        .expect("the prayer restore item has a display name");
+    scene.stat(3, 30, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 1);
+    assert!(
+        matches!(
+            plan.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == &prayer && action == "Drink"
+        ),
+        "prayer recovery is planned alone when no bite is due"
+    );
+
+    // A bite due: the ordinary eating branch keeps its row, then the restore.
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    let prayer = scene
+        .data
+        .item_by_alias("1doseprayerrestore")
+        .and_then(|item| item.name.clone())
+        .expect("the prayer restore item has a display name");
+    scene.stat(3, 18, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 2);
+    held_row(&plan, 0, "Eat");
+    assert!(
+        matches!(
+            plan.get(1),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == &prayer && action == "Drink"
+        ),
+        "prayer recovery follows the eating branch"
+    );
+}
+
 #[test]
 fn case28_food_extends_known_and_past_deadlines_without_delaying_restore() {
     for idle in [false, true] {
