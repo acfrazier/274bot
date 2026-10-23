@@ -17,7 +17,8 @@ it, or work on its code.
 | Choose a game server, world or revision | [Choose a game server and a world](manual/servers-and-worlds.md) |
 | Look up every setting of a server entry | [Server reference](reference/server-profiles.md) |
 | Look up the exact login limits or the vault file format | [Login limits](api/login.md) and [Vault](api/vault.md) |
-| Start, pause and stop scripts, and set their options | [Scripts](api/script.md) |
+| Start, pause and stop scripts, and set their options | [Run scripts on your bots](manual/running-scripts.md) |
+| Learn what the Quester, Gatherer, Grinch and Sherlock do, and their settings | [The built-in scripts](manual/built-in-scripts.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
 | See what changed in each release | [CHANGELOG](../CHANGELOG.md) |
