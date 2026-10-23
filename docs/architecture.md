@@ -450,13 +450,12 @@ only when needed. Their reverse proofs also retain demand-driven storage.
 Cooperative reverse proofs reserve their bounded capacities once, so an
 ordinary slice never grows or rehashes a complete proof.
 
-Both paths reserve the frontier's complete settle-cap capacity once, without
-initializing unused entries. Only live entries are written. The synchronous
-path still grows its record table on demand, but never reallocates the heap
-to follow that table. In the macOS probe, heap reallocation during table
-growth committed up to a whole new heap block, depending on earlier
-allocations. One reservation removes that reallocation. Admission already
-charges the complete heap backing, not its observed committed pages.
+Cooperative searches reserve their complete settle-capacity heap once.
+Synchronous searches start with the record table's initial capacity and grow
+the heap when that table grows. Each required growth allocates a fresh buffer,
+copies only live entries, and drops the old buffer. This avoids reallocating
+the heap in place and copying unused capacity. Admission still charges the
+complete heap bound, not the committed pages.
 
 The frontier starts as a binary min-heap. Only bounded-frontier eviction
 converts it to a min-max heap, in place and with one checkpoint per parent.

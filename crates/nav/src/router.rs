@@ -8493,7 +8493,9 @@ fn relax_packed<'table, 'heap, 'pending, B: Budget>(
                     return Ok(());
                 }
                 Err(()) => match table.try_grow(maximum_table_capacity) {
-                    Ok(true) => {}
+                    Ok(true) => heap
+                        .try_grow_to(table.capacity())
+                        .map_err(|_| SearchStop::Allocation)?,
                     Ok(false) => return Err(SearchStop::Budget),
                     Err(_) => return Err(SearchStop::Allocation),
                 },
@@ -8577,11 +8579,8 @@ async fn search_kernel_budget<B: Budget>(
             };
         }
     };
-    // Reserve the bounded heap once, as the cooperative path already does.
-    // In the macOS probe, heap growth with the record table committed up to
-    // a whole new heap block, depending on earlier allocations
-    // (FLOOR-025-SCRATCH-DIAG).
-    let Some(mut heap) = PackedMinMaxHeap::try_new(maximum_table_capacity) else {
+    // Start the heap at the record table's initial capacity.
+    let Some(mut heap) = PackedMinMaxHeap::try_new(came_from.capacity()) else {
         return KernelOutcome {
             stop: SearchStop::Budget,
             ..KernelOutcome::empty()
