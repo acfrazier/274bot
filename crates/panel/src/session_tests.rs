@@ -2923,6 +2923,11 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
         "script_catalog_last_dir",
         serde_json::json!(catalog_dir.to_string_lossy()),
     );
+    seed_ui_state(&crate::ui_state::PanelUiState {
+        script_load_last_dir: Some(load_dir.clone()),
+        script_catalog_last_dir: Some(catalog_dir.clone()),
+        ..Default::default()
+    });
     session.preferences_ready = false;
     let folder_draft = isolated.dir().join("uncommitted-folder");
     session.quester_paths_folder_edit = folder_draft.to_string_lossy().into_owned();
@@ -3161,6 +3166,7 @@ fn walk_status_is_dash_when_no_route() {
 #[test]
 fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     let mut session = Session::new();
+    hydrate_panel_preferences(&mut session);
     assert_eq!(
         session.ui.nav.danger_level(),
         frontend_core::DangerLevel::WhenSurvivable
@@ -3355,6 +3361,14 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     session
         .persist_quester_paths_change(true, false)
         .expect("checkbox toggle saves enabled with the already-saved folder");
+    await_preference(
+        &mut session,
+        "quester_paths",
+        serde_json::json!({
+            "enabled": true,
+            "folder": saved.to_string_lossy()
+        }),
+    );
     assert!(session.quester_paths.settings().enabled());
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     let document: serde_json::Value =
@@ -8774,6 +8788,8 @@ fn two_live_session(label: &str) -> (Session, IsolatedStores) {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
     hydrate_panel_preferences(&mut s);
+    s.load("alice");
+    s.select("alice");
     (s, iso)
 }
 
