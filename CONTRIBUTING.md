@@ -110,7 +110,7 @@ to set.
   link or checker change needs a change in the separate `274bot-arch` repository,
   which a maintainer makes. Details are in
   [Architecture check in detail](docs/dev/architecture-check.md); the crate
-  layout is in [Architecture](docs/architecture.md).
+  layout is in [Architecture](docs/dev/architecture.md).
 
 CI never sets `LIVE=1`. A green CI run does not show that a bot works in the
 game: run the live tests for any change that affects behavior in the game.
@@ -141,7 +141,7 @@ The rules for writing one:
 A failing live test prints `FAIL:` and exits with status 1. The harness, the
 suite runner and the other live commands are in
 [Build from source](docs/dev/build-from-source.md#live-tests-and-suite-runner)
-and the [live harness guide](docs/harness.md).
+and the [live harness guide](docs/dev/harness.md).
 
 ## The client submodule
 
@@ -198,7 +198,7 @@ Never edit those lists by hand.
 - [Build from source](docs/dev/build-from-source.md)
 - [Generate the selected game data](docs/dev/selected-data-generation.md)
 - [Architecture check in detail](docs/dev/architecture-check.md)
-- [Architecture](docs/architecture.md) and [CONTEXT.md](CONTEXT.md), the terms
+- [Architecture](docs/dev/architecture.md) and [CONTEXT.md](CONTEXT.md), the terms
   the code uses
 - [Docs index](docs/README.md)
 

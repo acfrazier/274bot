@@ -35,7 +35,7 @@ Crate edges are an explicit allowlist: the protected
 [`policy.toml`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml)
 in the operator-owned [`274bot-arch`](https://github.com/acfrazier/274bot-arch)
 repo (workspace members, edges/kinds/migrations, configuration
-feature/activation — see [docs/architecture.md](../architecture.md)).
+feature/activation — see [docs/dev/architecture.md](architecture.md)).
 An operator commit in protected `274bot-arch` is required for a new crate
 edge (including a new target cfg or cross-crate feature request), an edge kind,
 a migration, an optional-dependency activation, a vendored path package, or a checker change.

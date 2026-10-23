@@ -1501,7 +1501,7 @@ names the card; the host fills the catalog and dispatches
 `script_start_load` at live boot.
 
 External raw-TypeScript smoke for the suite runner is a separate
-`external_watch` / `--external-ts` path ([../e2e-suite.md](../e2e-suite.md));
+`external_watch` / `--external-ts` path ([../dev/e2e-suite.md](../dev/e2e-suite.md));
 ordinary operator Load is the File/catalog flow above.
 
 ## Host input versus native observations
