@@ -3998,6 +3998,91 @@ fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
         "the field displays its validation error: {text}"
     );
 }
+#[test]
+fn discarding_invalid_script_parameter_removes_its_dock_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    let selection = ScriptChoice::loaded(CardSource::Catalog, "CookBot");
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "leashRadius",
+        "number",
+        Some("12"),
+        Some("Cook surface search radius"),
+        &[],
+    );
+    schema.set_min("2").set_max("20");
+    let def = schema.schema_ref().get("leashRadius").unwrap();
+    let key = frontend_core::scripts::ParameterEditKey::new(Some("alice"), &selection, def.id());
+    *session.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        def.id(),
+        "12",
+        Some(serde_json::json!(12)),
+    ) = "40".into();
+    session.scripts.stage_parameter_validation(
+        key,
+        &selection,
+        "12",
+        Some(serde_json::json!(12)),
+        def,
+        &[],
+    );
+    let edit = session
+        .submit_script_command(
+            frontend_core::command::OperatorCommand::EditParameterText,
+            frontend_core::Targets::Application,
+        )
+        .expect("the field validation command is submitted");
+    assert!(session.core.command_failure(edit.request()).is_some());
+    let error = session
+        .scripts
+        .parameter_text_error_for(Some("alice"), &selection, def.id())
+        .expect("the field keeps its validation error")
+        .to_owned();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let banner_text = |ctx: &mut dear_imgui_rs::Context, session: &crate::session::Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("script validation banner")
+                .build(|| super::banner(ui, session, None));
+            ui.log_finish();
+        }
+        ctx.render();
+        drawn.0.take()
+    };
+    let invalid_banner = banner_text(&mut ctx, &session);
+
+    session.scripts.stage_profile_parameter_discard("alice");
+    let discard = session
+        .submit_script_command(
+            frontend_core::command::OperatorCommand::DiscardParameterText,
+            frontend_core::Targets::Application,
+        )
+        .expect("the draft discard command is submitted");
+    assert!(session.core.command_failure(discard.request()).is_none());
+    assert!(session
+        .scripts
+        .parameter_draft_details("alice")
+        .next()
+        .is_none());
+    let discarded_banner = banner_text(&mut ctx, &session);
+    assert!(
+        !discarded_banner.contains(&error),
+        "discarded validation remained on the dock banner: {discarded_banner}"
+    );
+    assert!(
+        !invalid_banner.contains(&error),
+        "field validation appeared on the dock banner: {invalid_banner}"
+    );
+}
 
 #[test]
 fn main_script_recovery_names_the_hidden_card_and_field() {

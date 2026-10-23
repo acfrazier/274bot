@@ -28,6 +28,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
 
+### Fixed during development
+
+#### Panel and TUI
+
+- Apply to all now logs one script-settings info line for each profile that it saves.
+- The panel clears a script-setting error from the dock banner when the operator discards the draft or fixes the field.
+
 ## [0.2.5] — 2026-10-22 — Beta 2
 
 ### Scripts

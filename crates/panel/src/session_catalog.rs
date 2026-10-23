@@ -44,6 +44,10 @@ impl Session {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Option<frontend_core::Submitted> {
+        let previous_validation_banner = self
+            .error
+            .as_deref()
+            .is_some_and(|error| self.scripts.has_parameter_draft_error(error));
         let submitted = self.submit(command, targets)?;
         let error = submitted
             .operation()
@@ -53,8 +57,13 @@ impl Session {
                     .command_failure(submitted.request())
                     .map(str::to_owned)
             });
+        if previous_validation_banner {
+            self.error = None;
+        }
         if let Some(error) = error {
-            self.error = Some(error);
+            if !self.scripts.has_parameter_draft_error(&error) {
+                self.error = Some(error);
+            }
         }
         Some(submitted)
     }

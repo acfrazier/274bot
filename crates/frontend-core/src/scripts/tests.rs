@@ -1310,6 +1310,50 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     let summary = report.summary().to_string();
     assert_eq!(f.scripts.take_notice(), Some(Notice::show(summary)));
 }
+#[test]
+fn apply_to_all_logs_each_profile_settings_write() {
+    let mut f = fixture("sync-profile-settings-log", &["alice", "bob", "dave"]);
+    let card = f.card(
+        "settings-sync-log.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    for profile in ["alice", "bob", "dave"] {
+        f.assign(profile, &card);
+    }
+    f.set("alice", &card, "surface", json!("Fire"));
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    f.prepare("alice", &card);
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    for profile in ["bob", "dave"] {
+        let mut log = crate::log::LogView::new(crate::log::LogScope::slot(profile));
+        crate::log::global().refresh(&mut log);
+        let prefix = format!(
+            "saved script settings; profile {profile}; card {}; action apply-to-all; field surface; old \"Range\"; new \"Fire\"; op#",
+            card.name
+        );
+        let records: Vec<_> = log
+            .rows()
+            .iter()
+            .filter(|row| {
+                row.level() == api::hostlog::Level::Info && row.message().starts_with(&prefix)
+            })
+            .collect();
+        assert_eq!(records.len(), 1, "{profile}: {:?}", log.rows());
+        assert!(
+            records[0]
+                .message()
+                .strip_prefix(&prefix)
+                .is_some_and(|operation| operation.parse::<u64>().is_ok()),
+            "{profile}: {}",
+            records[0].message()
+        );
+    }
+}
 
 /// Wall-wide Apply to all copies same-card members only: unassigned members
 /// are skipped and not assigned.
