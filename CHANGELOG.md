@@ -22,6 +22,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   action and operation id.
 - Script paint in the panel now follows rs2b0t's layout. The paint has a title bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's colours. Pause and Stop are compact buttons side by side. Only the small square at the right end of the title bar collapses the paint. The built-in Gatherer and Sherlock scripts now show the same Pause and Stop buttons on their paint. With input capture on, a click on the paint no longer also clicks the game under it.
 - With input capture on, the slot that receives a game press also receives its release. This still holds if the pointer leaves the Game Image. A focus change releases the held button from the slot that received the press.
+- The terminal app can now add a profile. Start `tui-play` on an empty vault to open a **New profile**
+  form. Type the username and the account's own game password. Press Enter to save. The app rejects
+  an empty password and saves nothing. Press `N` in the Fleet pane to add another profile.
+  `tui-play --user NAME` selects only a profile already in the vault. It does not create a profile
+  with a random password. An unknown name stops with a message that names how to add it. If the
+  vault does not exist, `tui-play --user NAME` stops before it asks for a passphrase or creates a
+  vault.
+- The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
+- The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
 
 ### Scripts
 

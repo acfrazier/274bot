@@ -2349,8 +2349,8 @@ fn logout_enabled(
     vault_open && focused && (connected || queued || guard_parked)
 }
 
-/// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout needs a connected, genuinely
+/// Log in / Log out above WalkTo. Always drawn; disabled while the vault
+/// is locked or no profile is focused. Log out needs a connected, genuinely
 /// queued or repeat-guard-parked focused slot, so an unloaded profile cannot
 /// be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
@@ -2391,7 +2391,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     }
     {
         let _off = (!can_logout).then(|| ui.begin_disabled());
-        if ui.button_with_size("Logout", [cells[1].0, 0.0]) {
+        if ui.button_with_size("Log out", [cells[1].0, 0.0]) {
             if let Some(name) = focused.as_deref() {
                 session.logout(name);
             }
