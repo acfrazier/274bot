@@ -52,6 +52,22 @@ Each rule ends with a test you can apply when you review a page.
 14. **Use the glossary words.** Do not swap in a synonym. If a word is missing
     from the glossary, add it in the same change.
 
+## Check a page
+
+Run these two commands from the repository root before you open a pull request:
+
+```
+python3 -B tools/docs-check/test_docs_check.py
+python3 -B tools/docs-check/docs_check.py
+```
+
+The first runs the checker's own tests. The second checks every page against
+`tools/docs-check/baseline.json` and prints each finding as
+`path:line: rule: message`. When a count goes down, the checker prints
+`baseline can shrink`; run `python3 -B tools/docs-check/docs_check.py --update`
+to record it. Use `--update` only for lowering or recording the baseline in
+the same change that explains it, never to hide a new violation.
+
 ## CHANGELOG entries
 
 CHANGELOG entries follow the same rules. Write what changed for the person
@@ -65,8 +81,8 @@ not in the Unreleased section.
 The app and the docs disagree in a few places. Until the choice is made, copy
 what the app shows, and do not "fix" it in prose:
 
-- **Log out or Logout.** The panel's login row says **Logout**; the Fleet
-  toolbar says **Log out**.
+- **Log out.** Every label says **Log out**: the panel's login row, the Fleet
+  toolbar and the terminal app. Do not write it as one word.
 - **Profile.** The **Profiles** window lists saved accounts, but `--profile`
   picks a server entry. The glossary calls the second one a **server**.
 - **Spelling.** Keep the spelling of the page you edit. Labels in the app win.

@@ -292,7 +292,7 @@ fn the_selected_marker_only_goes_to_a_loaded_row() {
 }
 
 #[test]
-fn an_empty_universe_says_there_is_nothing_to_act_on() {
+fn an_empty_universe_names_the_new_profile_key() {
     let model = FleetModel::new();
     let mut state = FleetState::default();
     let (rows, _, _) = render(
@@ -310,7 +310,7 @@ fn an_empty_universe_says_there_is_nothing_to_act_on() {
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("no profiles: nothing to mark or log in")),
+            .any(|row| row.contains("no profiles: press N to add one")),
         "{rows:?}"
     );
 }

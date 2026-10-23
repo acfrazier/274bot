@@ -83,7 +83,7 @@ pub fn button_row_layout_min(avail: f32, count: usize, min: f32) -> (f32, bool) 
 }
 
 /// Wrapping equal-width cells: `(width, same_line)`. A leftover last row
-/// (one button) takes the full `avail`, matching WalkTo under Log in/Logout.
+/// (one button) takes the full `avail`, matching WalkTo under Log in/Log out.
 pub fn button_cells(avail: f32, count: usize) -> Vec<(f32, bool)> {
     button_cells_min(avail, count, MIN_BUTTON)
 }

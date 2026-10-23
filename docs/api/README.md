@@ -46,7 +46,7 @@ tested nor claimed.
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`) + `e2e-suite` ordered runner |
 | `frontend-core` | Shared panel/TUI scripts, nav prefs, resource meter |
-| `panel` | Native UI (`panel-play`): profiles, Log in/Logout, WalkTo, scripts, MultiBox |
+| `panel` | Native UI (`panel-play`): profiles, Log in/Log out, WalkTo, scripts, MultiBox |
 | `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).

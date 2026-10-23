@@ -3210,7 +3210,7 @@ impl Session {
         self.select(name);
     }
 
-    /// Log out one member (the credentials Logout button): latch it so
+    /// Log out one member (the credentials Log out button): latch it so
     /// auto-login is blocked until [`Session::login_all`], then arm a clean
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
