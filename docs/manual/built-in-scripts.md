@@ -142,10 +142,12 @@ the shipped guide back. With the setting off, the folder is ignored.
 Each file must fit in 1 MiB. The loader reads the first 256 files in file name
 order and skips the rest. A bad file reports its name, its step, and the reason.
 A bad changed file falls back to the shipped guide. A bad draft stays in the
-list but cannot run. The rest still load. Guides the server cannot run stay
-unavailable. Linked files work if their target is a normal file. The report
-lists up to 32 problems, then a count of the rest. The terminal app shows the
-short form only. Full details are in the Logs.
+list but cannot run.
+
+The rest still load. Guides the server cannot run stay unavailable. Linked
+files work if their target is a normal file. The report lists up to 32 problems,
+then a count of the rest. The terminal app shows the short form only. Full
+details are in the Logs.
 
 [Quest guides](../scripting/quest-guides.md#quest-guide-files) describes the file
 format.

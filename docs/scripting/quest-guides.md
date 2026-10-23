@@ -9,7 +9,13 @@ A guide is a compiled, restartable description of one quest. The compiler checks
 A guide is one JSON file with schema 3. It names the quest, the checks the Quester runs before it starts, and the roles, sequences, and steps the runner follows. Unknown fields and unregistered step kinds fail before any run.
 
 - Top level: `$schema`, `schema: 3`, `id`, `display_name`, `kind`, `required`, `tested_stats`, `partner`, `quest`, and `roles`. The `id` is the content quest stem, for example `cook`. `kind` is `Quest` by default. A `Miniquest` role needs its own typed `progress_reader`, and one without it is rejected. `required` holds header requirement ids that gate Start. `tested_stats` stays `null` until a live run records it. `partner` stays `null` in every bundled guide. Guide authoring reserves `blackarmgang` and `hero` for Shield of Arrav and Hero's Quest.
-- `quest` holds provisioning and eligibility input: `members`, `quest_points`, `requirements`, `items`, `acquire` recipes, `bank`, `coin_float`, `loadouts`, `areas`, `tools`, and `owns_inventory`. `requirements` entries name quest-points, skill, quest, item, or members-world gates. `items` entries are `acquirable` with an optional `acquire` recipe, or `must_have`. An optional `from_stage` holds an item out until that stage. `bank` is `"nearest"` or an authored tile with a `source`, plus `required: true` only when that bank is necessary. `loadouts` entries map `worn` slots to item aliases and list carried item-alias rows with quantities. `areas` are named walk boxes with a `source`. The compiler requires this header. A guide with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
+- `quest` holds provisioning and eligibility input: `members`, `quest_points`, `requirements`, `items`, `acquire` recipes, `bank`, `coin_float`, `loadouts`, `areas`, `tools`, and `owns_inventory`.
+
+  `requirements` entries name quest-points, skill, quest, item, or members-world gates. `items` entries are `acquirable` with an optional `acquire` recipe, or `must_have`. An optional `from_stage` holds an item out until that stage.
+
+  `bank` is `"nearest"` or an authored tile with a `source`, plus `required: true` only when that bank is necessary. `loadouts` entries map `worn` slots to item aliases and list carried item-alias rows with quantities. `areas` are named walk boxes with a `source`.
+
+  The compiler requires this header. A guide with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`; see How a run reads a guide), and `steps[]`.
 - `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
@@ -33,12 +39,12 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `wait` | Default | Bounded wait for `until`, with `max_ticks`. Optional `park_on_timeout: true` parks immediately at expiry instead of consuming runner retries. |
 | `bank` | Default | Authored bank visit. |
 | `buy` | Default | Authored shop purchase. |
-| `make` | Explicit | Production action (for example cooking or crafting). |
+| `make` | Explicit | An action that makes an item (for example cooking or crafting). |
 | `equip` / `unequip` | Default | Wear or remove equipment. |
 | `loadout` | Default | Apply a named `quest.loadouts` entry (`loadout`, `at: "quest_bank"` or `"nearest"`, `allow_lower_tier`, `strip`, `exclusive`); see Loadouts and paired guides. `exclusive` requires exactly the listed worn items and cannot be combined with `strip` or `allow_lower_tier`. |
 | `setting` | Default | Flip an observed game setting, currently `retaliate` on or off. |
 | `combat` | Explicit | Native fight with a tactic (`melee_mode`, `ranged_style`, or mage `spells`), optional `cross`/`guard` walks, looting, and dialogue answers. |
-| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (Path-authoring reference; no bundled Beta 2 Path uses it). |
+| `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
 
@@ -61,52 +67,85 @@ Combinators are `All`, `Any`, and `Not`, with the envelope shown above. Every fa
 | `bank_known`, `bank_has` | The account's bank memory: whether the bank is known (seen this session or from the saved record; `Unknown` until then), or whether it holds an item. |
 | `loadout_ready` | A named loadout is worn and carried. |
 | `retaliate` | The observed retaliate setting. |
-| `pack_only` | Whether every held pack row is a listed object or a Path-protected item (see Rules of thumb). |
-| `members_world` | Whether the bound server profile's world is a members world (see Rules of thumb). |
+| `pack_only` | Whether every held pack row is a listed object or an item the guide protects (see Rules of thumb). |
+| `members_world` | Whether the bound server's world is a members world (see Rules of thumb). |
 | `partner_item_count_at_least` | The paired partner's observed item count. |
 
 ## Loadouts and paired guides
 
-A `quest.loadouts` entry names worn items and carried item/qty rows using selected item aliases. Compilation resolves each row once into the display-name rows the bank runner consumes. A `loadout` step applies one entry at `quest_bank` or `nearest`: `allow_lower_tier` permits lower-tier alternatives, and `strip` removes worn items outside the entry. `exclusive` requires exactly the listed worn items. It cannot be combined with `strip` or `allow_lower_tier`. `loadout_ready` proves the entry is held. An active recipe's declared inputs can independently request the same items, and active-loadout carry floats join provisioning like coin floats.
+A `quest.loadouts` entry names worn items and carried item/qty rows using selected item aliases. Compilation resolves each row once into the display-name rows the bank runner consumes.
+
+A `loadout` step applies one entry at `quest_bank` or `nearest`: `allow_lower_tier` permits lower-tier alternatives, and `strip` removes worn items outside the entry. `exclusive` requires exactly the listed worn items. It cannot be combined with `strip` or `allow_lower_tier`.
+
+`loadout_ready` proves the entry is held. An active recipe's declared inputs can independently request the same items, and active-loadout carry floats join provisioning like coin floats.
 
 #### Paired guides
 
-Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-role protocol with reciprocal handoffs driven by `partner` steps on each account. The guide id must be `blackarmgang` or `hero`. Each account runs its own Quester with reciprocal `partner_account` settings and opposite gangs (see [Quest paths for contributors](../dev/quest-paths.md)). Validation compiles both gang roles. A run activates only the account's effective gang after owned membership admission.
+Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-role arrangement with reciprocal handoffs driven by `partner` steps on each account. The guide id must be `blackarmgang` or `hero`. Each account runs its own Quester with reciprocal `partner_account` settings and opposite gangs (see [Quest paths for contributors](../dev/quest-paths.md)). Validation compiles both gang roles. A run activates only the account's effective gang after owned membership is admitted.
 
 ## How a run reads a guide
 
-1. **Read progress when needed.** The runner reads quest colour and, for an in-progress quest with `progress.rules`, the journal. Reads are requested at startup, after lifecycle changes or death, on retry, or on an explicit read request. Selection requests one when it needs fresh evidence. A running operation or a successful advancing step can also request a read. Unknown colour or unavailable evidence causes a bounded wait, not a guessed stage.
+1. **Read progress when needed.** The runner reads quest colour and, for an in-progress quest with `progress.rules`, the journal. Reads are requested at startup, after lifecycle changes or death, on retry, or on an explicit read request. Choosing a step requests one when it needs fresh evidence. A running operation or a successful advancing step can also request a read. Unknown colour or unavailable evidence causes a bounded wait, not a guessed stage.
 2. **Resolve the stage.** Journal rules and declared flags resolve progress to a symbolic stage, which must name a sequence. If a completed journal read does not match a sequence, the runner parks with the journal evidence rather than guessing stage zero.
 3. **Select a step.** At each boundary, the runner checks `prelude` before the current stage sequence. `True` skips a step, and `Unknown` blocks lower-priority steps until evidence becomes available. An attempted step is not automatically done: `skip_if` must describe an already-achieved condition. The sequence's `order` decides which proven-`False` step starts; see Step order within a stage.
-4. **Run the step.** A family plan may drive one or several actions; its run is polled over ticks. Provisioning recipes run their own sequence of steps. Temporary blocking or missing evidence can wait; repeated failures can park the Path.
+4. **Run the step.** A family plan may drive one or several actions; its run is polled over ticks. Provisioning recipes run their own sequence of steps. Temporary blocking or missing evidence can wait; repeated failures can park the guide.
 5. **Read and settle.** When a successful step has `advances: true`, the runner requests a progress read and then evaluates `settle` against current evidence inside the family's settle window. The read's latency does not consume that window. A true settle resets the failure streak and selects from the newly resolved stage. A timeout is recorded as a step failure; it is not treated as a skip.
 
 ## Step order within a stage
 
    - `"authored"` (default): the first one, re-read from the top at every boundary. Every step therefore needs a `skip_if` that becomes true once it is done, or it is selected again.
    - `"nearest"`: the one whose anchor is closest to the player; every step in the sequence must carry an anchor.
-   - `"ordered"`: steps run top to bottom through an in-memory cursor. A settled step moves the cursor past itself. A proven-`True` `skip_if` jumps it forward. That jump is committed even when the selection then blocks on an `Unknown` skip or runs out of steps. A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death, a random event) or the stage changes. A restart replays the sequence from its first step ("safe replay"). The reset is taken on the first progress read after the restart even if that read is still unresolved. One exception: a random event that arrives while paired work is pending (partner admission, a partner begin, or an active partner step) keeps the progress and the cursor. Replaying a partnered sequence mid-pairing would desync the partners. Write every ordered step so repeating it is harmless, and let the last step advance the stage. A sequence that runs off its end without a stage change parks with `no step for stage` after a confirming progress read. Use it for the stages whose steps leave nothing observable behind (Hazeel's five valves, Plague City's clerk → door → Bravek), where `authored` order would select the first step forever.
+   - `"ordered"`: steps run top to bottom through an in-memory cursor. A settled step moves the cursor past itself. A proven-`True` `skip_if` jumps it forward. That jump is committed even when the choice then blocks on an `Unknown` skip or runs out of steps.
+
+     A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death, a random event) or the stage changes.
+
+     A restart replays the sequence from its first step ("safe replay"). The reset is taken on the first progress read after the restart even if that read is still unresolved. One exception: a random event that arrives while paired work is pending (partner admission, a partner begin, or an active partner step) keeps the progress and the cursor. Replaying a partnered sequence mid-pairing would desync the partners.
+
+     Write every ordered step so repeating it is harmless, and let the last step advance the stage. A sequence that runs off its end without a stage change parks with `no step for stage` after a confirming progress read.
+
+     Use it for the stages whose steps leave nothing observable behind (Hazeel's five valves, Plague City's clerk → door → Bravek), where `authored` order would select the first step forever.
 
 ## Finish, recipes, and watchdog
 
-6. **Finish.** A selected terminal sequence with no steps completes the run where the Path finished. Completion does not add a bank retreat. The queue logs the next Path being prepared; that Path's preparation handles inventory. Authored `bank` steps still run normally.
-7. **Recipes.** Steps within an `acquire` recipe form a cursor: after a step settles, the recipe continues at the next step, skipping only steps whose `skip_if` is proven `True`. Write recipes as restartable paths from missing items to the required inventory; the enclosing quest sequence is selected normally. The cursor can pass the last step while the `acquire` step's own `settle` and `skip_if` are still `False` (a burnt pie, a product lost on the way). The recipe then restarts from its first step, and every child `skip_if` is checked again. Only a pass that began a child restarts. The `acquire` step's optional `max_restarts` arg (default 8) bounds this; past it the step parks with `<recipe> gave up after <N> attempts: <settle> is still false`. A restart repeats every child whose `skip_if` is false, so guard buys, hand-ins and consumed items with a `skip_if` that holds once they are done.
+6. **Finish.** A selected terminal sequence with no steps completes the run where the guide finished. Completion does not add a bank retreat. The queue logs the next guide being prepared; that guide's preparation handles inventory. Authored `bank` steps still run normally.
+7. **Recipes.** Steps within an `acquire` recipe form a cursor: after a step settles, the recipe continues at the next step, skipping only steps whose `skip_if` is proven `True`. Write recipes as restartable paths from missing items to the required inventory; the enclosing quest sequence is selected normally.
+
+   The cursor can pass the last step while the `acquire` step's own `settle` and `skip_if` are still `False` (a burnt pie, a product lost on the way). The recipe then restarts from its first step, and every child `skip_if` is checked again. Only a pass that began a child restarts.
+
+   The `acquire` step's optional `max_restarts` arg (default 8) bounds this; past it the step parks with `<recipe> gave up after <N> attempts: <settle> is still false`. A restart repeats every child whose `skip_if` is false, so guard buys, hand-ins and consumed items with a `skip_if` that holds once they are done.
 8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress.
 
 
 ## How a run gathers items
 
-Provisioning checks the inventory first and plans from the account's bank memory, which the host updates whenever the bank is open; the Quester keeps no bank receipt of its own. Collecting or making an item outside the bank does not change that memory. Unless `quest.owns_inventory` bypasses preparation, missing required or acquirable items, coin floats, active-loadout carry floats, and tools needed by a gather step may cause a bank check. An item with `from_stage` is ignored until the quest reaches that stage (an Unknown stage keeps it out), so it causes neither an acquisition nor the initial bank scan early. For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal path as recipes. An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session.
+Provisioning checks the inventory first and plans from the account's bank memory, which the host updates whenever the bank is open; the Quester keeps no bank receipt of its own. Collecting or making an item outside the bank does not change that memory.
+
+Unless `quest.owns_inventory` bypasses preparation, missing required or acquirable items, coin floats, active-loadout carry floats, and tools needed by a gather step may cause a bank check. An item with `from_stage` is ignored until the quest reaches that stage (an Unknown stage keeps it out), so it causes neither an acquisition nor the initial bank scan early.
+
+For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
+
+An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session.
 
 Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
-Preparation preserves the Path's record items, tools and floats. There is no unconditional inventory freshen or deposit sweep. Unrelated rows are banked only when the next withdrawals or acquisition need more slots than the posted inventory has free. Only enough rows are banked to make that room. Available bank hints are withdrawn only when they fit alongside the active recipe's peak, which may mean banking unrelated rows to make room; otherwise the authored steps acquire them later. A completed Path leaves its remaining inventory in place for the next Path to assess.
-An unmeetable speculative peak does not itself park the Path. Preparation falls back to immediate withdrawals while still requiring the active acquisition's final item slot. Later inventory pressure is left to the running family. Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
+Preparation preserves the guide's record items, tools and floats. There is no unconditional inventory freshen or deposit sweep.
+
+Unrelated rows are banked only when the next withdrawals or acquisition need more slots than the posted inventory has free. Only enough rows are banked to make that room.
+
+Available bank hints are withdrawn only when they fit alongside the active recipe's peak, which may mean banking unrelated rows to make room; otherwise the authored steps acquire them later. A completed guide leaves its remaining inventory in place for the next guide to assess.
+
+An unmeetable speculative peak does not itself park the guide. Preparation falls back to immediate withdrawals while still requiring room for the active acquisition's final item. Later inventory pressure is left to the running family.
+
+Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
 
 ## Rules of thumb
 
 - **Polarity.** `skip_if` means "this is already done"; `settle` means "I can see it worked". `{"Any":[]}` means never skip; do not write `{"All":[]}`.
-- **Self-skipping cleanup.** Selection restarts at the first step after every settled boundary, so a step with an empty settle (`{"All":[]}` on a `bank deposit_all`) runs again unless its `skip_if` turns true. Skip a `deposit_all` sweep with this fact: `{"Fact":{"kind":"pack_only","version":1,"args":{"objs":[…same keep list…]}}}`. It is true when every held pack row is a listed object or one of the guide's protected items. That is the same set `deposit_all` always keeps, so the sweep runs only while something is left to deposit. None of the listed objects is required, and an unobserved inventory is `Unknown`.
+- **Self-skipping cleanup.** Step choice restarts at the first step after every settled boundary. A step with an empty settle (`{"All":[]}` on a `bank deposit_all`) therefore runs again unless its `skip_if` turns true.
+
+  Skip a `deposit_all` sweep with this fact: `{"Fact":{"kind":"pack_only","version":1,"args":{"objs":[…same keep list…]}}}`. It is true when every held pack row is a listed object or one of the guide's protected items. That is the same set `deposit_all` always keeps, so the sweep runs only while something is left to deposit.
+
+  None of the listed objects is required, and an unobserved inventory is `Unknown`.
 - **Observable settles only.** Use inventory facts (`has_item`, `item_count_at_least`), position (`near`, `in_area`, `on_level`), chat (`message` after the step began; `message_state` for recoverable hints), quest colour (`quest_colour`), and journal progress (`stage_in`, `flag`). A direct journal-progress fact in `settle` requires `advances: true`. A settle that no evidence can make true will time out.
 - **`advances`.** Declare whether the server can change quest progress on Explicit kinds. Use `true` for starting the quest, hand-ins, and dialogues that advance the journal; use `false` for purchases, replacing a lost item, or informational dialogue. Default-class kinds may omit the field.
 - **Sources and names.** Give each authored destination/anchor a `source` (for example, a content placement, source file and line, or dated live observation). A `near` fact is an observation and has no source. Use content config names, not display names; use a `name` target only when the content pack makes a location ambiguous.
@@ -116,16 +155,34 @@ An unmeetable speculative peak does not itself park the Path. Preparation falls 
 
 ## The members world fact
 
-- **Members world.** `{"Fact":{"kind":"members_world","version":1,"args":{}}}` is `True` on a members world, `False` on a free-to-play world and `Unknown` only when the slot has no bound server profile (for example a Direct connection). It follows the world type the bound server profile declares or resolves. The declarers are an explicit flag, the rs2b2t worlds, or the local engine's `world.json` file. It never follows the account: a members account on a free-to-play world still reads `False`. It takes no arguments and needs no other evidence, so it may appear in `skip_if`, `settle`, `wait.until` and any other predicate position. Branch with `{"Not":...}` for the free-to-play case. `Unknown` blocks lower-priority steps like any other unknown `skip_if`.
+- **Members world.** `{"Fact":{"kind":"members_world","version":1,"args":{}}}` is `True` on a members world, `False` on a free-to-play world and `Unknown` only when the profile has no bound server (for example a Direct connection).
+
+  It follows the world type the bound server declares or resolves. The declarers are an explicit flag, the rs2b2t worlds, or the local engine's `world.json` file. It never follows the account: a members account on a free-to-play world still reads `False`.
+
+  It takes no arguments and needs no other evidence, so it may appear in `skip_if`, `settle`, `wait.until` and any other predicate position. Branch with `{"Not":...}` for the free-to-play case. `Unknown` blocks lower-priority steps like any other unknown `skip_if`.
 
 ## Dialogue answers
 
-- **Dialogue on `interact`/`use_on`.** One policy for both. Omission is strict Continue-only for observed chat and selected Scroll/Book pages. It drains Continue pages and refuses menus without sending an answer, leaving unrelated main interfaces untouched. No page is required. Omission-mode no-page completion waits for acceptance and a fresh idle-player tick. For Loc/Npc/name scene targets, no-page completion also requires post-acceptance movement or primary animation. This applies unless the target was within interaction range at acceptance. A fresh idle tick remains required in either case. Loc/Npc/name interactions require their own accepted dispatch receipt. This boundary covers arrival and primary animation without a fixed delay. With omitted dialogue, reaching `until` completes immediately even if a page is open or an optional dialogue driver is active. The step does not adopt a newly observed page. It does not continue draining an existing one. The next owner handles any page that remains. `settle_ms` bounds the step even while a page is open and is not extended by dialogue draining; a count first observed after the deadline times out. Explicit `"continue"` or the object form requires a page after every accepted round, including every `until` round. No page after the bounded opening wait fails with `expected dialogue did not open`. Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
+- **Dialogue on `interact`/`use_on`.** One policy for both. Omission is strict Continue-only for observed chat and selected Scroll/Book pages. It drains Continue pages and refuses menus without sending an answer, leaving unrelated main interfaces untouched. No page is required.
+
+  Omission-mode no-page completion waits for acceptance and a fresh idle-player tick. For Loc/Npc/name scene targets, no-page completion also requires post-acceptance movement or primary animation. This applies unless the target was within interaction range at acceptance. A fresh idle tick remains required in either case. Loc/Npc/name interactions require their own accepted dispatch receipt. This boundary covers arrival and primary animation without a fixed delay.
+
+  With omitted dialogue, reaching `until` completes immediately even if a page is open or an optional dialogue driver is active. The step does not adopt a newly observed page. It does not continue draining an existing one. The next owner handles any page that remains.
+
+  `settle_ms` bounds the step even while a page is open and is not extended by dialogue draining; a count first observed after the deadline times out.
+
+  Explicit `"continue"` or the object form requires a page after every accepted round, including every `until` round. No page after the bounded opening wait fails with `expected dialogue did not open`.
+
+  Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
 - **Chat-to-scroll transitions.** An owned conversation can finish on the selected scroll (including the source-proven quest-completion scroll) or book interface after its chat closes. The shared dialogue driver requires a witnessed owned page or an accepted, fresh Continue/Answer receipt; an in-flight advance waits within the existing page bound. An unrelated interface, a refused answer, or a scroll without an owned conversation does not prove dialogue success.
 
 ## Gaps, waits, and combat finish
 
-- **Dialogue end gap (`gap_ticks`).** A conversation counts as over 1 quiet tick after the chat is first observed closed. The engine sends the same chat close at a script's end and at a script's own `if_close`. A step whose NPC script closes the chat and `p_delay`s before its next page authors `gap_ticks`: the engine hole, where `p_delay(n)` costs n+1. Authors put it on `talk` args or in an `interact`/`use_on` `dialogue` object, and cite the content lines in the step's `comment`. Size it by every route the step's conversation can take in the engine script. Count the stages it can run at, the items it can already carry, its answers, and resumed or restarted steps. Do not size it by only the route the step is named for. The longest reachable hole wins. Each page is answered on the tick it is first observed; a choice page whose text changed on the same chat root waits one tick for its option rows.
+- **Dialogue end gap (`gap_ticks`).** A conversation counts as over 1 quiet tick after the chat is first observed closed. The engine sends the same chat close at a script's end and at a script's own `if_close`. A step whose NPC script closes the chat and `p_delay`s before its next page authors `gap_ticks`: the engine hole, where `p_delay(n)` costs n+1.
+
+  Authors put it on `talk` args or in an `interact`/`use_on` `dialogue` object, and cite the content lines in the step's `comment`. Size it by every route the step's conversation can take in the engine script. Count the stages it can run at, the items it can already carry, its answers, and resumed or restarted steps. Do not size it by only the route the step is named for. The longest reachable hole wins.
+
+  Each page is answered on the tick it is first observed; a choice page whose text changed on the same chat root waits one tick for its option rows.
 - **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
 
 `interact.wait_until` optionally gates each new operation round with a predicate.
