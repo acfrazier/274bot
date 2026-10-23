@@ -180,6 +180,11 @@ pub(crate) fn cure_choice(input: &CureInputs<'_>) -> CureDecision {
         return CureDecision::Drink { item, kind, why };
     }
     if let Some(item) = fruit {
+        // Fruit shares the server's next-food clock; the outstanding Eat
+        // receipt is separate and must not suppress a ready cure.
+        if !input.schedule.ready(OpKind::Eat, input.tick) {
+            return CureDecision::Needed { why, held: true };
+        }
         return CureDecision::EatFruit { item, why };
     }
     CureDecision::Needed { why, held: false }
@@ -960,6 +965,78 @@ mod tests {
                 held: true,
             }
         );
+    }
+    #[test]
+    fn cure_choice_waits_for_food_clock_but_not_pending_eat() {
+        let tables = tables();
+        let fruit_id = tables
+            .selected()
+            .item_by_alias("macro_triffidfruit")
+            .unwrap()
+            .id;
+        let inventory = [held(fruit_id, 1)];
+        let food = crate::combat::tables::FoodFact {
+            item_id: 379,
+            heal: 12,
+            eat_delay_arg: Some(2),
+            skill_delay_arg: None,
+            message_delay: None,
+        };
+        let state = condition(
+            20,
+            99,
+            PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            FoodSummary::default(),
+        );
+        let mut schedule = Schedule::default();
+        schedule.admitted(OpKind::Eat, 10, 4, true, InputEffect::Food(&food));
+        assert!(schedule.pending(OpKind::Eat));
+
+        assert_eq!(
+            cure_choice(&CureInputs {
+                cond: Some(&state),
+                danger: Some(0),
+                exposure: Exposure::None,
+                policy: CurePoison::Always,
+                route_refused_for_poison: false,
+                inventory: &inventory,
+                tables: &tables,
+                schedule: &schedule,
+                clue_reserve: false,
+                tick: 12,
+                q_unknown: 11,
+                eat_floor: 0,
+            }),
+            CureDecision::Needed {
+                why: CureWhy::Always,
+                held: true,
+            }
+        );
+        assert_eq!(
+            cure_choice(&CureInputs {
+                cond: Some(&state),
+                danger: Some(0),
+                exposure: Exposure::None,
+                policy: CurePoison::Always,
+                route_refused_for_poison: false,
+                inventory: &inventory,
+                tables: &tables,
+                schedule: &schedule,
+                clue_reserve: false,
+                tick: 13,
+                q_unknown: 11,
+                eat_floor: 0,
+            }),
+            CureDecision::EatFruit {
+                item: fruit_id,
+                why: CureWhy::Always,
+            }
+        );
+        assert!(schedule.pending(OpKind::Eat));
     }
 
     #[test]

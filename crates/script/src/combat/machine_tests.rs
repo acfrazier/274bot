@@ -886,6 +886,104 @@ fn combat_machine_uses_strange_fruit_and_settles_by_count_drop() {
     let _ = harness.drain(None);
     assert!(!harness.machine.pending_row(RowKind::CureFruit));
 }
+#[test]
+fn combat_machine_waits_for_shared_food_clock_before_cure_fruit() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.stat(3, 5, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.actions = vec![Some("Eat".into())];
+    scene.inventory.push(lobster);
+    scene.inventory.push(scene.held("macro_triffidfruit", 1));
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.allow.food = true;
+    request.allow.prayer = false;
+    request.allow.potions = true;
+    request.allow.retaliate_toggle = false;
+    request.fallback = Fallback::Fight;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    let condition = |tick| api::condition::BotCondition {
+        tick,
+        session: api::condition::SessionMark::Live,
+        hp: 5,
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        cures: api::condition::CureDoses {
+            strange_fruit: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    harness.runtime.cure_poison = crate::survival::CurePoison::Never;
+    harness.runtime.condition = Some(condition(1));
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+
+    let bite = harness.pending_batch(&scene, 1);
+    assert!(
+        (0..bite.len()).any(|index| matches!(
+            bite.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Lobster" && action == "Eat"
+        )),
+        "the first click must be the accepted ordinary bite"
+    );
+    assert!((0..bite.len()).all(|index| !matches!(
+        bite.get(index),
+        Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+            if name == "Strange fruit" && action == "Eat"
+    )));
+
+    harness.runtime.cure_poison = crate::survival::CurePoison::WhenNeeded;
+    for tick in 2..=3 {
+        harness.runtime.condition = Some(condition(tick));
+        scene.refresh();
+        let batch = harness.pending_batch(&scene, u64::from(tick));
+        assert!(
+            (0..batch.len()).all(|index| !matches!(
+                batch.get(index),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Strange fruit" && action == "Eat"
+            )),
+            "the shared food clock must defer fruit at T+1 and T+2"
+        );
+    }
+
+    harness.runtime.condition = Some(condition(4));
+    scene.refresh();
+    let fruit = harness.pending_batch(&scene, 4);
+    assert_eq!(
+        (0..fruit.len())
+            .filter(|index| matches!(
+                fruit.get(*index),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Strange fruit" && action == "Eat"
+            ))
+            .count(),
+        1,
+        "the cure fruit is admitted exactly once at T+3"
+    );
+
+    let fruit_id = scene.data.item_by_alias("macro_triffidfruit").unwrap().id;
+    scene.inventory.retain(|item| item.def.id != fruit_id);
+    scene.refresh();
+    harness.runtime.condition = Some(condition(5));
+    harness.pending_batch(&scene, 5);
+    assert!(harness.machine.pending_row(RowKind::Eat));
+    assert!(!harness.machine.pending_row(RowKind::CureFruit));
+    assert!(harness.machine.schedule.pending(OpKind::Eat));
+    assert!(!harness.machine.schedule.pending(OpKind::Drink));
+    assert!(!harness.machine.schedule.ready(OpKind::Eat, 6));
+    assert!(harness.machine.schedule.ready(OpKind::Eat, 7));
+}
 
 #[test]
 fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
