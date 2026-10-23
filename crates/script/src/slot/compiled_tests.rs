@@ -93,7 +93,11 @@ fn resume_consumes_the_takeover_for_a_step_that_continues() {
                 self.watch = Some(crate::native::ManualTakeoverWatch::begin(&tick.cx));
             }
             if self.owner.is_none() {
-                self.owner = Some(tick.actions.begin::<InPlaceOwner>((), &mut tick.cx).unwrap());
+                self.owner = Some(
+                    tick.actions
+                        .begin::<InPlaceOwner>((), &mut tick.cx)
+                        .unwrap(),
+                );
             }
             if self
                 .watch
@@ -124,7 +128,10 @@ fn resume_consumes_the_takeover_for_a_step_that_continues() {
 
     tick(&mut slot);
     assert_eq!(slot.state(), RunState::Running);
-    assert!(slot.live_native_owner(), "the fixture owns a live native action");
+    assert!(
+        slot.live_native_owner(),
+        "the fixture owns a live native action"
+    );
 
     assert!(slot.observe_walk_outcome(1, crate::native::WalkCancelReason::UserInput, None));
     slot.pause();
