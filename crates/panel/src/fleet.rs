@@ -269,7 +269,6 @@ pub(crate) fn draw_test_window(ui: &Ui, session: &mut Session) -> FleetLayout {
 /// The checkboxes that show and hide the status columns. The choice is saved
 /// in the panel preferences without touching any other key.
 fn column_toggles(ui: &Ui, session: &mut Session) {
-    let mut changed = false;
     for (i, column) in FleetColumn::ALL.into_iter().enumerate() {
         let mut on = fleet_columns::visible(&session.ui.fleet_columns, column);
         if i > 0 {
@@ -280,11 +279,13 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
         }
         if ui.checkbox(column.title(), &mut on) {
             fleet_columns::set_visible(&mut session.ui.fleet_columns, column, on);
-            changed = true;
+            let value = (on != column.default_on())
+                .then_some(serde_json::Value::Bool(on));
+            let _ = session.persist_panel_member(
+                &["fleet_columns", column.id()],
+                value,
+            );
         }
-    }
-    if changed && session.persist_ui {
-        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 

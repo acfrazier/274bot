@@ -74,6 +74,19 @@ fn seed_ui_state(state: &crate::ui_state::PanelUiState) {
     crate::ui_state::save(&thread_preferences(), state);
 }
 
+fn await_preference(session: &mut Session, key: &str, expected: serde_json::Value) {
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        if session.preferences.value(key) == Some(expected.clone()) {
+            Ok(())
+        } else {
+            Err("not durable within the panel preference wait".into())
+        }
+    })
+    .unwrap();
+}
+
 #[test]
 fn session_cache_is_unset_until_a_profile_is_bound() {
     let session = Session::new();
@@ -82,6 +95,66 @@ fn session_cache_is_unset_until_a_profile_is_bound() {
     assert!(
         cache_dir.is_empty(),
         "cache path must come from the resolved profile, not the standalone-client default: {cache_dir:?}"
+    );
+}
+
+#[test]
+fn panel_member_intent_keeps_unedited_document_members() {
+    let _iso = IsolatedStores::enter("panel-member-intent");
+    let mut session = Session::new();
+    let preferences = session.preferences.share();
+    let mut chrome = serde_json::to_value(crate::theme::ChromeColors::default())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    chrome.insert("accent".into(), serde_json::json!("#111111"));
+    chrome.insert("text".into(), serde_json::json!("#222222"));
+    chrome.insert("extension".into(), serde_json::json!("preserve"));
+    set_patiently(
+        &preferences,
+        "chrome",
+        serde_json::Value::Object(chrome),
+    );
+    set_patiently(
+        &preferences,
+        "third_party",
+        serde_json::json!({"untouched": true}),
+    );
+
+    session
+        .persist_panel_member(
+            &["chrome", "accent"],
+            Some(serde_json::json!("#AABBCC")),
+        )
+        .unwrap();
+    patiently(|| {
+        session.poll_panel_preferences();
+        let Ok(document) = preferences.document() else {
+            return Err("not durable within panel preference wait".into());
+        };
+        if session.panel_preference_writes_pending() == 0
+            && document
+                .get("chrome")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|chrome| chrome.get("accent"))
+                == Some(&serde_json::json!("#AABBCC"))
+        {
+            Ok(())
+        } else {
+            Err("not durable within panel preference wait".into())
+        }
+    })
+    .unwrap();
+
+    let document = preferences.document().unwrap();
+    let chrome = document["chrome"].as_object().unwrap();
+    assert_eq!(chrome["accent"], serde_json::json!("#AABBCC"));
+    assert_eq!(chrome["text"], serde_json::json!("#222222"));
+    assert_eq!(chrome["extension"], serde_json::json!("preserve"));
+    assert_eq!(
+        document["third_party"],
+        serde_json::json!({"untouched": true})
     );
 }
 
@@ -2810,6 +2883,95 @@ fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
 }
 
 #[test]
+fn unlock_defers_automatic_focus_until_preferences_are_ready() {
+    let isolated = IsolatedStores::enter("panel-cold-start");
+    let (mut session, path) = multibox_unlock_fixture();
+    let preferences = session.preferences.share();
+    let load_dir = isolated.dir().join("script-load");
+    let catalog_dir = isolated.dir().join("script-catalog");
+    let quester_dir = isolated.dir().join("quester-paths");
+    for directory in [&load_dir, &catalog_dir, &quester_dir] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    set_patiently(&preferences, "last_focus", serde_json::json!("alice"));
+    set_patiently(&preferences, "capture", serde_json::json!(false));
+    set_patiently(&preferences, "sidecar_50", serde_json::json!(true));
+    set_patiently(&preferences, "focused_50", serde_json::json!(false));
+    set_patiently(
+        &preferences,
+        "map_bake",
+        serde_json::to_value(frontend_core::MapBakeChoice::Always).unwrap(),
+    );
+    set_patiently(
+        &preferences,
+        "quester_paths",
+        serde_json::json!({
+            "enabled": true,
+            "folder": quester_dir.to_string_lossy()
+        }),
+    );
+    set_patiently(
+        &preferences,
+        "script_load_last_dir",
+        serde_json::json!(load_dir.to_string_lossy()),
+    );
+    set_patiently(
+        &preferences,
+        "script_catalog_last_dir",
+        serde_json::json!(catalog_dir.to_string_lossy()),
+    );
+    session.preferences_ready = false;
+    let folder_draft = isolated.dir().join("uncommitted-folder");
+    session.quester_paths_folder_edit = folder_draft.to_string_lossy().into_owned();
+    session.quester_paths_folder_dirty = true;
+
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    assert!(session.core.vault_open());
+    assert!(session.core.slots().is_empty());
+    assert!(session.focused_name().is_none());
+    assert!(session.startup_focus_pending);
+
+    patiently(|| {
+        session.poll_panel_preferences();
+        if session.panel_preferences_ready() {
+            Ok(())
+        } else {
+            Err("not durable within panel preference adoption wait".into())
+        }
+    })
+    .unwrap();
+
+    assert!(!session.startup_focus_pending);
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session.core.slots().contains_key("alice"));
+    assert!(!session.draw.capture());
+    assert!(session.draw.sidecar_50());
+    assert!(!session.draw.focused_50());
+    {
+        let focus = session.focus.lock().unwrap();
+        assert!(!focus.capture);
+        assert!(focus.sidecar_50);
+        assert!(!focus.focused_50);
+    }
+    assert_eq!(
+        session.map_desk.bake_gate().choice(),
+        frontend_core::MapBakeChoice::Always
+    );
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(
+        session.quester_paths.settings().folder(),
+        quester_dir.as_path()
+    );
+    assert_eq!(
+        session.quester_paths_folder_edit,
+        folder_draft.to_string_lossy().into_owned()
+    );
+    assert_eq!(session.script_load_dir, load_dir);
+    assert_eq!(session.rs2b0t_catalog_dir, catalog_dir);
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+#[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
     session.set_multibox(true);
@@ -3832,6 +3994,8 @@ fn fifty_fps_choices_are_saved_and_restored() {
     let mut s = Session::new();
     s.set_sidecar_50(true);
     s.set_focused_50(false);
+    await_preference(&mut s, "sidecar_50", serde_json::json!(true));
+    await_preference(&mut s, "focused_50", serde_json::json!(false));
     let saved = crate::ui_state::load(&s.preferences);
     assert!(
         saved.sidecar_50 && !saved.focused_50,
@@ -4790,6 +4954,7 @@ fn focus_first_prefers_last_focus() {
             ..Default::default()
         },
     );
+    s.ui.last_focus = Some("bob".into());
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert_eq!(
@@ -4809,10 +4974,8 @@ fn select_saves_last_focus() {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
-    assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
-        Some("alice")
-    );
+    await_preference(&mut s, "last_focus", serde_json::json!("alice"));
+    assert_eq!(s.ui.last_focus.as_deref(), Some("alice"));
 }
 
 #[test]
@@ -5839,8 +6002,10 @@ fn set_capture_persists_to_panel_ui() {
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let mut s = Session::new();
     s.set_capture(false);
+    await_preference(&mut s, "capture", serde_json::json!(false));
     assert!(!crate::ui_state::load(&s.preferences).capture);
     s.set_capture(true);
+    await_preference(&mut s, "capture", serde_json::json!(true));
     assert!(crate::ui_state::load(&s.preferences).capture);
 }
 

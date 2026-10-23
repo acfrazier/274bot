@@ -1621,7 +1621,10 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            crate::ui_state::save(&state.session.preferences, &state.session.ui);
+            let _ = state.session.persist_panel_member(
+                &["rail_preview", name],
+                Some(serde_json::Value::Bool(next)),
+            );
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {
@@ -1926,10 +1929,13 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
         session
             .ui
             .collapsed
-            .entry(user)
+            .entry(user.clone())
             .or_default()
             .insert(id.to_string(), !open);
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session.persist_panel_member(
+            &["collapsed", user.as_str(), id],
+            Some(serde_json::Value::Bool(!open)),
+        );
     }
     open
 }
@@ -1963,8 +1969,9 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
                 if let Some(from) = heading_from_key(p.data) {
                     let mut order = resolve_heading_order(&session.ui.section_order);
                     move_heading(&mut order, &from, id);
+                    let _ =
+                        session.persist_panel_serializable(&["section_order"], &order);
                     session.ui.section_order = order;
-                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2623,8 +2630,9 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
+                    let _ =
+                        session.persist_panel_serializable(&["script_category_order"], &order);
                     session.ui.script_category_order = order;
-                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2807,7 +2815,8 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session
+            .persist_panel_serializable(&["script_category_order"], &order);
     }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
@@ -2938,7 +2947,18 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         }
     }
     if session.persist_ui {
-        crate::ui_state::save(&session.preferences, &session.ui);
+        match mode {
+            DialogMode::File => {
+                let path = session.script_load_dir.clone();
+                let _ = session
+                    .persist_panel_serializable(&["script_load_last_dir"], &path);
+            }
+            DialogMode::Folder => {
+                let path = session.rs2b0t_catalog_dir.clone();
+                let _ = session
+                    .persist_panel_serializable(&["script_catalog_last_dir"], &path);
+            }
+        }
     }
 }
 
@@ -3298,6 +3318,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
+            if !session.panel_preferences_ready() {
+                ui.text_disabled("Loading preferences…");
+            } else if session.preferences_pending() {
+                ui.text_disabled("Saving preferences…");
+            }
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
             let mut changed = false;
@@ -3405,9 +3430,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 }
 
 /// Commit an edited Nav config: every operator preference that changed
-/// is its own command (`SetNavPreference`, `SetDangerLevel`); the rest of
-/// `after` is the panel's path paint and display state, saved as its own
-/// presentation preferences.
+/// is its own command (`SetNavPreference`, `SetDangerLevel`); panel-owned
+/// presentation values submit only their changed members.
 fn commit_nav_settings(
     session: &mut Session,
     before: &crate::nav_settings::NavSettings,
@@ -3425,51 +3449,90 @@ fn commit_nav_settings(
     let flags = [
         (
             P::AllowTeleports,
+            "allow_teleports",
             before.allow_teleports,
             after.allow_teleports,
         ),
         (
             P::AllowWilderness,
+            "allow_wilderness",
             before.allow_wilderness,
             after.allow_wilderness,
         ),
         (
             P::AllowBankFetch,
+            "allow_bank_fetch",
             before.allow_bank_fetch,
             after.allow_bank_fetch,
         ),
         (
             P::ScriptScopeNoticeAck,
+            "script_scope_notice_ack",
             before.script_scope_notice_ack,
             after.script_scope_notice_ack,
         ),
         (
             P::SurvivableRoutingNoticeAck,
+            "survivable_routing_notice_ack",
             before.survivable_routing_notice_ack,
             after.survivable_routing_notice_ack,
         ),
         (
             P::PauseScriptOnManualWalkAbort,
+            "pause_script_on_manual_walk_abort",
             before.pause_script_on_manual_walk_abort,
             after.pause_script_on_manual_walk_abort,
         ),
         (
             P::ShowSpecialAreas,
+            "show_special_areas",
             before.show_special_areas,
             after.show_special_areas,
         ),
     ];
-    for (preference, was, now) in flags {
+    for (preference, key, was, now) in flags {
         if was != now {
+            session.remember_nav_preference(key, now);
             submit(session, OperatorCommand::SetNavPreference(preference, now));
         }
     }
     if before.danger_level() != after.danger_level() {
+        session.remember_nav_preference("allow_danger_zones", after.allow_danger_zones);
+        session.remember_nav_preference("survivable_routing", after.survivable_routing);
         submit(
             session,
             OperatorCommand::SetDangerLevel(after.danger_level()),
         );
     }
+
+    macro_rules! persist_panel_nav_member {
+        ($field:ident) => {
+            if before.$field != after.$field {
+                if let Err(error) = session.persist_panel_serializable(
+                    &["nav", stringify!($field)],
+                    &after.$field,
+                ) {
+                    failure.get_or_insert(error);
+                }
+            }
+        };
+    }
+    persist_panel_nav_member!(show_nav_path);
+    persist_panel_nav_member!(hop_labels);
+    persist_panel_nav_member!(hop_label_px);
+    persist_panel_nav_member!(color_path);
+    persist_panel_nav_member!(color_transport);
+    persist_panel_nav_member!(color_click);
+    persist_panel_nav_member!(color_text);
+    persist_panel_nav_member!(collision_fill);
+    persist_panel_nav_member!(nsew_labels);
+    persist_panel_nav_member!(client_trail);
+    persist_panel_nav_member!(color_collision);
+    persist_panel_nav_member!(color_client);
+    persist_panel_nav_member!(color_client_run_alt);
+    persist_panel_nav_member!(component_flood);
+    persist_panel_nav_member!(camera_follow);
+
     session.route_through_zones = frontend_core::WalkGlobalsView::new(
         after.walk_globals(),
         after.script_scope_notice_ack,
@@ -3477,11 +3540,9 @@ fn commit_nav_settings(
     )
     .danger_this_walk(session.route_through_zones);
     session.ui.nav = after;
-    let saved = crate::ui_state::save_to_checked(&session.preferences, &session.ui)
-        .map_err(|error| error.to_string());
     match failure {
         Some(error) => Err(error),
-        None => saved,
+        None => Ok(()),
     }
 }
 
@@ -4149,7 +4210,10 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 "Show parameters in rail",
                 &mut session.ui.show_parameters_rail,
             ) {
-                crate::ui_state::save(&session.preferences, &session.ui);
+                let _ = session.persist_panel_member(
+                    &["show_parameters_rail"],
+                    Some(serde_json::Value::Bool(session.ui.show_parameters_rail)),
+                );
             }
             ui.spacing();
             ui.text_wrapped(
@@ -4190,16 +4254,23 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     }
     ui.text("Folder");
     ui.set_next_item_width(-1.0);
-    ui.input_text(
-        "##quester-path-folder",
-        &mut session.quester_paths_folder_edit,
-    )
-    .build();
+    let folder_edited = ui
+        .input_text(
+            "##quester-path-folder",
+            &mut session.quester_paths_folder_edit,
+        )
+        .build();
+    if folder_edited {
+        session.quester_paths_folder_dirty = true;
+    }
     let mut folder_committed = false;
     if ui.is_item_deactivated_after_edit() {
         folder_committed = true;
         paths_changed |= Path::new(&session.quester_paths_folder_edit)
             != session.quester_paths.settings().folder();
+        if !paths_changed {
+            session.quester_paths_folder_dirty = false;
+        }
     }
     drop(_path_controls_disabled);
 
@@ -4652,7 +4723,10 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     };
     if open != desired {
         session.ui.config_collapsed.insert(id.to_string(), !open);
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session.persist_panel_member(
+            &["config_collapsed", id],
+            Some(serde_json::Value::Bool(!open)),
+        );
     }
     if open {
         body(ui, session);
@@ -4678,7 +4752,15 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
         let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
         if ui.checkbox(*id, &mut visible) {
             crate::ui_state::set_panel_section_visible(&mut session.ui, id, visible);
-            crate::ui_state::save(&session.preferences, &session.ui);
+            let value = serde_json::Value::Bool(visible);
+            if *id == "parameters" {
+                let _ = session.persist_panel_member(&["show_parameters_rail"], Some(value));
+            } else {
+                let _ = session.persist_panel_member(
+                    &["panel_sections", id],
+                    Some(value),
+                );
+            }
         }
     }
     ui.spacing();
@@ -4698,8 +4780,30 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "error", &mut chrome.error);
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
+        macro_rules! persist_chrome_member {
+            ($field:ident) => {
+                if session.ui.chrome.$field != chrome.$field {
+                    let _ = session.persist_panel_serializable(
+                        &["chrome", stringify!($field)],
+                        &chrome.$field,
+                    );
+                }
+            };
+        }
+        persist_chrome_member!(accent);
+        persist_chrome_member!(accent_hover);
+        persist_chrome_member!(bg);
+        persist_chrome_member!(bg_deep);
+        persist_chrome_member!(text);
+        persist_chrome_member!(text_dim);
+        persist_chrome_member!(frame);
+        persist_chrome_member!(hover_fill);
+        persist_chrome_member!(active_fill);
+        persist_chrome_member!(border);
+        persist_chrome_member!(warn);
+        persist_chrome_member!(error);
+        persist_chrome_member!(green);
         session.ui.chrome = chrome;
-        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -4723,6 +4827,16 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
 }
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
+    if !session.panel_preferences_ready() {
+        ui.text_disabled("Loading preferences…");
+    } else if session.preferences_pending() {
+        ui.text_disabled("Saving preferences…");
+    }
+    if let Some(error) = session.panel_preference_write_error() {
+        ui.text_colored(session.ui.chrome.error_rgba(), "Preference save failed:");
+        ui.text_wrapped(error);
+    }
+    ui.spacing();
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");
     {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.accent_rgba());
@@ -5316,7 +5430,10 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            crate::ui_state::save(&state.session.preferences, &state.session.ui);
+            let _ = state.session.persist_panel_member(
+                &["rail_preview", name],
+                Some(serde_json::Value::Bool(next)),
+            );
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {
@@ -7472,6 +7589,7 @@ fn record_presented_upload(
 /// order of these calls is the frame's contract (the pump publishes the
 /// status the live tick reads).
 fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
+    state.session.poll_panel_preferences();
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     pump_record(state);
