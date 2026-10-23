@@ -14,6 +14,8 @@ pub(crate) struct Runtime {
     pub budget: TickBudget,
     pub clock: ActiveClock,
     pub observed_walk_outcome: ObservedWalkOutcome,
+    /// The latest manual takeover sequence consumed by Resume.
+    pub takeover_consumed_seq: u64,
     /// One confirmed native gameplay change, fenced to its run and session.
     pub pending_note_progress: Option<RunKey>,
 }
@@ -28,6 +30,10 @@ impl Runtime {
 
     pub fn clear_note_progress(&mut self) {
         self.pending_note_progress = None;
+    }
+    /// Consume the currently observed manual takeover when the slot resumes.
+    pub fn consume_manual_takeover(&mut self) {
+        self.takeover_consumed_seq = self.observed_walk_outcome.seq();
     }
 
     /// Consume the one pending stamp, even when it belongs to an old

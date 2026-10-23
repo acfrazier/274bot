@@ -2972,7 +2972,7 @@ fn begin_imp_combat_step(
 /// "Pause script on manual movement" off: the host does not pause the slot,
 /// and the next poll ends the step with one `manual-movement` terminal.
 #[test]
-fn manual_takeover_ends_the_quester_combat_step_once_when_pause_is_off() {
+fn manual_takeover_watch_ends_the_quester_combat_step_once_when_pause_is_off() {
     use crate::native::WalkCancelReason;
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;
@@ -3018,7 +3018,7 @@ fn manual_takeover_ends_the_quester_combat_step_once_when_pause_is_off() {
 /// restarts the step as for every other Quester step, and the takeover before
 /// that new begin does not end it.
 #[test]
-fn paused_manual_takeover_restarts_the_quester_combat_step_without_a_terminal() {
+fn manual_takeover_watch_resume_restarts_the_quester_combat_step_without_a_terminal() {
     use crate::native::WalkCancelReason;
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;

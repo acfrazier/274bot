@@ -923,7 +923,7 @@ fn combat_test_run(
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
-        walk_outcome_seq_at_begin: 0,
+        manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
         finish: None,
         finish_target_index: None,
@@ -959,7 +959,7 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
 }
 
 #[test]
-fn manual_takeover_after_begin_ends_the_combat_step_on_the_next_poll() {
+fn manual_takeover_watch_ends_the_combat_step_after_begin() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;
@@ -981,7 +981,7 @@ fn manual_takeover_after_begin_ends_the_combat_step_on_the_next_poll() {
 }
 
 #[test]
-fn manual_takeover_before_begin_does_not_end_the_new_combat_step() {
+fn manual_takeover_watch_ignores_takeover_before_begin() {
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;
@@ -2517,7 +2517,7 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
 }
 
 #[test]
-fn manual_movement_baseline_covers_return_and_loot_sublegs() {
+fn manual_takeover_watch_covers_return_and_loot_sublegs() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -2541,13 +2541,15 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
             },
         ],
     );
-    run.walk_outcome_seq_at_begin = 40;
     let outcome = publish_walk_outcome(40, WalkCancelReason::None);
 
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
     let mut ledger = None;
+    with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, outcome, |cx| {
+        run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
+    });
     assert!(
         with_step_context_at_walk_outcome(&snapshot, &mut ledger, 12, outcome, |cx| {
             run.on_combat_report(report(CombatEnd::TargetGone), cx)

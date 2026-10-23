@@ -199,7 +199,7 @@ impl SlotScript {
     /// A live Gather or Combat session: work in the world that manual
     /// movement takes over, with or without a walk in flight. A quest
     /// progress read moves nothing and is not included.
-    pub(super) fn api_session_takes_manual_input(&self) -> bool {
+    pub fn api_session_takes_manual_input(&self) -> bool {
         self.api
             .as_ref()
             .is_some_and(|seat| seat.gather.token().is_some() || seat.combat.token().is_some())
