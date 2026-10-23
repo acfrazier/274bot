@@ -2101,10 +2101,13 @@ mod tests {
         .unwrap();
         assert_eq!(line, 13, "the replay's own quiet poison line");
 
-        // The real replay loop's eat decision (`replay.rs:801-841`) calls
-        // `eat_choice` with `danger = Some(line / 2) = Some(6)` and the
-        // `poison_fire` argument 0, because its own line already charged the
-        // fire. The tick-0 fire lands before the decision (`replay.rs:746-752`).
+        // The real replay loop's eat decision (`replay.rs:774-842`) calls
+        // `eat_choice` only when `topup || hp <= intended`, with
+        // `danger = Some(intended / 2)` and the `poison_fire` argument 0
+        // because its own line already charged the fire
+        // (`replay.rs:801-803,832-841`). This fixture has no crossing, so
+        // `intended = line = 13`. The tick-0 fire lands before the decision
+        // (`replay.rs:746-747`).
         let replay_bites = |hp: u8| {
             let mut input = input;
             input.hp = hp;
@@ -2126,19 +2129,23 @@ mod tests {
             assert!(result.passed, "a one-fire quiet route passes at HP {hp}");
             (result.hp_after, bites)
         };
-        // At HP 8 the tick-0 fire leaves 2, below the replay's line 13: it
-        // bites on the first tick.
+        // At HP 8 the tick-0 fire leaves 2, below the replay's line 13: the
+        // outer gate admits the decision and it bites on the first tick.
         assert_eq!(
             replay_bites(8).1,
             vec![(0, food_id("lobster"))],
             "the replay's line 13 permits a bite at HP 8"
         );
-        // HP 19 -> 13 after the fire still bites; HP 20 -> 14 does not.
+        // HP 19 -> 13 after the fire still bites; HP 20 -> 14 does not. The
+        // HP 20 result is the replay's outer gate at `replay.rs:803`:
+        // decision HP 14 exceeds `intended = 13`, so `eat_choice` is never
+        // called and this case does not exercise the zero `poison_fire`
+        // argument at `replay.rs:837`.
         assert_eq!(replay_bites(19).1, vec![(0, food_id("lobster"))]);
         assert_eq!(
             replay_bites(20).1,
             Vec::new(),
-            "a second charge of the fire would raise the line to 19 and bite at 14"
+            "the replay's intended line 13 rejects the HP 14 decision before eat_choice runs"
         );
 
         // The guard's line for the same case is `lines(danger) + p`
