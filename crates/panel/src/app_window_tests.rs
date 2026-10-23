@@ -627,6 +627,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         },
     );
     let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
     let mut state = panel_state(session);

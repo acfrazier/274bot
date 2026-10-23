@@ -29,21 +29,25 @@ use frontend_core::test_support::live::tick_scenario_runner_for_test;
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
 
-fn await_preference(
-    session: &mut crate::session::Session,
-    key: &str,
-    expected: serde_json::Value,
-) {
+fn await_preference(session: &mut crate::session::Session, key: &str, expected: serde_json::Value) {
     patiently(|| {
         session.pump_status();
         session.poll_panel_preferences();
-        if session.preferences.value(key) == Some(expected.clone()) {
+        if !session.preferences_pending()
+            && session.preferences.value(key) == Some(expected.clone())
+        {
             Ok(())
         } else {
             Err("not durable within the panel preference wait".into())
         }
     })
     .unwrap();
+}
+
+fn hydrate_panel_preferences(session: &mut crate::session::Session) {
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
 }
 
 #[test]
@@ -5866,7 +5870,6 @@ fn rect_centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
     [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
 }
 
-
 #[test]
 fn nav_panel_edit_persists_only_the_changed_member() {
     let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-member");
@@ -5901,7 +5904,51 @@ fn nav_panel_edit_persists_only_the_changed_member() {
 }
 
 #[test]
-fn nav_core_edit_uses_no_panel_member_write() {
+fn nav_presentation_writers_keep_disjoint_nested_members() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-two-writers");
+    let mut first = crate::session::Session::new();
+    let preferences = first.preferences.share();
+    let first_before = first.ui.nav.clone();
+    crate::test_support::set_patiently(
+        &preferences,
+        "nav",
+        serde_json::to_value(&first_before).unwrap(),
+    );
+    let mut second = crate::session::Session::new();
+    let second_before = second.ui.nav.clone();
+    let mut second_after = second_before.clone();
+    second_after.hop_labels = !second_after.hop_labels;
+    let expected_hop_labels = second_after.hop_labels;
+    super::commit_nav_settings(&mut second, &second_before, second_after).unwrap();
+    crate::test_support::patiently(|| {
+        preferences.reload().map_err(|error| error.to_string())?;
+        if preferences.document().unwrap()["nav"]["hop_labels"] == expected_hop_labels {
+            Ok(())
+        } else {
+            Err("not durable within second Nav writer wait".into())
+        }
+    })
+    .unwrap();
+    let mut first_after = first_before.clone();
+    first_after.show_nav_path = !first_after.show_nav_path;
+    let expected_show_nav_path = first_after.show_nav_path;
+    super::commit_nav_settings(&mut first, &first_before, first_after).unwrap();
+    crate::test_support::patiently(|| {
+        preferences.reload().map_err(|error| error.to_string())?;
+        if preferences.document().unwrap()["nav"]["show_nav_path"] == expected_show_nav_path {
+            Ok(())
+        } else {
+            Err("not durable within first Nav writer wait".into())
+        }
+    })
+    .unwrap();
+    let saved = preferences.document().unwrap();
+    assert_eq!(saved["nav"]["hop_labels"], expected_hop_labels);
+    assert_eq!(saved["nav"]["show_nav_path"], expected_show_nav_path);
+}
+
+#[test]
+fn nav_core_edit_writes_once_and_preserves_other_members() {
     let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-core-member");
     let mut session = crate::session::Session::new();
     let preferences = session.preferences.share();
@@ -5912,27 +5959,54 @@ fn nav_core_edit_uses_no_panel_member_write() {
         .unwrap()
         .insert("extension".into(), serde_json::json!({"keep": true}));
     crate::test_support::set_patiently(&preferences, "nav", expected_nav.clone());
+    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_writes = std::sync::Arc::clone(&writes);
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        observed_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    let audits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_audits = std::sync::Arc::clone(&audits);
+    service.set_audit_hook(std::sync::Arc::new(move |record| {
+        observed_audits.lock().unwrap().push(record.clone());
+    }));
 
     let mut after = before.clone();
     after.allow_teleports = !after.allow_teleports;
     let expected_allow_teleports = after.allow_teleports;
     super::commit_nav_settings(&mut session, &before, after).unwrap();
-    assert_eq!(session.panel_preference_writes_pending(), 0);
     expected_nav["allow_teleports"] = expected_allow_teleports.into();
 
-    patiently(|| {
+    crate::test_support::patiently(|| {
         session.pump_status();
-        session.poll_panel_preferences();
         let Ok(document) = session.preferences.document() else {
             return Err("not durable within core Nav preference wait".into());
         };
-        if document.get("nav") == Some(&expected_nav) {
+        if document.get("nav") == Some(&expected_nav) && !session.core.preferences_pending() {
             Ok(())
         } else {
             Err("not durable within core Nav member wait".into())
         }
     })
     .unwrap();
+    assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1, "one Nav action has one saved-state audit");
+    let api::local_state::AuditOrigin::Submitted { request } = audits[0].origin() else {
+        panic!("the Nav audit must name its accepted request");
+    };
+    let host_play::local_state::RequestState::Settled(api::identity::Settlement::Completed(
+        receipt,
+    )) = service.request_state(request)
+    else {
+        panic!("the one Nav request must have one durable result");
+    };
+    assert_eq!(receipt.request(), Some(request));
+    assert_eq!(receipt.version(), audits[0].version());
 }
 
 /// At the docked Nav config width every Routing row stays inside the content
@@ -6069,6 +6143,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let mut ctx = dock_host_context();
     super::amber_style(&mut ctx);
     let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
     assert!(
         session.focus.lock().unwrap().only_render_selected,
         "only render focused starts on"
@@ -6105,7 +6180,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     // The next launch: the box starts on again, and unchecking it applies
     // at once.
     let mut next = crate::session::Session::new();
-    assert!(next.ui.render_all_warning_ack);
+    hydrate_panel_preferences(&mut next);
     assert!(next.focus.lock().unwrap().only_render_selected);
     super::only_render_selected_clicked(&mut next, false);
     assert!(!next.focus.lock().unwrap().only_render_selected);

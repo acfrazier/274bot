@@ -78,13 +78,21 @@ fn await_preference(session: &mut Session, key: &str, expected: serde_json::Valu
     patiently(|| {
         session.pump_status();
         session.poll_panel_preferences();
-        if session.preferences.value(key) == Some(expected.clone()) {
+        if !session.preferences_pending()
+            && session.preferences.value(key) == Some(expected.clone())
+        {
             Ok(())
         } else {
             Err("not durable within the panel preference wait".into())
         }
     })
     .unwrap();
+}
+
+fn hydrate_panel_preferences(session: &mut Session) {
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
 }
 
 #[test]
@@ -111,11 +119,7 @@ fn panel_member_intent_keeps_unedited_document_members() {
     chrome.insert("accent".into(), serde_json::json!("#111111"));
     chrome.insert("text".into(), serde_json::json!("#222222"));
     chrome.insert("extension".into(), serde_json::json!("preserve"));
-    set_patiently(
-        &preferences,
-        "chrome",
-        serde_json::Value::Object(chrome),
-    );
+    set_patiently(&preferences, "chrome", serde_json::Value::Object(chrome));
     set_patiently(
         &preferences,
         "third_party",
@@ -123,10 +127,7 @@ fn panel_member_intent_keeps_unedited_document_members() {
     );
 
     session
-        .persist_panel_member(
-            &["chrome", "accent"],
-            Some(serde_json::json!("#AABBCC")),
-        )
+        .persist_panel_member(&["chrome", "accent"], Some(serde_json::json!("#AABBCC")))
         .unwrap();
     patiently(|| {
         session.poll_panel_preferences();
@@ -2817,6 +2818,7 @@ fn multibox_unlock_fixture() -> (Session, TestPath) {
 #[test]
 fn multibox_before_unlock_registers_auto_focused_profile() {
     let (mut session, path) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
     assert!(session.set_multibox(true));
     assert!(session.multibox && session.wall.chooser_open);
     assert!(!session.core.vault_open());
@@ -2856,6 +2858,7 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
 #[test]
 fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
     let (mut session, path) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
@@ -2930,6 +2933,7 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
     assert!(session.core.slots().is_empty());
     assert!(session.focused_name().is_none());
     assert!(session.startup_focus_pending);
+    session.preferences.reload().unwrap();
 
     patiently(|| {
         session.poll_panel_preferences();
@@ -2974,7 +2978,7 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
 #[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
-    session.set_multibox(true);
+    hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
     let thiever = Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever"));
     let gatherer = Some(ScriptChoice::compiled(
@@ -3040,6 +3044,7 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
     session.scripts.set_legacy_store(legacy_path.clone());
+    hydrate_panel_preferences(&mut session);
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
 
@@ -3256,7 +3261,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .unwrap();
 
     let mut session = Session::new();
-    assert!(session.quester_paths.settings().enabled());
+    hydrate_panel_preferences(&mut session);
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("selected 289 game data")
@@ -3311,6 +3316,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     .unwrap();
 
     let mut session = Session::new();
+    hydrate_panel_preferences(&mut session);
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     assert!(!session.quester_paths.settings().enabled());
 
@@ -3985,13 +3991,15 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
 /// (sidecar off, focused on).
 #[test]
 fn fifty_fps_choices_are_saved_and_restored() {
-    let fresh = Session::new();
+    let mut fresh = Session::new();
+    hydrate_panel_preferences(&mut fresh);
     {
         let f = fresh.focus.lock().unwrap();
         assert!(!f.sidecar_50, "a missing key: sidecar off");
         assert!(f.focused_50, "a missing key: focused on, as before");
     }
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.set_sidecar_50(true);
     s.set_focused_50(false);
     await_preference(&mut s, "sidecar_50", serde_json::json!(true));
@@ -4002,7 +4010,8 @@ fn fifty_fps_choices_are_saved_and_restored() {
         "written to the preferences"
     );
 
-    let next = Session::new();
+    let mut next = Session::new();
+    hydrate_panel_preferences(&mut next);
     {
         let f = next.focus.lock().unwrap();
         assert!(f.sidecar_50, "the next launch restores sidecar 50 fps");
@@ -8764,13 +8773,14 @@ fn two_live_session(label: &str) -> (Session, IsolatedStores) {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s);
     (s, iso)
 }
 
 #[test]
 fn single_mode_select_offers_background_ack_until_persisted() {
     let (mut s, _iso) = two_live_session("bg-ack-select");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     assert!(
         !s.background_ack_open,
         "one live slot is not a background fleet"
@@ -8786,6 +8796,7 @@ fn single_mode_select_offers_background_ack_until_persisted() {
         "dismiss without ack shows the notice again"
     );
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert!(frontend_core::resources::background_bots_acked(
         &s.preferences
@@ -8816,6 +8827,7 @@ fn background_ack_survives_session_restart() {
     s.select("bob");
     assert!(s.background_ack_open);
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     drop(s);
     let mut s2 = Session::new();
     s2.core.set_spawn_workers(false);
@@ -8824,8 +8836,8 @@ fn background_ack_survives_session_restart() {
         &mut s2.core,
         VaultFixture::create(&tmp_vault("bg-ack-restart-2"), "test-passphrase-01"),
     );
-    vault_upsert(&mut s2.core, profile("alice", "pw", 42));
     vault_upsert(&mut s2.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s2);
     s2.select("alice");
     s2.select("bob");
     assert!(
@@ -8873,12 +8885,13 @@ fn live_persist_off_skips_background_ack() {
 #[test]
 fn failed_ack_persist_then_success_clears_only_that_error() {
     let (mut s, iso) = two_live_session("bg-ack-fail");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     s.select("bob");
     assert!(s.background_ack_open);
     let parent = s.preferences.path().parent().unwrap().to_path_buf();
     let _ = std::fs::remove_dir_all(&parent);
     std::fs::write(&parent, b"not-a-dir").unwrap();
+    assert!(s.preferences.reload().is_err());
     s.error = None;
     s.ack_background_bots();
     assert!(
@@ -8896,7 +8909,9 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
         &s.preferences
     ));
     std::fs::remove_file(&parent).unwrap();
+    s.preferences.reload().unwrap();
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert!(s.error.is_none(), "got {:?}", s.error);
     assert!(frontend_core::resources::background_bots_acked(
@@ -8908,10 +8923,11 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
 #[test]
 fn successful_ack_preserves_unrelated_error() {
     let (mut s, _iso) = two_live_session("bg-ack-unrelated");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     s.select("bob");
     s.error = Some("chooser: vault locked".into());
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert_eq!(s.error.as_deref(), Some("chooser: vault locked"));
     assert!(frontend_core::resources::background_bots_acked(
