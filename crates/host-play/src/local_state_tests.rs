@@ -3852,6 +3852,21 @@ fn cold_preference_document_and_walk_fail_before_hydration() {
     assert!(preferences.walk_globals().unwrap_err().is_not_ready());
     assert_eq!(preferences.value("nav"), None);
 
+    // Slots copy five flags or one shared handle, never a preference document.
+    assert!(std::mem::size_of::<crate::WalkGlobals>() <= 8);
+    assert!(std::mem::size_of::<Preferences>() <= std::mem::size_of::<Arc<()>>());
+    let assert_cached_reads_allocate_nothing = || {
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..256 {
+                let _ = std::hint::black_box(preferences.document());
+                let _ = std::hint::black_box(preferences.walk_globals());
+            }
+        });
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
+    };
+    assert_cached_reads_allocate_nothing();
+
     release_tx.send(()).unwrap();
     preferences.reload().unwrap();
     assert!(preferences.document().unwrap().is_empty());
@@ -3859,6 +3874,13 @@ fn cold_preference_document_and_walk_fail_before_hydration() {
         !preferences.path().exists(),
         "readiness does not save defaults"
     );
+    assert_cached_reads_allocate_nothing();
+
+    write_private(&preferences.path(), b"{not-json");
+    assert!(preferences.reload().is_err());
+    assert!(preferences.document().is_err());
+    assert!(preferences.walk_globals().is_err());
+    assert_cached_reads_allocate_nothing();
 }
 
 #[test]
