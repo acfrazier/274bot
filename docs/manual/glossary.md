@@ -13,7 +13,7 @@
 | **vault** | The encrypted file that holds your profiles. Each server has its own vault file. | store, wallet |
 | **passphrase** | The text that unlocks the vault. It is not the game password. | master password, vault password |
 | **game password** | The password of the game account. It is stored in the vault. | account password |
-| **Log in**, **Log out** | The buttons that connect a bot to the game and disconnect it. The panel's login row says **Logout**; the Fleet toolbar and the terminal app say **Log out**. | login (as a verb), logon |
+| **Log in**, **Log out** | The buttons that connect a bot to the game and disconnect it. Every app says **Log out**. | login (as a verb), logon |
 | **Log in automatically** | The profile option that logs a bot in when it starts and again after a disconnect. | auto-login |
 | **login queue** | The line that bots wait in. Bots log in one at a time. | FIFO, admission |
 | **repeat guard** | The stop that follows three unexpected drops within ten minutes. The bot stays logged out until you click **Log in**. | latch |
@@ -83,6 +83,5 @@ The script buttons are **Browse…**, **Load**, **Reload**, **Start**, **Pause**
 
 - Say **random-event handling**, not "guardian".
 - Say **navigation data**, not "nav pack", unless you are quoting the `nav-pack` tool.
-- Use the button names as the app shows them: **Log in**, **Start**, **Pause**,
-  **Resume**, **Stop**, **Browse…**, **Load**, **Reload**. The panel's login row
-  says **Logout**. The Fleet actions say **Log out**.
+- Use the button names as the app shows them: **Log in**, **Log out**,
+  **Start**, **Pause**, **Resume**, **Stop**, **Browse…**, **Load**, **Reload**.

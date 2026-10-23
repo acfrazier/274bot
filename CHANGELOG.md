@@ -8,6 +8,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- The terminal app can now add a profile. Start `tui-play` on an empty vault and it opens a **New profile** form: type the username and the account's own game password, then press Enter to save. Press `N` in the Fleet pane to add another profile later. `tui-play --user NAME` no longer creates a profile with a random password. It only logs in a profile that is already in the vault. With an unknown name it stops and says how to add it.
+- The panel button that logs a bot out now reads **Log out**, as the Fleet toolbar and the terminal app already did.
 
 ### Scripts
 

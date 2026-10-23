@@ -86,11 +86,13 @@ cargo run --release -p tui --bin tui-play -- --profile local-289
 # BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
 ```
 
-A first `tui-play` run with no `--user` stops with "vault has no profiles"
-instead of seeding an account: pass `--user NAME` to create the first one
-(`host-play --user` also creates missing accounts with a fresh random game
-password). The panel never auto-creates an account: an empty first-run vault
-stays empty until you type a username/password and Save.
+A first `tui-play` run on an empty vault opens its New profile form
+instead of seeding an account: type the username and its own password,
+then press Enter to save. `tui-play --user NAME` only selects a profile
+already in the vault and creates none (`host-play --user` still creates
+missing accounts with a fresh random game password). The panel never
+auto-creates an account: an empty first-run vault stays empty until you
+type a username/password and Save.
 
 Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):
 

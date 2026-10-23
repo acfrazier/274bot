@@ -80,25 +80,22 @@ To skip step 3, tick **Log in automatically** for the profile. See
 ## Use the terminal app instead
 
 `tui-play` runs the same bots in a terminal, which suits a server with no
-screen. It logs in the first profile of the vault, so the vault must already
-hold a profile. The terminal app has no profile editor. Create your profiles in
-the panel first, or
-[import them from rs2b0t](importing-from-rs2b0t.md).
+screen. It logs in the first profile of the vault. You can create profiles
+in the panel first, add them in the terminal app with **New profile**
+(below), or [import them from rs2b0t](importing-from-rs2b0t.md).
 
-Then run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in the
-terminal and does not show what you type. It then logs in the first profile in
-the vault.
+Run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in the
+terminal and does not show what you type. It then logs in the first profile
+in the vault. With `--user NAME` it logs in that profile instead. The flag
+only selects a profile that is already in the vault. It creates none. With
+an unknown name, `tui-play` stops and says so.
 
-With a new vault, `tui-play` asks for the passphrase twice and creates the vault.
-It then stops and prints:
-
-```
-vault has no profiles (start tui-play with --user <name> to create one)
-```
-
-Do not follow that advice for a real account. `--user NAME` creates a profile
-with a random password, not your game password. Create the profile in the panel
-instead, then run `tui-play` again.
+With a new vault, `tui-play` asks for the passphrase twice and creates the
+vault. The vault holds no profile yet, so the app opens its **New profile**
+form. Type the username and the account's own game password, then press
+Enter to save. The new profile loads, logs in and takes focus. Press Esc
+to close the form without saving. To add another profile later, press `N`
+in the Fleet pane or run **New profile** from the command palette.
 
 ## Where to go next
 
