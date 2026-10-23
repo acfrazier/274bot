@@ -43,6 +43,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Catalog scripts with many imports, including JiveKQ, no longer fail Start
   when the host is busy. Scripts that never finish loading still fail Start.
 
+### Survival
+
+- Combat and protected walks use a held antipoison dose or Strange fruit
+  before a health bite when poison makes a cure necessary. Walks that only
+  eat also drink a held cure before their next bite.
+
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
