@@ -98,6 +98,12 @@ next quest. Two stops need your action:
 | --- | --- |
 | `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
+## Reading a run
+
+Quester writes its run trace to the operator log (and to the per-session log file when enabled). `info` lines show the Path start, stage changes, step begins/skips/settles, acquisition-child activity, combat outcomes, and finish/Stop. `warn` lines name step failures and the parked reason. A skip line includes the `skip_if` predicate that evaluated true. Identical retry events are written once, with a later summary such as `(repeated 4 additional times)` rather than one line per retry. The trace retains at most 32 distinct events.
+
+Preparation may run acquisition recipes before an authored quest step begins. These use the same acquisition-child trace as an authored `acquire` step, including their final settle or failure. A root `step ... begin` line therefore appears only when that authored step actually starts, not while the provisioner is collecting its prerequisites. Items gated by `from_stage` stay out until their stage, so a quest that gates every item (Cook gates all three on `cook:1`) talks first and scans later.
+
 
 ## Quester: run guides from a folder
 
@@ -110,6 +116,49 @@ The guides are for revision 289. New guides appear as drafts. In the terminal
 app, press `o` on the Overview screen to find the same two rows.
 [Quest guides](../quester-paths.md#loading-draft-paths-without-rebuilding)
 describes the file format.
+## Loading draft Paths without rebuilding
+
+In the panel, select the Quester card and open **Script prefs**. In the TUI, open
+**settings** (`o` on Overview). Enable **Load quest Paths from folder** and choose a
+folder. The setting is off by
+default. Changing it refreshes the picker. A saved enabled folder reloads
+automatically when selected game data is ready at startup. The default is
+`<profile data directory>/quester/paths/289`; a checkout's
+`crates/script/paths/289` also works. These documents are for revision **289**.
+The default folder is not created automatically.
+
+Put each Path in `<folder>/<id>.json`, with the same `id` inside the document.
+An optional `index.json` uses the shipped index's schema:
+
+```json
+{"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"my-draft","file":"my-draft.json"}]}
+```
+
+Bundled rows retain their shipped order. A valid folder document replaces the
+bundled document with the same id; new ids are appended as **draft** rows, in
+folder-index order when an index is present, then filename order for unindexed
+files. Picker labels and running status distinguish **folder** overrides and
+**draft** Paths from bundled ones. The active Path's source, SHA-256 digest,
+and initial step comment are written to the log when it starts. Folder status
+also shows the current step comment in the existing script chrome.
+
+Use **Reload Paths** to reread and validate the folder without starting a quest.
+Every Quester Start also rereads it. Stop/Start to run edits; Reload does not
+replace a Path that is already running. Delete an override and Reload (or Start)
+to restore the bundled document. Turning the setting off ignores the folder
+entirely.
+
+Files are limited to 1 MiB each. The loader sorts valid folder filenames and
+loads at most the first 256 in filename order; later files are omitted.
+Validation reports the filename, step, error code, and detail. An invalid
+override falls back to its bundled Path; an invalid draft remains visible but
+unavailable, with the validation error as its reason. Other documents still
+load. Shipped server-unavailable quests retain their server-content restriction.
+
+Symlinked JSON files are followed; the opened target must be a regular file
+within the size limit. The report is capped at 32 diagnostic lines and ends
+with an `N more` summary when details are omitted. The TUI shows only the
+summary; per-file details are available in Logs.
 
 ## Gatherer
 
