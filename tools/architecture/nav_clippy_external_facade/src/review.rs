@@ -229,7 +229,7 @@ pub mod g3_generic_default {
 
 // probe: G4
 pub mod g4_dyn_trait_argument {
-    pub type W = Box<dyn api::prot::Out>;
+    pub type W = Box<dyn api::interact::Driver>;
 }
 
 // probe: G5

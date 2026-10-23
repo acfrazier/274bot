@@ -2,16 +2,6 @@
 #![deny(clippy::disallowed_methods)]
 #![deny(clippy::disallowed_macros)]
 
-struct ProbeOut;
-
-impl api::prot::Out for ProbeOut {
-    fn p1_enc(&mut self, _: i32) {}
-    fn p1(&mut self, _: i32) {}
-    fn p2(&mut self, _: i32) {}
-    fn p4(&mut self, _: i32) {}
-    fn pjstr(&mut self, _: &str) {}
-}
-
 // probe: METHOD
 pub fn resolved_method() {
     let _ = api::prot::Send::close_modal();
@@ -40,8 +30,7 @@ pub fn associated_type_projection_method() {
 
 // probe: EXTERNAL_INFERRED_VALUE_METHOD
 pub fn external_inferred_value_method() {
-    let mut out = ProbeOut;
-    nav_clippy_external_facade::values::static_value::S.write(&mut out);
+    let _ = nav_clippy_external_facade::values::static_value::S.named_packet();
 }
 
 // probe: EXTERNAL_MACRO_TYPE

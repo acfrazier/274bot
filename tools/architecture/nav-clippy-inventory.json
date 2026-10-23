@@ -16,10 +16,10 @@
       "api::interact::Driver::local_route",
       "api::interact::Driver::login",
       "api::interact::Driver::note_input_activity",
-      "api::interact::Driver::out",
       "api::interact::Driver::packet_checkpoint",
       "api::interact::Driver::revision",
       "api::interact::Driver::send_cheat",
+      "api::interact::Driver::send_packet",
       "api::interact::Driver::set_menu",
       "api::interact::Driver::set_orbit_camera_yaw",
       "api::interact::Driver::social_prompt_open",
@@ -72,10 +72,10 @@
       "api::interact::driver::Driver::local_route",
       "api::interact::driver::Driver::login",
       "api::interact::driver::Driver::note_input_activity",
-      "api::interact::driver::Driver::out",
       "api::interact::driver::Driver::packet_checkpoint",
       "api::interact::driver::Driver::revision",
       "api::interact::driver::Driver::send_cheat",
+      "api::interact::driver::Driver::send_packet",
       "api::interact::driver::Driver::set_menu",
       "api::interact::driver::Driver::set_orbit_camera_yaw",
       "api::interact::driver::Driver::social_prompt_open",
@@ -221,18 +221,96 @@
       "api::interact::tele_args",
       "api::interact::walk",
       "api::interact::walk_nearest",
-      "api::prot::Out::p1",
-      "api::prot::Out::p1_enc",
-      "api::prot::Out::p2",
-      "api::prot::Out::p4",
-      "api::prot::Out::pjstr",
+      "api::prot::AbuseReason::value",
+      "api::prot::Base37Name::new",
+      "api::prot::Base37Name::value",
+      "api::prot::PacketLength::validate",
+      "api::prot::Send::anticheat_cyclelogic1",
+      "api::prot::Send::anticheat_cyclelogic2",
+      "api::prot::Send::anticheat_cyclelogic3",
+      "api::prot::Send::anticheat_cyclelogic4",
+      "api::prot::Send::anticheat_cyclelogic5",
+      "api::prot::Send::anticheat_cyclelogic6",
+      "api::prot::Send::anticheat_cyclelogic7",
+      "api::prot::Send::anticheat_oplogic1",
+      "api::prot::Send::anticheat_oplogic2",
+      "api::prot::Send::anticheat_oplogic3",
+      "api::prot::Send::anticheat_oplogic4",
+      "api::prot::Send::anticheat_oplogic5",
+      "api::prot::Send::anticheat_oplogic6",
+      "api::prot::Send::anticheat_oplogic7",
+      "api::prot::Send::anticheat_oplogic8",
+      "api::prot::Send::anticheat_oplogic9",
+      "api::prot::Send::body",
+      "api::prot::Send::chat_setmode",
+      "api::prot::Send::client_cheat",
       "api::prot::Send::close_modal",
       "api::prot::Send::count_dialog",
+      "api::prot::Send::event_applet_focus",
+      "api::prot::Send::event_camera_position",
+      "api::prot::Send::event_mouse_click",
+      "api::prot::Send::event_mouse_move",
+      "api::prot::Send::friendlist_add",
+      "api::prot::Send::friendlist_del",
+      "api::prot::Send::idk_savedesign",
+      "api::prot::Send::idle_timer",
       "api::prot::Send::if_button",
-      "api::prot::Send::write",
+      "api::prot::Send::ignorelist_add",
+      "api::prot::Send::ignorelist_del",
+      "api::prot::Send::inv_button1",
+      "api::prot::Send::inv_button2",
+      "api::prot::Send::inv_button3",
+      "api::prot::Send::inv_button4",
+      "api::prot::Send::inv_button5",
+      "api::prot::Send::inv_buttond",
+      "api::prot::Send::map_build_complete",
+      "api::prot::Send::message_private",
+      "api::prot::Send::message_public",
+      "api::prot::Send::move_gameclick",
+      "api::prot::Send::move_minimapclick",
+      "api::prot::Send::move_opclick",
+      "api::prot::Send::named_packet",
+      "api::prot::Send::no_timeout",
+      "api::prot::Send::opheld1",
+      "api::prot::Send::opheld2",
+      "api::prot::Send::opheld3",
+      "api::prot::Send::opheld4",
+      "api::prot::Send::opheld5",
+      "api::prot::Send::opheldt",
+      "api::prot::Send::opheldu",
+      "api::prot::Send::oploc1",
+      "api::prot::Send::oploc2",
+      "api::prot::Send::oploc3",
+      "api::prot::Send::oploc4",
+      "api::prot::Send::oploc5",
+      "api::prot::Send::oploct",
+      "api::prot::Send::oplocu",
+      "api::prot::Send::opnpc1",
+      "api::prot::Send::opnpc2",
+      "api::prot::Send::opnpc3",
+      "api::prot::Send::opnpc4",
+      "api::prot::Send::opnpc5",
+      "api::prot::Send::opnpct",
+      "api::prot::Send::opnpcu",
+      "api::prot::Send::opobj1",
+      "api::prot::Send::opobj2",
+      "api::prot::Send::opobj3",
+      "api::prot::Send::opobj4",
+      "api::prot::Send::opobj5",
+      "api::prot::Send::opobjt",
+      "api::prot::Send::opobju",
+      "api::prot::Send::opplayer1",
+      "api::prot::Send::opplayer2",
+      "api::prot::Send::opplayer3",
+      "api::prot::Send::opplayer4",
+      "api::prot::Send::opplayer5",
+      "api::prot::Send::opplayert",
+      "api::prot::Send::opplayeru",
+      "api::prot::Send::report_abuse",
+      "api::prot::Send::resume_pausebutton",
+      "api::prot::Send::tut_clickside",
       "api::prot::Send::write_for_revision",
-      "api::prot::WalkStep::write",
-      "api::prot::WalkStep::write_for_revision",
+      "api::prot::effects::effects",
       "api::prot::legal_sends_for",
       "api::selected::ClientRevision::as_i32",
       "api::selected::ClientRevision::is_274",
@@ -772,10 +850,18 @@
       "api::interact::server_ordered::ServerOrderedCatalog",
       "api::interact::server_ordered::npc_transforms::NpcTransformAction",
       "api::interact::server_ordered::npc_transforms::NpcTransformEvidence",
+      "api::prot::AbuseReason",
+      "api::prot::Base37Name",
+      "api::prot::CycleLogic1",
+      "api::prot::CycleLogic2",
       "api::prot::LegalSend",
-      "api::prot::Out",
+      "api::prot::MinimapTrailer",
+      "api::prot::MouseMoveRecord",
+      "api::prot::PacketError",
+      "api::prot::PacketLength",
       "api::prot::Send",
-      "api::prot::WalkStep",
+      "api::prot::effects::Effect",
+      "api::prot::effects::PacketEffects",
       "api::selected::ClientRevision",
       "api::settle::Evidence",
       "api::settle::Outcome",
@@ -1374,12 +1460,6 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::interact::Driver::out",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
       "path": "api::interact::Driver::packet_checkpoint",
       "rustdoc_kind": "function"
     },
@@ -1393,6 +1473,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::Driver::send_cheat",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::Driver::send_packet",
       "rustdoc_kind": "function"
     },
     {
@@ -2246,12 +2332,6 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::interact::driver::Driver::out",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
       "path": "api::interact::driver::Driver::packet_checkpoint",
       "rustdoc_kind": "function"
     },
@@ -2265,6 +2345,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::driver::Driver::send_cheat",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::interact::driver::Driver::send_packet",
       "rustdoc_kind": "function"
     },
     {
@@ -3548,6 +3634,180 @@
       "rustdoc_kind": "module"
     },
     {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::AbuseReason",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::AccountSharing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::BugAbuse",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::CustomerSupportMisuse",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::EncouragingRuleBreaking",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::ItemScamming",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::Macroing",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::MultipleLoggingIn",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::OffensiveLanguage",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::PasswordScamming",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::RealWorldTrading",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::StaffImpersonation",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::AbuseReason::WebsiteAdvertising",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::AbuseReason::value",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::Base37Name",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Base37Name::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Base37Name::value",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::CycleLogic1",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic1::marker139",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic1::marker65",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic1::marker94",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic1::prefix",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic1::random",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::CycleLogic2",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic2::prefix",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic2::random_tail",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic2::random_word_a",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic2::random_word_b",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::CycleLogic2::suffix",
+      "rustdoc_kind": "struct_field"
+    },
+    {
       "declared_type": {
         "borrowed_ref": {
           "is_mutable": false,
@@ -3588,37 +3848,295 @@
     {
       "kind": "type",
       "lint": "type",
-      "path": "api::prot::Out",
-      "rustdoc_kind": "trait"
+      "path": "api::prot::MinimapTrailer",
+      "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::camera_anticheat_angle",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::camera_yaw",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::click_x",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::click_y",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::minimap_zoom",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::nearest",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::player_x",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MinimapTrailer::player_z",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::MouseMoveRecord",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Absolute",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Absolute::duplicates",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Absolute::x",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Absolute::y",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Delta",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Delta::duplicates",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Delta::dx",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Delta::dy",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Outside",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Outside::duplicates",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Repeated",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Repeated::duplicates",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Repeated::x",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::MouseMoveRecord::Repeated::y",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::PacketError",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::BodyTooLong",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::BodyTooLong::length",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::BodyTooLong::max",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::IntegerOutOfRange",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::IntegerOutOfRange::field",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::IntegerOutOfRange::max",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::IntegerOutOfRange::min",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::IntegerOutOfRange::value",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidAbuseReason",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidAbuseReason::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidCheat",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidCheat::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidName",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidName::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidShape",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidShape::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::InvalidText",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketError::RevisionMismatch",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::PacketLength",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketLength::Fixed",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketLength::Fixed::0",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketLength::VarByte",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::PacketLength::VarShort",
+      "rustdoc_kind": "variant"
     },
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::prot::Out::p1",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::Out::p1_enc",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::Out::p2",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::Out::p4",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::Out::pjstr",
+      "path": "api::prot::PacketLength::validate",
       "rustdoc_kind": "function"
     },
     {
@@ -3626,6 +4144,120 @@
       "lint": "type",
       "path": "api::prot::Send",
       "rustdoc_kind": "struct"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic6",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_cyclelogic7",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic6",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic7",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic8",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::anticheat_oplogic9",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::body",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::chat_setmode",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::client_cheat",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "method",
@@ -3642,25 +4274,379 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::prot::Send::if_button",
+      "path": "api::prot::Send::event_applet_focus",
       "rustdoc_kind": "function"
-    },
-    {
-      "kind": "field",
-      "lint": "inventory_only",
-      "path": "api::prot::Send::prot",
-      "rustdoc_kind": "struct_field"
-    },
-    {
-      "kind": "field",
-      "lint": "inventory_only",
-      "path": "api::prot::Send::value",
-      "rustdoc_kind": "struct_field"
     },
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::prot::Send::write",
+      "path": "api::prot::Send::event_camera_position",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::event_mouse_click",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::event_mouse_move",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::friendlist_add",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::friendlist_del",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::idk_savedesign",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::idle_timer",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::if_button",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::ignorelist_add",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::ignorelist_del",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_button1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_button2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_button3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_button4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_button5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::inv_buttond",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::map_build_complete",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::message_private",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::message_public",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::move_gameclick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::move_minimapclick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::move_opclick",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::named_packet",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::no_timeout",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheld1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheld2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheld3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheld4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheld5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheldt",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opheldu",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploc1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploc2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploc3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploc4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploc5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oploct",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::oplocu",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpc1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpc2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpc3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpc4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpc5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpct",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opnpcu",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobj1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobj2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobj3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobj4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobj5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobjt",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opobju",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayer1",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayer2",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayer3",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayer4",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayer5",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayert",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::opplayeru",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::report_abuse",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::resume_pausebutton",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::tut_clickside",
       "rustdoc_kind": "function"
     },
     {
@@ -3670,34 +4656,70 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "module",
+      "lint": "inventory_only",
+      "path": "api::prot::effects",
+      "rustdoc_kind": "module"
+    },
+    {
       "kind": "type",
       "lint": "type",
-      "path": "api::prot::WalkStep",
+      "path": "api::prot::effects::Effect",
+      "rustdoc_kind": "enum"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::effects::Effect::DependsOnContent",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::effects::Effect::No",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
+      "path": "api::prot::effects::Effect::Yes",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "type",
+      "lint": "type",
+      "path": "api::prot::effects::PacketEffects",
       "rustdoc_kind": "struct"
     },
     {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::WalkStep::write",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::prot::WalkStep::write_for_revision",
-      "rustdoc_kind": "function"
-    },
-    {
       "kind": "field",
       "lint": "inventory_only",
-      "path": "api::prot::WalkStep::x",
+      "path": "api::prot::effects::PacketEffects::account_punishment",
       "rustdoc_kind": "struct_field"
     },
     {
       "kind": "field",
       "lint": "inventory_only",
-      "path": "api::prot::WalkStep::z",
+      "path": "api::prot::effects::PacketEffects::cross_player",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::effects::PacketEffects::logout",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "field",
+      "lint": "inventory_only",
+      "path": "api::prot::effects::PacketEffects::persistent",
+      "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::effects::effects",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "method",
@@ -19855,11 +20877,11 @@
   "source_files": [
     {
       "path": "crates/api/src/interact.rs",
-      "sha256": "2652f1f7ad71c98a1808b3e94dacdd334dc71d654cf1d66ae56aea42e50da153"
+      "sha256": "a9b620c3f3fd7049864738ea9ac23509bced3c33d6d6c281e1cc748ee4870f2b"
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "d78860f4f1d34ab3154872b922c4a33ef56661481aba0857b8312a9c6c8e4d07"
+      "sha256": "cb3e8f74d5f8efaaa62cc2927f83ed08669682d58f0a290029c09af323a30622"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
@@ -19875,7 +20897,11 @@
     },
     {
       "path": "crates/api/src/prot.rs",
-      "sha256": "647ef35b4bb26138b325de7bc3da4072fc4cb9b60f448437d1324468d969fedb"
+      "sha256": "07967f605597d5a183079f6c941acc428f5f1188d5973fdb16bf2210e2728777"
+    },
+    {
+      "path": "crates/api/src/prot/effects.rs",
+      "sha256": "28c449433771a2feb76817a39bae9193a0ba33d03c3795f24229e96e3dcf3c99"
     },
     {
       "path": "crates/api/src/settle.rs",
@@ -19918,12 +20944,14 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "1c7268c11cb24a877687e9a8c8a33e399c212f926d941cec7c31728a4bded7b2"
+      "sha256": "a7c802ed6fa827a7842aebd39587d87f0d37dde94d0f52e7fa86270688017db9"
     },
     {
-      "files": [],
+      "files": [
+        "crates/api/src/prot/effects.rs"
+      ],
       "path": "crates/api/src/prot",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "e6738b4e1bca77eedcc840b979a6dbe93a99cb60077d8fa31ca0c8746f4f8001"
     },
     {
       "files": [],
