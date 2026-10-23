@@ -3,7 +3,7 @@
 //! This state outlives script owners, holds and reconnects. Packet counters
 //! describe committed host input. They never admit or refuse input.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use api::interact::server_ordered::{InputLineage, ServerOrderedInputState};
 use api::selected::ClientRevision;
@@ -30,6 +30,11 @@ struct ObservationState {
     committed_packets: u64,
 }
 
+/// A poisoned observation lock still yields its state: a panicking observer must never wedge the slot.
+fn lock_unpoisoned(state: &Mutex<ObservationState>) -> MutexGuard<'_, ObservationState> {
+    state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 impl Default for InputObservation {
     fn default() -> Self {
         Self {
@@ -51,7 +56,7 @@ pub struct InputLineageGuard<'a> {
 
 impl Drop for InputLineageGuard<'_> {
     fn drop(&mut self) {
-        let mut state = self.input.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input.input_observation.state);
         state.lineage = LineageKind::Foreign;
         state.request_id = 0;
     }
@@ -68,7 +73,7 @@ impl SlotInput {
     /// Reset only when a new PLAYER_INFO tick is observed. A session change
     /// invalidates ownership but does not create a tick or erase totals.
     pub fn observe_input_tick(&self, revision: ClientRevision, tick: u64, session: u64) {
-        let mut state = self.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input_observation.state);
         state.revision = revision;
         state.inputs.observe_session(session);
         state.inputs.observe_tick(tick);
@@ -76,14 +81,14 @@ impl SlotInput {
 
     /// Bind session identity without inventing a newly received PLAYER_INFO.
     pub fn observe_input_session(&self, revision: ClientRevision, session: u64) {
-        let mut state = self.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input_observation.state);
         state.revision = revision;
         state.inputs.observe_session(session);
     }
 
     /// Attribute this request's writes without reserving rate capacity.
     pub fn input_lineage(&self, lineage: InputLineage) -> InputLineageGuard<'_> {
-        let mut state = self.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input_observation.state);
         (state.lineage, state.request_id) = match lineage {
             InputLineage::Foreign => (LineageKind::Foreign, 0),
             InputLineage::ContentRequest(id) => (LineageKind::Content, id),
@@ -98,7 +103,7 @@ impl SlotInput {
         &self,
         apply: impl FnOnce(&mut ServerOrderedInputState) -> T,
     ) -> T {
-        apply(&mut self.input_observation.state.lock().unwrap().inputs)
+        apply(&mut lock_unpoisoned(&self.input_observation.state).inputs)
     }
 
     /// A foreign local edit invalidates content ownership even with no packet.
@@ -109,7 +114,7 @@ impl SlotInput {
 
 impl PacketObserver for SlotInput {
     fn observed_tick(&self, tick: u64, session: u64) {
-        let mut state = self.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input_observation.state);
         state.inputs.observe_session(session);
         state.inputs.observe_tick(tick);
     }
@@ -119,12 +124,12 @@ impl PacketObserver for SlotInput {
     }
 
     fn packet_body_length(&self, opcode: u8) -> i16 {
-        let revision = self.input_observation.state.lock().unwrap().revision;
+        let revision = lock_unpoisoned(&self.input_observation.state).revision;
         api::prot::packet_metadata(revision, opcode).map_or(-3, |metadata| metadata.length as i16)
     }
 
     fn packet_committed(&self, opcode: u8, _encoded_length: usize) {
-        let mut state = self.input_observation.state.lock().unwrap();
+        let mut state = lock_unpoisoned(&self.input_observation.state);
         state.committed_packets = state
             .committed_packets
             .checked_add(1)
@@ -139,13 +144,7 @@ impl PacketObserver for SlotInput {
     }
 
     fn committed_packet_count(&self) -> Option<u64> {
-        Some(
-            self.input_observation
-                .state
-                .lock()
-                .unwrap()
-                .committed_packets,
-        )
+        Some(lock_unpoisoned(&self.input_observation.state).committed_packets)
     }
 }
 
