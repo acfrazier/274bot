@@ -18,11 +18,11 @@ the random-event guardian, and `tui-play` are in this tree. Revision **289**
 is the production revision; 274 packs build but are best-effort, neither
 tested nor claimed.
 
-- [snapshot.md](snapshot.md) — the full gen-stamped world read model
+- [snapshot.md](../dev/snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
-- [query.md](query.md) — the fluent `Query<T>` read DSL + typed filters
-- [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
-- [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
+- [query.md](../dev/query.md) — the fluent `Query<T>` read DSL + typed filters
+- [interact.md](../dev/interact.md) — `Driver` + the `Interactions` orchestration layer
+- [settle.md](../dev/settle.md) — pollable `Settle`/`Outcome`/`Evidence`
 - [nav.md](nav.md) — whole-world collision + transport graph (pack v17) +
   Dijkstra router (`nav`) + `Traveller::follow` (`nav-executor`) + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
@@ -81,4 +81,4 @@ LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 capture, and the `crates/scenario` engine via `--live <scenario>` with
 screenshots); `crates/e2e` is the headless twin. Failures print `FAIL:` and
 `exit(1)`. Wait until `ingame && scene_state == 2`. Suite contracts:
-[../e2e-suite.md](../e2e-suite.md).
+[../dev/e2e-suite.md](../dev/e2e-suite.md).

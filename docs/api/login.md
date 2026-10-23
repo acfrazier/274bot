@@ -153,7 +153,7 @@ New accounts spawn on Tutorial Island. Two different local-engine paths:
 
 `tele` / `setvar` / `setstat` have **no** tilde. Engine debugprocs are cheat bodies that **start with `~`** (`~home` from the panel Lumbridge button; type `::~name` in chat). Panel capture must pass colon, tilde, and comma.
 
-This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Cheat sends are admitted on local (loopback) profiles; remote profiles refuse them.
+This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](../dev/interact.md)). Cheat sends are admitted on local (loopback) profiles; remote profiles refuse them.
 
 ## RSA (local engine)
 

@@ -28,7 +28,7 @@ terminal is present; otherwise it pumps headless and still prints
 PASS/FAIL. `--catalog-core` / `--pair-core` (environment form
 `BOT_LIVE_CORE=catalog|pair`) hold a `--live` PASS until the shared core
 witness qualifies, exactly as the panel watches do; see
-[the harness guide](../harness.md#core-gated-qualification). `--help` (or
+[the harness guide](../dev/harness.md#core-gated-qualification). `--help` (or
 `-h`) prints the usage on stdout and exits 0; any other bad flag prints
 usage on stderr and exits 2.
 

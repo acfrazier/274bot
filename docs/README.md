@@ -31,7 +31,7 @@ headings to jump to the part you need.
 | See which rs2b0t scripts and calls run | [Scripts](api/script.md) |
 | Write or load a quest guide for the Quester | [Quest guides](quester-paths.md) |
 | Copy a working example | [Example scripts](../crates/script/examples/) |
-| Test a script against a local game server | [Reusable live harness](harness.md) |
+| Test a script against a local game server | [Reusable live harness](dev/harness.md) |
 
 ## I want to work on 274bot
 
@@ -42,10 +42,10 @@ headings to jump to the part you need.
 | Run it against my own game server, or learn how the cache works | [Cache and local engine](dev/cache-and-local-engine.md) |
 | Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
 | Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
-| Learn the crates and who owns what | [Architecture](architecture.md) |
+| Learn the crates and who owns what | [Architecture](dev/architecture.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
-| Run the end-to-end suite | [e2e suite](e2e-suite.md) |
+| Run the end-to-end suite | [e2e suite](dev/e2e-suite.md) |
 | Check an upgrade from 0.1.8.1 before a release | [Release gate](dev/release-gate-0.1.8.1.md) |
 | See the open and deferred issues | [`known-issues.toml`](known-issues.toml) |
 | Write or edit a doc | [Writing docs](dev/writing-docs.md) |

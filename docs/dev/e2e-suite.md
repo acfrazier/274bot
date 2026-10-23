@@ -1,7 +1,7 @@
 # Native e2e suite runner (`e2e-suite`)
 
 > **Developer reference.** This page is for people who change 274bot.
-> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
 
 `e2e-suite` is the tracked entrypoint for running the native end-to-end cases in one
 ordered, resumable run. It drives the *existing* native executables — `panel`'s
