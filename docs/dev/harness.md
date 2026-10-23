@@ -325,7 +325,7 @@ export RS2B0T=/absolute/path/to/catalog
 # optional custom bake (not required for default bundled nav):
 # export NAV_PACK=/absolute/output/274bot.navpack
 # export NAV_FLAGS=/absolute/output/274bot.navflags
-# cargo run --locked --release -p nav --bin nav-pack
+# cargo run --locked --release -p nav-planner --bin nav-pack
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever

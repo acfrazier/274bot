@@ -9,15 +9,15 @@ use api::snapshot::WorldTile;
 use host_play as map_host;
 use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
-use nav::bank_fetch::BankRows;
-use nav::collision::WorldCollision;
-use nav::map::identity::Digest;
-use nav::router::{AvoidRect, FindOptions};
-use nav::tile::Tile;
-use nav::transport::{TransportGraph, WildernessRules};
-use nav::world::NavWorld;
-use nav::zones::{Zone, ZoneKind, ZoneTable};
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::collision::WorldCollision;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::{AvoidRect, FindOptions};
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportGraph, WildernessRules};
+use nav_planner::world::NavWorld;
+use nav_planner::zones::{Zone, ZoneKind, ZoneTable};
+use nav_planner::WorldState;
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::{walk_marked, MarkedWalk, WalkInputs};
@@ -39,7 +39,7 @@ fn world(size: usize, blocked: &[(usize, usize)]) -> NavWorld {
     for &(x, z) in blocked {
         flags[z * size + x] = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: api::snapshot::WorldTile {
@@ -171,9 +171,9 @@ impl Fixture {
                 .as_ref()
                 .is_none_or(|zones| zones.zones().is_empty())
             {
-                nav::zones::ZoneExempt::all()
+                nav_planner::zones::ZoneExempt::all()
             } else {
-                nav::zones::ZoneExempt::default()
+                nav_planner::zones::ZoneExempt::default()
             },
             ..FindOptions::default()
         };

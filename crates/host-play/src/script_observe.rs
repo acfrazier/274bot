@@ -11,8 +11,8 @@ use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
@@ -967,7 +967,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         poison_unknown_pulse,
                         collision: world
                             .as_deref()
-                            .and_then(|world| nav::producer::collision_view(world).ok()),
+                            .and_then(|world| nav_planner::producer::collision_view(world).ok()),
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),
@@ -1965,7 +1965,7 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
     let goal = (matches!(
         &end,
         script::native::WalkEnd::Arrived | script::native::WalkEnd::RouteEnded
-    ) && bot.route_arrival == nav::contract::ArrivalKind::Area
+    ) && bot.route_arrival == nav_planner::contract::ArrivalKind::Area
         && bot.route_loc_id.is_none()
         && bot.walk_outcome_radius == 0)
         .then_some(api::snapshot::WorldTile {

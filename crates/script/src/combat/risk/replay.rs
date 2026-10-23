@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav::contract::{BoundZoneExempt, BoundZoneKey, LegView, RouteView, WildernessView};
+use nav_planner::contract::{BoundZoneExempt, BoundZoneKey, LegView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 

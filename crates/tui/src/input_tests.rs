@@ -795,9 +795,9 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
     );
     assert_eq!(app.log.scroll, 3);
 
-    app.world = Some(std::sync::Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
-    )));
+    app.world = Some(std::sync::Arc::new(
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3()),
+    ));
     app.on_key(key(KeyCode::F(4)));
     draw(&mut app, 120, 40);
     let map = app.regions.map;
@@ -811,9 +811,9 @@ fn the_wheel_scrolls_the_pane_under_the_pointer() {
 #[test]
 fn a_map_click_selects_and_a_second_action_walks() {
     let mut app = fleet_app(&["alice"]);
-    app.world = Some(std::sync::Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
-    )));
+    app.world = Some(std::sync::Arc::new(
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3()),
+    ));
     app.here = Some(api::snapshot::WorldTile {
         x: 1,
         z: 1,

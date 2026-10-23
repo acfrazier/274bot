@@ -18,9 +18,9 @@ use host_play::walk_map::{
     ActionError, MapContext, MapWalkPlan, WalkRequest, WalkSlotOutcomeKind, WalkSlotRequest,
 };
 use host_play::{WalkArms, WorldMembersFact};
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::WorldState;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::WorldState;
 
 const LABEL: &str = "Walk marked";
 const DONE: &str = "walking";
@@ -30,7 +30,7 @@ const DONE: &str = "walking";
 pub struct WalkInputs {
     state: WorldState,
     /// The bot's bank memory rows ([`host_play::Play::bank_rows`]).
-    bank: nav::bank_fetch::BankRows,
+    bank: nav_planner::bank_fetch::BankRows,
     risk_input: host_play::admission::RiskInput,
 }
 
@@ -38,7 +38,7 @@ impl WalkInputs {
     /// One bot's router inputs.
     pub fn new(
         state: WorldState,
-        bank: nav::bank_fetch::BankRows,
+        bank: nav_planner::bank_fetch::BankRows,
         risk_input: host_play::admission::RiskInput,
     ) -> Self {
         Self {
@@ -54,7 +54,7 @@ impl WalkInputs {
     }
 
     /// The bot's bank memory rows.
-    pub fn bank(&self) -> &nav::bank_fetch::BankRows {
+    pub fn bank(&self) -> &nav_planner::bank_fetch::BankRows {
         &self.bank
     }
 

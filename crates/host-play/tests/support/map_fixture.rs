@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use nav::collision::WorldCollision;
-use nav::map::identity::Digest;
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::collision::WorldCollision;
+use nav_planner::map::identity::Digest;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use super::map_host;
 use map_host::profile::{CacheManifest, NavManifest, ProfileEnvironment};
@@ -66,7 +66,7 @@ impl MapFixture {
         } else {
             &world.collision
         };
-        let bytes = nav::pack::encode(collision, &world.graph, world.banks()).unwrap();
+        let bytes = nav_planner::pack::encode(collision, &world.graph, world.banks()).unwrap();
         let pack = root.join("selected.navpack");
         std::fs::write(&pack, &bytes).unwrap();
         let manifest = NavManifest {

@@ -1,7 +1,7 @@
 //! Conservative, pure route estimates. This module neither admits a walk nor
 //! observes a live slot; callers retain the immutable route used by the plan.
 //!
-//! Routes, zones and wilderness reach this module only as `nav::contract`
+//! Routes, zones and wilderness reach this module only as `nav_planner::contract`
 //! views (T5.1, I-nav-closure): the host manufactures them at the owner
 //! boundary, and every retained zone identity is a pack-bound key, so a plan
 //! judged against another pack's table is refused, never misindexed. A
@@ -17,7 +17,7 @@ pub(crate) use facts::poison_unknown_v_rows;
 pub use facts::*;
 pub use geometry::{build_plan, RoutePath};
 pub use input::*;
-use nav::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
+use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
     admission_passes, admission_passes_cooperative, assess, assess_cooperative, candidate_cost,
     eat_line, estimated_floor, replay, Estimate, Grants, ReplayResult,

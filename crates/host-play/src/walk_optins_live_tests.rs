@@ -191,15 +191,20 @@ fn nav_sample(play: &Play, account: &str, combat: Option<i32>) -> Option<(u64, V
     let zone_tiles = bot.route.as_ref().and_then(|route| {
         let world = play.world.as_ref()?;
         let table = world.graph.zones.as_ref()?;
-        let filter = nav::zones::ZoneFilter::new(table, combat, &[], &nav::zones::ZoneExempt::NONE);
+        let filter = nav_planner::zones::ZoneFilter::new(
+            table,
+            combat,
+            &[],
+            &nav_planner::zones::ZoneExempt::NONE,
+        );
         let endpoint_zones: Vec<_> = table.at(ORIGIN).chain(table.at(route.dest)).collect();
         Some(
             route
                 .legs
                 .iter()
                 .flat_map(|leg| match leg {
-                    nav::router::Leg::Walk { tiles } => tiles.as_slice(),
-                    nav::router::Leg::Transport { edge } => std::slice::from_ref(&edge.to),
+                    nav_planner::router::Leg::Walk { tiles } => tiles.as_slice(),
+                    nav_planner::router::Leg::Transport { edge } => std::slice::from_ref(&edge.to),
                 })
                 .fold((0usize, 0usize), |(active, transit), &tile| {
                     let mut active_tile = false;
@@ -220,8 +225,8 @@ fn nav_sample(play: &Play, account: &str, combat: Option<i32>) -> Option<(u64, V
             (Some(active), Some(transit))
         });
     let legs = bot.route.as_ref().map(|route| route.legs.iter().map(|leg| match leg {
-        nav::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
-        nav::router::Leg::Transport { edge } => json!({"kind": format!("{:?}", edge.kind), "at": edge.at, "to": edge.to, "option": edge.option, "ticks": edge.ticks}),
+        nav_planner::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
+        nav_planner::router::Leg::Transport { edge } => json!({"kind": format!("{:?}", edge.kind), "at": edge.at, "to": edge.to, "option": edge.option, "ticks": edge.ticks}),
     }).collect::<Vec<_>>());
     Some((
         bot.walk_request_id,

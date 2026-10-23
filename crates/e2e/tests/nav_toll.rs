@@ -25,10 +25,10 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, profiles, wait_ingame};
 use host_play::{run_with_template, ProfileOptions, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use scenario::{default_pack_path, Proof, RunnerStatus, ScenarioRunner, StepKind};
 
 /// The left toll gate placement (m51_50 local (4,27) = (3268,3227)).
@@ -138,7 +138,7 @@ fn nav_toll() {
     if tolls.len() < 4 {
         fail(&format!(
             "nav_toll: pack carries {} toll-gate edges (locs 2882/2883), need 4 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
             tolls.len()
         ));
     }
@@ -179,7 +179,7 @@ fn nav_toll() {
         fail(&format!(
             "nav_toll: pack carries {} Shantay henge edges (loc 4031), need exactly 2 \
              (the gated desert hop and the free desert exit; rebake with \
-             `cargo run -p nav --bin nav-pack`)",
+             `cargo run -p nav-planner --bin nav-pack`)",
             henge.len()
         ));
     }

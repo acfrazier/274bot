@@ -771,7 +771,7 @@ mod tests {
             _target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
         ) -> crate::native::WalkDanger<'_> {
             crate::native::WalkDanger::Allowed
         }
@@ -781,7 +781,7 @@ mod tests {
             target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
             _existing: Option<&crate::native::WalkGoals>,
         ) -> Result<Option<crate::native::WalkGoals>, crate::native::WalkGoalsError> {
             self.restricted
@@ -832,7 +832,7 @@ mod tests {
             );
             assert_eq!(request.loc_id, None);
             assert_eq!(request.radius, 0);
-            assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+            assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Area);
         } else {
             assert!(request.candidate_goals.is_none());
             assert_eq!(request.loc_id, Some(loc.id));
@@ -840,7 +840,7 @@ mod tests {
                 request.radius,
                 crate::gatherer::select::RESOURCE_APPROACH_RADIUS
             );
-            assert_eq!(request.arrival, nav::contract::ArrivalKind::Reach);
+            assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Reach);
         }
     }
 

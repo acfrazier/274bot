@@ -29,10 +29,10 @@ use frontend_core::walk_map::{
 };
 use frontend_core::{FleetCounts, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
-use nav::map::poi::{PoiKind, PoiRecord};
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::map::poi::{PoiKind, PoiRecord};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
 use crate::commands::{script_command, Command};

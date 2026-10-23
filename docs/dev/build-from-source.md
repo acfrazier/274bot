@@ -9,7 +9,7 @@
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav-planner`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav-planner`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -70,7 +70,7 @@ cargo run --release -p panel --bin panel-play -- --profile local-289 --live stre
 cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50_full
 
 # Unit tests (no engine). Local CI: fmt + clippy -D + test on host *and* vendor/fr-client-rust (no LIVE=1).
-cargo test -p nav --offline
+cargo test -p nav-planner --offline
 cargo test -p api --offline
 ```
 
@@ -109,7 +109,7 @@ table and the build-time identity rules: [docs/api/nav.md](../api/nav.md).
 `nav-pack` stays for deliberate developer/custom-input bakes over a Server tree:
 
 ```bash
-cargo run -p nav --bin nav-pack
+cargo run -p nav-planner --bin nav-pack
 ```
 
 Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **17**).
@@ -130,7 +130,7 @@ See [the navigation API guide](../api/nav.md) for the full wire format and bake 
 
 **External v17 packs keep their baked routing data.** The app rebuilds the bundled pack automatically.
 It does not derive a pack that you baked yourself from the current content tree.
-Rebake it with `cargo run -p nav --bin nav-pack` after content or format changes to refresh its routing data.
+Rebake it with `cargo run -p nav-planner --bin nav-pack` after content or format changes to refresh its routing data.
 
 ## Live tests and suite runner
 
@@ -150,7 +150,7 @@ The nav real-map qualification tests are `#[ignore]`d. They need the content tre
 : "${ENGINE_DIR:?set ENGINE_DIR to the 289 engine root}"
 NAV_CONTENT_ROOT="$ENGINE_DIR/../content" \
 NAV_CACHE="$ENGINE_DIR/data/pack/client/config" \
-cargo test -p nav --lib -- --ignored
+cargo test -p nav-planner --lib -- --ignored
 ```
 
 Nav, panel and scenario twins live in `crates/e2e`. Login, RSS and null-raster twins live in `crates/host-play`. The memory fleet harness is in [docs/dev/harness.md](harness.md). `cargo test` here does not run Fairy-Ring client integration tests.

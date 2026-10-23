@@ -8,7 +8,7 @@ use bank_slot::BankSlot;
 use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
-use nav::named_banks::resolve;
+use nav_planner::named_banks::resolve;
 use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use script::isolate_fb::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,

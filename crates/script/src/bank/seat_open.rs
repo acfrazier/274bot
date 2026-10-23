@@ -22,7 +22,7 @@ use crate::native_bank::{
 use crate::shim::InteractReq;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
-use nav::contract::ArrivalKind;
+use nav_planner::contract::ArrivalKind;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;

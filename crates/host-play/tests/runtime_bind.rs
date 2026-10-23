@@ -165,8 +165,8 @@ fn snapshot(root: &Path, revision: u16, packs: &[Vec<u8>]) -> PathBuf {
             Ok(())
         }
     }
-    let transfer = nav::manifest::hash_bytes(&packs[4]);
-    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = nav_planner::manifest::hash_bytes(&packs[4]);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
     let input = root.join("fixture-packs");
     write_packs(&input, packs);
     let out = root
@@ -392,9 +392,9 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let content = root.join("content");
     std::fs::create_dir(&content).unwrap();
     std::fs::write(content.join("world"), b"world-a").unwrap();
-    let (walk, blocked) = nav::collision::pack_walk(&[0; 8]);
-    let bytes = nav::pack::encode(
-        &nav::collision::WorldCollision {
+    let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 8]);
+    let bytes = nav_planner::pack::encode(
+        &nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 3200,
                 z: 3200,
@@ -406,7 +406,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
             blocked,
             flags: None,
         },
-        &nav::transport::TransportGraph::default(),
+        &nav_planner::transport::TransportGraph::default(),
         &[],
     )
     .unwrap();
@@ -421,7 +421,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
             .content_id_hex(),
     );
     manifest.source_sha256 =
-        Some(nav::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
+        Some(nav_planner::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&manifest).unwrap(),
@@ -534,7 +534,7 @@ fn stepped_fixture(name: &str) -> (TempRoot, Vec<Vec<u8>>, PathBuf) {
             .unwrap(),
     )
     .unwrap();
-    let negotiated = nav::manifest::hash_bytes(&crc_body(&public)[..36]);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(&public)[..36]);
     let lock = root
         .join("unpack")
         .join("revision-274")
