@@ -43,7 +43,7 @@ use frontend_core::walk_map::{
     WalkRoutePath, WalkRouteSource, WalkSlotStatus, WalkSourceStatus,
 };
 use frontend_core::MapBakeChoice;
-use frontend_core::{GuardianEdit, GuardianPolicy, UiPreferences};
+use frontend_core::{CurePoison, GuardianEdit, GuardianPolicy, SurvivalEdit, UiPreferences};
 #[cfg(test)]
 use host_play::SlotStatus;
 use nav::paint::{
@@ -3282,6 +3282,17 @@ impl Session {
         self.core
             .stage_guardian(GuardianEdit::policy(event, policy));
         let result = self.submit_profile_write(OperatorCommand::SetGuardian, name);
+        self.apply_result(result)
+    }
+
+    /// Persist the focused profile's Cure poison setting to the vault
+    /// and mirror it onto a running slot's arm once the write is
+    /// durable, so the slot sees the change within one frame. Never
+    /// spawns or stops a slot.
+    pub fn set_survival(&mut self, name: &str, cure_poison: CurePoison) -> bool {
+        self.core
+            .stage_survival(SurvivalEdit::cure_poison(cure_poison));
+        let result = self.submit_profile_write(OperatorCommand::SetSurvival, name);
         self.apply_result(result)
     }
 

@@ -50,7 +50,7 @@ use frontend_core::walk_map::{
 use frontend_core::UiPreferences;
 use frontend_core::{
     load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, SubmitError,
-    Targets,
+    SurvivalEdit, Targets,
 };
 #[cfg(test)]
 use host_play::{PlayOptions, SharedClientTemplate};
@@ -2564,8 +2564,8 @@ impl TuiSession {
             })
             .unwrap_or_default();
         // Field edit, not a whole-settings replacement: the popup owns the
-        // guardian fields and the memory row, and each row lands through its
-        // own write (the form tracks the latest).
+        // guardian fields, the memory row and the cure poison row, and
+        // each row lands through its own write (the form tracks the latest).
         let lowmem = app.settings.lowmem();
         let random_events = app.settings.random_events();
         let lamp_skill = app.settings.lamp_skill().to_string();
@@ -2574,6 +2574,11 @@ impl TuiSession {
             .core
             .profile(&name)
             .is_some_and(|p| p.lowmem() != lowmem);
+        let cure_poison = app.settings.survival().cure_poison();
+        let cure_poison_changed = self
+            .core
+            .profile(&name)
+            .is_some_and(|p| p.survival().cure_poison() != cure_poison);
         if lowmem_changed {
             let mode = if lowmem {
                 api::lifecycle::MemoryMode::Low
@@ -2600,6 +2605,15 @@ impl TuiSession {
                 .stage_guardian(GuardianEdit::policy(event, policy));
             if let Err(error) =
                 self.submit_with(app, OperatorCommand::SetGuardian, Targets::Profile(&name))
+            {
+                app.error = Some(format!("settings: {error}"));
+            }
+        }
+        if cure_poison_changed {
+            self.core
+                .stage_survival(SurvivalEdit::cure_poison(cure_poison));
+            if let Err(error) =
+                self.submit_with(app, OperatorCommand::SetSurvival, Targets::Profile(&name))
             {
                 app.error = Some(format!("settings: {error}"));
             }
@@ -4158,6 +4172,9 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                 }
                 crate::settings::SettingsEdit::Lowmem(value) => {
                     *app.settings.lowmem_mut() = value;
+                }
+                crate::settings::SettingsEdit::CurePoison(value) => {
+                    app.settings.survival_mut().set_cure_poison(value);
                 }
             }
             if let Err(error) = session.submit_with(

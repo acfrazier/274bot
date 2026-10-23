@@ -6232,6 +6232,7 @@ fn profile_form_body(ui: &Ui, session: &mut Session) {
     }
     slot_capture_section(ui, session);
     slot_random_section(ui, session);
+    slot_survival_section(ui, session);
     slot_clue_section(ui, session);
 }
 
@@ -6795,6 +6796,82 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
             Targets::Application,
         );
     }
+}
+
+/// The Survival and supplies section: the profile's Cure poison row.
+/// The choice uses the same vault save path as the random-event and
+/// lamp controls, and a running slot sees it within one frame.
+fn slot_survival_section(ui: &Ui, session: &mut Session) {
+    ui.text_disabled("Survival and supplies");
+    ui.text_disabled("Cure poison");
+    ui.same_line();
+    let mut policy = session
+        .profile_editor
+        .draft()
+        .settings()
+        .survival()
+        .cure_poison();
+    if cure_poison_combo(ui, &mut policy) {
+        session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .survival_mut()
+            .set_cure_poison(policy);
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            session
+                .core
+                .stage_survival(frontend_core::SurvivalEdit::cure_poison(policy));
+            if let Some(submitted) =
+                session.submit(OperatorCommand::SetSurvival, Targets::Profile(&name))
+            {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
+        }
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
+    }
+    ui.text_wrapped(policy.label());
+}
+
+fn cure_poison_combo(ui: &Ui, policy: &mut frontend_core::CurePoison) -> bool {
+    use frontend_core::CurePoison::{Always, Never, WhenNeeded};
+
+    let preview = match *policy {
+        WhenNeeded => "When needed",
+        Always => "Always",
+        Never => "Never",
+    };
+    let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    let mut changed = false;
+    ui.set_next_item_width(-1.0);
+    if let Some(_open) = ui.begin_combo_with_flags("##cure-poison", preview, options) {
+        for (option, label) in [
+            (WhenNeeded, "When needed"),
+            (Always, "Always"),
+            (Never, "Never"),
+        ] {
+            let selected = option == *policy;
+            if ui.selectable_config(label).selected(selected).build() {
+                *policy = option;
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    changed
 }
 
 /// lamp skill combo: the client skill table (the lamp dialogue's own

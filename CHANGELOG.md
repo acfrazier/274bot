@@ -29,6 +29,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Grinch makes one fresh return attempt if its walk back to the Start tile
   stalls. A second stall still stops the script and keeps the failure detail.
 
+### Survival
+
+- A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
+
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
