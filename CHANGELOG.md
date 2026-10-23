@@ -8,6 +8,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- Other players now show the current movement and action pose when you switch
+  between bots. Old short effects, such as smoke, no longer start playing only
+  when that bot's game view is first drawn.
 
 ### Nav
 
