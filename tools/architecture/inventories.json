@@ -1394,6 +1394,14 @@
       "reason": "T3.3 operator command seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|Update",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "Update",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S2 durable or service-owned queued preference result."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/surface.rs|SpawnProfile",
       "path": "crates/frontend-core/src/surface.rs",
       "symbol": "SpawnProfile",
