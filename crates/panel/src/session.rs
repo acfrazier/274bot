@@ -1843,7 +1843,7 @@ impl Session {
         }
         self.draw = frontend_core::DrawPolicy::restore(&self.preferences, self.persist_ui);
         {
-            let mut focus = self.focus.lock().unwrap();
+            let mut focus = self.focus.lock().expect("panel focus mutex is not poisoned");
             focus.capture = self.draw.capture();
             focus.sidecar_50 = self.draw.sidecar_50();
             focus.focused_50 = self.draw.focused_50();

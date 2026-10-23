@@ -62,32 +62,78 @@ fn operator_identity(domain: LocalStateDomain) -> DomainIdentity {
 }
 /// A typed preference failure with the affected preference path and cause.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("preferences at {path}: {cause}")]
-pub struct PreferenceError {
-    path: Arc<str>,
-    cause: Arc<str>,
-    code: Option<ErrorCode>,
+pub enum PreferenceError {
+    /// The preference service refused or failed an operation with a typed code.
+    #[error("preferences at {path}: {cause}")]
+    Store {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded diagnostic cause.
+        cause: Arc<str>,
+        /// The neutral service code.
+        code: ErrorCode,
+    },
+    /// The preference service cancelled an accepted request.
+    #[error("preferences at {path}: {cause}")]
+    Cancelled {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded cancellation diagnostic.
+        cause: Arc<str>,
+    },
+    /// The service no longer retains the request's terminal result.
+    #[error("preferences at {path}: {cause}")]
+    ResultNotRetained {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded diagnostic cause.
+        cause: Arc<str>,
+    },
+    /// A preference failure without a service error code.
+    #[error("preferences at {path}: {cause}")]
+    Other {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded diagnostic cause.
+        cause: Arc<str>,
+    },
 }
 
 impl PreferenceError {
     fn from_code(path: impl Into<String>, code: ErrorCode) -> Self {
-        Self {
+        Self::Store {
             path: Arc::from(path.into()),
             cause: Arc::from(code.to_string()),
-            code: Some(code),
+            code,
         }
     }
 
     fn caused(path: impl Into<String>, cause: impl Into<String>) -> Self {
-        Self {
+        Self::Other {
             path: Arc::from(path.into()),
             cause: Arc::from(cause.into()),
-            code: None,
+        }
+    }
+
+    fn cancelled(path: impl Into<String>, cause: impl Into<String>) -> Self {
+        Self::Cancelled {
+            path: Arc::from(path.into()),
+            cause: Arc::from(cause.into()),
+        }
+    }
+
+    fn result_not_retained(path: impl Into<String>) -> Self {
+        Self::ResultNotRetained {
+            path: Arc::from(path.into()),
+            cause: Arc::from("the request's terminal result is no longer retained"),
         }
     }
 
     pub(super) fn from_cached(path: Arc<str>, cause: Arc<str>, code: Option<ErrorCode>) -> Self {
-        Self { path, cause, code }
+        match code {
+            Some(code) => Self::Store { path, cause, code },
+            None => Self::Other { path, cause },
+        }
     }
 
     fn validation(
@@ -95,34 +141,133 @@ impl PreferenceError {
         reason: ValidationReason,
         cause: impl Into<String>,
     ) -> Self {
-        Self {
+        Self::Store {
             path: Arc::from(path.into()),
             cause: Arc::from(cause.into()),
-            code: Some(ErrorCode::Validation {
+            code: ErrorCode::Validation {
                 domain: LocalStateDomain::Preferences,
                 reason,
-            }),
+            },
         }
     }
 
     /// The preference key or file path associated with this error.
     pub fn path(&self) -> &str {
-        &self.path
+        match self {
+            Self::Store { path, .. }
+            | Self::Cancelled { path, .. }
+            | Self::ResultNotRetained { path, .. }
+            | Self::Other { path, .. } => path,
+        }
     }
 
     /// The bounded diagnostic cause.
     pub fn cause(&self) -> &str {
-        &self.cause
+        match self {
+            Self::Store { cause, .. }
+            | Self::Cancelled { cause, .. }
+            | Self::ResultNotRetained { cause, .. }
+            | Self::Other { cause, .. } => cause,
+        }
     }
 
     /// The neutral service code, when the failure came from the store.
     pub fn code(&self) -> Option<ErrorCode> {
-        self.code
+        match self {
+            Self::Store { code, .. } => Some(*code),
+            Self::Cancelled { .. } | Self::ResultNotRetained { .. } | Self::Other { .. } => None,
+        }
     }
 
     /// Whether the preference document is still hydrating.
     pub fn is_not_ready(&self) -> bool {
-        matches!(self.code, Some(ErrorCode::NotReady { .. }))
+        matches!(
+            self,
+            Self::Store {
+                code: ErrorCode::NotReady { .. },
+                ..
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+mod preference_error_tests {
+    use super::PreferenceError;
+    use api::local_state::{ErrorCode, LocalStateDomain};
+    use std::sync::Arc;
+
+    #[test]
+    fn cached_store_error_preserves_shared_diagnostics_and_code() {
+        let path: Arc<str> = Arc::from("panel-ui.json");
+        let cause: Arc<str> = Arc::from("preference document is not ready yet");
+        let error = PreferenceError::from_cached(
+            Arc::clone(&path),
+            Arc::clone(&cause),
+            Some(ErrorCode::NotReady {
+                domain: LocalStateDomain::Preferences,
+            }),
+        );
+
+        assert!(matches!(&error, PreferenceError::Store { .. }));
+        assert_eq!(error.path(), "panel-ui.json");
+        assert_eq!(error.cause(), "preference document is not ready yet");
+        assert_eq!(
+            error.code(),
+            Some(ErrorCode::NotReady {
+                domain: LocalStateDomain::Preferences,
+            })
+        );
+        assert!(error.is_not_ready());
+        assert_eq!(
+            error.to_string(),
+            "preferences at panel-ui.json: preference document is not ready yet"
+        );
+        let PreferenceError::Store {
+            path: stored_path,
+            cause: stored_cause,
+            ..
+        } = error
+        else {
+            panic!("cached error keeps the shared store diagnostics")
+        };
+        assert!(Arc::ptr_eq(&path, &stored_path));
+        assert!(Arc::ptr_eq(&cause, &stored_cause));
+    }
+
+    #[test]
+    fn cancellation_and_missing_result_have_distinct_variants() {
+        let cancelled = PreferenceError::cancelled(
+            "panel-ui.json",
+            "request cancelled (Shutdown)",
+        );
+        let missing = PreferenceError::result_not_retained("panel-ui.json");
+
+        assert!(matches!(&cancelled, PreferenceError::Cancelled { .. }));
+        assert_eq!(cancelled.path(), "panel-ui.json");
+        assert_eq!(cancelled.cause(), "request cancelled (Shutdown)");
+        assert_eq!(cancelled.code(), None);
+        assert!(!cancelled.is_not_ready());
+        assert_eq!(
+            cancelled.to_string(),
+            "preferences at panel-ui.json: request cancelled (Shutdown)"
+        );
+
+        assert!(matches!(
+            &missing,
+            PreferenceError::ResultNotRetained { .. }
+        ));
+        assert_eq!(missing.path(), "panel-ui.json");
+        assert_eq!(
+            missing.cause(),
+            "the request's terminal result is no longer retained"
+        );
+        assert_eq!(missing.code(), None);
+        assert!(!missing.is_not_ready());
+        assert_eq!(
+            missing.to_string(),
+            "preferences at panel-ui.json: the request's terminal result is no longer retained"
+        );
     }
 }
 
@@ -609,16 +754,18 @@ impl Preferences {
         let path = || self.path().display().to_string();
         match poll {
             PreferenceWatchPoll::Pending => None,
-            PreferenceWatchPoll::Missing => Some(Err(PreferenceError::caused(
-                path(),
-                "the request's terminal result is no longer retained",
-            ))),
+            PreferenceWatchPoll::Missing => {
+                Some(Err(PreferenceError::result_not_retained(path())))
+            }
             PreferenceWatchPoll::Settled(Settlement::Completed(_)) => Some(Ok(())),
             PreferenceWatchPoll::Settled(Settlement::Failed(code)) => {
                 Some(Err(PreferenceError::from_code(path(), code)))
             }
             PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => Some(Err(
-                PreferenceError::caused(path(), format!("request cancelled ({cancellation:?})")),
+                PreferenceError::cancelled(
+                    path(),
+                    format!("request cancelled ({cancellation:?})"),
+                ),
             )),
         }
     }
