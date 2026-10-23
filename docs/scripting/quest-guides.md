@@ -8,7 +8,11 @@ A guide is a compiled, restartable description of one quest. The compiler checks
 
 A guide is one JSON file with schema 3. It names the quest, the checks the Quester runs before it starts, and the roles, sequences, and steps the runner follows. Unknown fields and unregistered step kinds fail before any run.
 
-- Top level: `$schema`, `schema: 3`, `id`, `display_name`, `kind`, `required`, `tested_stats`, `partner`, `quest`, and `roles`. The `id` is the content quest stem, for example `cook`. `kind` is `Quest` by default. A `Miniquest` role needs its own typed `progress_reader`, and one without it is rejected. `required` holds header requirement ids that gate Start. `tested_stats` stays `null` until a live run records it. `partner` stays `null` in every bundled guide. Guide authoring reserves `blackarmgang` and `hero` for Shield of Arrav and Hero's Quest.
+- Top level: `$schema`, `schema: 3`, `id`, `display_name`, `kind`, `required`, `tested_stats`, `partner`, `quest`, and `roles`.
+
+  `id` is the content quest stem, for example `cook`. `kind` is `Quest` by default. A `Miniquest` role needs its own typed `progress_reader`, and one without it is rejected. `required` holds header requirement ids that gate Start.
+
+  `tested_stats` is optional. The runner reads it only as a warning: when it is `null`, the tested stats warning reads `No qualified stats recorded`. It never blocks Start, so an author may record qualified stats by hand. `partner` stays `null` in every bundled guide. Guide authoring reserves `blackarmgang` and `hero` for Shield of Arrav and Hero's Quest.
 - `quest` holds provisioning and eligibility input: `members`, `quest_points`, `requirements`, `items`, `acquire` recipes, `bank`, `coin_float`, `loadouts`, `areas`, `tools`, and `owns_inventory`.
 
   `requirements` entries name quest-points, skill, quest, item, or members-world gates. `items` entries are `acquirable` with an optional `acquire` recipe, or `must_have`. An optional `from_stage` holds an item out until that stage.
@@ -178,9 +182,11 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 
 ## Gaps, waits, and combat finish
 
-- **Dialogue end gap (`gap_ticks`).** A conversation counts as over 1 quiet tick after the chat is first observed closed. The engine sends the same chat close at a script's end and at a script's own `if_close`. A step whose NPC script closes the chat and `p_delay`s before its next page authors `gap_ticks`: the engine hole, where `p_delay(n)` costs n+1.
+- **Dialogue end gap (`gap_ticks`).** A conversation counts as over 1 quiet tick after the chat is first observed closed. The engine sends the same chat close at a script's end and at a script's own `if_close`. A step whose NPC script closes the chat and `p_delay`s before its next page authors `gap_ticks`: the engine hole, where `p_delay(n)` costs n+1. An authored value must be from 1 to 30; anything else fails to compile with `invalid-dialogue-options`.
 
   Authors put it on `talk` args or in an `interact`/`use_on` `dialogue` object, and cite the content lines in the step's `comment`. Size it by every route the step's conversation can take in the engine script. Count the stages it can run at, the items it can already carry, its answers, and resumed or restarted steps. Do not size it by only the route the step is named for. The longest reachable hole wins.
+
+  During the hole, an inventory change, a player move, a new game chat line, or an active player animation re-arms the gap, adding `gap_ticks` again. Size it from the longest quiet stretch, not one quiet moment.
 
   Each page is answered on the tick it is first observed; a choice page whose text changed on the same chat root waits one tick for its option rows.
 - **Combat `finish`.** Flat `prefer`/`choose`/`strict`/`line_rules` fields use the shared dialogue selector, and `max_ticks` measures observed game ticks, not host polls.
@@ -205,7 +211,7 @@ Comments are annotations, not valid JSON; the real file has none. Changes from t
   "id": "cook",                                // content quest stem (C scripts/quests/quest_cook)
   "display_name": "Cook's Assistant",          // UI only
   "required": [],                              // ids from quest.requirements that gate Start (none)
-  "tested_stats": null,                        // written only by a live PASS; never a gate
+  "tested_stats": null,                        // optional; read only as a warning, never a gate
   "partner": null,                             // null in every bundled Beta 2 Path
   "quest": {
     "members": false,
