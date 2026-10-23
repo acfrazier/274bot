@@ -116,6 +116,31 @@ pub enum RandomEventPolicy {
     Ignore,
 }
 
+/// When a script drinks a held antipoison. The stored form of the
+/// profile's Cure poison setting.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CurePoison {
+    /// Drink when the poison's worst case would take the bot below its
+    /// eating line or kill it.
+    #[default]
+    WhenNeeded,
+    /// Drink as soon as the game reports the poison.
+    Always,
+    /// Never drink.
+    Never,
+}
+
+/// The profile's Survival and supplies group. Phase 1 stores one field;
+/// later phases extend the group without a migration (`#[serde(default)]`
+/// loads a row that predates each new field).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct SurvivalSettings {
+    /// When a script drinks a held antipoison.
+    pub cure_poison: CurePoison,
+}
+
 /// Stable event keys and their profile-settings labels, shared by the panel
 /// and TUI. Keys are lowercase NPC names so profile files remain readable.
 pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 8] = [
@@ -166,6 +191,10 @@ pub struct ProfileSettings {
     /// Per-profile parameter overrides keyed by [`assignment_key`].
     #[serde(default)]
     pub script_settings: BTreeMap<String, Map<String, Value>>,
+    /// The Survival and supplies group. Absent in pre-0.2.6 vault rows,
+    /// which load with the default (cure when needed).
+    #[serde(default)]
+    pub survival: SurvivalSettings,
 }
 
 fn default_random_events() -> bool {
@@ -195,6 +224,7 @@ impl Default for ProfileSettings {
             clue_duel_partner: String::new(),
             script_assignment: None,
             script_settings: BTreeMap::new(),
+            survival: SurvivalSettings::default(),
         }
     }
 }
@@ -756,6 +786,62 @@ mod tests {
             decoded.random_event_policy("Swarm"),
             super::RandomEventPolicy::Flee
         );
+    }
+
+    #[test]
+    fn profile_json_round_trip_keeps_survival_group() {
+        // A vault row written by a newer binary carries the survival
+        // group. Loading and saving it must keep the group in the JSON
+        // text: `ProfileSettings` has no `deny_unknown_fields`, so a
+        // build without the field silently drops the key on this round
+        // trip.
+        let row: ProfileSettings =
+            serde_json::from_str(r#"{"lowmem":true,"survival":{"cure_poison":"never"}}"#).unwrap();
+        let saved = serde_json::to_string(&row).unwrap();
+        assert!(
+            saved.contains(r#""survival":{"cure_poison":"never"}"#),
+            "the saved row keeps the survival group: {saved}"
+        );
+    }
+
+    #[test]
+    fn profile_settings_survival_defaults_from_legacy_json() {
+        // A pre-0.2.6 row has no survival key. It loads with the default:
+        // cure when needed.
+        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        assert_eq!(
+            missing.survival.cure_poison,
+            super::CurePoison::WhenNeeded,
+            "old vault rows cure when needed"
+        );
+        assert_eq!(
+            ProfileSettings::default().survival.cure_poison,
+            super::CurePoison::WhenNeeded
+        );
+        // A row with an empty survival object also takes the defaults.
+        let empty: ProfileSettings =
+            serde_json::from_str(r#"{"lowmem":true,"survival":{}}"#).unwrap();
+        assert_eq!(empty.survival, super::SurvivalSettings::default());
+    }
+
+    #[test]
+    fn profile_settings_round_trip_unchanged() {
+        // Regression pin: encoding and decoding a settings row returns
+        // the same row, field for field.
+        let settings = ProfileSettings {
+            lowmem: false,
+            auto_login: true,
+            world: Some(2),
+            tutorial_skipped: Some(true),
+            random_events: false,
+            lamp_skill: "magic".into(),
+            lamp_auto: false,
+            clue_duel_partner: "partner".into(),
+            ..ProfileSettings::default()
+        };
+        let raw = serde_json::to_string(&settings).unwrap();
+        let back: ProfileSettings = serde_json::from_str(&raw).unwrap();
+        assert_eq!(back, settings);
     }
 
     #[test]

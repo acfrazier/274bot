@@ -63,6 +63,7 @@ impl Runtime {
         let mut cx = ActionContext {
             condition: None,
             poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
