@@ -17,7 +17,7 @@ use super::{
     BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
-use crate::test_support::TestDir;
+use crate::test_support::{patiently, TestDir};
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
@@ -28,6 +28,23 @@ use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::live::tick_scenario_runner_for_test;
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+fn await_preference(
+    session: &mut crate::session::Session,
+    key: &str,
+    expected: serde_json::Value,
+) {
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        if session.preferences.value(key) == Some(expected.clone()) {
+            Ok(())
+        } else {
+            Err("not durable within the panel preference wait".into())
+        }
+    })
+    .unwrap();
+}
 
 #[test]
 #[ignore]
@@ -5849,6 +5866,75 @@ fn rect_centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
     [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
 }
 
+
+#[test]
+fn nav_panel_edit_persists_only_the_changed_member() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-member");
+    let mut session = crate::session::Session::new();
+    let preferences = session.preferences.share();
+    let before = crate::nav_settings::NavSettings::default();
+    let mut expected_nav = serde_json::to_value(&before).unwrap();
+    expected_nav
+        .as_object_mut()
+        .unwrap()
+        .insert("extension".into(), serde_json::json!({"keep": true}));
+    crate::test_support::set_patiently(&preferences, "nav", expected_nav.clone());
+
+    let mut after = before.clone();
+    after.hop_labels = !after.hop_labels;
+    let expected_hop_labels = after.hop_labels;
+    super::commit_nav_settings(&mut session, &before, after).unwrap();
+    expected_nav["hop_labels"] = expected_hop_labels.into();
+
+    patiently(|| {
+        session.poll_panel_preferences();
+        let Ok(document) = session.preferences.document() else {
+            return Err("not durable within panel Nav preference wait".into());
+        };
+        if document.get("nav") == Some(&expected_nav) {
+            Ok(())
+        } else {
+            Err("not durable within Nav presentation member wait".into())
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn nav_core_edit_uses_no_panel_member_write() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-core-member");
+    let mut session = crate::session::Session::new();
+    let preferences = session.preferences.share();
+    let before = session.ui.nav.clone();
+    let mut expected_nav = serde_json::to_value(&before).unwrap();
+    expected_nav
+        .as_object_mut()
+        .unwrap()
+        .insert("extension".into(), serde_json::json!({"keep": true}));
+    crate::test_support::set_patiently(&preferences, "nav", expected_nav.clone());
+
+    let mut after = before.clone();
+    after.allow_teleports = !after.allow_teleports;
+    let expected_allow_teleports = after.allow_teleports;
+    super::commit_nav_settings(&mut session, &before, after).unwrap();
+    assert_eq!(session.panel_preference_writes_pending(), 0);
+    expected_nav["allow_teleports"] = expected_allow_teleports.into();
+
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        let Ok(document) = session.preferences.document() else {
+            return Err("not durable within core Nav preference wait".into());
+        };
+        if document.get("nav") == Some(&expected_nav) {
+            Ok(())
+        } else {
+            Err("not durable within core Nav member wait".into())
+        }
+    })
+    .unwrap();
+}
+
 /// At the docked Nav config width every Routing row stays inside the content
 /// region at each Danger routing level. The drop-down spans the width, so its
 /// level names never clip; the old plain button ran past the edge at "availabl".
@@ -6005,6 +6091,11 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     assert!(
         !session.focus.lock().unwrap().only_render_selected,
         "it does what OK does"
+    );
+    await_preference(
+        &mut session,
+        "render_all_warning_ack",
+        serde_json::json!(true),
     );
     assert!(
         crate::ui_state::load(&session.preferences).render_all_warning_ack,

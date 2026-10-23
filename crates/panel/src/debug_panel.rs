@@ -1097,10 +1097,9 @@ fn send_wires<'a, I>(
     }
 }
 
-fn save_prefs(session: &Session) {
-    if session.persist_ui {
-        crate::ui_state::save(&session.preferences, &session.ui);
-    }
+fn save_prefs(session: &mut Session) {
+    let prefs = session.ui.debug_panel.clone();
+    let _ = session.persist_panel_serializable(&["debug_panel"], &prefs);
 }
 
 #[cfg(test)]
