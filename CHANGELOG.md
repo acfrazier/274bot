@@ -8,6 +8,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- A bot's **Start** in the panel runs the script its Script section shows. In 0.2.5, after **Assign** from Fleet, it could start an older pick from the script browser instead.
 - Player and NPC movement, action poses, map effects, projectile flight, and
   cutscene cameras keep their animation time between bot views and after late
   frames. Old smoke no longer starts only when a bot’s game view is first drawn.
