@@ -1428,6 +1428,8 @@ fn settle_preferences(session: &mut TuiSession, app: &mut TuiApp) {
     loop {
         session.pump(app);
         if !session.core.preferences_pending() {
+            // Projection precedes core polling, so deliver the settled snapshot next frame.
+            session.pump(app);
             return;
         }
         assert!(

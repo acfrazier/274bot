@@ -5,7 +5,7 @@
 //!
 //! Every operator preference is written here, through the process
 //! local-state service's preferences document; a front end writes only its
-//! own presentation state ([`crate::UiPreferences::update`]).
+//! own presentation state ([`crate::UiPreferences::begin_patch`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;

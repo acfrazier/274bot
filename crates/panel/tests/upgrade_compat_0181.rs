@@ -327,7 +327,9 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
 
     // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
     let service = LocalStateService::open_process(StateRoot::new(bot.clone()));
-    let prefs = load_from(&frontend_core::UiPreferences::of_service_for_test(&service));
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
+    preferences.reload().unwrap();
+    let prefs = load(&preferences);
     assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
     let root = MapCacheRoot::from_home(&home);
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");
