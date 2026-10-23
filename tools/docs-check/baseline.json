@@ -2,14 +2,9 @@
   "CHANGELOG.md|link-missing": 2,
   "NOTICE.md|link-missing": 2,
   "docs/manual/built-in-scripts.md|page-words": 1,
-  "docs/manual/glossary.md|page-words": 1,
-  "docs/manual/install-and-first-run.md|page-words": 1,
   "docs/manual/install-and-first-run.md|paragraph-words": 1,
   "docs/manual/profiles-and-accounts.md|page-words": 1,
-  "docs/manual/running-scripts.md|page-words": 1,
-  "docs/manual/servers-and-worlds.md|page-words": 1,
-  "docs/manual/servers-and-worlds.md|paragraph-words": 1,
   "docs/reference/server-profiles.md|paragraph-words": 3,
   "docs/reference/server-profiles.md|section-words": 1,
-  "docs/reference/server-profiles.md|sentence-words": 2
+  "docs/reference/server-profiles.md|sentence-words": 1
 }

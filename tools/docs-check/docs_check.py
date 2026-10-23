@@ -48,6 +48,10 @@ PAGE_WORD_LIMIT = 800
 SECTION_WORD_LIMIT = 400
 FILE_LINE_LIMIT = 1000
 
+# A lookup page, not a how-to page: its length is its content.
+PAGE_WORDS_EXEMPT_PAGES = ("docs/manual/glossary.md",)
+PAGE_WORDS_EXEMPT_HEADINGS = ("troubleshooting", "requirements", "when something goes wrong")
+
 LINK_RE = re.compile(r"!?\[([^\[\]\n]*)\]\(([^()\n]*)\)")
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:\s+(.*?))?\s*$")
 LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
@@ -57,7 +61,7 @@ RS_WORD_RE = re.compile(r"(?<![\w./-])[\w./-]*\.rs\b")
 CRATE_CODE_RE = re.compile(r"(?<![\w-])(?:frontend-core|nav-executor)(?![\w-])")
 DOUBLE_COLON_RE = re.compile(re.escape("::"))
 CRATES_PATH_RE = re.compile(re.escape("crates/"))
-VERSION_FROM_RE = re.compile(r"\bfrom \d+\.\d+(?:\.\d+)*\b")
+VERSION_FROM_RE = re.compile(r"\bfrom \d+\.\d+(?:\.\d+)*\b", re.IGNORECASE)
 BANNED_PHRASES = ("fails closed", "best-effort", "best effort", "honest", "no longer", "was removed")
 BOLD_RE = re.compile(r"\*\*[^*\n]+\*\*")
 WORD_BEFORE = r"(?<![A-Za-z0-9_])"
@@ -274,8 +278,25 @@ def normalize_for_counting(text: str) -> str:
     return "".join(pieces)
 
 
+def mask_code_and_link_targets(text: str) -> str:
+    """Blank inline code spans and link targets, keeping the length and offsets."""
+    chars = list(text)
+    for start, end in code_spans(text):
+        for index in range(start, end):
+            chars[index] = " "
+    for match in LINK_RE.finditer(text):
+        for index in range(match.start(2) - 1, match.end(2) + 1):
+            chars[index] = " "
+    return "".join(chars)
+
+
+def is_word(token: str) -> bool:
+    """A token is a word when at least one character is alphanumeric."""
+    return any(char.isalnum() for char in token)
+
+
 def count_words(text: str) -> int:
-    return len(normalize_for_counting(text).split())
+    return sum(1 for token in normalize_for_counting(text).split() if is_word(token))
 
 
 def sentences_with_starts(text: str) -> list[tuple[int, int]]:
@@ -289,7 +310,7 @@ def sentences_with_starts(text: str) -> list[tuple[int, int]]:
         end = starts[position + 1] if position + 1 < len(starts) else len(normalized)
         segment = normalized[start:end]
         if segment.strip():
-            result.append((start, len(segment.split())))
+            result.append((start, sum(1 for token in segment.split() if is_word(token))))
     return result
 
 
@@ -564,9 +585,11 @@ class Checker:
 
     def check_page_words(self, rel: str) -> None:
         doc = self.doc(rel)
+        if rel in PAGE_WORDS_EXEMPT_PAGES:
+            return
         for _, text in doc.headings:
             lowered = text.lower()
-            if "troubleshooting" in lowered or "requirements" in lowered:
+            if any(phrase in lowered for phrase in PAGE_WORDS_EXEMPT_HEADINGS):
                 return
         words = 0
         for line in doc.visible:
@@ -622,7 +645,8 @@ class Checker:
             stripped = line.strip()
             if not stripped or heading_text(line) is not None:
                 continue
-            text = BOLD_RE.sub(lambda match: " " * len(match.group(0)), line)
+            text = mask_code_and_link_targets(line)
+            text = BOLD_RE.sub(lambda match: " " * len(match.group(0)), text)
             occupied: list[tuple[int, int]] = []
             hits: list[tuple[int, str]] = []
             for entry, pattern in patterns:
@@ -640,7 +664,8 @@ class Checker:
             stripped = line.strip()
             if not stripped or heading_text(line) is not None or stripped.startswith("|"):
                 continue
-            for _ in NOW_RE.finditer(line):
+            text = mask_code_and_link_targets(line)
+            for _ in NOW_RE.finditer(text):
                 self.warn(rel, index + 1, "now-word", 'do not write "now"')
 
     # -- driving -------------------------------------------------------
@@ -653,9 +678,9 @@ class Checker:
             self.check_paragraphs(rel)
             self.check_tables(rel)
             self.check_internal_names(rel)
-            if rel.startswith(("docs/manual/", "docs/scripting/")):
+            if rel.startswith("docs/manual/"):
                 self.check_page_words(rel)
-            if rel.startswith("docs/reference/"):
+            if rel.startswith(("docs/reference/", "docs/scripting/")):
                 self.check_section_words(rel)
             self.check_file_lines(rel)
         for rel in self.style_files:
