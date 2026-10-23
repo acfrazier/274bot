@@ -978,9 +978,9 @@ mod tests {
             release: Some(release_tx),
             released: false,
         };
-        entered_rx.recv_timeout(Duration::from_secs(5)).expect(
-            "loadouts hydration is held; preferences hydration queues behind it",
-        );
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("loadouts hydration is held; preferences hydration queues behind it");
         let preferences = service.preferences();
         (service, preferences, held)
     }
@@ -1089,7 +1089,9 @@ mod tests {
             survivable_routing: false,
         };
         assert_eq!(
-            preferences.walk_globals().expect("read hydrated walk globals"),
+            preferences
+                .walk_globals()
+                .expect("read hydrated walk globals"),
             expected_globals
         );
 
@@ -1161,10 +1163,8 @@ mod tests {
             "the held write settles after release"
         );
         assert!(
-            service.wait_preference_readbacks_for_test(
-                completed_before + 1,
-                Duration::from_secs(5),
-            ),
+            service
+                .wait_preference_readbacks_for_test(completed_before + 1, Duration::from_secs(5),),
             "the stale readback completes after the writer is released"
         );
         let document = preferences
@@ -1173,7 +1173,9 @@ mod tests {
         assert_eq!(document["held_write_marker"], true);
         assert_eq!(document["nav"], stored_walk);
         assert_eq!(
-            preferences.walk_globals().expect("read refreshed walk globals"),
+            preferences
+                .walk_globals()
+                .expect("read refreshed walk globals"),
             expected_globals
         );
         let (_, completed_after) = service.preference_readback_state_for_test();
