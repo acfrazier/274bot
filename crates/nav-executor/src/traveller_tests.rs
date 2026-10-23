@@ -8311,10 +8311,12 @@ impl Out for Sink {
     }
 }
 
+// The typed NPC reason shrinks the former fat `Option<&'static str>` state.
+// Keep both measured 16-byte reductions pinned.
 #[test]
 fn executor_state_size_pins() {
-    assert_eq!(std::mem::size_of::<Traveller>(), 816);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
+    assert_eq!(std::mem::size_of::<Traveller>(), 800);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 760);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

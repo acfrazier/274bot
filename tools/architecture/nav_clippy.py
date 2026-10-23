@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Generate the nav action deny list from compiler-resolved Rustdoc items.
 
-Rustdoc inventory reflects default-enabled features. SHA-256 rows for each
-seed module's source files and subtrees make edits, including inactive
-``cfg`` declarations and relocated exported macros, require a deliberate
-baseline refresh; they do not resolve those inactive items into Clippy paths.
+The inventory reads ``api`` with default features and ``client`` with default
+features plus ``test-support``. The wider client profile includes methods that
+Cargo feature unification can expose to planner production code.
+The generated config marks feature-gated paths ``allow-invalid`` when the
+default build cannot resolve them.
+SHA-256 rows for each seed module's source files and subtrees make edits,
+including inactive ``cfg`` declarations and relocated exported macros,
+require a deliberate baseline refresh.
 """
 
 from __future__ import annotations
@@ -38,6 +42,16 @@ SEEDS = {
         "client::io::client_prot_289",
         "client::io::client_stream",
     ],
+}
+
+RUSTDOC_FEATURES = {
+    "api": (),
+    "client": ("test-support",),
+}
+
+# The method is absent by default, so its config entry needs allow-invalid.
+FEATURED_SEED_METHODS = {
+    "client/test-support": ("client::io::client_stream::connect_ws_plain",),
 }
 
 SOURCE_FILES = [
@@ -162,30 +176,35 @@ def cargo_target_directory() -> Path:
     return Path(json.loads(result.stdout)["target_directory"])
 
 
-def rustdoc_json(package_name: str, target_dir: Path) -> tuple[str, Path]:
+def rustdoc_json(
+    package_name: str, target_dir: Path, features: tuple[str, ...] = ()
+) -> tuple[str, Path]:
     env = os.environ.copy()
     env["RUSTC_BOOTSTRAP"] = "1"
-    result = run(
+    command = [
+        "cargo",
+        "rustdoc",
+        "--manifest-path",
+        str(ROOT_MANIFEST),
+        "--package",
+        package_name,
+    ]
+    if features:
+        command.extend(["--features", ",".join(features)])
+    command.extend(
         [
-            "cargo",
-            "rustdoc",
-            "--manifest-path",
-            str(ROOT_MANIFEST),
-            "--package",
-            package_name,
             "--lib",
             "--",
             "-Z",
             "unstable-options",
             "--output-format",
             "json",
-        ],
-        cwd=ROOT,
-        env=env,
+        ]
     )
+    result = run(command, cwd=ROOT, env=env)
     if result.returncode != 0:
         raise InventoryError(
-            f"cargo rustdoc failed for {package_name}:\\n{result.stdout}{result.stderr}"
+            f"cargo rustdoc failed for {package_name}:\n{result.stdout}{result.stderr}"
         )
     crate_name = package_name.replace("-", "_")
     path = target_dir / "doc" / f"{crate_name}.json"
@@ -934,9 +953,9 @@ def source_hashes() -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
             contents_hash = hashlib.sha256(path.read_bytes()).digest()
             file_hashes[source_path] = contents_hash.hex()
             subtree_hash.update(source_path.encode("utf-8"))
-            subtree_hash.update(b"\\0")
+            subtree_hash.update(b"\0")
             subtree_hash.update(contents_hash)
-            subtree_hash.update(b"\\n")
+            subtree_hash.update(b"\n")
             file_names.append(source_path)
         subtree_rows.append(
             {
@@ -955,8 +974,8 @@ def source_hashes() -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
 def build_inventory() -> dict[str, Any]:
     target_dir = cargo_target_directory()
     docs: dict[str, Rustdoc] = {}
-    for package_name in ("api", "client"):
-        crate_name, json_path = rustdoc_json(package_name, target_dir)
+    for package_name, features in RUSTDOC_FEATURES.items():
+        crate_name, json_path = rustdoc_json(package_name, target_dir, features)
         docs[crate_name] = Rustdoc(crate_name, json_path)
     collector = SeedCollector(docs)
     for crate_seeds in SEEDS.values():
@@ -974,6 +993,13 @@ def build_inventory() -> dict[str, Any]:
         for name in ("types", "methods", "macros")
     }
     value_items = [item for item in items if item["kind"] == "value"]
+    method_paths = set(clippy_paths["methods"])
+    for feature, required_paths in FEATURED_SEED_METHODS.items():
+        missing = sorted(set(required_paths) - method_paths)
+        if missing:
+            raise InventoryError(
+                f"Rustdoc with {feature} omitted required seed methods: {missing}"
+            )
     unlinted_values = collector.unlinted_value_items()
     external_aliases = sorted(
         collector.external_aliases.values(),
@@ -982,7 +1008,10 @@ def build_inventory() -> dict[str, Any]:
     source_files, source_subtrees = source_hashes()
     return {
         "schema": 2,
-        "rustdoc_features": "default-enabled features only",
+        "rustdoc_features": {
+            crate: ["default", *features]
+            for crate, features in RUSTDOC_FEATURES.items()
+        },
         "coverage_limits": [
             "Inactive cfg items are not resolved into Clippy paths; edits to seed source files and subtrees change the SHA-256 tripwires.",
             "Exported macros relocated to crate root are source-hashed but are not name-resolved from the seed module by this inventory.",
@@ -1011,6 +1040,9 @@ def config_text(inventory: dict[str, Any]) -> str:
         "# Value-only const/static uses are inventoried but not denied by Clippy.",
     ]
     reason = "The planner must use nav-executor for action capabilities."
+    featured_methods = {
+        path for paths in FEATURED_SEED_METHODS.values() for path in paths
+    }
     for option, inventory_key in (
         ("disallowed-types", "types"),
         ("disallowed-methods", "methods"),
@@ -1018,8 +1050,14 @@ def config_text(inventory: dict[str, Any]) -> str:
     ):
         lines.extend(["", f"{option} = ["])
         for path in inventory["clippy_paths"][inventory_key]:
+            allow_invalid = (
+                ", allow-invalid = true"
+                if option == "disallowed-methods" and path in featured_methods
+                else ""
+            )
             lines.append(
-                f"    {{ path = {toml_string(path)}, reason = {toml_string(reason)} }},"
+                f"    {{ path = {toml_string(path)}, "
+                f"reason = {toml_string(reason)}{allow_invalid} }},"
             )
         lines.append("]")
     return "\n".join(lines) + "\n"
@@ -1368,8 +1406,8 @@ def run_probes() -> bool:
         source_path.write_text(consumer_source, encoding="utf-8")
 
         docs: dict[str, Rustdoc] = {}
-        for package_name in ("api", "client"):
-            crate_name, json_path = rustdoc_json(package_name, target_dir)
+        for package_name, features in RUSTDOC_FEATURES.items():
+            crate_name, json_path = rustdoc_json(package_name, target_dir, features)
             docs[crate_name] = Rustdoc(crate_name, json_path)
         # Cargo rustdoc can rebuild proc-macro dependencies in place. Capture
         # linkable artifacts only after those invocations finish.

@@ -729,6 +729,7 @@
       "client::io::client_stream::LoginCancel::cancel",
       "client::io::client_stream::LoginCancel::is_cancelled",
       "client::io::client_stream::LoginCancel::new",
+      "client::io::client_stream::connect_ws_plain",
       "client::io::client_stream::set_transport_wait_hook",
       "client::io::map_client_prot",
       "client::io::revision::ClientRevision::as_i32",
@@ -19199,6 +19200,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::client_stream::connect_ws_plain",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::client_stream::set_transport_wait_hook",
       "rustdoc_kind": "function"
     },
@@ -19826,7 +19833,15 @@
       "rustdoc_kind": "function"
     }
   ],
-  "rustdoc_features": "default-enabled features only",
+  "rustdoc_features": {
+    "api": [
+      "default"
+    ],
+    "client": [
+      "default",
+      "test-support"
+    ]
+  },
   "schema": 2,
   "seeds": [
     "api::interact",
@@ -19903,7 +19918,7 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "084d3bfd17f1f41a9d2a47448243192e703f5505bc75fe1f0be08f16d1b85184"
+      "sha256": "1c7268c11cb24a877687e9a8c8a33e399c212f926d941cec7c31728a4bded7b2"
     },
     {
       "files": [],

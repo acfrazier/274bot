@@ -201,6 +201,12 @@ pub mod e3_leading_absolute_alias {
     pub type Probe = c2::io::client_prot::ClientProt;
 }
 
+// probe: E4
+pub mod e4_private_extern_crate_prefix {
+    extern crate client as c;
+    pub use c::io as wire;
+}
+
 // probe: G0
 pub mod g0_plain_alias {
     pub type W = client::io::client_prot::ClientProt;

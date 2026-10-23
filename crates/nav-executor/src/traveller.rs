@@ -119,10 +119,7 @@ pub enum NpcHopBlockReason {
 }
 
 fn blocked_target_word(kind: &TransportKind) -> &'static str {
-    if matches!(
-        kind,
-        TransportKind::Npc | TransportKind::Boat | TransportKind::Glider
-    ) {
+    if is_npc_backed_kind(*kind) {
         "npc"
     } else {
         "loc"
