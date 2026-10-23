@@ -3564,33 +3564,81 @@ fn save_log_runs_through_the_command_and_the_pane_follows_the_write() {
 }
 
 /// The session-file toggle is saved and applied by `SetSessionLog`, and the
-/// log pane's status names what the process holds open.
+/// log pane preserves its prior status while storage is pending.
 #[test]
 fn session_file_toggle_is_saved_and_applied_through_the_command() {
-    let iso = IsolatedStores::enter("tui-session-log-command");
+    let _iso = IsolatedStores::enter("tui-session-log-command");
+    frontend_core::log_file::apply_session_log_for_test(false);
     let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
-    dispatch(&mut session, &mut app, AppAction::SetSessionLog(true));
-    settle_preferences(&mut session, &mut app);
-    assert!(frontend_core::log_file::session_log_setting(
-        &session.preferences
-    ));
-    assert!(frontend_core::log_file::session_log_path().is_some());
-    assert!(
-        app.log.status.as_deref().is_some_and(
-            |status| status.starts_with("session file ") && status != "session file off"
-        ),
-        "{:?}",
-        app.log.status
-    );
-    dispatch(&mut session, &mut app, AppAction::SetSessionLog(false));
-    settle_preferences(&mut session, &mut app);
-    assert!(!frontend_core::log_file::session_log_setting(
-        &session.preferences
-    ));
-    assert!(frontend_core::log_file::session_log_path().is_none());
-    assert_eq!(app.log.status.as_deref(), Some("session file off"));
-    let _iso = iso;
+
+    let (write_entered_tx, write_entered_rx) = std::sync::mpsc::sync_channel(2);
+    let (write_release_tx, write_release_rx) = std::sync::mpsc::channel();
+    let write_release_rx = std::sync::Mutex::new(write_release_rx);
+    let stalled_writes = std::sync::atomic::AtomicUsize::new(0);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            if stalled_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 {
+                write_entered_tx
+                    .send(())
+                    .expect("the pending write has a test observer");
+                write_release_rx
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .expect("the test releases the pending write");
+            }
+        }));
+
+    let current_sink_status = || {
+        frontend_core::log_file::session_log_path()
+            .map(|path| format!("session file {}", path.display()))
+            .unwrap_or_else(|| "session file off".to_owned())
+    };
+    for (on, was_on) in [(true, false), (false, true)] {
+        let sink_status_before_settlement = current_sink_status();
+        assert_eq!(
+            frontend_core::log_file::session_log_setting(&session.preferences),
+            was_on
+        );
+        assert_eq!(
+            frontend_core::log_file::session_log_path().is_some(),
+            was_on
+        );
+
+        let prior_status = format!("prior status before setting session file {on}");
+        app.log.status = Some(prior_status.clone());
+        dispatch(&mut session, &mut app, AppAction::SetSessionLog(on));
+        write_entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the preference write reached the held storage seam");
+        assert!(session.core.preferences_pending());
+        assert_eq!(app.log.status.as_deref(), Some(prior_status.as_str()));
+        assert_eq!(current_sink_status(), sink_status_before_settlement);
+        assert_eq!(
+            frontend_core::log_file::session_log_setting(&session.preferences),
+            was_on
+        );
+
+        write_release_tx
+            .send(())
+            .expect("the preference writer is still held");
+        settle_preferences(&mut session, &mut app);
+        assert_eq!(
+            frontend_core::log_file::session_log_setting(&session.preferences),
+            on
+        );
+        assert_eq!(
+            frontend_core::log_file::session_log_path().is_some(),
+            on
+        );
+        let settled_status = current_sink_status();
+        assert_eq!(app.log.status.as_deref(), Some(settled_status.as_str()));
+    }
 }
 
 /// Dismissing the Quester Paths status line is the `AcknowledgeNotice`
