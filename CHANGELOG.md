@@ -36,8 +36,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - Grinch makes one return attempt if its walk back to the Start tile stalls.
   A second stall stops the script and keeps the failure detail.
 - Catalog scripts with many imports, including JiveKQ, can finish loading when
-  the host is busy. A load can take up to 10 seconds. **Start** stops with a
-  timeout if loading takes longer.
+  the host is busy. **Start** still stops with a timeout if a script never
+  finishes loading.
 
 ### Documentation
 
