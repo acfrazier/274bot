@@ -1009,4 +1009,18 @@ mod tests {
         assert_eq!(CurePoison::from_byte(2), CurePoison::Never);
         assert_eq!(CurePoison::from_byte(u8::MAX), CurePoison::WhenNeeded);
     }
+
+    #[test]
+    fn cure_poison_byte_round_trip_and_unknown_byte_defaults() {
+        for policy in [
+            CurePoison::WhenNeeded,
+            CurePoison::Always,
+            CurePoison::Never,
+        ] {
+            assert_eq!(CurePoison::from_byte(policy.to_byte()), policy);
+        }
+        assert_eq!(CurePoison::default(), CurePoison::WhenNeeded);
+        assert_eq!(CurePoison::WhenNeeded.to_byte(), 0);
+        assert_eq!(CurePoison::from_byte(3), CurePoison::WhenNeeded);
+    }
 }

@@ -14,7 +14,7 @@ use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
-use crate::survival::cure::{self, CureDecision, CureInputs, CurePoison};
+use crate::survival::cure::{self, CureDecision, CureInputs};
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
 use std::num::NonZeroU64;
@@ -1769,7 +1769,7 @@ impl Combat {
             cond: cx.condition(),
             danger,
             exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
-            policy: CurePoison::WhenNeeded,
+            policy: cx.cure_poison(),
             route_refused_for_poison: false,
             inventory: frame.inventory,
             tables: &self.tables,
