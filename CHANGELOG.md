@@ -232,6 +232,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Deleting a profile no longer leaves the result of the delete waiting
   forever; it now reports when the delete is saved.
 
+#### Navigation
+
+- A long route search no longer uses up to about 1.5 MB more memory than
+  in 0.2.4 on some runs.
+
 #### Banking
 
 - When bank selection cannot find a route, the session log now gives the
