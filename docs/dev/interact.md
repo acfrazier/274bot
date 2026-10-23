@@ -66,6 +66,43 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 - `close_modal`/`clear_local_modal` dispatch via `CLOSE_BUTTON` do_action so
   the client's local modal state is cleared (not just the wire write).
 
+## Server-ordered input dispatch
+
+`api::interact::server_ordered::ServerOrderedInputs` is the shared dispatcher
+for selected-content requests and advanced typed packet batches. This mechanism
+has no product consumer yet. It does not add a script declaration, JavaScript
+binding or new Gatherer, bank or dialogue behavior.
+
+Native content uses `ActionContext::emit_server_ordered`. A request uses one
+owner reservation, one request id and one completion. Its receipt contains
+`request_id`, `dispatch_tick`, five fixed row results, `row_count`,
+`dispatched_prefix`, `wire_events` and an optional typed terminal error.
+The existing completion envelope retains run and observation identity.
+`HostQueued` means that the normal encrypted client sink accepted the bytes.
+It does not prove that the server applied them.
+
+The dispatcher checks the full request before the first packet. The knife
+request checks the selected `knife.knife` and `knife.logs` item identities,
+inventory generations and distinct slots. These identities come from the
+selected content extractor, not item names or a hand-written id table.
+The selected NPC transform proofs currently admit no numeric NPC operation.
+The native request surface cannot construct an advanced envelope or its permit.
+The private advanced surface uses the same dispatcher, packet validation and
+cheat authorization as the named content path.
+
+The client sink reports complete packets without copying packet bodies.
+Slot input state keeps a monotonic input count, per-observed-tick category
+counts, a USER_EVENT input epoch and an owned content expectation. Advanced
+input invalidates the expectation even when its packet is a CLIENT_EVENT.
+Ordinary housekeeping packets do not count as dispatched input. Accepted
+zero-wire local prompt edits also invalidate the expectation.
+
+Counts never refuse input or reserve engine capacity. Only a newly observed
+tick resets per-tick counts. Native batch charging applies to that runtime's
+own emission frame; it does not exclude other producers in the drain tick.
+The server alone defers input that exceeds its decode-pass limits.
+
+
 ## `LEGAL_SEND` / `ClientProt`
 
 `api::prot::LEGAL_SEND` is the complete outbound table (opcode id + fixed
@@ -95,9 +132,9 @@ outside `cfg(test)` forward it through their own `test-support` feature.
 In particular, `host-play/test-support` enables `api/test-support` for its
 Linux harness, including frontend test builds. Product builds enable neither
 feature and do not expose the raw recorder trait.
-The client fork still exposes its public `Client::out` field. This slice does
-not change the fork. The S3/S5 type fence controls access to that remaining
-product sink.
+The client fork still exposes its public `Client::out` field. The native
+source fence rejects advanced permit construction and emission from native
+machines. External script bindings are not activated by this mechanism.
 
 The typed driver path remains available in product builds:
 

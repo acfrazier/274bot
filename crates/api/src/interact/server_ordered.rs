@@ -11,6 +11,11 @@ use crate::selected::{ClientRevision, SelectedPin, SourceSpan};
 
 mod npc_transforms;
 pub use npc_transforms::*;
+mod input;
+mod request;
+
+pub use input::*;
+pub use request::*;
 
 /// A selected contract cannot authorize input when its proof is unavailable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
