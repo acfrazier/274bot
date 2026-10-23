@@ -3,10 +3,6 @@
   "contract": "\u00a721 Appendix A as amended by \u00a723 \u00a73 (isolate_generated.rs T1); tools/seat-model/** T1 per Main decision 2026-10-12 F0-CHECKER (ADR0008 note)",
   "paths": [
     {
-      "path": "crates/api/Cargo.toml",
-      "owner": "T2"
-    },
-    {
       "path": "crates/api/build.rs",
       "owner": "T2"
     },
