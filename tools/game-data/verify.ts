@@ -1,18 +1,21 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
+import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, assertServerOrderedPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack, walkContentFiles } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, SITE_OVERRIDES, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, baseProvenanceInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, baseProvenanceInputs, serverOrderedProvenanceInputs, runtimeNpcOperations, npcEvidenceBytes } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
+import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
+import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -36,6 +39,17 @@ const expectedDropNames: Record<number, Record<string, string[]>> = {
     },
 };
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
+function npcEvidenceSha256(file: string, regeneratedBytes: string) {
+    if (fs.existsSync(file)) return digest(file).sha256;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-npc-evidence-'));
+    try {
+        const temporaryFile = path.join(directory, path.basename(file));
+        fs.writeFileSync(temporaryFile, regeneratedBytes);
+        return digest(temporaryFile).sha256;
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
 /** Item categories as written in the selected content: alias to its `.obj` `category=` literal, or `null` when the section sets none. */
 function extractItemCategories(contentRoot: string): Map<string, string | null> {
@@ -175,6 +189,7 @@ async function verifyRevision(revision: number) {
     assertEqual(payload.schema_version, 5, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
     const spec = revisions.find((each) => each.revision === revision)!;
     const pinnedCommits = assertPinned(spec);
+    assertServerOrderedPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
     const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
@@ -188,6 +203,31 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
     assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
+    const contentId = spec.cacheIdentity.content_id;
+    if (!contentId) throw new Error(`${revision}: selected content identity is missing`);
+    const npcEvidence = revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
+    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence) : undefined;
+    if (npcEvidence) {
+        const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
+        const actualSha256 = npcEvidenceSha256(evidenceFile, npcEvidenceBytes(npcEvidence));
+        assertEqual(actualSha256, payload.server_ordered?.npc_transforms?.evidence_sha256,
+            `${revision} development-only NPC closure evidence SHA-256`);
+    }
+    const serverOrdered = revision === 289 ? {
+        ...await loadServerOrderedFacts({
+            contentRoot: spec.content,
+            engineRoot: spec.engine,
+            revision,
+            engineCommit: pinnedCommits.engineCommit,
+            contentCommit: pinnedCommits.contentCommit,
+            cacheId: spec.cacheIdentity.cache_id,
+            contentId,
+        }),
+        npc_transforms: npcOperations!,
+    } : undefined;
+    assertEqual(JSON.stringify(payload.server_ordered), JSON.stringify(serverOrdered), `${revision} source-proven server-ordered catalog`);
+    const serverOrderedInputs = npcEvidence ? serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence.source_inputs) : undefined;
+    assertEqual(JSON.stringify(payload.provenance.server_ordered_inputs), JSON.stringify(serverOrderedInputs), `${revision} complete server-ordered input closure`);
     assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);

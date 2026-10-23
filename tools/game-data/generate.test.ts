@@ -11,12 +11,15 @@ import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
+import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, runtimeNpcOperations, npcEvidenceBytes, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import './server-ordered.test.ts';
+import './npc-transforms.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
+import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -30,6 +33,39 @@ assert.deepEqual(
     ['\uE000', '\u{10000}'],
     'ordering compares Unicode code points rather than locale collation or UTF-16 units',
 );
+
+{
+    const evidence: NpcTransformClosureEvidence = {
+        schema: 1,
+        source_inputs: { engine: [], content: [] },
+        source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
+        npc_types: [1, 2].map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        actions: [1, 2].map(npc_type_id => ({
+            npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
+            trigger_kind: 'type', trigger_target_id: npc_type_id,
+            operation_fingerprint: 'a'.repeat(64), source_refs: [0],
+        })),
+        transform_edges: [],
+        unresolved: [],
+        proofs: [1, 2].map(npc_type_id => ({
+            npc_type_id, slot: 1, status: npc_type_id === 1 ? 'unchanged' : 'unavailable',
+            reachable_npc_type_ids: [npc_type_id], mismatched_npc_type_ids: [],
+            evidence_refs: [0], unresolved_refs: [],
+        })),
+        engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
+    };
+    const runtime = runtimeNpcOperations(evidence);
+    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.equal(runtime.evidence_sha256, crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'));
+    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations']);
+    evidence.proofs[0].unresolved_refs.push(0);
+    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    evidence.proofs[0].unresolved_refs.length = 0;
+    evidence.npc_types[0].config_state = 'missing';
+    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    evidence.engine.complete = false;
+    assert.deepEqual(runtimeNpcOperations(evidence).operations, []);
+}
 
 
 /** Pinned-tree roots are the generator's required GAME_DATA_*_CONTENT variables, never literals. */
@@ -1353,6 +1389,23 @@ try {
     const manifest = JSON.parse(manifestBytes);
     // The exported serializer is the one the pipeline uses: byte-identical for both families.
     const upstream = familyInputs(pipelineSpec, assertPinned(pipelineSpec));
+    const withoutContractCachePins = {
+        ...pipelineSpec,
+        generatedInputs: {
+            ...pipelineSpec.generatedInputs,
+            engine: pipelineSpec.generatedInputs.engine.filter(input => ![
+                'data/pack/client/interface', 'data/pack/client/title',
+                'data/pack/server/interface.dat', 'data/pack/server/mesanim.dat',
+            ].includes(input.path)),
+        },
+    };
+    const existingUpstream = familyInputs(withoutContractCachePins, assertPinned(withoutContractCachePins));
+    assert.equal(familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
+        familyBytes(existingUpstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
+        'server-ordered-only cache pins do not change existing quest bytes or nav bindings');
+    assert.equal(familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
+        familyBytes(existingUpstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
+        'server-ordered-only cache pins do not change existing gathering bytes');
     assert.equal(fs.readFileSync(path.join(liveDirectory, 'gathering.json'), 'utf8'), familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'));
     assert.equal(fs.readFileSync(path.join(liveDirectory, 'quests.json'), 'utf8'), familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'));
     assert.equal(sha256(path.join(liveDirectory, 'gathering.json')).sha256, manifest.families.gathering.sha256, 'the manifest digests the exact family bytes');

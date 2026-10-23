@@ -107,6 +107,14 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/interact/server_ordered.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/interact/server_ordered/npc_transforms.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/lib.rs",
       "owner": "T2"
     },

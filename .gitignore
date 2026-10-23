@@ -22,3 +22,4 @@ imgui.ini
 /.hash_overlay.py
 /tools/game-data/_review_check.mjs
 /.nav-verification/
+/tools/game-data/evidence/289-npc-transforms.json
