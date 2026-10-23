@@ -627,6 +627,7 @@ pub struct ActionContext<'a> {
     pub(crate) snapshot: SnapshotView<'a>,
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
+    pub(crate) cure_poison: crate::survival::CurePoison,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
@@ -1079,6 +1080,10 @@ impl<'a> ActionContext<'a> {
     /// Strongest poison pulse in the selected content, or the saturated bound.
     pub fn poison_unknown_pulse(&self) -> u8 {
         self.poison_unknown_pulse
+    }
+    /// The profile's Cure poison setting for this frame.
+    pub fn cure_poison(&self) -> crate::survival::CurePoison {
+        self.cure_poison
     }
     pub fn retained(&mut self) -> &mut RetainedMemory {
         self.retained

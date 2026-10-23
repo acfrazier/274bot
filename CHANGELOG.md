@@ -48,16 +48,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Combat and protected walks use a held antipoison dose or Strange fruit
   before a health bite when poison makes a cure necessary. Walks that only
   eat also drink a held cure before their next bite.
+- When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
+- A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
 
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
 
-### Survival
-
-- When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
-
 ### Fixed during development
+
+#### Profile settings
+
+- Survival and script-setting audit lines use the values before and after
+  the durable commit, including when one commit batches edits. Failed writes
+  and superseded same-setting edits do not add audit lines.
 
 #### Panel and TUI
 

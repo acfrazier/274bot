@@ -749,6 +749,45 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
 }
 
 #[test]
+fn combined_profile_setting_writes_log_the_durable_transition() {
+    let name = "settings-log-coalesced-alice";
+    let mut f = fixture("settings-log-coalesced", &[name]);
+    let card = f.card(
+        "cook-settings.ts",
+        "export const SETTINGS = { surface: { type: 'string', default: 'Range', options: ['Range', 'Fire', 'Magic'] } };\nexport default class T extends LoopingBot { override loop() {} }\n",
+    );
+    f.assign(name, &card);
+
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    f.set(name, &card, "surface", json!("Fire"));
+    let superseded = f.core.last_operation().unwrap().id();
+    f.set(name, &card, "surface", json!("Magic"));
+    let final_write = f.core.last_operation().unwrap().id();
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+
+    let expected = format!(
+        "saved script settings; profile {name}; card {}; action parameter edit; field surface; old \"Range\"; new \"Magic\"; op#{}",
+        card.name, final_write.0
+    );
+    let mut log = crate::log::LogView::new(crate::log::LogScope::slot(name));
+    crate::log::global().refresh(&mut log);
+    let records: Vec<_> = log
+        .rows()
+        .iter()
+        .filter(|row| {
+            row.level() == api::hostlog::Level::Info
+                && row.message().contains("saved script settings")
+        })
+        .collect();
+    assert_eq!(records.len(), 1, "{:?}", log.rows());
+    assert_eq!(records[0].message(), expected);
+    assert_ne!(superseded, final_write);
+}
+
+#[test]
 fn legacy_parameter_save_logs_card_field_and_both_values() {
     let mut f = fixture("legacy-parameter-log", &["alice"]);
     let card = f.card(

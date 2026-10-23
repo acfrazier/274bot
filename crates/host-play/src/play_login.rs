@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -383,6 +383,13 @@ pub struct SlotArm {
     pub lamp_skill: Arc<Mutex<String>>,
     /// Live per-event Guardian policies, mirrored from profile saves.
     pub random_event_policies: Arc<Mutex<BTreeMap<String, RandomEventPolicy>>>,
+    /// Live Cure poison policy as its mirrored byte
+    /// ([`script::survival::CurePoison::to_byte`]): 0 is the default, cure
+    /// when needed. Mirrored from the vault on spawn and by settings
+    /// writes, and read once per frame into the posted script bundle, so
+    /// a settings change reaches a running slot within one frame. The
+    /// `Arc` is one 24-byte allocation per slot, made at slot creation.
+    pub cure_poison: Arc<AtomicU8>,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
@@ -440,6 +447,9 @@ impl SlotArm {
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             random_event_policies: Arc::new(Mutex::new(BTreeMap::new())),
+            cure_poison: Arc::new(AtomicU8::new(
+                script::survival::CurePoison::WhenNeeded.to_byte(),
+            )),
             password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -864,6 +874,25 @@ impl SlotArm {
 
     pub fn set_auto_login(&self, enabled: bool) {
         self.post_intent(Intent::AutoLogin(enabled));
+    }
+
+    /// Mirror a durable Cure poison write onto this arm. The next frame
+    /// the slot observes posts the new policy to its script.
+    pub fn set_cure_poison(&self, policy: vault::CurePoison) {
+        // The vault-to-policy conversion lives here, in the crate that
+        // owns both the profile row and the mirror; the script enum
+        // itself carries only the byte encoding.
+        let policy = match policy {
+            vault::CurePoison::WhenNeeded => script::survival::CurePoison::WhenNeeded,
+            vault::CurePoison::Always => script::survival::CurePoison::Always,
+            vault::CurePoison::Never => script::survival::CurePoison::Never,
+        };
+        self.cure_poison.store(policy.to_byte(), Ordering::Relaxed);
+    }
+
+    /// The Cure poison policy this arm currently mirrors.
+    pub fn cure_poison(&self) -> script::survival::CurePoison {
+        script::survival::CurePoison::from_byte(self.cure_poison.load(Ordering::Relaxed))
     }
 
     pub fn withdraw_login(&self) {
@@ -1321,6 +1350,7 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
         .store(profile.settings.lamp_auto, Ordering::Relaxed);
     *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
     *arm.random_event_policies.lock().unwrap() = profile.settings.random_event_policies.clone();
+    arm.set_cure_poison(profile.settings.survival.cure_poison);
     arm.post_intent(Intent::WorldPreference(match profile.settings.world {
         Some(number) => IntentWorldChoice::World(number),
         None => IntentWorldChoice::Automatic,

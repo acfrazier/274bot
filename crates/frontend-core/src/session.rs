@@ -29,9 +29,11 @@ use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
 };
 use crate::profile_saves::{SaveBook, SaveRecord, SaveResult, SaveSettled, WriteFailure};
-use crate::profiles::{ProfileWriter, Written};
+use crate::profiles::{ProfileAuditBefore, ProfileAuditKind, ProfileWriter, Written};
 use crate::resources::{ResourceView, Resources};
-use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
+use crate::scripts::{
+    LiveDelivery, LiveSettings, ScriptSettingsLog, SettingsResult, SettingsWrite,
+};
 use crate::surface::SlotSurface;
 use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
@@ -381,6 +383,10 @@ enum ArmMirrorKind {
         event: String,
         policy: RandomEventPolicy,
     },
+    /// The Cure poison setting's post-write mirror.
+    Survival {
+        new: crate::CurePoison,
+    },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
     /// write resets the arm to the restored durable value. No client state
@@ -433,6 +439,10 @@ impl ArmMirror {
         Self(ArmMirrorKind::RandomEventPolicy { event, policy })
     }
 
+    pub fn survival(new: crate::CurePoison) -> Self {
+        Self(ArmMirrorKind::Survival { new })
+    }
+
     pub fn memory(lowmem: bool) -> Self {
         Self(ArmMirrorKind::Memory(lowmem))
     }
@@ -481,6 +491,7 @@ impl ArmMirror {
         match (&self.0, &earlier.0) {
             (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
             | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
+            | (ArmMirrorKind::Survival { .. }, ArmMirrorKind::Survival { .. })
             | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
             | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_))
             | (ArmMirrorKind::ScriptAssignment, ArmMirrorKind::ScriptAssignment) => true,
@@ -586,7 +597,7 @@ mod scripts;
 mod vault_rows;
 mod world_switch;
 pub(crate) use commands::StagedProfileWrite;
-pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
+pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
@@ -632,8 +643,8 @@ pub struct OperatorSession<Io> {
     saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
-    /// Details for each queued script-settings operation, until it settles.
-    script_settings_logs: HashMap<OperationId, String>,
+    /// Audit metadata for queued script-setting writes.
+    script_settings_logs: HashMap<OperationId, ScriptSettingsLog>,
 
     /// Command-backed script assignment writes, drained by the script coordinator.
     script_assignment_writes: VecDeque<ScriptAssignmentWrite>,
@@ -1236,8 +1247,8 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn set_outcome(&mut self, op: OperationId, slot: &str, outcome: Outcome) {
         self.operations.set(op, slot, outcome);
     }
-    pub(crate) fn track_script_settings_log(&mut self, op: OperationId, details: String) {
-        self.script_settings_logs.insert(op, details);
+    pub(crate) fn track_script_settings_log(&mut self, op: OperationId, audit: ScriptSettingsLog) {
+        self.script_settings_logs.insert(op, audit);
     }
 
     pub(crate) fn log_legacy_script_settings(
@@ -3065,6 +3076,13 @@ impl<Io> OperatorSession<Io> {
         if let Some(card) = mirror.native_identity() {
             self.native_edits.insert((member.clone(), card), op);
         }
+        let audit = if matches!(&mirror.0, ArmMirrorKind::Survival { .. }) {
+            Some(ProfileAuditKind::SurvivalCurePoison)
+        } else {
+            mirror
+                .script_settings_identity()
+                .map(ProfileAuditKind::ScriptSettings)
+        };
         self.writes.insert(
             op,
             PendingWrite {
@@ -3076,7 +3094,7 @@ impl<Io> OperatorSession<Io> {
             },
         );
         if let Some(writer) = self.writer.as_mut() {
-            writer.submit(op, changes, assignment_action);
+            writer.submit(op, changes, assignment_action, audit);
         }
     }
 
@@ -3142,6 +3160,26 @@ impl<Io> OperatorSession<Io> {
             ArmMirror::random_event_policy(event, policy),
             "random",
         )
+    }
+
+    /// Persist a profile's Cure poison setting through `save_profile`
+    /// (the only write path); a running slot's arm follows once the
+    /// write is durable, so the slot sees the change within one frame
+    /// and never before it is saved.
+    pub(crate) fn set_survival_settings(
+        &mut self,
+        name: &str,
+        cure_poison: crate::CurePoison,
+    ) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "survival: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("survival: no profile {name}"))?;
+        profile.settings.survival.cure_poison = cure_poison.to_vault();
+        self.save_profile(profile, ArmMirror::survival(cure_poison), "survival")
     }
 
     /// The profile a form's Save writes: the draft's credentials over the
@@ -3345,9 +3383,50 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn settle_write(&mut self, written: Written) {
-        let setting_log = self.script_settings_logs.remove(&written.op);
+        let script_settings_log = self.script_settings_logs.remove(&written.op);
         let Some(mut pending) = self.writes.remove(&written.op) else {
             return;
+        };
+        let audit_before = written.audit_before;
+        let profile_name = pending.member.as_str();
+        let committed_profile = written
+            .durable
+            .iter()
+            .find(|(name, _)| name == profile_name)
+            .and_then(|(_, profile)| profile.as_ref());
+        let own_setting = written.superseded
+            && self.keeps_own_setting(profile_name, &pending.mirror, &written.later);
+        let settles_successfully = written.result.is_ok()
+            && !pending.copy_abandoned
+            && (!written.superseded || own_setting);
+        // Audit lines use the writer's pre-commit value and the committed row.
+        let setting_log = if settles_successfully {
+            script_settings_log.and_then(|audit| {
+                committed_profile
+                    .map(|after| audit.details(audit_before.as_deref(), &after.settings))
+            })
+        } else {
+            None
+        };
+        let survival_transition = if settles_successfully {
+            match (
+                &pending.mirror.0,
+                audit_before.as_deref(),
+                committed_profile,
+            ) {
+                (
+                    ArmMirrorKind::Survival { .. },
+                    Some(ProfileAuditBefore::SurvivalCurePoison(old)),
+                    Some(after),
+                ) => {
+                    let old = crate::CurePoison::from_vault(*old);
+                    let new = crate::CurePoison::from_vault(after.settings.survival.cure_poison);
+                    (old != new).then_some((old, new))
+                }
+                _ => None,
+            }
+        } else {
+            None
         };
 
         // Profiles whose newest queued write this is: only those may be put
@@ -3386,19 +3465,9 @@ impl<Io> OperatorSession<Io> {
             ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::NativeSettings { .. }
         );
 
-        // A superseded write (later writes in this commit wrote every row it
-        // did) is durable only inside their rows. If the commit succeeded, it
-        // still settles on its own when it carries a setting (a live effect
-        // or a card's parameters) that no later write of the member in the
-        // commit replaces: each distinct change is saved, reported and
-        // applied, and the slot never sees a replaced value. Otherwise it is
-        // Cancelled: a failed commit fails, restores and reports once,
-        // through the write owning the row.
-        let own_setting =
-            written.superseded && self.keeps_own_setting(&member, &pending.mirror, &written.later);
-        // A form save registered under this operation settles from this
-        // write's own commit result, superseded or not: every write in a
-        // commit shares it.
+        // Form saves use this operation's commit result, even when a later
+        // write in the same commit also updates the profile.
+
         let tracked = self.saves.tracks(written.op);
         let durable_row = committed.is_some();
         let commit_error = written.result.as_ref().err().filter(|_| tracked).cloned();
@@ -3417,6 +3486,19 @@ impl<Io> OperatorSession<Io> {
                             ),
                         );
                     }
+                }
+                if let Some((old, new)) = survival_transition {
+                    crate::log::global().slot_line(
+                        &member,
+                        Source::Host,
+                        Level::Info,
+                        &format!(
+                            "survival cure_poison {} -> {}; profile {member}; action survival; op#{}",
+                            old.key(),
+                            new.key(),
+                            written.op.0
+                        ),
+                    );
                 }
 
                 if tracked {
@@ -3576,6 +3658,11 @@ impl<Io> OperatorSession<Io> {
                         .lock()
                         .unwrap()
                         .insert(event, policy);
+                }
+            }
+            ArmMirrorKind::Survival { new } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.set_cure_poison(new.to_vault());
                 }
             }
             ArmMirrorKind::Memory(lowmem) => {

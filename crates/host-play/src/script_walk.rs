@@ -1133,7 +1133,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             &mut bot.walk_guard,
                             condition,
                             Some(name),
-                            script::survival::CurePoison::WhenNeeded,
+                            bot.cure_poison,
                         )
                     } else {
                         None
