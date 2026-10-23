@@ -14,7 +14,7 @@ apply cleanly to that engine commit.
 
 | Patch | Repository | What it does | Needed by |
 |---|---|---|---|
-| `0001-engine-givebank-cheat.patch` | engine | `::givebank <item> (amount)` in `src/network/game/client/handler/ClientCheatHandler.ts`. It seeds the calling player's bank without a booth deposit. It only works when `node.production` is false and for staff level 4 and up. Byte-for-byte the 289 patch 0001 change. | The scenario cells that seed a bank (same list as 289, `docs/harness.md` "Engine test patches"). |
+| `0001-engine-givebank-cheat.patch` | engine | `::givebank <item> (amount)` in `src/network/game/client/handler/ClientCheatHandler.ts`. It seeds the calling player's bank without a booth deposit. It only works when `node.production` is false and for staff level 4 and up. Byte-for-byte the 289 patch 0001 change. | The scenario cells that seed a bank (same list as 289, `docs/dev/harness.md` "Engine test patches"). |
 | `0003-engine-loopback-listeners.patch` | engine | Binds the game listener (`src/server/tcp/TcpServer.ts`), the web and management listeners (`src/web.ts`) and the setup management listener (`src/setup.ts`) to `127.0.0.1`. The 274 branch binds `0.0.0.0`. | The nightly guest. `status-274.sh` refuses an engine with any other listener. |
 
 ## Applying

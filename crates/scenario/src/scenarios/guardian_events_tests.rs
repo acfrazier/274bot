@@ -301,17 +301,17 @@ fn scenarios_sending(needle: &str) -> Vec<&'static str> {
     users
 }
 
-/// The cells `docs/harness.md` lists for one patch, between
+/// The cells `docs/dev/harness.md` lists for one patch, between
 /// `<!-- engine-patch-cells:<patch> -->` and `<!-- /engine-patch-cells -->`.
 fn documented_cells(patch: &str) -> Vec<String> {
     let doc = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/harness.md"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/dev/harness.md"),
     )
-    .expect("docs/harness.md");
+    .expect("docs/dev/harness.md");
     let open = format!("<!-- engine-patch-cells:{patch} -->");
     let start = doc
         .find(&open)
-        .unwrap_or_else(|| panic!("docs/harness.md has no {open}"));
+        .unwrap_or_else(|| panic!("docs/dev/harness.md has no {open}"));
     let rest = &doc[start + open.len()..];
     let end = rest
         .find("<!-- /engine-patch-cells -->")
@@ -324,7 +324,7 @@ fn documented_cells(patch: &str) -> Vec<String> {
         .collect()
 }
 
-/// `docs/harness.md` names every scenario cell that needs an engine test
+/// `docs/dev/harness.md` names every scenario cell that needs an engine test
 /// patch, so a contributor on an unmodified engine knows which cells need
 /// which patch.
 #[test]

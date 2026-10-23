@@ -1,7 +1,7 @@
 # Reusable live harness
 
 > **Developer reference.** This page is for people who change 274bot.
-> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
 
 The harness runs real revision clients against your local engine for the
 bound **server profile**. It keeps scenario preparation, proof predicates
@@ -155,7 +155,7 @@ not count; `elapsed_ms` records wall time separately.
 
 Some cells need a test-only cheat that the stock 289 engine or content lacks.
 The patches, what each adds and how to apply them are in
-[`tools/engine-patches/289/README.md`](../tools/engine-patches/289/README.md).
+[`tools/engine-patches/289/README.md`](../../tools/engine-patches/289/README.md).
 A cell that needs a patch the engine lacks ends with outcome `UNAVAILABLE`
 in its evidence JSON, and its message names the patch file. It is never a
 plain FAIL, and it still exits non-zero.
