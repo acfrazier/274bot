@@ -624,6 +624,8 @@ fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     let key = ParameterEditKey::new(Some("alice"), &selection, "surface");
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
     let op = match f
         .scripts
         .commit_parameter_value(
@@ -641,8 +643,16 @@ fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
     };
     assert!(f.scripts.parameter_edit_blocks_start("alice"));
 
-    f.core.set_outcome(op, "alice", Outcome::Cancelled);
-    f.scripts.settle_parameter_edits(&f.core);
+    // A later write of the same field replaces the accepted edit in this
+    // commit. Settle the actual writer outcome, not an injected test result.
+    f.set("alice", &card, "surface", json!("Range"));
+    drop(held);
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(
+        f.core.operation(op).unwrap().outcome("alice"),
+        Some(&Outcome::Cancelled)
+    );
 
     assert_eq!(
         f.scripts
@@ -657,7 +667,11 @@ fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
     );
     assert!(!f.scripts.parameter_edit_blocks_start("alice"));
     assert!(f.scripts.parameter_draft_details("alice").next().is_none());
-    f.core.flush_writes();
+    assert_eq!(
+        f.saved_bag("alice", &card.identity_key()).unwrap()["surface"],
+        json!("Range")
+    );
+    f.start_running("alice");
 }
 
 #[test]
