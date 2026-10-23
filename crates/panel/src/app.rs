@@ -1772,11 +1772,18 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             state
                 .queue_cards
                 .frame(ui, name, row.queue(), cell_image_min);
-            pointer_in_paint = if is_focused {
-                overlay_script_paint(ui, gpu, state, focused_paint.take(), cell_image_min, size)
-            } else {
-                false
-            };
+            // Only the focused cell writes the paint flag: a later open
+            // cell must not clear the value the capture gate reads.
+            if is_focused {
+                pointer_in_paint = overlay_script_paint(
+                    ui,
+                    gpu,
+                    state,
+                    focused_paint.take(),
+                    cell_image_min,
+                    size,
+                );
+            }
         } else if is_focused {
             state.paint.release_canvas(gpu);
         }
