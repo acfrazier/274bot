@@ -225,17 +225,16 @@ owner = "nav-gated-entrances"
 id = "manual-movement-only-while-walking"
 kind = "known-issue"
 area = "Scripts"
-text = """A script notices that you moved the bot yourself only while it is
-  walking, or while an rs2b0t script runs a Gather or Combat session. If you
-  move the bot while it fights or gathers in place, "Pause script on manual
-  movement" does not pause the script, the script does not stop, and it
-  carries on. A Quester fight notices your movement only when the fight began
-  with a walk to its spot."""
+text = """With "Pause script on manual movement" off, an rs2b0t script that acts
+  in place can continue after you move the bot yourself, unless it runs a
+  Gather or Combat session. Each remaining native family must adopt the
+  shared manual-takeover check. With the setting on, running scripts pause
+  even without a walk. Quester fights use the shared check."""
 first = "0.2.0"
-listed = "0.2.5"
+listed = "0.2.6"
 target = "none"
 severity = "medium"
-owner = "host lifecycle"
+owner = "T2.rest native family rewrites"
 
 [[item]]
 id = "flaxrunner-spinner-bank-checks"

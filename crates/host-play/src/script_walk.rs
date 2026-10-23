@@ -529,9 +529,16 @@ pub(crate) fn take_manual_walk_ownership(
         && slot
             .as_ref()
             .is_some_and(|slot| slot.want_run && slot.state() == script::RunState::Running);
-    // A Gather or Combat API session is taken over even with no walk in
-    // flight; it learns the movement through `note_manual_walk_takeover`.
-    let live_work = eligible && slot.as_ref().is_some_and(|slot| slot.manual_input_owner());
+    let live_native_owner = slot.as_ref().is_some_and(|slot| slot.live_native_owner());
+    let live_walking_operation = slot.as_ref().is_some_and(|slot| slot.live_walking_operation());
+    let api_session = slot
+        .as_ref()
+        .is_some_and(|slot| slot.api_session_takes_manual_input());
+    let load_active = slot.as_ref().is_some_and(|slot| slot.load_active());
+    let live_work = eligible
+        && slot
+            .as_ref()
+            .is_some_and(|slot| slot.manual_input_owner() || (pause_owner && load_active));
     let mut all = navs.lock().unwrap();
     if !all.contains_key(name) {
         all.insert(name.to_owned(), NavBot::default());
@@ -542,11 +549,22 @@ pub(crate) fn take_manual_walk_ownership(
     bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
     // Retained request metadata also deduplicates completed walks; it is
     // not evidence of active work. Route-less families keep their own owner.
-    let active_walk =
-        bot.walk_work_live() || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    let walk_work_live = bot.walk_work_live();
+    let native_walk_live = bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    let active_walk = walk_work_live || native_walk_live;
     if !eligible || !(active_walk || live_work) {
         return false;
     }
+    let host_walk_facts = [
+        bot.route.is_some(),
+        bot.compact_route.is_some(),
+        bot.has_route(),
+        bot.pending_route.is_some(),
+        bot.route_ticket.is_some(),
+        bot.route_work_pending(),
+        bot.bank_fetch.is_some(),
+        bot.carried_walk.is_some(),
+    ];
     bot.cancel_for_manual_input();
     // End watchdog ownership before the ordinary Pause entry can defer it.
     if let Some(slot) = slot.as_mut() {
@@ -557,12 +575,30 @@ pub(crate) fn take_manual_walk_ownership(
         api::hostlog::Category::NavEvent,
         api::hostlog::Level::Info,
         slot = name,
-        "walk outcome=cancelled reason=UserInput request={} generation={} intent_seq={} source={:?} manual_steps={}",
+        "walk outcome=cancelled reason=UserInput request={} generation={} intent_seq={} source={:?} manual_steps={} tick={} live_work={} active_walk={} live_native_owner={} live_walking_operation={} api_session={} load_active={} pause_owner={} native_walk_live={} walk_work_live={} route={} compact_route={} has_route={} pending_route={} route_ticket={} route_work_pending={} bank_fetch={} carried_walk={}",
         bot.walk_outcome_request_id,
         bot.walk_outcome_generation,
         bot.user_move_intent_seq,
         frame.manual_move_intent,
         frame.manual_steps,
+        tick,
+        live_work,
+        active_walk,
+        live_native_owner,
+        live_walking_operation,
+        api_session,
+        load_active,
+        pause_owner,
+        native_walk_live,
+        walk_work_live,
+        host_walk_facts[0],
+        host_walk_facts[1],
+        host_walk_facts[2],
+        host_walk_facts[3],
+        host_walk_facts[4],
+        host_walk_facts[5],
+        host_walk_facts[6],
+        host_walk_facts[7],
     );
     drop(all);
     if pause_owner {

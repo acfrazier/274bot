@@ -3964,6 +3964,230 @@ fn manual_frame(hold: bool) -> crate::SlotFrameInput {
     }
 }
 
+/// An admitted machine with no walking request or API session.
+struct InPlace {
+    command: Arc<std::sync::atomic::AtomicU8>,
+}
+
+impl script::native::NativeMachine for InPlace {
+    type Args = Arc<std::sync::atomic::AtomicU8>;
+    type Output = ();
+
+    fn begin(
+        command: Self::Args,
+        _: &mut script::native::ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
+        command.store(4, std::sync::atomic::Ordering::Relaxed);
+        Ok(Self { command })
+    }
+
+    fn poll(
+        &mut self,
+        _: &mut script::native::ActionContext<'_>,
+    ) -> Poll<Result<(), ActionError>> {
+        if self.command.load(std::sync::atomic::Ordering::Relaxed) == 2 {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+struct InPlaceScript {
+    command: Arc<std::sync::atomic::AtomicU8>,
+    handle: Option<ActionHandle<InPlace>>,
+    begun: bool,
+}
+
+impl Script for InPlaceScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let command = self.command.load(std::sync::atomic::Ordering::Relaxed);
+        if command == 1 {
+            self.handle = None;
+        } else if let Some(handle) = &self.handle {
+            if tick.actions.poll(handle, &mut tick.cx).is_ready() {
+                self.handle = None;
+            }
+        } else if !self.begun && command != 3 {
+            self.handle = Some(
+                tick.actions
+                    .begin::<InPlace>(Arc::clone(&self.command), &mut tick.cx)
+                    .unwrap(),
+            );
+            self.begun = true;
+        }
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+fn in_place_rig(command: u8) -> (Rig, Arc<std::sync::atomic::AtomicU8>) {
+    let mut rig = open_rig(false);
+    rig.slot().lock().unwrap().stop();
+    let command = Arc::new(std::sync::atomic::AtomicU8::new(command));
+    rig.slot()
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(InPlaceScript {
+                command: Arc::clone(&command),
+                handle: None,
+                begun: false,
+            }),
+            None,
+        )
+        .unwrap();
+    rig.observe(1);
+    (rig, command)
+}
+
+struct TakeoverLog(Mutex<Vec<String>>);
+
+impl api::hostlog::Sink for TakeoverLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.message.contains("walk outcome=cancelled reason=UserInput") {
+            self.0.lock().unwrap().push(record.message.to_owned());
+        }
+    }
+}
+
+static TAKEOVER_LOG: TakeoverLog = TakeoverLog(Mutex::new(Vec::new()));
+static TAKEOVER_LOG_INSTALLED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| api::hostlog::install_sink(&TAKEOVER_LOG));
+
+#[test]
+fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
+    assert!(*TAKEOVER_LOG_INSTALLED);
+    let (rig, command) = in_place_rig(0);
+    assert_eq!(command.load(std::sync::atomic::Ordering::Relaxed), 4);
+    let slot = rig.slot();
+    {
+        let slot = slot.lock().unwrap();
+        assert!(!slot.live_walking_operation());
+        assert!(!slot.load_active());
+    }
+    assert!(!rig.navs.lock().unwrap()["alice"].walk_work_live());
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        41,
+        false,
+    ));
+    let bots = rig.navs.lock().unwrap();
+    assert_eq!(bots["alice"].walk_outcome_seq, before + 1);
+    assert_eq!(bots["alice"].manual_takeover_watermark, before + 1);
+    drop(bots);
+    assert!(TAKEOVER_LOG.0.lock().unwrap().iter().any(|line| {
+        line.contains("tick=41 live_work=true active_walk=false live_native_owner=true live_walking_operation=false api_session=false")
+    }));
+}
+
+#[test]
+fn takeover_with_pause_on_pauses_a_native_owner_without_a_walk() {
+    let (rig, _) = in_place_rig(0);
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, before + 1);
+}
+
+#[test]
+fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
+    for command in [3, 1, 2] {
+        let (mut rig, control) = in_place_rig(if command == 3 { 3 } else { 0 });
+        control.store(command, std::sync::atomic::Ordering::Relaxed);
+        rig.observe(2);
+        assert!(!rig.slot().lock().unwrap().has_native_actions());
+        let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+        assert!(!crate::script_runtime::take_manual_walk_ownership(
+            &rig.scripts,
+            &rig.navs,
+            "alice",
+            manual_frame(false),
+            true,
+            2,
+            false,
+        ));
+        assert_eq!(
+            rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+            before,
+            "owner command {command}"
+        );
+    }
+}
+
+fn in_place_load_rig() -> Rig {
+    let mut rig = open_rig(false);
+    rig.slot().lock().unwrap().stop();
+    rig.slot()
+        .lock()
+        .unwrap()
+        .start_load(
+            "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
+                .into(),
+            script::LoadShape::NativeTick,
+            Vec::new(),
+        )
+        .unwrap();
+    rig.slot().lock().unwrap().probe("true").unwrap();
+    rig.observe(1);
+    rig.slot().lock().unwrap().probe("true").unwrap();
+    rig
+}
+
+#[test]
+fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
+    let mut rig = in_place_load_rig();
+    let slot = rig.slot();
+    let ticks = slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap();
+    assert!(!slot.lock().unwrap().manual_input_owner());
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(slot.lock().unwrap().state(), script::RunState::Paused);
+    rig.observe(2);
+    assert_eq!(slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap(), ticks);
+    assert!(slot.lock().unwrap().seat_probe().is_none_or(|seat| seat.results == 0));
+    slot.lock().unwrap().resume();
+    rig.observe(3);
+    assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
+    assert!(slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap().as_u64() > ticks.as_u64());
+}
+
+#[test]
+fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
+    let rig = in_place_load_rig();
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(!crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        false,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Running);
+    assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, before);
+}
+
 #[test]
 fn manual_step_takeover_must_end_active_walk_before_follow() {
     let mut rig = open_rig(false);
