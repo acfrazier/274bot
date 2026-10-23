@@ -53,6 +53,7 @@ v8 = { version = "=137.2.1", default-features = false, optional = true }
 libc = "0.2"
 
 [dev-dependencies]
+api = { path = "../api", features = ["test-support"] }
 allocation-counter = "=0.8.1"
 # F0 §28 conformance oracle: dev-only, never a native product service.
 seat-model = { path = "../../tools/seat-model" }

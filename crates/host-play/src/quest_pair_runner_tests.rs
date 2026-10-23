@@ -61,9 +61,7 @@ impl Driver for NoopDriver {
     fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
         None
     }
-    fn out(&mut self) -> &mut dyn Out {
-        &mut self.out
-    }
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> { packet.write_for_revision(self.revision(), &mut self.out) }
     fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
         false
     }
