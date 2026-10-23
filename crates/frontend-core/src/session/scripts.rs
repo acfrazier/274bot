@@ -408,14 +408,20 @@ fn commit_staged_setting<Io>(
         return Applied::Rejected(Rejection::NotApplicable, None);
     }
     let key = ParameterEditKey::new(profile, &staged.selection, &staged.field);
-    *scripts.parameter_text_mut(&key, "", None) = script::format_setting_value(&staged.value);
+    let current = scripts.durable_setting_value(core, profile, &staged.selection, &staged.field);
+    let current_text = current
+        .as_ref()
+        .map(script::format_setting_value)
+        .unwrap_or_default();
+    *scripts.parameter_text_mut(&key, &current_text, current.clone()) =
+        script::format_setting_value(&staged.value);
     match scripts.commit_parameter_value(
         core,
         &key,
         &staged.selection,
         &staged.field,
         staged.value,
-        None,
+        current,
     ) {
         Ok(ParameterCommit::Submitted(operation) | ParameterCommit::Pending(operation)) => {
             Applied::Operation(operation)
