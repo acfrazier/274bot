@@ -861,13 +861,30 @@ pub(crate) fn block_on_event_loop(
         runtime.block_on_event_loop(options, timeout)
     })
 }
+/// Module resolution, compilation and evaluation share setup's deadline,
+/// not the runtime's 50 ms budget for a yielding tick. The setup owner can
+/// still terminate non-yielding V8 execution; this timer rejects an awaited
+/// module that never settles without changing the runtime's tick budget.
 pub(crate) fn load_modules(
     runtime: &mut Runtime,
     main: &rustyscript::Module,
     side: Vec<&rustyscript::Module>,
 ) -> Result<(), Error> {
     enter_root(runtime, |runtime| {
-        runtime.load_modules(main, side).map(|_| ())
+        let tokio = runtime.tokio_runtime();
+        let heap_exhausted = runtime.heap_exhausted_token();
+        tokio.block_on(async {
+            tokio::select! {
+                result = tokio::time::timeout(super::isolate::SETUP_TIMEOUT, async {
+                    let loaded = runtime.load_modules_async(main, side).await;
+                    runtime
+                        .await_event_loop(rustyscript::deno_core::PollEventLoopOptions::default(), None)
+                        .await?;
+                    loaded.map(|_| ())
+                }) => result.map_err(|error| Error::Timeout(error.to_string()))?,
+                () = heap_exhausted.cancelled() => Err(Error::HeapExhausted),
+            }
+        })
     })
 }
 
@@ -882,6 +899,38 @@ mod tests {
         install(&mut runtime, true).unwrap();
         enter_root(&mut runtime, install_interact_capture).unwrap();
         runtime
+    }
+    #[test]
+    fn finite_async_side_modules_do_not_share_the_tick_timeout() {
+        crate::load::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions {
+            timeout: Duration::from_millis(50),
+            ..Default::default()
+        })
+        .unwrap();
+        install(&mut runtime, false).unwrap();
+        runtime
+            .register_async_function(
+                "finish_side",
+                rustyscript::async_callback!(|_arg: i32| async move {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok::<i32, Error>(1)
+                }),
+            )
+            .unwrap();
+        let sides: Vec<_> = (0..4)
+            .map(|n| {
+                rustyscript::Module::new(
+                    format!("/rs2b0t/bot/scripts/bot/side{n}.js"),
+                    "await rustyscript.async_functions.finish_side(0);",
+                )
+            })
+            .collect();
+        let main = rustyscript::Module::new(
+            "/rs2b0t/bot/scripts/bot/main.js",
+            "export const done = true;",
+        );
+        load_modules(&mut runtime, &main, sides.iter().collect()).unwrap();
     }
 
     // `rust-interact-gate-bypass` removes the native caps; this direct callback
