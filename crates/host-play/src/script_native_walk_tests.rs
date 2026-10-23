@@ -4187,11 +4187,8 @@ fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
         slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap(),
         ticks
     );
-    assert!(slot
-        .lock()
-        .unwrap()
-        .seat_probe()
-        .is_none_or(|seat| seat.results == 0));
+    // Non-walking compat rows are covered by the live Thiever cell:
+    // manual_takeover_compat_live_tests::compat_thiever_pauses_on_viewport_click.
     slot.lock().unwrap().resume();
     rig.observe(3);
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);

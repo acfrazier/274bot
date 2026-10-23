@@ -538,9 +538,10 @@ pub(crate) fn take_manual_walk_ownership(
         .is_some_and(|slot| slot.api_session_takes_manual_input());
     let load_active = slot.as_ref().is_some_and(|slot| slot.load_active());
     let live_work = eligible
-        && slot
-            .as_ref()
-            .is_some_and(|slot| slot.manual_input_owner() || (pause_owner && load_active));
+        && (api_session
+            || live_walking_operation
+            || live_native_owner
+            || (pause_owner && load_active));
     let mut all = navs.lock().unwrap();
     if !all.contains_key(name) {
         all.insert(name.to_owned(), NavBot::default());

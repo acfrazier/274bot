@@ -154,20 +154,26 @@ even when no walk outcome is produced. Snapshot deltas keep unchanged outcome
 fields; a new outcome replaces the reason as part of the same outcome family.
 
 The shared navigation preference `nav.pause_script_on_manual_walk_abort`
-(displayed as “Pause script on manual movement”) defaults to ON. It controls
-only whether the owning script is paused after cancellation: OFF still cancels
-the walk and publishes the correlated result, so a running v2 script can
-observe `'user-input'` and choose what to do. Already-paused or reconnect-carried
-work is not cancelled merely because movement happens during that hold. After
-an explicit Resume, a native script may make a fresh decision, but the old
-cancelled request, host carry, queued work, and watchdog recovery are never
-automatically replayed. A live `api.gather` or `api.combat` session is owned
-work too, with or without a walk in flight: manual movement ends it (see
-"Gather sessions" and "Combat sessions") and the preference pauses its script.
-See [Nav](nav.md) for the accepted intent bounds and known detector residue.
+(displayed as “Pause script on manual movement”) defaults to ON. With it ON,
+manual movement pauses a running script behind an active walk, live native
+action, or live `api.gather` or `api.combat` session, even while acting in place.
+It also pauses any running Load script, including rs2b0t scripts, without a
+walk or other owned work. A built-in script between actions does not pause
+unless it still owns a walk. OFF still cancels walks and API sessions without
+pausing the script. A running v2 script can observe the correlated
+`'user-input'` walk result and choose what to do. Other in-place work can
+continue unless its native family handles takeover, as Quester fights do.
+See "Gather sessions" and "Combat sessions" for their terminal outcomes.
 
-User-owned world/minimap clicks and TUI Manual steps are classified as intent;
-script-generated input is not. This is not evidence that the player moved.
+Already-paused or reconnect-carried work is not cancelled merely because
+movement happens during that hold. After an explicit Resume, a native script
+may make a fresh decision. The old cancelled request, host carry, queued work,
+and watchdog recovery are never automatically replayed.
+
+User-owned viewport and minimap clicks, qualifying world-menu actions, and TUI
+Manual steps count as intent, not proof of displacement. World-menu Examine
+and Cancel selections and script-generated input do not count.
+See [Nav](nav.md) for the other exclusions and known detector residue.
 
 User script owns bury/restock business logic. Navigation, action sequencing,
 random handling and recovery stay in Rust.
