@@ -1373,7 +1373,7 @@
     "areas": {
       "jail": {
         "boxes": [[3096, 3224, 3140, 3262, 0]],
-        "source": "C maps/m48_50.jm2:6688-6695 guard and quest NPC placements; crates/nav/src/zones/curated.rs:26-37 draynor-jail-guards crossing envelope"
+        "source": "C maps/m48_50.jm2:6688-6695 guard and quest NPC placements; crates/nav-planner/src/zones/curated.rs:26-37 draynor-jail-guards crossing envelope"
       },
       "cell": {
         "boxes": [[3122, 3240, 3124, 3243, 0]],

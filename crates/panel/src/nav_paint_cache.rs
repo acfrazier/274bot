@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use api::snapshot::WorldTile;
-use nav::router::{Leg, Route};
+use nav_planner::router::{Leg, Route};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Facts {

@@ -9,8 +9,8 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg};
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{find_with, FindOptions, Leg};
 use serde_json::json;
 
 const ORIGIN: WorldTile = WorldTile {
@@ -150,11 +150,12 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         s.ingame()
             && s.scene_state() == 2
             && s.tile() == Some((ORIGIN.x, ORIGIN.z, ORIGIN.level))
-            && nav::WorldState::from_snapshot(s)
+            && nav_planner::WorldState::from_snapshot(s)
                 .combat_level
                 .is_some_and(|level| level >= 100)
     });
-    let state = nav::WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
+    let state =
+        nav_planner::WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
     let route = find_with(
         &world.collision,
         &world.graph,
@@ -350,7 +351,7 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
         origin,
         destination,
         FindOptions::default(),
-        &nav::WorldState::empty().with_map_members(profile.map_members()),
+        &nav_planner::WorldState::empty().with_map_members(profile.map_members()),
     )
     .expect("non-anchor Viking seer ladder route");
     let planned_edge = route
@@ -555,7 +556,7 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
         origin,
         destination,
         FindOptions::default(),
-        &nav::WorldState::empty().with_map_members(profile.map_members()),
+        &nav_planner::WorldState::empty().with_map_members(profile.map_members()),
     )
     .expect("route across Karamja ship gangplank");
     let (transport_index, planned_edge) = route

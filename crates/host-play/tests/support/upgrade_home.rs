@@ -11,9 +11,9 @@ use api::snapshot::WorldTile;
 use host_play::profile::{CacheManifest, NavManifest, ProfileEnvironment};
 use host_play::progress::ProfileProgressObserver;
 use host_play::{BundledNavIdentity, ProfileOptions, ServerProfile};
-use nav::collision::{pack_walk, WorldCollision};
-use nav::map::identity::Digest;
-use nav::transport::TransportGraph;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::map::identity::Digest;
+use nav_planner::transport::TransportGraph;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -89,7 +89,7 @@ impl UpgradeHome {
             level: 0,
         };
         let (walk, blocked) = pack_walk(&[0; 8]);
-        let bundle = nav::pack::encode(
+        let bundle = nav_planner::pack::encode(
             &WorldCollision {
                 origin,
                 width: 2,
@@ -104,15 +104,15 @@ impl UpgradeHome {
         .unwrap();
         std::fs::write(resources.join("274bot.navpack"), &bundle).unwrap();
         let bundle_digest = Digest::of(&bundle).0;
-        let reach = nav::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &bundle_digest);
+        let reach = nav_planner::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &bundle_digest);
         std::fs::write(resources.join("274bot.navreach"), &reach).unwrap();
-        let policy = nav::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64]);
-        let canlight = nav::pack::encode_canlight_sidecar(
+        let policy = nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64]);
+        let canlight = nav_planner::pack::encode_canlight_sidecar(
             origin,
             2,
             1,
             &[0u64],
-            &nav::canlight::header_binding(&bundle_digest, &policy),
+            &nav_planner::canlight::header_binding(&bundle_digest, &policy),
         );
         std::fs::write(resources.join("274bot.navcanlight"), &canlight).unwrap();
         let table = [BundledNavIdentity {
@@ -120,12 +120,12 @@ impl UpgradeHome {
             cache_id,
             content_id: None,
             source_sha256: None,
-            format: nav::pack::FORMAT_ID.into(),
-            nav_sha256: nav::manifest::hash_bytes(&bundle),
+            format: nav_planner::pack::FORMAT_ID.into(),
+            nav_sha256: nav_planner::manifest::hash_bytes(&bundle),
             flags_sha256: None,
-            reach_sha256: Some(nav::manifest::hash_bytes(&reach)),
-            canlight_sha256: Some(nav::manifest::hash_bytes(&canlight)),
-            canlight_identity: Some(nav::pack::sha256_hex(&policy)),
+            reach_sha256: Some(nav_planner::manifest::hash_bytes(&reach)),
+            canlight_sha256: Some(nav_planner::manifest::hash_bytes(&canlight)),
+            canlight_identity: Some(nav_planner::pack::sha256_hex(&policy)),
             pois_sha256: None,
             relative_path: "274bot.navpack".into(),
         }];

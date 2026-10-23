@@ -4,29 +4,29 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use nav::map::identity::{Digest, ImageIdentity};
-use nav::map::poi::PoiRecord;
-use nav::map::spatial::{TileKey, MAX_LOD};
+use nav_planner::map::identity::{Digest, ImageIdentity};
+use nav_planner::map::poi::PoiRecord;
+use nav_planner::map::spatial::{TileKey, MAX_LOD};
 
 #[cfg(test)]
-use nav::map::formats::MAX_PNG_BYTES;
+use nav_planner::map::formats::MAX_PNG_BYTES;
 #[cfg(test)]
-use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+use nav_planner::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
 #[cfg(test)]
-use nav::map::MapError;
+use nav_planner::map::MapError;
 #[cfg(test)]
 use std::io::Cursor;
 
 #[cfg(test)]
-use nav::map::formats::TileReceipt;
+use nav_planner::map::formats::TileReceipt;
 #[cfg(test)]
-use nav::map::poi::{
+use nav_planner::map::poi::{
     CapabilityEvidence, DisplayAnchor, EntityKind, Footprint, PoiKey, PoiKind, SourceSpace,
 };
 #[cfg(test)]
-use nav::map::spatial::{TILE_GUTTER, TILE_INTERIOR};
+use nav_planner::map::spatial::{TILE_GUTTER, TILE_INTERIOR};
 #[cfg(test)]
-use nav::map::{Rows, Text};
+use nav_planner::map::{Rows, Text};
 
 #[cfg(test)]
 /// Lumbridge courtyard mapsquare group (64-tile LOD-0 cells).
@@ -148,7 +148,7 @@ pub fn encode_tile(key: TileKey) -> Result<Vec<u8>, MapError> {
     }
     let receipt = TileReceipt {
         key,
-        payload: nav::map::formats::PayloadReceipt {
+        payload: nav_planner::map::formats::PayloadReceipt {
             bytes: out.len() as u32,
             sha256: Digest::of(&out),
         },

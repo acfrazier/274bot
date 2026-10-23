@@ -11,11 +11,11 @@ use host::Pump;
 use host_play::admission::{self, Admission, RiskInput};
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms, WalkGlobals};
-use nav::map::identity::Digest;
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
 };
@@ -184,7 +184,7 @@ fn endpoint_fixture(
                 continue;
             }
             let options = FindOptions::default();
-            let Ok(route) = nav::router::find_with(
+            let Ok(route) = nav_planner::router::find_with(
                 &world.collision,
                 &world.graph,
                 origin,
@@ -384,7 +384,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &nav::bank_fetch::BankRows::default(),
+            &nav_planner::bank_fetch::BankRows::default(),
             Admission::manual(strict_options, input, 1, WalkGlobals::default()),
             &arms,
         )
@@ -427,7 +427,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &nav::bank_fetch::BankRows::default(),
+            &nav_planner::bank_fetch::BankRows::default(),
             strict_admission,
             &arms,
         )
@@ -476,7 +476,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
         Some(tile(destination))
     );
     let allow_options = FindOptions {
-        zones: nav::zones::ZoneExempt::all(),
+        zones: nav_planner::zones::ZoneExempt::all(),
         ..strict_options
     };
     let command = model
@@ -493,7 +493,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &nav::bank_fetch::BankRows::default(),
+            &nav_planner::bank_fetch::BankRows::default(),
             Admission::manual(allow_options, input, 2, WalkGlobals::default()),
             &arms,
         )
@@ -588,7 +588,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             &context,
             &name,
             &state,
-            &nav::bank_fetch::BankRows::default(),
+            &nav_planner::bank_fetch::BankRows::default(),
             Admission::manual(strict_options, escape_input, 3, WalkGlobals::default()),
             &arms,
         )
@@ -689,10 +689,10 @@ fn compat_corridor_fixture(
     assert!(world.collision.standable(origin));
     assert!(world.collision.standable(destination));
     let options = FindOptions {
-        zones: nav::zones::ZoneExempt::all(),
+        zones: nav_planner::zones::ZoneExempt::all(),
         ..FindOptions::default()
     };
-    let route = nav::router::find_with(
+    let route = nav_planner::router::find_with(
         &world.collision,
         &world.graph,
         origin,
@@ -704,7 +704,7 @@ fn compat_corridor_fixture(
     assert!(route
         .legs
         .iter()
-        .all(|leg| matches!(leg, nav::router::Leg::Walk { .. })));
+        .all(|leg| matches!(leg, nav_planner::router::Leg::Walk { .. })));
     let assessment = admission::assess(
         &route,
         world,

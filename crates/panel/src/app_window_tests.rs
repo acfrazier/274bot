@@ -261,8 +261,8 @@ fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture
 }
 
 fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
-    let world = nav::world::NavWorld::from_parts(
-        nav::collision::WorldCollision {
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 0,
                 z: 0,
@@ -274,7 +274,7 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
             blocked: vec![0u64; 1],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
@@ -736,8 +736,8 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
 #[test]
 fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
     let _guard = crate::test_support::imgui_context_guard();
-    let world = nav::world::NavWorld::from_parts(
-        nav::collision::WorldCollision {
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 0,
                 z: 0,
@@ -749,7 +749,7 @@ fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
             blocked: vec![0u64; 1],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let mut ctx = context();

@@ -1,11 +1,11 @@
 //! design-bank-snapshot §7 S5: the host BankBudget planner reads the
-//! account's bank memory ([`nav::bank_fetch::BankRows`]), not the open
+//! account's bank memory ([`nav_planner::bank_fetch::BankRows`]), not the open
 //! bank. A closed bank with a `Session` memory still plans; a `Session` or
 //! `Unknown` shortage is `NoPath` in place; a `Hint` shortage costs exactly
 //! one verifying trip that the open bank settles.
 use super::*;
 use api::bank_memory::{BankMemory, Origin};
-use nav::bank_fetch::{nearest_bank_access, BankStep};
+use nav_planner::bank_fetch::{nearest_bank_access, BankStep};
 use parking_lot::RwLock;
 
 const COINS: i32 = 995;
@@ -639,7 +639,7 @@ fn the_post_session_route_resumes_from_the_bank() {
             let route = bot.route.expect("the route resumes from the bank");
             assert_eq!(route.dest, dest);
             match route.legs.first() {
-                Some(nav::router::Leg::Walk { tiles }) => {
+                Some(nav_planner::router::Leg::Walk { tiles }) => {
                     assert_eq!(tiles.first(), Some(&at_bank))
                 }
                 other => panic!("the resumed route starts with a walk: {other:?}"),
@@ -693,7 +693,7 @@ fn toll_trip(world: &NavWorld) -> Vec<BankStep> {
 /// on the hint, so the search reaches a goal and plans the one verifying
 /// trip, and the post-session route goes to that goal. The same rows as a
 /// `Session` or `Unknown` memory stay `NoPath` in place.
-fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
+fn assert_one_trip_only_for_a_hint(arrival: nav_planner::arrival::ArrivalKind) {
     let world = Arc::new(solid_toll_world());
     let (_, closed) = solid_fixture();
     let state = WorldState::from_snapshot(&closed);
@@ -759,12 +759,12 @@ fn assert_one_trip_only_for_a_hint(arrival: nav::arrival::ArrivalKind) {
 
 #[test]
 fn a_solid_radius_walk_plans_the_trip_a_hint_lacks_the_toll_for() {
-    assert_one_trip_only_for_a_hint(nav::arrival::ArrivalKind::Reach);
+    assert_one_trip_only_for_a_hint(nav_planner::arrival::ArrivalKind::Reach);
 }
 
 #[test]
 fn an_area_walk_plans_the_trip_a_hint_lacks_the_toll_for() {
-    assert_one_trip_only_for_a_hint(nav::arrival::ArrivalKind::Area);
+    assert_one_trip_only_for_a_hint(nav_planner::arrival::ArrivalKind::Area);
 }
 
 /// The enabled compat dispatch (`walk-near`, radius 1, fetch on) to a solid

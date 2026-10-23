@@ -82,7 +82,7 @@ fn verify_game_data_source(
             actual: actual_len,
         });
     }
-    let actual = nav::manifest::hash_file(path)
+    let actual = nav_planner::manifest::hash_file(path)
         .map_err(|error| GameDataSourceFault::Unreadable { error })?;
     if actual != expected.sha256 {
         return Err(GameDataSourceFault::Content {
@@ -558,7 +558,7 @@ impl ProfileSelection {
             if origin.is_bundled() {
                 eprintln!(
                     "host-play: navigation source: packaged {} bundle: {}",
-                    nav::pack::FORMAT_ID,
+                    nav_planner::pack::FORMAT_ID,
                     nav_pack.display()
                 );
             } else {
@@ -829,7 +829,7 @@ impl ProfileSelection {
             && prefix.starts_with(b"274V")
             && prefix
                 .get(4)
-                .is_some_and(|version| *version < nav::pack::VERSION)
+                .is_some_and(|version| *version < nav_planner::pack::VERSION)
         {
             let message = format!(
                 "navigation unavailable: navigation pack was built by an older 274bot; rebuild it with nav-pack: {}",
@@ -1250,7 +1250,7 @@ fn nav_zone_counts(world: &NavWorld) -> (u32, u32) {
 pub struct DeferredReach {
     path: PathBuf,
     content_sha256: String,
-    header: nav::pack::ReachSidecarHeader,
+    header: nav_planner::pack::ReachSidecarHeader,
     bits: std::sync::OnceLock<Result<Arc<[u64]>, String>>,
     reads: std::sync::atomic::AtomicU32,
     hashes: std::sync::atomic::AtomicU32,
@@ -1266,7 +1266,7 @@ impl DeferredReach {
         let path = pack_path.with_extension("navreach");
         let observer = ProfileProgressObserver::default();
         let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
-        let header = nav::pack::read_reach_sidecar_header(&mut reader, length)
+        let header = nav_planner::pack::read_reach_sidecar_header(&mut reader, length)
             .map_err(|e| format!("navigation {}: {e}", path.display()))?;
         if sha256_hex(&header.binding) != nav_sha256 {
             return Err(format!(
@@ -1303,7 +1303,7 @@ impl DeferredReach {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.hashes
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let side = nav::pack::read_reach_sidecar(&mut reader, length)
+        let side = nav_planner::pack::read_reach_sidecar(&mut reader, length)
             .map_err(|e| format!("navigation {}: {e}", self.path.display()))?;
         if side.origin != self.header.origin
             || side.width != self.header.width
@@ -1389,7 +1389,7 @@ fn load_canlight(
     let path = pack_path.with_extension("navcanlight");
     let observer = ProfileProgressObserver::default();
     let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
-    let side = nav::pack::read_canlight_sidecar(&mut reader, length)
+    let side = nav_planner::pack::read_canlight_sidecar(&mut reader, length)
         .map_err(|e| format!("navigation {}: {e}", path.display()))?;
     if let Some(policy) = policy {
         let expected = canlight::expected_header_binding(nav_sha256, policy)
@@ -1442,14 +1442,17 @@ fn decode_nav_world(
 }
 
 /// Record the verified pack digest as the loaded world's one facade identity
-/// (`nav::producer::bind`), before the world is published to `Play`: every
+/// (`nav_planner::producer::bind`), before the world is published to `Play`: every
 /// collision, zone and route view the slots are served carries it.
 fn bind_nav_identity(world: &Arc<NavWorld>, nav_sha256: &str) -> Result<(), String> {
-    let digest = nav::map::identity::Digest::from_hex(nav_sha256)
+    let digest = nav_planner::map::identity::Digest::from_hex(nav_sha256)
         .map_err(|error| format!("navigation identity {nav_sha256}: {error}"))?;
-    nav::producer::bind(world, nav::contract::PackDigest::from_bytes(digest.0))
-        .map(drop)
-        .map_err(|error| format!("navigation lease identity: {error}"))
+    nav_planner::producer::bind(
+        world,
+        nav_planner::contract::PackDigest::from_bytes(digest.0),
+    )
+    .map(drop)
+    .map_err(|error| format!("navigation lease identity: {error}"))
 }
 
 #[cfg(test)]
@@ -1545,18 +1548,21 @@ mod tests {
     fn paint_sidecar_is_lazy_shared_and_rejects_changed_payload() {
         let dir = scratch_dir("lazy-paint");
         let pack = dir.join("world.navpack");
-        let world = nav::world::NavWorld::from_grid(&nav::grid::StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(
+            &nav_planner::grid::StepGrid::fixture_open_3x3(),
+        );
         let binding = [0xabu8; 32];
         let c = &world.collision;
         let bits = vec![0x1234u64; c.walk.len().div_ceil(64)];
-        let bytes = nav::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
+        let bytes =
+            nav_planner::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
         let path = pack.with_extension("navreach");
         std::fs::write(&path, &bytes).unwrap();
         let prepared = super::DeferredReach::prepare(
             &pack,
             &world,
-            &nav::pack::sha256_hex(&binding),
-            &nav::manifest::hash_bytes(&bytes),
+            &nav_planner::pack::sha256_hex(&binding),
+            &nav_planner::manifest::hash_bytes(&bytes),
         )
         .unwrap();
         assert!(
@@ -1574,8 +1580,8 @@ mod tests {
         let changed = super::DeferredReach::prepare(
             &pack,
             &world,
-            &nav::pack::sha256_hex(&binding),
-            &nav::manifest::hash_bytes(&bytes),
+            &nav_planner::pack::sha256_hex(&binding),
+            &nav_planner::manifest::hash_bytes(&bytes),
         )
         .unwrap();
         let mut edited = bytes.clone();
@@ -1599,13 +1605,13 @@ mod tests {
     }
 
     /// Pin `path` by its own current length and SHA-256, the same
-    /// `nav::manifest::hash_file` the binding uses (the real pinned digests
+    /// `nav_planner::manifest::hash_file` the binding uses (the real pinned digests
     /// have no synthetic preimage).
     fn pin(path: &Path, relative: &str) -> api::game_data::SourceInput {
         api::game_data::SourceInput {
             path: relative.to_string(),
             bytes: std::fs::metadata(path).unwrap().len(),
-            sha256: nav::manifest::hash_file(path).unwrap(),
+            sha256: nav_planner::manifest::hash_file(path).unwrap(),
         }
     }
 
@@ -1614,7 +1620,7 @@ mod tests {
     /// `bind` attaches generated facts only when every pinned generator source
     /// verifies by exact bytes, through this predicate. The pinned SHA-256
     /// values have no synthetic preimage, so the expected identity comes from
-    /// the probe's own bytes via the same `nav::manifest::hash_file` the
+    /// the probe's own bytes via the same `nav_planner::manifest::hash_file` the
     /// binding uses; one flipped byte at the same length must be refused.
     #[test]
     fn equal_size_different_bytes_sources_do_not_attach_game_data() {

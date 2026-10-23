@@ -187,7 +187,7 @@ claim that `e2e` owns those crates' production behavior.
   dependency fails the checker, so the compiled script crate stays
   client-free.
 - **`script`** has no `nav-executor` edge. Script walks run through the host's
-  `Traveller` owner and read plans through `nav::contract`. `panel` has no
+  `Traveller` owner and read plans through `nav_planner::contract`. `panel` has no
   `nav-executor` edge. Its one executor test builds through the `host-play`
   test-support seam `WalkArm::with_latched_essence`.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
@@ -517,7 +517,7 @@ job replay as the library tests. The integration binary does not reference
 
 #### Native map data boundary
 
-The public `nav::map` modules define the data/spatial contract independently of
+The public `nav_planner::map` modules define the data/spatial contract independently of
 the panel, TUI and worker lifecycle. `SourceSpace::ClientVisual` alone uses
 `collision::game_plane`; collision and can-light stamping use that same helper.
 Server NPC spawns and already-game-plane coordinates are never shifted.

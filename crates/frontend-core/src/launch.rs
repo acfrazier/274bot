@@ -354,15 +354,15 @@ impl BoundProfile {
     }
 
     /// The navigation world, once loaded.
-    pub fn world(&self) -> Option<Arc<nav::world::NavWorld>> {
+    pub fn world(&self) -> Option<Arc<nav_planner::world::NavWorld>> {
         self.0.world()
     }
 
     /// Navigation pack identity for map bindings, if the profile published one.
-    pub fn nav_identity(&self) -> Option<nav::map::identity::Digest> {
-        self.0
-            .nav_identity()
-            .and_then(|identity| nav::map::identity::Digest::from_hex(&identity.nav_sha256).ok())
+    pub fn nav_identity(&self) -> Option<nav_planner::map::identity::Digest> {
+        self.0.nav_identity().and_then(|identity| {
+            nav_planner::map::identity::Digest::from_hex(&identity.nav_sha256).ok()
+        })
     }
 
     /// Path to the profile's bound map-flags sidecar.

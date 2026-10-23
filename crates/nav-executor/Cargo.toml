@@ -9,10 +9,10 @@ workspace = true
 
 [dependencies]
 api = { path = "../api" }
-nav = { path = "../nav" }
+nav-planner = { path = "../nav-planner" }
 client = { workspace = true }
 thiserror = "=2.0.20"
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
-nav = { path = "../nav", features = ["test-support"] }
+nav-planner = { path = "../nav-planner", features = ["test-support"] }

@@ -419,7 +419,7 @@ impl Runner {
     /// Start a scenario runner over the selected world.
     pub(crate) fn with_world(
         scenario: Scenario,
-        world: Option<std::sync::Arc<nav::world::NavWorld>>,
+        world: Option<std::sync::Arc<nav_planner::world::NavWorld>>,
     ) -> Self {
         Self(Box::new(scenario::ScenarioRunner::with_world(
             *scenario.0,
@@ -1357,7 +1357,11 @@ impl RunnerHandle {
     pub fn with_route_for<R>(
         &self,
         name: &str,
-        project: impl FnOnce(bool, Option<&nav::router::Route>, Option<api::snapshot::WorldTile>) -> R,
+        project: impl FnOnce(
+            bool,
+            Option<&nav_planner::router::Route>,
+            Option<api::snapshot::WorldTile>,
+        ) -> R,
     ) -> R {
         let state = self.0.lock().unwrap();
         match state.runner.as_ref() {

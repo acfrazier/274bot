@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find_with;
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::find_with;
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// Aubury (npc 553) in the Varrock rune shop (m50_53 local (53,10)).
@@ -50,10 +50,10 @@ const MINE_PAD: WorldTile = WorldTile {
 /// Quest" — since Task 1 `find` gates every requirement fail-closed (the
 /// perm-scoped `%runemysteries` varp is never transmitted, so only the
 /// journal proves it live).
-fn ess_state() -> nav::WorldState {
-    nav::WorldState {
+fn ess_state() -> nav_planner::WorldState {
+    nav_planner::WorldState {
         quests: ["Rune Mysteries Quest".to_string()].into(),
-        ..nav::WorldState::default()
+        ..nav_planner::WorldState::default()
     }
 }
 
@@ -88,7 +88,7 @@ fn nav_essence() {
     if ess.len() < 4 {
         fail(&format!(
             "nav_essence: pack carries {} essence entry edges, need >= 4 \
-             (Aubury+Sedridor+…; rebake with `cargo run -p nav --bin nav-pack`)",
+             (Aubury+Sedridor+…; rebake with `cargo run -p nav-planner --bin nav-pack`)",
             ess.len()
         ));
     }
@@ -102,13 +102,13 @@ fn nav_essence() {
         {
             fail(&format!(
                 "nav_essence: entry edge {e:?} is not on a known wizard tile \
-                 (rebake with `cargo run -p nav --bin nav-pack`)"
+                 (rebake with `cargo run -p nav-planner --bin nav-pack`)"
             ));
         }
         if e.to != MINE_PAD {
             fail(&format!(
                 "nav_essence: entry edge {e:?} must land on the mine pad {MINE_PAD:?} \
-                 (rebake with `cargo run -p nav --bin nav-pack`)"
+                 (rebake with `cargo run -p nav-planner --bin nav-pack`)"
             ));
         }
         if !e
@@ -128,7 +128,7 @@ fn nav_essence() {
         &world.graph,
         AUBURY,
         MINE_PAD,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
         &ess_state(),
     )
     .map(|route| {
@@ -138,7 +138,7 @@ fn nav_essence() {
                 route.dest
             ));
         }
-        if nav::debug_enabled() {
+        if nav_planner::debug_enabled() {
             println!(
                 "nav_essence: aubury -> essence mine routed ({:.0} ticks, {} legs)",
                 route.ticks,
@@ -162,7 +162,7 @@ fn nav_essence() {
             level: 0,
         },
         MINE_PAD,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
         &ess_state(),
     )
     .map(|route| {
@@ -181,7 +181,7 @@ fn nav_essence() {
     // Every mine landing must be able to reach the exit: with a session
     // latched, any interior tile (the teleport landings are random among
     // 22 `essence_mine_teleports` coords) routes to a portal and out.
-    let session = nav::essence::essence_session_for_wizard(553).unwrap();
+    let session = nav_planner::essence::essence_session_for_wizard(553).unwrap();
     for &(x, z) in &[(2909, 4834), (2912, 4833), (2935, 4846), (2896, 4809)] {
         find_with(
             &world.collision,
@@ -192,9 +192,9 @@ fn nav_essence() {
                 z: 3401,
                 level: 0,
             },
-            nav::router::FindOptions {
+            nav_planner::router::FindOptions {
                 essence: Some(session),
-                ..nav::router::FindOptions::default()
+                ..nav_planner::router::FindOptions::default()
             },
             &ess_state(),
         )

@@ -9,10 +9,10 @@ use std::rc::Rc;
 use api::snapshot::WorldTile;
 use dear_imgui_rs::TextureId;
 use dear_imgui_wgpu as imgui_wgpu;
-use nav::collision::WorldCollision;
-use nav::map::spatial::{TileKey, View};
-use nav::transport::TransportGraph;
-use nav::world::NavWorld;
+use nav_planner::collision::WorldCollision;
+use nav_planner::map::spatial::{TileKey, View};
+use nav_planner::transport::TransportGraph;
+use nav_planner::world::NavWorld;
 
 use super::{panel_gpu_shutdown, PanelState, StartupPreparation};
 use crate::test_support::headless_gpu;
