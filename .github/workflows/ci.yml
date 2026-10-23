@@ -90,6 +90,8 @@ jobs:
           workspaces: |
             . -> target
             vendor/fr-client-rust -> target
+      - name: Navigation action deny-list coverage
+        run: python3 -B tools/architecture/nav_clippy.py --check
       - name: Clippy
         run: |
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
