@@ -302,9 +302,36 @@ impl ObservedFrame {
     }
 }
 
+/// A captured action's session snapshot clock, never its host script counter.
+/// Keep a missing clock visible so an oracle cannot discard an untimed action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActionSnapshotTick(Option<u32>);
+
+impl ActionSnapshotTick {
+    fn from_capture(action: &Value) -> Self {
+        Self(
+            action["snapshot_tick"]
+                .as_u64()
+                .and_then(|tick| u32::try_from(tick).ok()),
+        )
+    }
+}
+
+/// The only action-versus-condition time comparison in the survival oracles.
+/// All three eating cells, including their heal deadlines, use this clock.
+fn action_at_condition_offset(
+    action: ActionSnapshotTick,
+    condition_tick: u32,
+    allowed: std::ops::RangeInclusive<i64>,
+) -> bool {
+    action
+        .0
+        .is_some_and(|tick| allowed.contains(&(i64::from(tick) - i64::from(condition_tick))))
+}
+
 #[derive(Debug, Clone)]
 struct EatAction {
-    tick: u32,
+    tick: ActionSnapshotTick,
     hp_before: i32,
     hp_max: i32,
     lobsters_before: i32,
@@ -316,7 +343,7 @@ struct EatAction {
 
 #[derive(Debug, Clone)]
 struct AttackAction {
-    tick: u32,
+    tick: ActionSnapshotTick,
     accepted: bool,
     owner_run: Option<String>,
     real_wire: bool,
@@ -719,7 +746,7 @@ fn eat_actions(actions: &[Value]) -> Vec<EatAction> {
         .filter_map(|action| {
             let snapshot = &action["snapshot"];
             Some(EatAction {
-                tick: u32::try_from(action["tick"].as_u64()?).ok()?,
+                tick: ActionSnapshotTick::from_capture(action),
                 hp_before: snapshot_stat(snapshot, 3)?,
                 hp_max: snapshot_stat_base(snapshot, 3)?,
                 lobsters_before: snapshot_item_count(snapshot, i64::from(LOBSTER_ID)),
@@ -736,13 +763,11 @@ fn attack_actions(actions: &[Value]) -> Vec<AttackAction> {
     actions
         .iter()
         .filter(|action| is_fight_attack(action))
-        .filter_map(|action| {
-            Some(AttackAction {
-                tick: u32::try_from(action["tick"].as_u64()?).ok()?,
-                accepted: action["accepted"] == json!(true),
-                owner_run: action["run"].as_str().map(str::to_owned),
-                real_wire: has_decoded_wire(action),
-            })
+        .map(|action| AttackAction {
+            tick: ActionSnapshotTick::from_capture(action),
+            accepted: action["accepted"] == json!(true),
+            owner_run: action["run"].as_str().map(str::to_owned),
+            real_wire: has_decoded_wire(action),
         })
         .collect()
 }
@@ -778,8 +803,7 @@ fn onset(frames: &[ObservedFrame]) -> Option<(u32, u32)> {
 fn healed_after(frames: &[ObservedFrame], eat: &EatAction, expected_hp: i32) -> bool {
     let expected_food = eat.lobsters_before - 1;
     frames.iter().any(|frame| {
-        frame.tick >= eat.tick
-            && frame.tick <= eat.tick.saturating_add(3)
+        action_at_condition_offset(eat.tick, frame.tick, -3..=0)
             && frame.hp == expected_hp
             && frame.lobsters == expected_food
     })
@@ -791,6 +815,9 @@ fn evaluate_walk(
     frames: &[ObservedFrame],
     eats: &[EatAction],
 ) -> OracleDecision {
+    if eats.iter().any(|eat| eat.tick.0.is_none()) {
+        return OracleDecision::Fail("oracle: captured Eat has no explicit snapshot_tick".into());
+    }
     if frames.iter().any(|frame| frame.hp == 0) {
         return OracleDecision::Fail("product: account died during the walk cell".into());
     }
@@ -837,7 +864,10 @@ fn evaluate_walk(
             case.expected_hp_max()
         ));
     }
-    if eats.iter().any(|eat| eat.tick < onset_tick) {
+    if eats
+        .iter()
+        .any(|eat| action_at_condition_offset(eat.tick, onset_tick, i64::MIN..=-1))
+    {
         return OracleDecision::Fail("product: food was emitted before the poison line".into());
     }
     let marks = poison_marks(frames);
@@ -876,7 +906,10 @@ fn evaluate_walk(
     match case {
         EatCase::PoisonLine => {
             let Some(second) = marks.get(1).copied() else {
-                if eats.iter().any(|eat| eat.tick >= onset_tick) {
+                if eats
+                    .iter()
+                    .any(|eat| action_at_condition_offset(eat.tick, onset_tick, 0..=i64::MAX))
+                {
                     return OracleDecision::Fail(
                         "product: food was emitted before the second poison mark".into(),
                     );
@@ -900,14 +933,17 @@ fn evaluate_walk(
                     second.tick, second.hp, second.poison
                 ));
             }
-            if eats.iter().any(|eat| eat.tick < second.tick) {
+            if eats
+                .iter()
+                .any(|eat| action_at_condition_offset(eat.tick, second.tick, i64::MIN..=-1))
+            {
                 return OracleDecision::Fail(
                     "product: food was emitted before the second poison mark".into(),
                 );
             }
             let due = eats
                 .iter()
-                .filter(|eat| eat.tick >= second.tick && eat.tick <= second.tick.saturating_add(3))
+                .filter(|eat| action_at_condition_offset(eat.tick, second.tick, 0..=3))
                 .collect::<Vec<_>>();
             if due.len() > 1 {
                 return OracleDecision::Fail(
@@ -938,10 +974,9 @@ fn evaluate_walk(
             }
             if healed_after(frames, eat, 15) {
                 OracleDecision::Pass
-            } else if frames
-                .last()
-                .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
-            {
+            } else if frames.last().is_some_and(|frame| {
+                action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4)
+            }) {
                 OracleDecision::Fail(
                     "product: lobster action did not heal by 12 HP and consume one lobster".into(),
                 )
@@ -950,14 +985,17 @@ fn evaluate_walk(
             }
         }
         EatCase::FullHp => {
-            if eats.iter().any(|eat| eat.tick < first.tick) {
+            if eats
+                .iter()
+                .any(|eat| action_at_condition_offset(eat.tick, first.tick, i64::MIN..=-1))
+            {
                 return OracleDecision::Fail(
                     "product: food was emitted at full HP before the first poison mark".into(),
                 );
             }
             let first_due_eats = eats
                 .iter()
-                .filter(|eat| eat.tick >= first.tick && eat.tick <= first.tick.saturating_add(3))
+                .filter(|eat| action_at_condition_offset(eat.tick, first.tick, 0..=3))
                 .collect::<Vec<_>>();
             if first_due_eats.len() > 1 {
                 return OracleDecision::Fail(
@@ -987,10 +1025,9 @@ fn evaluate_walk(
                 ));
             }
             if !healed_after(frames, first_eat, 10) {
-                if frames
-                    .last()
-                    .is_some_and(|frame| frame.tick > first_eat.tick.saturating_add(3))
-                {
+                if frames.last().is_some_and(|frame| {
+                    action_at_condition_offset(first_eat.tick, frame.tick, i64::MIN..=-4)
+                }) {
                     return OracleDecision::Fail(
                         "product: first lobster did not heal to full HP".into(),
                     );
@@ -999,7 +1036,12 @@ fn evaluate_walk(
             }
             let Some(second) = marks.get(1).copied() else {
                 if eats.iter().any(|eat| {
-                    eat.tick > first_eat.tick && eat.tick < first.tick.saturating_add(30)
+                    eat.tick > first_eat.tick
+                        && action_at_condition_offset(
+                            eat.tick,
+                            first.tick.saturating_add(30),
+                            i64::MIN..=-1,
+                        )
                 }) {
                     return OracleDecision::Fail(
                         "product: a second bite occurred before the second poison mark".into(),
@@ -1024,17 +1066,17 @@ fn evaluate_walk(
                     second.tick, second.hp, second.poison
                 ));
             }
-            if eats
-                .iter()
-                .any(|eat| eat.tick > first_eat.tick && eat.tick < second.tick)
-            {
+            if eats.iter().any(|eat| {
+                eat.tick > first_eat.tick
+                    && action_at_condition_offset(eat.tick, second.tick, i64::MIN..=-1)
+            }) {
                 return OracleDecision::Fail(
                     "product: a second bite occurred before the second poison mark".into(),
                 );
             }
             let due = eats
                 .iter()
-                .filter(|eat| eat.tick >= second.tick && eat.tick <= second.tick.saturating_add(3))
+                .filter(|eat| action_at_condition_offset(eat.tick, second.tick, 0..=3))
                 .collect::<Vec<_>>();
             if due.len() > 1 {
                 return OracleDecision::Fail(
@@ -1065,10 +1107,9 @@ fn evaluate_walk(
             }
             if healed_after(frames, eat, 10) {
                 OracleDecision::Pass
-            } else if frames
-                .last()
-                .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
-            {
+            } else if frames.last().is_some_and(|frame| {
+                action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4)
+            }) {
                 OracleDecision::Fail("product: second lobster did not heal to full HP".into())
             } else {
                 OracleDecision::Pending
@@ -1083,6 +1124,13 @@ fn evaluate_combat(
     eats: &[EatAction],
     attacks: &[AttackAction],
 ) -> OracleDecision {
+    if eats.iter().any(|eat| eat.tick.0.is_none())
+        || attacks.iter().any(|attack| attack.tick.0.is_none())
+    {
+        return OracleDecision::Fail(
+            "oracle: captured combat action has no explicit snapshot_tick".into(),
+        );
+    }
     if frames.iter().any(|frame| frame.hp == 0) {
         return OracleDecision::Fail("product: account died during the combat cell".into());
     }
@@ -1144,14 +1192,17 @@ fn evaluate_combat(
             first.tick, first.hp, first.poison
         ));
     }
-    if eats.iter().any(|eat| eat.tick < first.tick) {
+    if eats
+        .iter()
+        .any(|eat| action_at_condition_offset(eat.tick, first.tick, i64::MIN..=-1))
+    {
         return OracleDecision::Fail(
             "product: combat ate before the first poison mark at full HP".into(),
         );
     }
     let due = eats
         .iter()
-        .filter(|eat| eat.tick >= first.tick && eat.tick <= first.tick.saturating_add(3))
+        .filter(|eat| action_at_condition_offset(eat.tick, first.tick, 0..=3))
         .collect::<Vec<_>>();
     if due.len() > 1 {
         return OracleDecision::Fail(
@@ -1196,7 +1247,7 @@ fn evaluate_combat(
         OracleDecision::Pass
     } else if frames
         .last()
-        .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
+        .is_some_and(|frame| action_at_condition_offset(eat.tick, frame.tick, i64::MIN..=-4))
     {
         OracleDecision::Fail(
             "product: API combat Lobster action did not heal to full and consume one item".into(),
@@ -1268,7 +1319,8 @@ fn walk_receipt(
         "frames": frames.iter().map(ObservedFrame::evidence).collect::<Vec<_>>(),
         "host_capture": captured_evidence(&cell.capture),
         "eat_actions": eats.iter().map(|eat| json!({
-            "tick": eat.tick,
+            "tick": eat.tick.0,
+            "snapshot_tick": eat.tick.0,
             "hp_before": eat.hp_before,
             "hp_max": eat.hp_max,
             "lobsters_before": eat.lobsters_before,
@@ -1644,7 +1696,8 @@ fn run_combat_cell() {
         "classification": failure.as_ref().map(|(class, _)| *class),
         "failure": failure.as_ref().map(|(_, reason)| reason),
         "eat_actions": eat_actions(&actions).iter().map(|eat| json!({
-            "tick": eat.tick,
+            "tick": eat.tick.0,
+            "snapshot_tick": eat.tick.0,
             "hp_before": eat.hp_before,
             "hp_max": eat.hp_max,
             "lobsters_before": eat.lobsters_before,
@@ -1654,7 +1707,8 @@ fn run_combat_cell() {
             "real_wire": eat.real_wire,
         })).collect::<Vec<_>>(),
         "attack_actions": attack_actions(&actions).iter().map(|attack| json!({
-            "tick": attack.tick,
+            "tick": attack.tick.0,
+            "snapshot_tick": attack.tick.0,
             "accepted": attack.accepted,
             "owner_run": attack.owner_run,
             "real_wire": attack.real_wire,
@@ -1702,6 +1756,300 @@ fn live_survival_eat_poison_through_api_combat_fight() {
 #[cfg(test)]
 mod oracle_tests {
     use super::*;
+
+    #[test]
+    fn oracle_action_condition_clock_checks_exact_windows_without_offsets() {
+        for (action, condition, first, last, expected) in [
+            (81, 82, 0, 3, false),
+            (82, 82, 0, 3, true),
+            (85, 82, 0, 3, true),
+            (86, 82, 0, 3, false),
+            (82, 82, -3, 0, true),
+            (82, 85, -3, 0, true),
+            (82, 86, -3, 0, false),
+            (82, 86, i64::MIN, -4, true),
+            (0, u32::MAX, i64::MIN, -1, true),
+            (u32::MAX, 0, 0, i64::MAX, true),
+        ] {
+            assert_eq!(
+                action_at_condition_offset(
+                    ActionSnapshotTick(Some(action)),
+                    condition,
+                    first..=last,
+                ),
+                expected,
+                "action={action}, condition={condition}, window={first}..={last}",
+            );
+        }
+        let missing = ActionSnapshotTick::from_capture(&json!({"tick": 82, "host_tick": 82}));
+        assert_eq!(missing, ActionSnapshotTick(None));
+        assert!(!action_at_condition_offset(
+            missing,
+            82,
+            i64::MIN..=i64::MAX
+        ));
+    }
+
+    fn combat_capture_with_clocks(host_tick: u32, snapshot_tick: u32) -> Vec<Value> {
+        vec![
+            json!({
+                "kind": "interaction",
+                "request": {"op": "npc", "name": "Cow", "action": "Attack"},
+                "tick": 9000,
+                "host_tick": 9000,
+                "snapshot_tick": 50,
+                "accepted": true,
+                "run": "run-1",
+                "wire_decoded": true,
+                "wire_opcodes": [72],
+            }),
+            json!({
+                "kind": "interaction",
+                "request": {"op": "held", "name": "Lobster", "action": "Eat"},
+                "tick": host_tick,
+                "host_tick": host_tick,
+                "snapshot_tick": snapshot_tick,
+                "accepted": true,
+                "run": "run-1",
+                "wire_decoded": true,
+                "wire_opcodes": [76],
+                "snapshot": {
+                    "stats": [{"index": 3, "base": 10, "effective": 4}],
+                    "inventory": [{"id": LOBSTER_ID, "count": 5}],
+                },
+            }),
+        ]
+    }
+
+    #[test]
+    fn combat_oracle_uses_explicit_snapshot_clock_when_host_clocks_differ() {
+        let actions = combat_capture_with_clocks(89, 82);
+        let eats = eat_actions(&actions);
+        let attacks = attack_actions(&actions);
+        assert_eq!(eats[0].tick, ActionSnapshotTick(Some(82)));
+        assert_eq!(attacks[0].tick, ActionSnapshotTick(Some(50)));
+        let frames = vec![
+            onset_frame(51, 10, 10),
+            mark_frame(82, 4, 10, 5, 82),
+            mark_frame(84, 10, 10, 4, 82),
+        ];
+        assert_eq!(
+            evaluate_combat(50, &frames, &eats, &attacks),
+            OracleDecision::Pass,
+        );
+    }
+
+    #[test]
+    fn combat_oracle_rejects_a_truly_late_snapshot_despite_a_timely_host_clock() {
+        let actions = combat_capture_with_clocks(82, 86);
+        let frames = vec![
+            onset_frame(51, 10, 10),
+            mark_frame(82, 4, 10, 5, 82),
+            mark_frame(86, 4, 10, 5, 82),
+            mark_frame(88, 10, 10, 4, 82),
+        ];
+        assert!(matches!(
+            evaluate_combat(50, &frames, &eat_actions(&actions), &attack_actions(&actions)),
+            OracleDecision::Fail(reason) if reason.contains("within three ticks"),
+        ));
+    }
+
+    #[test]
+    fn survival_oracles_reject_untimed_actions_instead_of_using_the_host_clock() {
+        let mut actions = combat_capture_with_clocks(82, 82);
+        for action in &mut actions {
+            action.as_object_mut().unwrap().remove("snapshot_tick");
+        }
+        let eats = eat_actions(&actions);
+        let attacks = attack_actions(&actions);
+        assert_eq!(eats.len(), 1);
+        assert_eq!(attacks.len(), 1);
+        let frames = vec![
+            onset_frame(51, 10, 10),
+            mark_frame(82, 4, 10, 5, 82),
+            mark_frame(84, 10, 10, 4, 82),
+        ];
+        for decision in [
+            evaluate_walk(EatCase::PoisonLine, 50, &frames, &eats),
+            evaluate_walk(EatCase::FullHp, 50, &frames, &eats),
+            evaluate_combat(50, &frames, &eats, &attacks),
+        ] {
+            assert!(matches!(
+                decision,
+                OracleDecision::Fail(reason) if reason.contains("no explicit snapshot_tick"),
+            ));
+        }
+    }
+
+    // Historical receipts contain PoisonState's exact Debug representation.
+    // Parse that representation strictly; never infer poison from HP or timing.
+    fn saved_poison_state(text: &str) -> Option<PoisonState> {
+        let state = if text == "Clear" {
+            PoisonState::Clear
+        } else if let Some(fields) = text
+            .strip_prefix("Unknown { since: ")
+            .and_then(|fields| fields.strip_suffix(" }"))
+        {
+            PoisonState::Unknown {
+                since: fields.parse().ok()?,
+            }
+        } else if let Some(fields) = text
+            .strip_prefix("Onset { since: ")
+            .and_then(|fields| fields.strip_suffix(" }"))
+        {
+            let (since, fields) = fields.split_once(", q: ")?;
+            let (q, hit) = fields.split_once(", hit_since_line: ")?;
+            PoisonState::Onset {
+                since: since.parse().ok()?,
+                q: if q == "None" {
+                    None
+                } else {
+                    Some(q.strip_prefix("Some(")?.strip_suffix(')')?.parse().ok()?)
+                },
+                hit_since_line: hit.parse().ok()?,
+            }
+        } else if let Some(fields) = text
+            .strip_prefix("Poisoned { per_tick: ")
+            .and_then(|fields| fields.strip_suffix(" }"))
+        {
+            let (per_tick, fields) = fields.split_once(", last_mark: ")?;
+            let (last_mark, hit) = fields.split_once(", hit_since_mark: ")?;
+            PoisonState::Poisoned {
+                per_tick: per_tick.parse().ok()?,
+                last_mark: last_mark.parse().ok()?,
+                hit_since_mark: hit.parse().ok()?,
+            }
+        } else {
+            PoisonState::Immune {
+                until_lower: text
+                    .strip_prefix("Immune { until_lower: ")?
+                    .strip_suffix(" }")?
+                    .parse()
+                    .ok()?,
+            }
+        };
+        (format!("{state:?}") == text).then_some(state)
+    }
+
+    fn saved_frame(row: &Value) -> ObservedFrame {
+        let tick = u32::try_from(row["tick"].as_u64().expect("saved frame tick"))
+            .expect("saved frame u32 tick");
+        let hp =
+            i32::try_from(row["hp"].as_i64().expect("saved frame HP")).expect("saved frame i32 HP");
+        let hp_max = i32::try_from(row["hp_max"].as_i64().expect("saved frame max HP"))
+            .expect("saved frame i32 max HP");
+        let poison_text = row["poison"].as_str().expect("saved poison text");
+        let evidence = &row["snapshot"];
+        assert_eq!(evidence["condition"]["tick"], json!(tick));
+        assert_eq!(evidence["snapshot_facts"]["snapshot_tick"], json!(tick));
+        assert_eq!(evidence["condition"]["hp"], json!(hp));
+        assert_eq!(evidence["condition"]["hp_max"], json!(hp_max));
+        assert_eq!(evidence["condition"]["poison"], json!(poison_text));
+        ObservedFrame {
+            tick,
+            hp,
+            hp_max,
+            lobsters: i32::try_from(row["lobsters"].as_i64().expect("saved lobster count"))
+                .expect("saved i32 lobster count"),
+            poison: saved_poison_state(poison_text).expect("exact saved poison representation"),
+            poison_line: row["poison_line"].as_bool().expect("saved poison line"),
+            route_active: row["route_active"].as_bool().expect("saved route state"),
+            protect_active: row["protect_from_melee"]
+                .as_bool()
+                .expect("saved protection state"),
+            non_poison_damage: row["non_poison_damage"]
+                .as_bool()
+                .expect("saved damage attribution"),
+            evidence: evidence.clone(),
+        }
+    }
+
+    #[test]
+    fn oracle_saved_poison_reader_accepts_exact_states_and_rejects_other_formats() {
+        for poison in [
+            PoisonState::Unknown { since: 0 },
+            PoisonState::Clear,
+            PoisonState::Onset {
+                since: 32,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            PoisonState::Onset {
+                since: 32,
+                q: None,
+                hit_since_line: true,
+            },
+            PoisonState::Poisoned {
+                per_tick: 6,
+                last_mark: 93,
+                hit_since_mark: false,
+            },
+            PoisonState::Immune { until_lower: 100 },
+        ] {
+            let text = format!("{poison:?}");
+            assert_eq!(saved_poison_state(&text), Some(poison));
+            assert_eq!(saved_poison_state(&(text + " trailing")), None);
+        }
+        for text in [
+            "",
+            "Poisoned { per_tick: 6, last_mark: 93 }",
+            "Onset { since: 32, q: Some(11), hit_since_line: maybe }",
+            "Unknown { since: 65536 }",
+        ] {
+            assert_eq!(saved_poison_state(text), None);
+        }
+    }
+
+    #[test]
+    #[ignore = "saved receipt replay; set SURVIVAL_REJUDGE_RECEIPTS to a JSON array of paths"]
+    fn oracle_rejudges_saved_survival_walk_receipts() {
+        let paths: Vec<PathBuf> = serde_json::from_str(
+            &std::env::var("SURVIVAL_REJUDGE_RECEIPTS").expect("SURVIVAL_REJUDGE_RECEIPTS"),
+        )
+        .expect("saved receipt paths");
+        assert!(!paths.is_empty(), "at least one saved receipt");
+        for path in paths {
+            assert!(path.is_absolute(), "absolute receipt path");
+            let receipt: Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read saved receipt"))
+                    .expect("parse saved receipt");
+            let case = match receipt["cell"].as_str().expect("saved cell name") {
+                "L-EAT-POISON-LINE-WALK" => EatCase::PoisonLine,
+                "L-EAT-FULL-HP-WALK" => EatCase::FullHp,
+                other => panic!("not a survival walk receipt: {other}"),
+            };
+            let seed = u32::try_from(
+                receipt["poison_seed_tick"]
+                    .as_u64()
+                    .expect("saved poison seed tick"),
+            )
+            .expect("saved u32 poison seed tick");
+            let frames = receipt["frames"]
+                .as_array()
+                .expect("saved observed frames")
+                .iter()
+                .map(saved_frame)
+                .collect::<Vec<_>>();
+            let eats = eat_actions(
+                receipt["raw_actions"]
+                    .as_array()
+                    .expect("saved raw actions"),
+            );
+            let decision = evaluate_walk(case, seed, &frames, &eats);
+            println!(
+                "survival-rejudged={}",
+                json!({
+                    "receipt": path,
+                    "cell": case.name(),
+                    "oracle_decision": format!("{decision:?}"),
+                    "action_clock": "explicit snapshot_tick",
+                    "eat_snapshot_ticks": eats.iter().map(|eat| eat.tick.0).collect::<Vec<_>>(),
+                    "observed_frames": frames.len(),
+                }),
+            );
+            assert_eq!(decision, OracleDecision::Pass, "receipt={}", path.display());
+        }
+    }
 
     #[test]
     fn oracle_seed_waits_for_login_prefix_and_active_route_progress() {
@@ -1778,7 +2126,7 @@ mod oracle_tests {
         wire: bool,
     ) -> EatAction {
         EatAction {
-            tick,
+            tick: ActionSnapshotTick(Some(tick)),
             hp_before: hp,
             hp_max: max,
             lobsters_before: lobsters,
@@ -1936,7 +2284,7 @@ mod oracle_tests {
         ];
         let eats = vec![eat(131, 4, 10, 5, "interaction", Some("run-1"), true)];
         let attacks = vec![AttackAction {
-            tick: 95,
+            tick: ActionSnapshotTick(Some(95)),
             accepted: true,
             owner_run: Some("run-1".to_owned()),
             real_wire: true,
@@ -1965,13 +2313,13 @@ mod oracle_tests {
         ];
         let eat = eat(131, 4, 10, 5, "interaction", Some("run-1"), true);
         let attacks = vec![AttackAction {
-            tick: 95,
+            tick: ActionSnapshotTick(Some(95)),
             accepted: true,
             owner_run: Some("run-1".to_owned()),
             real_wire: true,
         }];
         let mut early = eat.clone();
-        early.tick = 110;
+        early.tick = ActionSnapshotTick(Some(110));
         assert!(matches!(
             evaluate_combat(99, &frames, &[early], &attacks),
             OracleDecision::Fail(reason) if reason.contains("before the first poison mark")
