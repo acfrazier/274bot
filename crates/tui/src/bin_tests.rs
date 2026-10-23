@@ -883,16 +883,10 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
 #[test]
 fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
     let iso = IsolatedStores::enter("tui-user-missing-vault");
-    let no_vault = |home: &std::path::Path| {
-        std::fs::read_dir(home.join(".274bot"))
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .all(|entry| !entry.file_name().to_string_lossy().starts_with("vault"))
-            })
-            .unwrap_or(true)
-    };
-    assert!(no_vault(iso.home()), "the test starts without a vault");
+    // `run` resolves the vault from its own arguments and the process home,
+    // not from the thread-pinned stores, so name the vault path explicitly.
+    let vault_path = iso.dir().join("vault-test");
+    assert!(!vault_path.exists(), "the test starts without a vault");
     let nav_dir = std::env::current_exe()
         .expect("test binary path")
         .parent()
@@ -918,6 +912,8 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
             .join("274bot.navflags")
             .to_string_lossy()
             .into_owned(),
+        "--vault".to_string(),
+        vault_path.to_string_lossy().into_owned(),
         "--user".to_string(),
         "ghost".to_string(),
     ])
@@ -932,7 +928,7 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
          username and password)"
     );
     assert!(
-        no_vault(iso.home()),
+        !vault_path.exists(),
         "a rejected user must not create a vault"
     );
 }
