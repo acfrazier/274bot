@@ -1192,6 +1192,27 @@ impl LocalStateService {
         self.shared.state.lock().write_stall = Some(stall);
     }
 
+    /// Make a hydrated preference lease stale without waiting for a clock tick.
+    #[cfg(test)]
+    pub(crate) fn expire_preference_cache_for_test(&self) {
+        let mut state = self.shared.state.lock();
+        let store = state.stores.get_mut(&StoreKey::Preferences).expect("preferences are open");
+        let FileState::Read(cached) = &mut store.file else {
+            panic!("the preference cache must be hydrated before expiry");
+        };
+        cached.refreshed_at = Instant::now()
+            .checked_sub(frontend::PREFERENCES_FRESHNESS)
+            .expect("the test clock can represent the preference freshness interval");
+    }
+
+    /// Whether a preference readback is demanded, and how many finished.
+    #[cfg(test)]
+    pub(crate) fn preference_readback_state_for_test(&self) -> (bool, u64) {
+        let state = self.shared.state.lock();
+        let store = state.stores.get(&StoreKey::Preferences).expect("preferences are open");
+        (store.readback != Readback::Idle, store.readbacks)
+    }
+
     /// Publish every file write through `hook` instead of the real file.
     #[cfg(test)]
     pub(crate) fn set_write_hook(&self, hook: WriteHook) {
@@ -2456,8 +2477,8 @@ impl Shared {
     /// do its I/O with no lock held, record the outcome, and park when
     /// nothing is queued. A job that panics is contained: its request
     /// fails and the store reads its file again. Once the service is
-    /// dropped, readbacks stop and every accepted write is still finished;
-    /// the thread exits when none is left.
+    /// dropped, only hydration needed by accepted writes continues;
+    /// the thread exits when every accepted write settles.
     fn run(self: Arc<Self>) {
         let mut after_shutdown = 0usize;
         loop {
@@ -2483,7 +2504,7 @@ impl Shared {
                     self.wake.wait(&mut state);
                 }
             };
-            if stopping {
+            if stopping && matches!(job, Job::Write(..)) {
                 after_shutdown += 1;
             }
             let outcome = panic::catch_unwind(AssertUnwindSafe(|| match &job {
@@ -3519,6 +3540,9 @@ fn decide(
         }
     };
     let unchanged = cached.durable && cached.digest == Some(files::digest(&bytes));
+    // A semantic no-op can still publish canonical bytes or flush an outside
+    // writer's file. Every such publication needs its saved-state info line.
+    let audit = audit.or_else(|| (!unchanged).then_some(AuditKind::Plain));
     let advance_version = !unchanged && audit.is_some();
     Ok(Staged {
         bytes,
@@ -3642,19 +3666,20 @@ fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {
     })
 }
 
-/// The next job: the oldest queued readback (a lease or Start is waiting
-/// on it), else the oldest queued write of any store with nothing in
-/// flight. Once the service is stopping, readbacks are dropped (nobody
-/// waits on one any more) and only writes are taken.
+/// The next job: the oldest queued readback, else the oldest queued write
+/// of any store with nothing in flight. During shutdown only a cold store
+/// with accepted writes retains its hydration demand.
 fn take_job(state: &mut State) -> Option<Job> {
     if state.shutdown {
         for store in state.stores.values_mut() {
-            if store.readback != Readback::Idle {
+            let needed_by_write = matches!(store.file, FileState::Cold) && !store.queue.is_empty();
+            if store.readback != Readback::Idle && !needed_by_write {
                 store.readback = Readback::Idle;
                 store.readbacks += 1;
             }
         }
-    } else if let Some(key) = state
+    }
+    if let Some(key) = state
         .stores
         .iter()
         .filter(|(_, store)| store.readback == Readback::Queued)

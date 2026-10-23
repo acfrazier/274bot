@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   save no longer erases an unsaved checkbox or folder entry during refresh.
   Each saved change writes one log line that names the changed settings
   without private text.
+  Quitting during initial preference loading now finishes accepted saves
+  within the shutdown limit or reports their cancellation. Rewriting an
+  unchanged preference file also writes its saved-state log line.
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
 - A bot's **Start** in the panel runs the script its Script section shows. In 0.2.5, after **Assign** from Fleet, it could start an older pick from the script browser instead.
 - Player and NPC movement, action poses, map effects, projectile flight, and
