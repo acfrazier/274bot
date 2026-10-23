@@ -1,25 +1,15 @@
-//! Traveller: drives a route through the kernel `Driver` over ticks. The
-//! caller supplies the player's current tile and the door-open state each
-//! tick; the traveller targets walk legs one hop ahead and works a door
-//! leg by `op_loc` while closed. When the caller reports the door open,
-//! walk through the same tick without OP_LOC1 (that would Close).
-//!
-//! The high-level [`Traveller::follow`] is a new pollable layer: it drives
-//! a [`nav::router::Route`] leg-by-leg through `api::interact::Interactions`
-//! and `api::settle::Settle` (walk legs via `walk` + an `arrived` arm,
-//! transport legs via `interact` on the transport loc + a positional
-//! `arrived(edge.to)` arm), advancing one step per call. The host calls it
-//! every tick and gets `None` while the route is still being followed and
-//! `Some(outcome)` when it terminates.
+//! Traveller follows a planner route through the client's `Driver`.
+//! Each call to [`Traveller::follow`] polls one step through
+//! `api::interact::Interactions` and `api::settle::Settle`.
+//! The host calls it once per game tick. It returns `None` while the run is
+//! active and `Some(outcome)` when the run ends.
 
 use std::collections::VecDeque;
 
 use std::sync::Arc;
 
 use api::hostlog::{Category, Level};
-use api::interact::{
-    op_loc, press, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
-};
+use api::interact::{press, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult};
 use api::query::{ChatQueryExt, Query, SceneQuery};
 use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WidgetView, WorldTile};
@@ -35,12 +25,10 @@ use nav::executor_adapter::{
     AL_KHARID_TOLL_LEFT_LOC_ID, AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
     CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
 };
-use nav::router::{GridLeg, GridRoute, Leg, Route};
-use nav::tile::{chebyshev, Tile};
+use nav::router::{Leg, Route};
 use nav::transport::{DoorDir, TransportEdge, TransportKind};
 
 mod dialog;
-mod legacy_grid;
 mod npc_hop;
 mod snapshot;
 mod transport_hop;
@@ -78,27 +66,6 @@ const NPC_SEARCH_RADIUS: i32 = 8;
 const SCENE_SETTLE_TRIES: u32 = 3;
 /// Frozen `delayTicks(2)` per settle (`WalkExecutor.ts:1182`).
 const SCENE_SETTLE_TICKS: u32 = 2;
-
-/// The traveller's state, reported by each [`Traveller::tick`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NavStatus {
-    /// No route armed.
-    Idle,
-    /// Stepping along a walk leg.
-    Walking,
-    /// Working a door leg.
-    Door,
-    /// Standing on the destination.
-    Arrived,
-    /// Waiting at the closest reachable tile.
-    Closest,
-    /// No path to the destination.
-    Blocked,
-    /// Exceeded the per-hop tick budget.
-    Budget,
-    /// Interrupted by an external event.
-    Interrupted,
-}
 
 /// Why a [`Traveller::follow`] hop failed: the per-hop tick budget lapsed
 /// while the player was making progress (`Expired`), the player never
@@ -262,24 +229,8 @@ impl Default for TravelOptions<'_> {
     }
 }
 
-/// Drives a [`GridRoute`] toward its destination one hop per tick. The stub
-/// world has no world grid: the caller passes the player's tile each tick,
-/// and the walk target is picked from the armed route's own tiles.
+/// Follows a planner route one leg at a time.
 pub struct Traveller {
-    route: Option<GridRoute>,
-    dest: Option<Tile>,
-    status: NavStatus,
-    hop_ticks: u32,
-    budget: u32,
-    /// The tile observed on the previous tick; the per-hop budget resets
-    /// when the player advances off it.
-    last_here: Option<Tile>,
-    /// Whether the most recent walk hop was accepted by the driver.
-    last_walk_ok: Option<bool>,
-    /// Whether the most recent door `op_loc` was accepted by the driver.
-    last_op_ok: Option<bool>,
-    /// The leg currently being worked.
-    leg: usize,
     /// The active high-level follow run (Task 14); `None` when idle.
     follow: Option<FollowRun>,
     /// Original-route leg for the most recent terminal follow outcome. Kept
@@ -294,33 +245,17 @@ pub struct Traveller {
 }
 
 impl Traveller {
-    /// A traveller with the default budget of 60 ticks per hop.
+    /// An idle traveller with no active follow run.
     pub fn new() -> Self {
         Self {
-            route: None,
-            dest: None,
-            status: NavStatus::Idle,
-            hop_ticks: 0,
-            budget: 60,
-            last_here: None,
-            last_walk_ok: None,
-            last_op_ok: None,
-            leg: 0,
             follow: None,
             follow_terminal_leg: None,
             essence: None,
         }
     }
 
-    /// Drop the armed route, its destination, and any active follow run.
+    /// Drop the active follow run and its terminal-leg record.
     pub fn clear(&mut self) {
-        self.route = None;
-        self.dest = None;
-        self.hop_ticks = 0;
-        self.last_here = None;
-        self.last_walk_ok = None;
-        self.last_op_ok = None;
-        self.leg = 0;
         self.follow = None;
         self.follow_terminal_leg = None;
     }

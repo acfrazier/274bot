@@ -5,9 +5,8 @@ use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::{chebyshev, Tile};
 
 // ---------------------------------------------------------------------------
-// Legacy step-grid A* (the pre-Task-13 router), kept under `find_on_grid`
-// for the traveller and the live harnesses until they move to the
-// collision+transport router.
+// Legacy step-grid A* (the pre-Task-13 router), retained for fixture
+// compatibility. Production travel uses the collision+transport router.
 // ---------------------------------------------------------------------------
 
 /// One leg of a step-grid route: a walk segment or a door crossing.
