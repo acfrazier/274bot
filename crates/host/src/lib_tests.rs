@@ -2931,8 +2931,8 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             Some(render),
             Some(Arc::new(park)),
             ScriptRunPolicy::default(),
-            |c, _, _, _, _| {
-                mirror.lock().unwrap().0 = c.loop_cycle;
+            |_, _, _, _, _| {
+                mirror.lock().unwrap().0 += 1;
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
@@ -2975,15 +2975,16 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
         second.elapsed() >= Duration::from_millis(900),
         "watch-only repaint must wait a wall-clock second, not every tick"
     );
-    // Parking proof: a 20 ms loop would tick ~100× in 2.2 s; the 1 s
-    // park stays near 2–3 wakes.
-    let t1 = seen.lock().unwrap().0;
+    // Count ordinary observe calls, not the entity cycles recovered at wake.
+    // A 20 ms service loop would call observe ~100× in 2.2 s; the 1 s
+    // park stays near 2–3 calls.
+    let w1 = seen.lock().unwrap().0;
     thread::sleep(Duration::from_secs(2) + Duration::from_millis(200));
-    let t2 = seen.lock().unwrap().0;
-    let ticks = t2 - t1;
+    let w2 = seen.lock().unwrap().0;
+    let wakes = w2 - w1;
     assert!(
-        (1..=5).contains(&ticks),
-        "watch-only sidecar must wake ~1×/s, not 50×/s: ticks {t1} -> {t2} ({ticks} in 2.2 s)"
+        (1..=5).contains(&wakes),
+        "watch-only sidecar must wake ~1×/s, not 50×/s: wakes {w1} -> {w2} ({wakes} in 2.2 s)"
     );
     stop.store(true, Ordering::Relaxed);
     wake.wake();
