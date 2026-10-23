@@ -39,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 ### Fixed during development
 
+#### Profile settings
+
+- Survival and script-setting audit lines use the values before and after
+  the durable commit, including when one commit batches edits. Failed writes
+  and superseded same-setting edits do not add audit lines.
+
 #### Panel and TUI
 
 - Apply to all now logs one script-settings info line for each profile that it saves.

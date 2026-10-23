@@ -1475,6 +1475,96 @@ fn set_survival_logs_one_audit_line() {
 }
 
 #[test]
+fn combined_survival_writes_log_the_durable_transition_once() {
+    let name = "survival-coalesced-alice";
+    let mut s = session("survival-coalesced", &[(name, 1, false)]);
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let superseded = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    let final_write = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    drop(held);
+    s.flush_writes();
+
+    assert_eq!(
+        s.operation(superseded).unwrap().outcome(name),
+        Some(&Outcome::Cancelled)
+    );
+    assert_eq!(
+        s.operation(final_write).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> always; profile {name}; action survival; op#{}",
+                final_write.0
+            ),
+        )],
+        "one committed change logs its durable transition"
+    );
+}
+
+#[test]
+fn failed_pending_survival_write_then_success_logs_only_the_durable_transition() {
+    let name = "survival-failed-then-success-alice";
+    let test = "survival-failed-then-success";
+    let mut s = session(test, &[(name, 1, false)]);
+    let blocked = block_writes(&vault_path(test));
+
+    let failed = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    let failed_write = s
+        .writer
+        .as_mut()
+        .and_then(ProfileWriter::wait_take)
+        .expect("the failed write reaches the writer");
+    assert!(failed_write.result.is_err());
+
+    let successful = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    s.settle_write(failed_write);
+    unblock_writes(blocked);
+    let successful_write = s
+        .writer
+        .as_mut()
+        .and_then(ProfileWriter::wait_take)
+        .expect("the following write reaches the writer");
+    s.settle_write(successful_write);
+
+    assert!(s
+        .operation(failed)
+        .unwrap()
+        .outcome(name)
+        .unwrap()
+        .is_failed());
+    assert_eq!(
+        s.operation(successful).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> always; profile {name}; action survival; op#{}",
+                successful.0
+            ),
+        )],
+        "the failed setting never appears in the audit history"
+    );
+}
+
+#[test]
 fn random_settings_write_path_unchanged() {
     // Regression pin: the guardian write path still persists through
     // save_profile and mirrors the running arm. This test names no

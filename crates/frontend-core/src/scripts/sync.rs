@@ -1496,17 +1496,10 @@ impl Scripts {
                     .js
                     .get(*source, lookup)
                     .map_or(&[][..], |card| card.settings_schema.as_slice());
-                let previous = super::script_settings_values(&row.settings, copy.card);
                 row.settings
                     .script_settings
                     .insert(copy.card.to_owned(), copy.overrides.clone());
-                let current = super::script_settings_values(&row.settings, copy.card);
-                let details = self.script_settings_log_details(
-                    copy.card,
-                    "apply-to-all",
-                    &previous,
-                    &current,
-                );
+                let audit = self.script_settings_log(copy.card, "apply-to-all");
                 let live =
                     super::live_fence(core, &target, copy.card).map(|(identity, generation)| {
                         LiveSettings {
@@ -1524,7 +1517,7 @@ impl Scripts {
                     "settings sync",
                 );
                 if let Ok(operation) = &result {
-                    core.track_script_settings_log(*operation, details);
+                    core.track_script_settings_log(*operation, audit);
                 }
                 result
             }
