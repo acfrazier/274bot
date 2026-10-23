@@ -533,8 +533,15 @@ fn frozen_catalog() -> Result<FrozenCatalog, String> {
         .ok_or("Thiever matrix row has no source_sha256")?
         .to_owned();
     let repository = std::fs::canonicalize(root_path()).map_err(|error| error.to_string())?;
-    let root = std::fs::canonicalize(repository.join(read_only_path))
-        .map_err(|error| format!("resolve frozen catalog root {read_only_path}: {error}"))?;
+    let selected_root = std::env::var_os("RS2B0T")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repository.join(read_only_path));
+    let root = std::fs::canonicalize(&selected_root).map_err(|error| {
+        format!(
+            "resolve frozen catalog root {}: {error}",
+            selected_root.display()
+        )
+    })?;
     let source = std::fs::canonicalize(root.join(&source_path))
         .map_err(|error| format!("resolve frozen Thiever source {source_path}: {error}"))?;
     let registry = std::fs::canonicalize(root.join(&registry_path))
