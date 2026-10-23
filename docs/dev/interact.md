@@ -180,3 +180,42 @@ the command with its formatter. Its catalog revision must match the session.
 This packet value does not grant cheat authority. Dispatch must still enforce
 the concrete driver's Local/loopback and live-session admission. The existing
 checked cheat helper retains that boundary and its byte encoding.
+
+## Server-ordered requests
+
+Named content requests and advanced typed packets use one host drain owner,
+one request ID and one completion. The dispatcher checks every row before
+writing the first packet. It checks live ownership again before each row.
+Cancellation retains the committed prefix; it does not replay that prefix.
+The receipt records host dispatch, not server acceptance.
+
+`ServerOrderedInputState` holds the slot's one content expectation and bounded
+continue exclusion. A resume needs the exact run, predecessor, phase, input
+epoch and session proof. Reset needs complete closure, a new owned Talk-to
+and its newly observed initial page. A timeout or repeated old page cannot
+release the exclusion.
+
+The encrypted sink is the only packet-counting point. USER_EVENT advances
+the input epoch; CLIENT_EVENT counts as input without advancing that epoch.
+Ordinary housekeeping does neither. Any advanced packet invalidates the
+content expectation. Accepted foreign local edits invalidate it even when
+they write no packet. Counts can exceed five and never control admission.
+The engine owns input deferral. The native emission frame still charges its
+own existing batch allowance, not another producer's slot-wide traffic.
+
+Native content needs no external declaration. The advanced Rust envelope
+requires a private, run-bound permit. No production permit issuer, script
+binding or native consumer is activated here.
+
+On 64-bit macOS, the permanent dispatch state adds 256 Rust live bytes per
+active native slot: 208 bytes in `SlotInput`, 32 bytes for its outbound
+observer and 16 bytes in the existing native ledger. `Packet` remains
+2,128 bytes and `Client` remains 28,872 bytes. The observer allocates once;
+replacement, socket adoption and packet commits reuse its state. Inbound,
+sound and retained appearance packets acquire no observer storage.
+
+A completed ordered request separately retains one 72-byte completion
+envelope. Its lazy box preserves run/session evidence without adding the
+whole envelope to every native ledger. The warmed native-seat test remains
+below its existing 8,448-byte heap limit. Default native runs allocate no
+advanced packet buffer.

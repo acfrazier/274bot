@@ -177,4 +177,55 @@ mod tests {
             std::mem::size_of::<InputLineageGuard<'_>>(),
         );
     }
+
+    #[test]
+    fn outbound_observer_allocates_once_and_commits_allocate_nothing() {
+        let input = SlotInput::new();
+        input.observe_input_tick(ClientRevision::R289, 1, 1);
+        let observer: Arc<dyn PacketObserver> = input.clone();
+        let mut packet = client::io::Packet::new(vec![0; 256]);
+        let close = api::prot::Send::close_modal();
+        close
+            .write_for_revision(ClientRevision::R289, &mut packet)
+            .unwrap();
+        packet.pos = 0;
+
+        let installed = allocation_counter::measure(|| {
+            packet.set_observer(Some(Arc::clone(&observer)));
+        });
+        assert_eq!(installed.count_total, 1);
+        assert_eq!(installed.bytes_total, 32);
+        assert_eq!(installed.bytes_current, 32);
+
+        let rebound = allocation_counter::measure(|| {
+            packet.set_observer(Some(Arc::clone(&observer)));
+        });
+        assert_eq!(rebound.count_total, 0);
+        assert_eq!(rebound.bytes_current, 0);
+
+        let committed = allocation_counter::measure(|| {
+            for _ in 0..128 {
+                close
+                    .write_for_revision(ClientRevision::R289, &mut packet)
+                    .unwrap();
+                packet.finish_packet();
+            }
+        });
+        assert_eq!(committed.count_total, 0);
+        assert_eq!(committed.bytes_current, 0);
+        assert_eq!(packet.committed_packet_count(), Some(128));
+        assert_eq!(
+            input.with_server_ordered_input(|state| state.snapshot().packet_count()),
+            128
+        );
+
+        let removed = allocation_counter::measure(|| packet.set_observer(None));
+        assert_eq!(removed.count_total, 0);
+        assert_eq!(removed.bytes_current, -32);
+        assert!(!packet.has_observer());
+        eprintln!(
+            "S3 observer heap: one install={}B; rebind={} allocations; 128 commits={} allocations; retained after detach=0B",
+            installed.bytes_current, rebound.count_total, committed.count_total,
+        );
+    }
 }

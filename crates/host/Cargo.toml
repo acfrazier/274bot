@@ -33,6 +33,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+allocation-counter = "=0.8.1"
 api = { path = "../api", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 tungstenite = "0.24"

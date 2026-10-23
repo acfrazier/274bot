@@ -2051,6 +2051,7 @@ dependencies = [
 name = "host"
 version = "0.2.5"
 dependencies = [
+ "allocation-counter",
  "api",
  "client",
  "libc",

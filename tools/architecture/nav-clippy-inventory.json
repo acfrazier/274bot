@@ -23335,7 +23335,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/client.rs",
-      "sha256": "7776c2a64317b566b40d6f64ce14d4f6045c7a53456c84c6349fcc725ecdca8e"
+      "sha256": "95daca5a6dcc7ac951ef7a3ce73bf2d89646f200542da4474bec4aa4f1e5decc"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/mod.rs",
