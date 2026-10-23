@@ -47,9 +47,9 @@ These steps use the public server, **rs2b2t**. You need your own account on it.
 4. **Add an account.** Click **Profiles**, then **New profile**. Type your game
    username and password, then click **Save**.
 5. **Log in and start a script.** Click **Log in**. When the bot is in the game,
-   click **Browse…** and click a script. If a window asks for your rs2b0t folder,
-   click **Not now**. Then click **Start**. Open **Script prefs** first to change
-   the script's settings.
+   click the closed **script** heading to open it, then click **Browse…**. If a
+   window asks for your rs2b0t folder, click **Not now**. Then click a script and
+   click **Start**. Open **Script prefs** first to change the script's settings.
 
 The panel does not make an account for you. An empty vault stays empty until you
 save a profile.
@@ -62,9 +62,9 @@ save a profile.
 | Fix a first-start problem | [FIRST-START.md](FIRST-START.md) |
 | Learn the window and what its buttons do | [Panel guide](docs/api/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](docs/api/tui.md) |
-| Move my accounts over from rs2b0t | [Importing rs2b0t profiles](docs/api/vault.md#importing-profiles-from-rs2b0t) |
+| Move my accounts over from rs2b0t | [Import your accounts from rs2b0t](docs/manual/importing-from-rs2b0t.md) |
 | Use or write quest guides | [Quest guides](docs/quester-paths.md) |
-| Choose a game server, world or revision | [Server profiles](docs/reference/server-profiles.md) |
+| Choose a game server, world or revision | [Choose a game server and a world](docs/manual/servers-and-worlds.md) |
 | Look up a word | [Glossary](docs/manual/glossary.md) |
 | See what changed | [CHANGELOG.md](CHANGELOG.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](docs/upgrade-0.2.0.md) |

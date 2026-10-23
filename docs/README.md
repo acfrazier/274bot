@@ -7,13 +7,16 @@ it, or work on its code.
 
 | I want to… | Read |
 | --- | --- |
-| Install it and run it for the first time | [FIRST-START.md](../FIRST-START.md) |
+| Install it and run it for the first time | [Install and first run](manual/install-and-first-run.md) |
 | Fix a first-start problem | [Troubleshooting in FIRST-START.md](../FIRST-START.md#troubleshooting) |
 | Learn the window and what its buttons do | [Panel guide](api/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](api/tui.md) |
-| Keep my accounts safe, or move them over from rs2b0t | [Vault and profiles](api/vault.md) |
-| Understand why a bot waits to log in | [Logging in](api/login.md) |
-| Choose a game server, world or revision | [Server profiles](reference/server-profiles.md) |
+| Add, change or remove accounts | [Manage your accounts and log in](manual/profiles-and-accounts.md) |
+| Move accounts over from rs2b0t | [Import your accounts from rs2b0t](manual/importing-from-rs2b0t.md) |
+| Understand why a bot waits to log in | [The login messages](manual/profiles-and-accounts.md#read-the-login-messages) |
+| Choose a game server, world or revision | [Choose a game server and a world](manual/servers-and-worlds.md) |
+| Look up every setting of a server entry | [Server reference](reference/server-profiles.md) |
+| Look up the exact login limits or the vault file format | [Login limits](api/login.md) and [Vault](api/vault.md) |
 | Start, pause and stop scripts, and set their options | [Scripts](api/script.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
