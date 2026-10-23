@@ -1591,9 +1591,20 @@ fn ordered_observation_survives_real_client_socket_adoption_without_reset() {
 fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_host_rate_refusal()
 {
     let mut rig = Rig::new();
+    {
+        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        cache.objs.resize(1539, client::config::ObjType::default());
+        for slot in 0..28 {
+            let id = 1511 + slot;
+            cache.objs[id].id = id as i32;
+            cache.objs[id].name = format!("Disposable {slot}");
+            cache.objs[id].iop[4] = Some("Drop".into());
+        }
+    }
+    rig.names = Arc::new(api::obj_names::ObjNames::from_objs(&rig.client.cache.objs));
     rig.snapshot.seed_inventory(
         (0..28)
-            .map(|slot| inventory_item(1511, slot, "Logs"))
+            .map(|slot| inventory_item(1511 + slot, slot, &format!("Disposable {slot}")))
             .collect(),
         28,
     );
@@ -1608,7 +1619,7 @@ export default class T extends LoopingBot {
         globalThis.__sent = true;
         globalThis.__returns = [];
         for (let slot = 0; slot < 28; slot++) {
-            globalThis.__returns.push(Input.heldOp(1511, slot, 3214, 1));
+            globalThis.__returns.push(Input.heldOp(1511 + slot, slot, 3214, 1));
         }
     }
 }
@@ -1627,7 +1638,12 @@ export default class T extends LoopingBot {
         .validate_for_revision(rig.client.revision())
         .unwrap()
         .opcode;
-    assert!(decoded.iter().all(|packet| packet.0 == opcode));
+    for (slot, (sent, body)) in decoded.iter().enumerate() {
+        assert_eq!(*sent, opcode);
+        assert_eq!(u16::from_be_bytes([body[0], body[1]]), 1511 + slot as u16);
+        assert_eq!(u16::from_be_bytes([body[2], body[3]]), slot as u16);
+        assert_eq!(u16::from_be_bytes([body[4], body[5]]), 3214);
+    }
     rig.input.with_server_ordered_input(|state| {
         assert_eq!(state.snapshot().category_counts(), [28, 0, 0]);
         assert_eq!(state.snapshot().packet_count(), 28);
