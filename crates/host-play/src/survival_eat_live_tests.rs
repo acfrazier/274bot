@@ -1,0 +1,1951 @@
+//! Engine-A survival-eating receipts for the native route guard and the
+//! public `api.combat.fight` path. The per-tick oracle below uses the slot's
+//! published poison condition and the actions captured from the live host.
+//!
+//! Run each ignored cell three times with separate accounts. Use Engine A at
+//! its normal 600 ms tick, a throwaway HOME (`isohome`), the v17 reference nav
+//! pack, and the accepted read-only 1.1 cache inputs:
+//!
+//! ```sh
+//! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<unique-prefix> \
+//!   GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
+//!   GATHERER_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
+//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack \
+//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags \
+//!   GATHERER_CATALOG_ROOT=<catalog-root> \
+//!   BOT_CACHE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/live-cache/6dcb7c4ad1b85372 \
+//!   CLIENT_UNPACK_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/client-home/.274bot/unpack \
+//!   LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-INT-123 \
+//!   /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
+//!   cargo test -p host-play --features live-harness,test-support --lib \
+//!   survival_eat_live_tests::<cell-name> -- --ignored --nocapture --test-threads=1
+//! ```
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use api::condition::{BotCondition, PoisonState};
+use api::interact;
+use api::snapshot::{GameSnapshot, WorldTile};
+use host::Pump;
+use parking_lot::Mutex;
+use script::native::walk::Walk;
+use script::native::{
+    ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkReceipt,
+    WalkRequest,
+};
+use serde_json::{json, Value};
+use vault::{Profile, ProfileSettings};
+
+use super::bank_core_live::{self, Cell, Prep};
+use super::combat_proof::{self, CaptureRegistration, CombatCapture};
+use super::{run_with_template, SharedClientTemplate};
+
+const LOBSTER_ID: i32 = 379;
+const PROTECT_FROM_MELEE_VARP: i32 = 97;
+const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
+const WALK_CELL_WALL_LIMIT: Duration = Duration::from_secs(360);
+const COMBAT_CELL_WALL_LIMIT: Duration = Duration::from_secs(300);
+const CELL_TICK_LIMIT: u32 = 100;
+const POISON_PREFIX_TICKS: u32 = 31;
+const POISON_LINE: &str = "You have been poisoned!";
+
+const WALK_ORIGIN: WorldTile = WorldTile {
+    x: 3185,
+    z: 3440,
+    level: 0,
+};
+const WALK_TARGET: WorldTile = WorldTile {
+    x: 3017,
+    z: 3170,
+    level: 0,
+};
+const COW_FIELD: WorldTile = WorldTile {
+    x: 3255,
+    z: 3278,
+    level: 0,
+};
+
+const POISON_LINE_SEED: &[&str] = &[
+    "setstat hitpoints 15",
+    "setstat prayer 43",
+    "give lobster 5",
+];
+const FULL_HP_SEED: &[&str] = &[
+    "setstat hitpoints 10",
+    "setstat prayer 43",
+    "give lobster 5",
+];
+const COMBAT_SEED: &[&str] = &[
+    "setstat attack 1",
+    "setstat strength 1",
+    "setstat defence 1",
+    "setstat hitpoints 10",
+    "setstat prayer 43",
+    "give bronze_scimitar 1",
+    "give lobster 5",
+    "setvar prayer14 1",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EatCase {
+    PoisonLine,
+    FullHp,
+}
+
+impl EatCase {
+    fn name(self) -> &'static str {
+        match self {
+            Self::PoisonLine => "L-EAT-POISON-LINE-WALK",
+            Self::FullHp => "L-EAT-FULL-HP-WALK",
+        }
+    }
+
+    fn seed(self) -> &'static [&'static str] {
+        match self {
+            Self::PoisonLine => POISON_LINE_SEED,
+            Self::FullHp => FULL_HP_SEED,
+        }
+    }
+
+    fn seed_ready(self) -> fn(&GameSnapshot) -> bool {
+        match self {
+            Self::PoisonLine => poison_line_seed_ready,
+            Self::FullHp => full_hp_seed_ready,
+        }
+    }
+
+    fn expected_hp(self) -> i32 {
+        match self {
+            Self::PoisonLine => 15,
+            Self::FullHp => 10,
+        }
+    }
+
+    fn expected_hp_max(self) -> i32 {
+        match self {
+            Self::PoisonLine => 15,
+            Self::FullHp => 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveAction {
+    Poison,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SentAction {
+    tick: u32,
+    accepted: bool,
+}
+
+#[derive(Default)]
+struct LiveObserver {
+    snapshot: GameSnapshot,
+    pump: Pump,
+    tele_sent: bool,
+    arrived_tick: Option<u32>,
+    action: Option<LiveAction>,
+    sent: Option<SentAction>,
+}
+
+impl LiveObserver {
+    fn observe(&mut self, client: &client::client::Client) {
+        // Preparation relogs. Keep the condition owner's session-local clock.
+        let drain = self.pump.drain_client(client);
+        host::publish_snapshot(&mut self.snapshot, client, drain);
+    }
+}
+
+struct LiveCell {
+    play: super::Play,
+    account: String,
+    evidence: PathBuf,
+    preparation: Arc<Mutex<Cell>>,
+    live: Arc<Mutex<LiveObserver>>,
+    capture: Arc<StdMutex<CombatCapture>>,
+    _capture_registration: CaptureRegistration,
+}
+
+#[derive(Debug, Clone)]
+struct RouteSample {
+    request_id: u64,
+    generation: u64,
+    guard_active: bool,
+    native_owner: bool,
+    legs: usize,
+    walking_tiles: usize,
+}
+
+impl RouteSample {
+    fn active(&self) -> bool {
+        self.guard_active && self.native_owner
+    }
+
+    fn evidence(&self) -> Value {
+        json!({
+            "request_id": self.request_id,
+            "generation": self.generation,
+            "guard_active": self.guard_active,
+            "native_owner": self.native_owner,
+            "legs": self.legs,
+            "walking_tiles": self.walking_tiles,
+        })
+    }
+}
+
+#[derive(Default)]
+struct WalkState {
+    begin_attempted: bool,
+    start_error: Option<String>,
+    receipt: Option<Result<WalkReceipt, ActionError>>,
+}
+
+struct NativeWalkScript {
+    state: Arc<Mutex<WalkState>>,
+    handle: Option<ActionHandle<Walk>>,
+}
+
+impl Script for NativeWalkScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let begin = {
+            let mut state = self.state.lock();
+            if state.begin_attempted {
+                false
+            } else {
+                state.begin_attempted = true;
+                true
+            }
+        };
+        if begin {
+            let request = WalkRequest {
+                target: WALK_TARGET,
+                candidate_goals: None,
+                loc_id: None,
+                radius: 12,
+                arrival: nav::arrival::ArrivalKind::Reach,
+                options: script::native::WalkOptions::default(),
+                required_after: tick.cx.evidence(),
+                evidence: None,
+                cross: Box::default(),
+                protect: true,
+                food_guard: false,
+                allow: Default::default(),
+            };
+            match tick.actions.begin::<Walk>(request, &mut tick.cx) {
+                Ok(handle) => self.handle = Some(handle),
+                Err(error) => {
+                    self.state.lock().start_error = Some(format!("Walk begin: {error:?}"))
+                }
+            }
+        }
+
+        if let Some(handle) = &self.handle {
+            if let std::task::Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
+                self.state.lock().receipt = Some(result);
+                self.handle = None;
+            }
+        }
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ObservedFrame {
+    tick: u32,
+    hp: i32,
+    hp_max: i32,
+    lobsters: i32,
+    poison: PoisonState,
+    poison_line: bool,
+    route_active: bool,
+    protect_active: bool,
+    non_poison_damage: bool,
+    evidence: Value,
+}
+
+impl ObservedFrame {
+    fn evidence(&self) -> Value {
+        json!({
+            "tick": self.tick,
+            "hp": self.hp,
+            "hp_max": self.hp_max,
+            "lobsters": self.lobsters,
+            "poison": format!("{:?}", self.poison),
+            "poison_line": self.poison_line,
+            "route_active": self.route_active,
+            "protect_from_melee": self.protect_active,
+            "non_poison_damage": self.non_poison_damage,
+            "snapshot": self.evidence,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EatAction {
+    tick: u32,
+    hp_before: i32,
+    hp_max: i32,
+    lobsters_before: i32,
+    accepted: bool,
+    source: String,
+    owner_run: Option<String>,
+    real_wire: bool,
+}
+
+#[derive(Debug, Clone)]
+struct AttackAction {
+    tick: u32,
+    accepted: bool,
+    owner_run: Option<String>,
+    real_wire: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OracleDecision {
+    Pending,
+    Pass,
+    Fail(String),
+}
+
+fn evidence_root() -> PathBuf {
+    let path = PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR")
+            .expect("LIVE_EVIDENCE_DIR must name the request evidence directory"),
+    );
+    assert!(path.is_absolute(), "LIVE_EVIDENCE_DIR must be absolute");
+    std::fs::create_dir_all(&path).expect("create LIVE_EVIDENCE_DIR");
+    std::fs::canonicalize(path).expect("resolve LIVE_EVIDENCE_DIR")
+}
+
+fn stamp_utc() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs()
+}
+
+fn require_live_environment() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
+    assert_eq!(
+        std::env::var("BOT_CPU").as_deref(),
+        Ok("1"),
+        "requires BOT_CPU=1"
+    );
+    assert!(
+        std::env::var_os("BOT_LIVE_NAME_PREFIX").is_some(),
+        "requires this run's unique BOT_LIVE_NAME_PREFIX"
+    );
+}
+
+fn start_cell(
+    label: &'static str,
+    seed: &'static [&'static str],
+    seed_ready: fn(&GameSnapshot) -> bool,
+    destination: WorldTile,
+) -> LiveCell {
+    require_live_environment();
+    let evidence_root = evidence_root();
+    let account = super::mint_live_names(1)
+        .into_iter()
+        .next()
+        .expect("mint one account under BOT_LIVE_NAME_PREFIX");
+    let evidence = evidence_root.join(format!("{label}_{}_utc-{}Z", account, stamp_utc()));
+    let scratch = evidence.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("create per-account scratch directory");
+
+    let profile = bank_core_live::live_profile(&scratch)
+        .expect("live profile inputs")
+        .resolve(None)
+        .and_then(|profile| profile.bind_runtime())
+        .expect("bind the Engine-A 289 profile");
+    assert!(
+        profile.map_members(),
+        "poison requires a members map; this is a fixture precondition"
+    );
+    assert_eq!(profile.client().game_host(), "127.0.0.1");
+    let template = SharedClientTemplate::load(profile).expect("prepare the bound live template");
+
+    let capture = Arc::new(StdMutex::new(CombatCapture::default()));
+    let capture_registration = CaptureRegistration::install(&account, Arc::clone(&capture));
+    let preparation = Arc::new(Mutex::new(Cell::new(
+        Duration::from_secs(360),
+        seed,
+        seed_ready,
+        &[LOBSTER_ID],
+        json!({"cell": label, "destination": [destination.x, destination.z, destination.level]}),
+        |_| false,
+        evidence.clone(),
+    )));
+    let live = Arc::new(Mutex::new(LiveObserver::default()));
+    let frame_preparation = Arc::clone(&preparation);
+    let frame_live = Arc::clone(&live);
+    let frame_account = account.clone();
+    let play = run_with_template(
+        template,
+        true,
+        vec![Profile {
+            username: account.clone(),
+            password: account.clone().into(),
+            uid: 274_279_311,
+            settings: never_cure_settings(),
+        }],
+        |_| (None, None),
+        move |client, username, _| {
+            if username != frame_account {
+                return;
+            }
+            bank_core_live::frame(client, &frame_preparation, &frame_account);
+            let phase = frame_preparation.lock().phase;
+            let mut live = frame_live.lock();
+            live.observe(client);
+            if phase == Prep::Ready && !live.tele_sent {
+                interact::seed_at(client, destination.level, destination.x, destination.z);
+                live.tele_sent = true;
+            }
+            if live.tele_sent
+                && live.snapshot.tile() == Some((destination.x, destination.z, destination.level))
+            {
+                let tick = u32::from(live.snapshot.tick());
+                live.arrived_tick.get_or_insert(tick);
+            }
+            if let Some(LiveAction::Poison) = live.action.take() {
+                let accepted = interact::cheat(client, "~poison 27") == client::CheatSend::Sent;
+                let tick = u32::from(live.snapshot.tick());
+                live.sent = Some(SentAction { tick, accepted });
+            }
+        },
+    )
+    .expect("start one-slot Engine-A Play");
+
+    LiveCell {
+        play,
+        account,
+        evidence,
+        preparation,
+        live,
+        capture,
+        _capture_registration: capture_registration,
+    }
+}
+
+fn never_cure_settings() -> ProfileSettings {
+    let mut settings = ProfileSettings::default();
+    settings.survival.cure_poison = vault::CurePoison::Never;
+    settings
+}
+
+fn wait_for_destination(cell: &LiveCell) -> Result<u32, String> {
+    let started = cell.preparation.lock().preparation_started;
+    let deadline = started + PREPARATION_DEADLINE;
+    loop {
+        let status = cell
+            .play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == cell.account);
+        let (phase, failure) = {
+            let preparation = cell.preparation.lock();
+            (preparation.phase, preparation.trace.failure.clone())
+        };
+        let (arrived_tick, snapshot_tick) = {
+            let live = cell.live.lock();
+            (live.arrived_tick, u32::from(live.snapshot.tick()))
+        };
+        if phase == Prep::PrerequisiteFailed || phase == Prep::Failed {
+            return Err(format!("preparation ended in {phase:?}: {failure:?}"));
+        }
+        if let Some(status) = status {
+            if status.ingame
+                && status.scene_state == 2
+                && arrived_tick.is_some()
+                && status.condition.tick == snapshot_tick
+            {
+                return Ok(arrived_tick.expect("checked above"));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "account did not reach the seeded destination within {PREPARATION_DEADLINE:?}; phase={phase:?}, failure={failure:?}, arrived_tick={arrived_tick:?}, snapshot_tick={snapshot_tick}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn poison_line_seed_ready(snapshot: &GameSnapshot) -> bool {
+    stat_levels(snapshot, 3) == Some((15, 15))
+        && stat_levels(snapshot, 5) == Some((43, 43))
+        && bank_core_live::count(snapshot.inventory(), LOBSTER_ID) == 5
+}
+
+fn full_hp_seed_ready(snapshot: &GameSnapshot) -> bool {
+    stat_levels(snapshot, 3) == Some((10, 10))
+        && stat_levels(snapshot, 5) == Some((43, 43))
+        && bank_core_live::count(snapshot.inventory(), LOBSTER_ID) == 5
+}
+
+fn combat_seed_ready(snapshot: &GameSnapshot) -> bool {
+    [0, 1, 2, 3, 5].into_iter().all(|index| {
+        let expected = match index {
+            0..=2 => 1,
+            3 => 10,
+            5 => 43,
+            _ => unreachable!(),
+        };
+        stat_levels(snapshot, index) == Some((expected, expected))
+    }) && bank_core_live::count(snapshot.inventory(), LOBSTER_ID) == 5
+        && snapshot.inventory().iter().any(|item| item.def.id == 1321)
+        && varp(snapshot, PROTECT_FROM_MELEE_VARP) == 1
+}
+
+fn stat_levels(snapshot: &GameSnapshot, index: i32) -> Option<(i32, i32)> {
+    snapshot
+        .stats()
+        .iter()
+        .find(|stat| stat.index == index)
+        .map(|stat| (stat.base, stat.effective))
+}
+
+fn varp(snapshot: &GameSnapshot, index: i32) -> i32 {
+    snapshot
+        .varps()
+        .iter()
+        .find(|row| row.index == index)
+        .map_or(0, |row| row.value)
+}
+
+fn route_sample(play: &super::Play, account: &str) -> Option<RouteSample> {
+    let navs = play.navs.lock().unwrap_or_else(|error| error.into_inner());
+    let bot = navs.get(account)?;
+    let route = bot.route.as_deref()?;
+    let walking_tiles = route
+        .legs
+        .iter()
+        .map(|leg| match leg {
+            nav::router::Leg::Walk { tiles } => tiles.len(),
+            nav::router::Leg::Transport { .. } => 0,
+        })
+        .sum();
+    Some(RouteSample {
+        request_id: bot.route_request_id,
+        generation: bot.route_generation,
+        guard_active: bot.walk_guard.is_some(),
+        native_owner: bot.native_walk.is_some(),
+        legs: route.legs.len(),
+        walking_tiles,
+    })
+}
+
+fn sample_frame(
+    cell: &LiveCell,
+    condition: BotCondition,
+    route: Option<&RouteSample>,
+) -> Option<ObservedFrame> {
+    let live = cell.live.lock();
+    let snapshot = &live.snapshot;
+    let tick = condition.tick;
+    if tick != u32::from(snapshot.tick()) {
+        return None;
+    }
+    let raw_chat = snapshot
+        .chat_lines()
+        .iter()
+        .map(|line| json!({"sequence": line.sequence, "text": line.text}))
+        .collect::<Vec<_>>();
+    let poison_line = snapshot
+        .chat_lines()
+        .iter()
+        .any(|line| line.text == POISON_LINE);
+    let raw_hitmarks = snapshot.hitmarks().map(|marks| {
+        marks
+            .marks
+            .iter()
+            .map(|mark| {
+                json!({
+                    "kind": mark.kind,
+                    "value": mark.value,
+                    "cycle": mark.cycle,
+                    "loop_cycle": marks.loop_cycle,
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    let non_poison_damage = snapshot.hitmarks().is_some_and(|marks| {
+        marks
+            .marks
+            .iter()
+            .any(|mark| mark.kind != 2 && mark.value > 0)
+    });
+    let protect_active = varp(snapshot, PROTECT_FROM_MELEE_VARP) == 1;
+    let route_active = route.is_some_and(RouteSample::active);
+    let fact = combat_proof::snapshot_facts(snapshot, Some(u64::from(tick)));
+    let evidence = json!({
+        "condition": {
+            "tick": condition.tick,
+            "hp": condition.hp,
+            "hp_max": condition.hp_max,
+            "hp_known": condition.hp_known,
+            "poison": format!("{:?}", condition.poison),
+            "cures": format!("{:?}", condition.cures),
+        },
+        "snapshot_facts": fact,
+        "raw_chat": raw_chat,
+        "raw_hitmarks": raw_hitmarks,
+        "route": route.map(RouteSample::evidence),
+        "protect_from_melee": protect_active,
+    });
+    Some(ObservedFrame {
+        tick,
+        hp: condition.hp,
+        hp_max: condition.hp_max,
+        lobsters: bank_core_live::count(snapshot.inventory(), LOBSTER_ID),
+        poison: condition.poison,
+        poison_line,
+        route_active,
+        protect_active,
+        non_poison_damage,
+        evidence,
+    })
+}
+
+fn captured_actions(capture: &Arc<StdMutex<CombatCapture>>) -> Vec<Value> {
+    capture
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .actions
+        .clone()
+}
+
+fn is_eat(action: &Value) -> bool {
+    (action["kind"] == json!("guard") && action["op"] == json!("eat"))
+        || (action["kind"] == json!("interaction")
+            && action["request"]["op"] == json!("held")
+            && action["request"]["name"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("lobster"))
+            && action["request"]["action"]
+                .as_str()
+                .is_some_and(|verb| verb.eq_ignore_ascii_case("eat")))
+}
+
+fn is_fight_attack(action: &Value) -> bool {
+    action["kind"] == json!("interaction")
+        && action["request"]["op"] == json!("npc")
+        && action["request"]["name"]
+            .as_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case("cow"))
+        && action["request"]["action"]
+            .as_str()
+            .is_some_and(|verb| verb.eq_ignore_ascii_case("attack"))
+}
+
+fn has_decoded_wire(action: &Value) -> bool {
+    action["wire_decoded"] == json!(true)
+        && action["wire_opcodes"]
+            .as_array()
+            .is_some_and(|opcodes| !opcodes.is_empty())
+}
+
+fn snapshot_stat(snapshot: &Value, index: i64) -> Option<i32> {
+    snapshot["stats"]
+        .as_array()?
+        .iter()
+        .find(|row| row["index"] == json!(index))?
+        .get("effective")?
+        .as_i64()
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn snapshot_stat_base(snapshot: &Value, index: i64) -> Option<i32> {
+    snapshot["stats"]
+        .as_array()?
+        .iter()
+        .find(|row| row["index"] == json!(index))?
+        .get("base")?
+        .as_i64()
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn snapshot_item_count(snapshot: &Value, id: i64) -> i32 {
+    snapshot["inventory"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| row["id"] == json!(id))
+        .filter_map(|row| row["count"].as_i64())
+        .filter_map(|count| i32::try_from(count).ok())
+        .sum()
+}
+
+fn eat_actions(actions: &[Value]) -> Vec<EatAction> {
+    actions
+        .iter()
+        .filter(|action| is_eat(action))
+        .filter_map(|action| {
+            let snapshot = &action["snapshot"];
+            Some(EatAction {
+                tick: u32::try_from(action["tick"].as_u64()?).ok()?,
+                hp_before: snapshot_stat(snapshot, 3)?,
+                hp_max: snapshot_stat_base(snapshot, 3)?,
+                lobsters_before: snapshot_item_count(snapshot, i64::from(LOBSTER_ID)),
+                accepted: action["accepted"] == json!(true),
+                source: action["kind"].as_str()?.to_owned(),
+                owner_run: action["run"].as_str().map(str::to_owned),
+                real_wire: has_decoded_wire(action),
+            })
+        })
+        .collect()
+}
+
+fn attack_actions(actions: &[Value]) -> Vec<AttackAction> {
+    actions
+        .iter()
+        .filter(|action| is_fight_attack(action))
+        .filter_map(|action| {
+            Some(AttackAction {
+                tick: u32::try_from(action["tick"].as_u64()?).ok()?,
+                accepted: action["accepted"] == json!(true),
+                owner_run: action["run"].as_str().map(str::to_owned),
+                real_wire: has_decoded_wire(action),
+            })
+        })
+        .collect()
+}
+
+fn poison_marks(frames: &[ObservedFrame]) -> Vec<&ObservedFrame> {
+    let mut last_mark = None;
+    let mut marks = Vec::new();
+    for frame in frames {
+        if let PoisonState::Poisoned {
+            per_tick: _,
+            last_mark: mark,
+            ..
+        } = frame.poison
+        {
+            if last_mark != Some(mark) {
+                last_mark = Some(mark);
+                marks.push(frame);
+            }
+        }
+    }
+    marks
+}
+
+fn onset(frames: &[ObservedFrame]) -> Option<(u32, u32)> {
+    frames.iter().find_map(|frame| match frame.poison {
+        PoisonState::Onset {
+            since, q: Some(11), ..
+        } => Some((frame.tick, u32::from(since))),
+        _ => None,
+    })
+}
+
+fn healed_after(frames: &[ObservedFrame], eat: &EatAction, expected_hp: i32) -> bool {
+    let expected_food = eat.lobsters_before - 1;
+    frames.iter().any(|frame| {
+        frame.tick >= eat.tick
+            && frame.tick <= eat.tick.saturating_add(3)
+            && frame.hp == expected_hp
+            && frame.lobsters == expected_food
+    })
+}
+
+fn evaluate_walk(
+    case: EatCase,
+    seed_tick: u32,
+    frames: &[ObservedFrame],
+    eats: &[EatAction],
+) -> OracleDecision {
+    if frames.iter().any(|frame| frame.hp == 0) {
+        return OracleDecision::Fail("product: account died during the walk cell".into());
+    }
+    if let Some(frame) = frames.iter().find(|frame| frame.non_poison_damage) {
+        return OracleDecision::Fail(format!(
+            "interference: non-poison hitmark at observed tick {}",
+            frame.tick
+        ));
+    }
+    if let Some(frame) = frames
+        .iter()
+        .find(|frame| frame.tick >= seed_tick && !frame.route_active)
+    {
+        return OracleDecision::Fail(format!(
+            "product: native route guard was not active at observed tick {}",
+            frame.tick
+        ));
+    }
+    let Some((onset_tick, since)) = onset(frames) else {
+        if frames
+            .last()
+            .is_some_and(|frame| frame.tick.saturating_sub(seed_tick) > CELL_TICK_LIMIT)
+        {
+            return OracleDecision::Fail(
+                "product: accepted poison seed had no latched q=11 onset".into(),
+            );
+        }
+        return OracleDecision::Pending;
+    };
+    let onset_frame = frames
+        .iter()
+        .find(|frame| frame.tick == onset_tick)
+        .expect("onset frame");
+    if !onset_frame.poison_line
+        || onset_frame.hp != case.expected_hp()
+        || onset_frame.hp_max != case.expected_hp_max()
+    {
+        return OracleDecision::Fail(format!(
+            "fixture: poison line or seeded HP did not match at onset: line={}, hp={}/{}, expected={}/{}",
+            onset_frame.poison_line,
+            onset_frame.hp,
+            onset_frame.hp_max,
+            case.expected_hp(),
+            case.expected_hp_max()
+        ));
+    }
+    if eats.iter().any(|eat| eat.tick < onset_tick) {
+        return OracleDecision::Fail("product: food was emitted before the poison line".into());
+    }
+    let marks = poison_marks(frames);
+    let first_due = since.saturating_add(30);
+    let Some(first) = marks.first().copied() else {
+        if frames
+            .last()
+            .is_some_and(|frame| frame.tick > first_due.saturating_add(2))
+        {
+            return OracleDecision::Fail(
+                "product: first poison mark did not reach the slot condition".into(),
+            );
+        }
+        return OracleDecision::Pending;
+    };
+    if first.tick < first_due
+        || first.tick > first_due.saturating_add(2)
+        || !matches!(first.poison, PoisonState::Poisoned { per_tick: 6, .. })
+    {
+        return OracleDecision::Fail(format!(
+            "fixture: first poison mark did not match 6 damage at since+30..32: since={since}, tick={}, poison={:?}",
+            first.tick, first.poison
+        ));
+    }
+    let expected_mark_hp = match case {
+        EatCase::PoisonLine => 9,
+        EatCase::FullHp => 4,
+    };
+    if first.hp != expected_mark_hp {
+        return OracleDecision::Fail(format!(
+            "fixture: first poison mark left HP {}, expected {expected_mark_hp}",
+            first.hp
+        ));
+    }
+
+    match case {
+        EatCase::PoisonLine => {
+            let Some(second) = marks.get(1).copied() else {
+                if eats.iter().any(|eat| eat.tick >= onset_tick) {
+                    return OracleDecision::Fail(
+                        "product: food was emitted before the second poison mark".into(),
+                    );
+                }
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > first.tick.saturating_add(32))
+                {
+                    return OracleDecision::Fail(
+                        "product: second poison mark did not reach the slot condition".into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            };
+            if second.tick != first.tick.saturating_add(30)
+                || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
+                || second.hp != 3
+            {
+                return OracleDecision::Fail(format!(
+                    "fixture: second poison mark mismatch at tick {}: hp={}, poison={:?}",
+                    second.tick, second.hp, second.poison
+                ));
+            }
+            if eats.iter().any(|eat| eat.tick < second.tick) {
+                return OracleDecision::Fail(
+                    "product: food was emitted before the second poison mark".into(),
+                );
+            }
+            let due = eats
+                .iter()
+                .filter(|eat| eat.tick >= second.tick && eat.tick <= second.tick.saturating_add(3))
+                .collect::<Vec<_>>();
+            if due.len() > 1 {
+                return OracleDecision::Fail(
+                    "product: multiple bites followed the second poison mark".into(),
+                );
+            }
+            let Some(eat) = due.first() else {
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > second.tick.saturating_add(3))
+                {
+                    return OracleDecision::Fail(
+                        "product: no bite within three observed ticks of the second poison mark"
+                            .into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            };
+            if !eat.accepted
+                || eat.source != "guard"
+                || eat.hp_before != 3
+                || eat.hp_max != 15
+                || eat.lobsters_before != 5
+            {
+                return OracleDecision::Fail(format!(
+                    "product: invalid native guard eat action: {eat:?}"
+                ));
+            }
+            if healed_after(frames, eat, 15) {
+                OracleDecision::Pass
+            } else if frames
+                .last()
+                .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
+            {
+                OracleDecision::Fail(
+                    "product: lobster action did not heal by 12 HP and consume one lobster".into(),
+                )
+            } else {
+                OracleDecision::Pending
+            }
+        }
+        EatCase::FullHp => {
+            if eats.iter().any(|eat| eat.tick < first.tick) {
+                return OracleDecision::Fail(
+                    "product: food was emitted at full HP before the first poison mark".into(),
+                );
+            }
+            let first_due_eats = eats
+                .iter()
+                .filter(|eat| eat.tick >= first.tick && eat.tick <= first.tick.saturating_add(3))
+                .collect::<Vec<_>>();
+            if first_due_eats.len() > 1 {
+                return OracleDecision::Fail(
+                    "product: multiple bites followed the first full-HP poison mark".into(),
+                );
+            }
+            let Some(first_eat) = first_due_eats.first() else {
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > first.tick.saturating_add(3))
+                {
+                    return OracleDecision::Fail(
+                        "product: no bite within three observed ticks of the first poison mark"
+                            .into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            };
+            if !first_eat.accepted
+                || first_eat.source != "guard"
+                || first_eat.hp_before != 4
+                || first_eat.hp_max != 10
+                || first_eat.lobsters_before != 5
+            {
+                return OracleDecision::Fail(format!(
+                    "product: invalid first native guard eat action: {first_eat:?}"
+                ));
+            }
+            if !healed_after(frames, first_eat, 10) {
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > first_eat.tick.saturating_add(3))
+                {
+                    return OracleDecision::Fail(
+                        "product: first lobster did not heal to full HP".into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            }
+            let Some(second) = marks.get(1).copied() else {
+                if eats.iter().any(|eat| {
+                    eat.tick > first_eat.tick && eat.tick < first.tick.saturating_add(30)
+                }) {
+                    return OracleDecision::Fail(
+                        "product: a second bite occurred before the second poison mark".into(),
+                    );
+                }
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > first.tick.saturating_add(32))
+                {
+                    return OracleDecision::Fail(
+                        "product: second poison mark did not reach the slot condition".into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            };
+            if second.tick != first.tick.saturating_add(30)
+                || !matches!(second.poison, PoisonState::Poisoned { per_tick: 6, .. })
+                || second.hp != 4
+            {
+                return OracleDecision::Fail(format!(
+                    "fixture: second poison mark mismatch at tick {}: hp={}, poison={:?}",
+                    second.tick, second.hp, second.poison
+                ));
+            }
+            if eats
+                .iter()
+                .any(|eat| eat.tick > first_eat.tick && eat.tick < second.tick)
+            {
+                return OracleDecision::Fail(
+                    "product: a second bite occurred before the second poison mark".into(),
+                );
+            }
+            let due = eats
+                .iter()
+                .filter(|eat| eat.tick >= second.tick && eat.tick <= second.tick.saturating_add(3))
+                .collect::<Vec<_>>();
+            if due.len() > 1 {
+                return OracleDecision::Fail(
+                    "product: multiple bites followed the second poison mark".into(),
+                );
+            }
+            let Some(eat) = due.first() else {
+                if frames
+                    .last()
+                    .is_some_and(|frame| frame.tick > second.tick.saturating_add(3))
+                {
+                    return OracleDecision::Fail(
+                        "product: no second bite within three observed ticks of the second mark"
+                            .into(),
+                    );
+                }
+                return OracleDecision::Pending;
+            };
+            if !eat.accepted
+                || eat.source != "guard"
+                || eat.hp_before != 4
+                || eat.hp_max != 10
+                || eat.lobsters_before != 4
+            {
+                return OracleDecision::Fail(format!(
+                    "product: invalid second native guard eat action: {eat:?}"
+                ));
+            }
+            if healed_after(frames, eat, 10) {
+                OracleDecision::Pass
+            } else if frames
+                .last()
+                .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
+            {
+                OracleDecision::Fail("product: second lobster did not heal to full HP".into())
+            } else {
+                OracleDecision::Pending
+            }
+        }
+    }
+}
+
+fn evaluate_combat(
+    seed_tick: u32,
+    frames: &[ObservedFrame],
+    eats: &[EatAction],
+    attacks: &[AttackAction],
+) -> OracleDecision {
+    if frames.iter().any(|frame| frame.hp == 0) {
+        return OracleDecision::Fail("product: account died during the combat cell".into());
+    }
+    if let Some(frame) = frames.iter().find(|frame| frame.non_poison_damage) {
+        return OracleDecision::Fail(format!(
+            "interference: an unprotected non-poison hit landed at observed tick {}",
+            frame.tick
+        ));
+    }
+    let Some((onset_tick, since)) = onset(frames) else {
+        if frames
+            .last()
+            .is_some_and(|frame| frame.tick.saturating_sub(seed_tick) > CELL_TICK_LIMIT)
+        {
+            return OracleDecision::Fail(
+                "product: accepted poison seed had no latched q=11 onset".into(),
+            );
+        }
+        return OracleDecision::Pending;
+    };
+    let onset_frame = frames
+        .iter()
+        .find(|frame| frame.tick == onset_tick)
+        .expect("onset frame");
+    if !onset_frame.poison_line || onset_frame.hp != 10 || onset_frame.hp_max != 10 {
+        return OracleDecision::Fail(format!(
+            "fixture: combat poison onset did not preserve full HP: line={}, hp={}/{}, expected=10",
+            onset_frame.poison_line, onset_frame.hp, onset_frame.hp_max
+        ));
+    }
+    if frames
+        .iter()
+        .filter(|frame| frame.tick >= onset_tick)
+        .any(|frame| !frame.protect_active)
+    {
+        return OracleDecision::Fail(
+            "fixture: Protect from Melee was not held through the poison fire".into(),
+        );
+    }
+    let marks = poison_marks(frames);
+    let Some(first) = marks.first().copied() else {
+        if frames
+            .last()
+            .is_some_and(|frame| frame.tick > since.saturating_add(32))
+        {
+            return OracleDecision::Fail(
+                "product: first poison mark did not reach the combat condition".into(),
+            );
+        }
+        return OracleDecision::Pending;
+    };
+    if first.tick < since.saturating_add(30)
+        || first.tick > since.saturating_add(32)
+        || !matches!(first.poison, PoisonState::Poisoned { per_tick: 6, .. })
+        || first.hp != 4
+    {
+        return OracleDecision::Fail(format!(
+            "fixture: first combat poison mark mismatch at {}: hp={}, poison={:?}",
+            first.tick, first.hp, first.poison
+        ));
+    }
+    if eats.iter().any(|eat| eat.tick < first.tick) {
+        return OracleDecision::Fail(
+            "product: combat ate before the first poison mark at full HP".into(),
+        );
+    }
+    let due = eats
+        .iter()
+        .filter(|eat| eat.tick >= first.tick && eat.tick <= first.tick.saturating_add(3))
+        .collect::<Vec<_>>();
+    if due.len() > 1 {
+        return OracleDecision::Fail(
+            "product: multiple combat bites followed the first poison mark".into(),
+        );
+    }
+    let Some(eat) = due.first() else {
+        if frames
+            .last()
+            .is_some_and(|frame| frame.tick > first.tick.saturating_add(3))
+        {
+            return OracleDecision::Fail(
+                "product: api.combat.fight did not eat within three ticks of poison damage".into(),
+            );
+        }
+        return OracleDecision::Pending;
+    };
+    if !eat.accepted
+        || !eat.real_wire
+        || eat.source != "interaction"
+        || eat.hp_before != 4
+        || eat.hp_max != 10
+        || eat.lobsters_before != 5
+    {
+        return OracleDecision::Fail(format!(
+            "product: API combat did not emit an accepted real Lobster action: {eat:?}"
+        ));
+    }
+    let same_fight = attacks.iter().any(|attack| {
+        attack.accepted
+            && attack.real_wire
+            && attack.tick <= eat.tick
+            && attack.owner_run.is_some()
+            && attack.owner_run == eat.owner_run
+    });
+    if !same_fight {
+        return OracleDecision::Fail(
+            "oracle: no accepted wire-decoded Cow attack shares the Eat run".into(),
+        );
+    }
+    if healed_after(frames, eat, 10) {
+        OracleDecision::Pass
+    } else if frames
+        .last()
+        .is_some_and(|frame| frame.tick > eat.tick.saturating_add(3))
+    {
+        OracleDecision::Fail(
+            "product: API combat Lobster action did not heal to full and consume one item".into(),
+        )
+    } else {
+        OracleDecision::Pending
+    }
+}
+
+fn captured_evidence(capture: &Arc<StdMutex<CombatCapture>>) -> Value {
+    let capture = capture.lock().unwrap_or_else(|error| error.into_inner());
+    json!({
+        "start_baseline": capture.start_baseline,
+        "frames": capture.frames,
+        "statuses": capture.statuses,
+        "actions": capture.actions,
+        "random_events": capture.random_events,
+        "observations": capture.observations,
+        "prayer_facts": capture.prayer_facts,
+        "invalid_reason": capture.invalid_reason,
+    })
+}
+
+fn write_receipt(evidence: &Path, receipt: &Value) -> PathBuf {
+    std::fs::create_dir_all(evidence).expect("create cell evidence directory");
+    let path = evidence.join("receipt.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(receipt).expect("serialize receipt"),
+    )
+    .unwrap_or_else(|error| panic!("write receipt {}: {error}", path.display()));
+    println!("survival-eat-receipt={}", path.display());
+    path
+}
+
+fn walk_receipt(
+    cell: &LiveCell,
+    case: EatCase,
+    setup_tick: u32,
+    seed_tick: Option<u32>,
+    poison_send: Option<SentAction>,
+    frames: &[ObservedFrame],
+    failure: Option<(&str, String)>,
+    walk_state: &Arc<Mutex<WalkState>>,
+) -> Value {
+    let raw_actions = captured_actions(&cell.capture);
+    let eats = eat_actions(&raw_actions);
+    let walk_state = walk_state.lock();
+    let walk_result = walk_state
+        .receipt
+        .as_ref()
+        .map(|result| format!("{result:?}"));
+    json!({
+        "cell": case.name(),
+        "real_content": true,
+        "account": cell.account,
+        "map_members": true,
+        "cure_poison": "never",
+        "start": [WALK_ORIGIN.x, WALK_ORIGIN.z, WALK_ORIGIN.level],
+        "target": [WALK_TARGET.x, WALK_TARGET.z, WALK_TARGET.level],
+        "setup_tick": setup_tick,
+        "poison_seed_tick": seed_tick,
+        "poison_seed_sent": poison_send.map(|sent| json!({"tick": sent.tick, "accepted": sent.accepted})),
+        "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
+        "classification": failure.as_ref().map(|(class, _)| *class),
+        "failure": failure.map(|(_, reason)| reason),
+        "walk_result": walk_result,
+        "frames": frames.iter().map(ObservedFrame::evidence).collect::<Vec<_>>(),
+        "host_capture": captured_evidence(&cell.capture),
+        "eat_actions": eats.iter().map(|eat| json!({
+            "tick": eat.tick,
+            "hp_before": eat.hp_before,
+            "hp_max": eat.hp_max,
+            "lobsters_before": eat.lobsters_before,
+            "accepted": eat.accepted,
+            "source": eat.source,
+            "owner_run": eat.owner_run,
+            "real_wire": eat.real_wire,
+        })).collect::<Vec<_>>(),
+        "raw_actions": raw_actions,
+        "preparation_phase": format!("{:?}", cell.preparation.lock().phase),
+    })
+}
+
+fn run_walk_case(case: EatCase) {
+    let cell = start_cell(case.name(), case.seed(), case.seed_ready(), WALK_ORIGIN);
+    let mut frames = Vec::new();
+    let mut failure = None;
+    let mut passed = false;
+    let setup_tick = match wait_for_destination(&cell) {
+        Ok(tick) => tick,
+        Err(error) => {
+            failure = Some(("fixture", error));
+            0
+        }
+    };
+    let walk_state = Arc::new(Mutex::new(WalkState::default()));
+    let mut seed_tick = None;
+    let mut poison_send = None;
+    let mut route_started_tick = None;
+    let mut seed_scheduled = false;
+    if failure.is_none() {
+        {
+            let live = cell.live.lock();
+            combat_proof::record_start_baseline(&cell.account, &live.snapshot);
+        }
+        let script_start = cell.play.script_start_handle().start_test_script(
+            &cell.account,
+            Box::new(NativeWalkScript {
+                state: Arc::clone(&walk_state),
+                handle: None,
+            }),
+            None,
+        );
+        match script_start {
+            Ok(_) => cell.play.wake(&cell.account),
+            Err(error) => {
+                failure = Some(("product", format!("native Walk did not start: {error}")))
+            }
+        }
+    }
+
+    let deadline = Instant::now() + WALK_CELL_WALL_LIMIT;
+    let mut last_tick = None;
+    while failure.is_none() && !passed {
+        if Instant::now() >= deadline {
+            failure = Some((
+                "fixture",
+                format!("wall watchdog expired after {WALK_CELL_WALL_LIMIT:?}"),
+            ));
+            break;
+        }
+        let status = cell
+            .play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == cell.account);
+        let route = route_sample(&cell.play, &cell.account);
+        let Some(status) = status else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        let Some(frame) = sample_frame(&cell, status.condition, route.as_ref()) else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        if last_tick == Some(frame.tick) {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        last_tick = Some(frame.tick);
+        if route.as_ref().is_some_and(RouteSample::active) {
+            route_started_tick.get_or_insert(frame.tick);
+        }
+        frames.push(frame);
+        let tick = frames.last().expect("just pushed").tick;
+        if seed_tick.is_none()
+            && !seed_scheduled
+            && route_started_tick
+                .is_some_and(|started| tick.saturating_sub(started) >= POISON_PREFIX_TICKS)
+        {
+            cell.live.lock().action = Some(LiveAction::Poison);
+            seed_scheduled = true;
+        }
+        if let Some(sent) = cell.live.lock().sent.take() {
+            poison_send = Some(sent);
+            if sent.accepted {
+                seed_tick = Some(sent.tick);
+            } else {
+                failure = Some((
+                    "fixture",
+                    format!("~poison 27 was refused at tick {}", sent.tick),
+                ));
+            }
+        }
+        if let Some(seed) = seed_tick {
+            if tick.saturating_sub(seed) > CELL_TICK_LIMIT {
+                failure = Some((
+                    "product",
+                    format!("100 observed-tick oracle bound expired at tick {tick}"),
+                ));
+            }
+        }
+        let actions = captured_actions(&cell.capture);
+        let eats = eat_actions(&actions);
+        let decision = seed_tick.map_or(OracleDecision::Pending, |seed| {
+            evaluate_walk(case, seed, &frames, &eats)
+        });
+        match decision {
+            OracleDecision::Pending => {}
+            OracleDecision::Pass => passed = true,
+            OracleDecision::Fail(reason) => {
+                let class = if reason.starts_with("interference:") {
+                    "interference"
+                } else if reason.starts_with("fixture:") {
+                    "fixture"
+                } else if reason.starts_with("oracle:") {
+                    "oracle"
+                } else {
+                    "product"
+                };
+                failure = Some((class, reason));
+            }
+        }
+        let walk = walk_state.lock();
+        if failure.is_none() && walk.start_error.is_some() {
+            failure = Some(("product", walk.start_error.clone().unwrap_or_default()));
+        }
+        if failure.is_none() && walk.receipt.is_some() && !passed && seed_tick.is_some() {
+            failure = Some((
+                "product",
+                format!(
+                    "native walk ended before the eat oracle passed: {:?}",
+                    walk.receipt
+                ),
+            ));
+        }
+        drop(walk);
+        if failure.is_none() && !passed && status.condition.hp == 0 {
+            failure = Some(("product", format!("account died at observed tick {tick}")));
+        }
+        if failure.is_none() && !passed {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    cell.play.script_stop(&cell.account);
+    let receipt = walk_receipt(
+        &cell,
+        case,
+        setup_tick,
+        seed_tick,
+        poison_send,
+        &frames,
+        failure
+            .as_ref()
+            .map(|(class, reason)| (*class, reason.clone())),
+        &walk_state,
+    );
+    let receipt_path = write_receipt(&cell.evidence, &receipt);
+    assert!(
+        passed,
+        "{} failed: {}; receipt={}",
+        case.name(),
+        failure.map_or_else(|| "no passing receipt".to_owned(), |(_, reason)| reason),
+        receipt_path.display()
+    );
+}
+
+const FIGHT_CONSUMER: &str = r#"export const apiVersion = 2;
+export function tick(api) {
+  if (!globalThis.__eatFight) {
+    globalThis.__eatFight = api.combat.fight({
+      target: { npc: 'Cow' },
+      area: { min_x: 3240, min_z: 3254, max_x: 3266, max_z: 3299, level: 0 },
+      prayer: true,
+      food: true,
+      budgetTicks: 200,
+    });
+    globalThis.__eatFight.then((value) => {
+      globalThis.__eatFightOutcome = value;
+      globalThis.__eatFight = null;
+    });
+  }
+}"#;
+
+fn run_combat_cell() {
+    const COMBAT_LABEL: &str = "L-EAT-POISON-API-COMBAT";
+    let cell = start_cell(COMBAT_LABEL, COMBAT_SEED, combat_seed_ready, COW_FIELD);
+    let mut frames = Vec::new();
+    let mut failure = None;
+    let mut passed = false;
+    let setup_tick = match wait_for_destination(&cell) {
+        Ok(tick) => tick,
+        Err(error) => {
+            failure = Some(("fixture", error));
+            0
+        }
+    };
+    let mut fight_start_tick = None;
+    let mut seed_tick = None;
+    let mut poison_send = None;
+    let mut seed_scheduled = false;
+    if failure.is_none() {
+        {
+            let live = cell.live.lock();
+            combat_proof::record_start_baseline(&cell.account, &live.snapshot);
+        }
+        match cell.play.script_start_load(
+            &cell.account,
+            FIGHT_CONSUMER.to_owned(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        ) {
+            Ok(()) => {
+                cell.play.wake(&cell.account);
+                fight_start_tick = Some(setup_tick);
+            }
+            Err(error) => {
+                failure = Some((
+                    "product",
+                    format!("api.combat.fight script did not start: {error}"),
+                ));
+            }
+        }
+    }
+
+    let deadline = Instant::now() + COMBAT_CELL_WALL_LIMIT;
+    let mut last_tick = None;
+    while failure.is_none() && !passed {
+        if Instant::now() >= deadline {
+            failure = Some((
+                "fixture",
+                format!("wall watchdog expired after {COMBAT_CELL_WALL_LIMIT:?}"),
+            ));
+            break;
+        }
+        let status = cell
+            .play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == cell.account);
+        let Some(status) = status else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        let Some(frame) = sample_frame(&cell, status.condition, None) else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        if last_tick == Some(frame.tick) {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        last_tick = Some(frame.tick);
+        let tick = frame.tick;
+        let cow_visible = cell.live.lock().snapshot.npcs().iter().any(|npc| {
+            npc.name.eq_ignore_ascii_case("cow")
+                && (3240..=3266).contains(&npc.tile.x)
+                && (3254..=3299).contains(&npc.tile.z)
+        });
+        frames.push(frame);
+        let actions = captured_actions(&cell.capture);
+        let attacks = attack_actions(&actions);
+        if !cow_visible && seed_tick.is_none() && tick.saturating_sub(setup_tick) > 15 {
+            failure = Some((
+                "fixture",
+                "no real Cow appeared in the selected field".to_owned(),
+            ));
+        }
+        if seed_tick.is_none()
+            && !seed_scheduled
+            && tick.saturating_sub(setup_tick) >= POISON_PREFIX_TICKS
+            && attacks
+                .iter()
+                .any(|attack| attack.accepted && attack.real_wire)
+            && frames.last().is_some_and(|frame| frame.protect_active)
+        {
+            cell.live.lock().action = Some(LiveAction::Poison);
+            seed_scheduled = true;
+        }
+        if let Some(sent) = cell.live.lock().sent.take() {
+            poison_send = Some(sent);
+            if sent.accepted {
+                seed_tick = Some(sent.tick);
+            } else {
+                failure = Some((
+                    "fixture",
+                    format!("~poison 27 was refused at tick {}", sent.tick),
+                ));
+            }
+        }
+        if seed_tick.is_none()
+            && fight_start_tick.is_some_and(|started| tick.saturating_sub(started) > 40)
+            && !attacks
+                .iter()
+                .any(|attack| attack.accepted && attack.real_wire)
+        {
+            failure = Some(("product", "api.combat.fight emitted no accepted wire-decoded Cow attack within 40 observed ticks".to_owned()));
+        }
+        if let Some(seed) = seed_tick {
+            if tick.saturating_sub(seed) > CELL_TICK_LIMIT {
+                failure = Some((
+                    "product",
+                    format!("100 observed-tick oracle bound expired at tick {tick}"),
+                ));
+            }
+        }
+        let eats = eat_actions(&actions);
+        let decision = seed_tick.map_or(OracleDecision::Pending, |seed| {
+            evaluate_combat(seed, &frames, &eats, &attacks)
+        });
+        match decision {
+            OracleDecision::Pending => {}
+            OracleDecision::Pass => passed = true,
+            OracleDecision::Fail(reason) => {
+                let class = if reason.starts_with("interference:") {
+                    "interference"
+                } else if reason.starts_with("fixture:") {
+                    "fixture"
+                } else if reason.starts_with("oracle:") {
+                    "oracle"
+                } else {
+                    "product"
+                };
+                failure = Some((class, reason));
+            }
+        }
+        if failure.is_none() && !passed && status.condition.hp == 0 {
+            failure = Some(("product", format!("account died at observed tick {tick}")));
+        }
+        if failure.is_none() && !passed {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let outcome = script_slot_probe(
+        &cell.play,
+        &cell.account,
+        "globalThis.__eatFightOutcome ?? null",
+    );
+    cell.play.script_stop(&cell.account);
+    let actions = captured_actions(&cell.capture);
+    let receipt = json!({
+        "cell": COMBAT_LABEL,
+        "api_path": "api.combat.fight",
+        "fight_source": FIGHT_CONSUMER,
+        "real_content": true,
+        "target": "Cow",
+        "target_spawned": false,
+        "account": cell.account,
+        "map_members": true,
+        "protect_from_melee_varp": PROTECT_FROM_MELEE_VARP,
+        "cure_poison": "never",
+        "setup_tick": setup_tick,
+        "fight_start_tick": fight_start_tick,
+        "poison_seed_tick": seed_tick,
+        "poison_seed_sent": poison_send.map(|sent| json!({"tick": sent.tick, "accepted": sent.accepted})),
+        "fight_outcome": outcome,
+        "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
+        "classification": failure.as_ref().map(|(class, _)| *class),
+        "failure": failure.as_ref().map(|(_, reason)| reason),
+        "eat_actions": eat_actions(&actions).iter().map(|eat| json!({
+            "tick": eat.tick,
+            "hp_before": eat.hp_before,
+            "hp_max": eat.hp_max,
+            "lobsters_before": eat.lobsters_before,
+            "accepted": eat.accepted,
+            "source": eat.source,
+            "owner_run": eat.owner_run,
+            "real_wire": eat.real_wire,
+        })).collect::<Vec<_>>(),
+        "attack_actions": attack_actions(&actions).iter().map(|attack| json!({
+            "tick": attack.tick,
+            "accepted": attack.accepted,
+            "owner_run": attack.owner_run,
+            "real_wire": attack.real_wire,
+        })).collect::<Vec<_>>(),
+        "frames": frames.iter().map(ObservedFrame::evidence).collect::<Vec<_>>(),
+        "host_capture": captured_evidence(&cell.capture),
+    });
+    let receipt_path = write_receipt(&cell.evidence, &receipt);
+    assert!(
+        passed,
+        "{COMBAT_LABEL} failed: {}; receipt={}",
+        failure.map_or_else(|| "no passing receipt".to_owned(), |(_, reason)| reason),
+        receipt_path.display()
+    );
+}
+
+fn script_slot_probe(play: &super::Play, account: &str, expression: &str) -> Value {
+    let Some(slot) = super::script_slot(&play.scripts, account) else {
+        return Value::Null;
+    };
+    let Ok(slot) = slot.lock() else {
+        return Value::Null;
+    };
+    slot.probe(expression).unwrap_or(Value::Null)
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_eat_poison_line_native_walk() {
+    run_walk_case(EatCase::PoisonLine);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_eat_full_hp_native_walk() {
+    run_walk_case(EatCase::FullHp);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_eat_poison_through_api_combat_fight() {
+    run_combat_cell();
+}
+
+#[cfg(test)]
+mod oracle_tests {
+    use super::*;
+
+    fn frame(
+        tick: u32,
+        hp: i32,
+        hp_max: i32,
+        lobsters: i32,
+        poison: PoisonState,
+        route_active: bool,
+        protect_active: bool,
+    ) -> ObservedFrame {
+        ObservedFrame {
+            tick,
+            hp,
+            hp_max,
+            lobsters,
+            poison,
+            poison_line: matches!(poison, PoisonState::Onset { .. }),
+            route_active,
+            protect_active,
+            non_poison_damage: false,
+            evidence: Value::Null,
+        }
+    }
+
+    fn onset_frame(tick: u32, hp: i32, max: i32) -> ObservedFrame {
+        frame(
+            tick,
+            hp,
+            max,
+            5,
+            PoisonState::Onset {
+                since: tick as u16,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            true,
+            true,
+        )
+    }
+
+    fn mark_frame(tick: u32, hp: i32, max: i32, lobsters: i32, last_mark: u16) -> ObservedFrame {
+        frame(
+            tick,
+            hp,
+            max,
+            lobsters,
+            PoisonState::Poisoned {
+                per_tick: 6,
+                last_mark,
+                hit_since_mark: false,
+            },
+            true,
+            true,
+        )
+    }
+
+    fn eat(
+        tick: u32,
+        hp: i32,
+        max: i32,
+        lobsters: i32,
+        source: &str,
+        run: Option<&str>,
+        wire: bool,
+    ) -> EatAction {
+        EatAction {
+            tick,
+            hp_before: hp,
+            hp_max: max,
+            lobsters_before: lobsters,
+            accepted: true,
+            source: source.to_owned(),
+            owner_run: run.map(str::to_owned),
+            real_wire: wire,
+        }
+    }
+
+    fn poison_line_receipt() -> (Vec<ObservedFrame>, Vec<EatAction>) {
+        (
+            vec![
+                onset_frame(100, 15, 15),
+                mark_frame(130, 9, 15, 5, 130),
+                mark_frame(160, 3, 15, 5, 160),
+                mark_frame(162, 15, 15, 4, 160),
+            ],
+            vec![eat(161, 3, 15, 5, "guard", None, false)],
+        )
+    }
+
+    fn full_hp_receipt() -> (Vec<ObservedFrame>, Vec<EatAction>) {
+        (
+            vec![
+                onset_frame(100, 10, 10),
+                mark_frame(130, 4, 10, 5, 130),
+                mark_frame(132, 10, 10, 4, 130),
+                mark_frame(160, 4, 10, 4, 160),
+                mark_frame(162, 10, 10, 3, 160),
+            ],
+            vec![
+                eat(131, 4, 10, 5, "guard", None, false),
+                eat(161, 4, 10, 4, "guard", None, false),
+            ],
+        )
+    }
+
+    #[test]
+    fn poison_line_oracle_passes_and_rejects_a_bite_before_the_second_mark() {
+        let (frames, eats) = poison_line_receipt();
+        assert_eq!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &eats),
+            OracleDecision::Pass
+        );
+        let early = vec![eat(131, 9, 15, 5, "guard", None, false), eats[0].clone()];
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &early),
+            OracleDecision::Fail(reason) if reason.contains("before the second poison mark")
+        ));
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames[..2], &[]),
+            OracleDecision::Pending
+        ));
+    }
+
+    #[test]
+    fn poison_line_oracle_rejects_late_duplicate_unhealed_dead_and_inactive_receipts() {
+        let (frames, eats) = poison_line_receipt();
+        let mut late = frames.clone();
+        late.push(mark_frame(164, 3, 15, 5, 160));
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &late, &[]),
+            OracleDecision::Fail(reason) if reason.contains("no bite within three")
+        ));
+        let duplicate = vec![eats[0].clone(), eat(162, 3, 15, 5, "guard", None, false)];
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &frames, &duplicate),
+            OracleDecision::Fail(reason) if reason.contains("multiple bites")
+        ));
+        for (hp, food) in [(14, 4), (15, 5)] {
+            let mut bad = frames.clone();
+            bad[3].hp = hp;
+            bad[3].lobsters = food;
+            bad.push(mark_frame(165, hp, 15, food, 160));
+            assert!(matches!(
+                evaluate_walk(EatCase::PoisonLine, 69, &bad, &eats),
+                OracleDecision::Fail(reason) if reason.contains("heal by 12 HP")
+            ));
+        }
+        let mut dead = frames.clone();
+        dead[2].hp = 0;
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &dead, &eats),
+            OracleDecision::Fail(reason) if reason.contains("died")
+        ));
+        let mut inactive = frames;
+        inactive[1].route_active = false;
+        assert!(matches!(
+            evaluate_walk(EatCase::PoisonLine, 69, &inactive, &eats),
+            OracleDecision::Fail(reason) if reason.contains("route guard was not active")
+        ));
+    }
+
+    #[test]
+    fn full_hp_oracle_rejects_late_missing_heal_and_death() {
+        let (frames, eats) = full_hp_receipt();
+        let mut late = frames[..2].to_vec();
+        late.push(mark_frame(134, 4, 10, 5, 130));
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &late, &[]),
+            OracleDecision::Fail(reason) if reason.contains("no bite within three")
+        ));
+        let mut unhealed = frames[..2].to_vec();
+        unhealed.push(mark_frame(135, 4, 10, 4, 130));
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &unhealed, &eats[..1]),
+            OracleDecision::Fail(reason) if reason.contains("did not heal to full")
+        ));
+        let mut dead = frames;
+        dead[1].hp = 0;
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &dead, &eats),
+            OracleDecision::Fail(reason) if reason.contains("died")
+        ));
+    }
+
+    #[test]
+    fn full_hp_oracle_passes_and_rejects_early_or_duplicate_bites() {
+        let (frames, eats) = full_hp_receipt();
+        assert_eq!(
+            evaluate_walk(EatCase::FullHp, 69, &frames, &eats),
+            OracleDecision::Pass
+        );
+        let early = vec![
+            eat(110, 10, 10, 5, "guard", None, false),
+            eats[0].clone(),
+            eats[1].clone(),
+        ];
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &frames, &early),
+            OracleDecision::Fail(reason) if reason.contains("before the first poison mark")
+        ));
+        let duplicate = vec![
+            eats[0].clone(),
+            eat(133, 10, 10, 4, "guard", None, false),
+            eats[1].clone(),
+        ];
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &frames, &duplicate),
+            OracleDecision::Fail(reason) if reason.contains("second bite occurred before the second poison mark")
+        ));
+        assert!(matches!(
+            evaluate_walk(EatCase::FullHp, 69, &frames[..3], &eats[..1]),
+            OracleDecision::Pending
+        ));
+    }
+
+    #[test]
+    fn combat_oracle_requires_real_attack_and_food_packets_from_one_fight() {
+        let frames = vec![
+            onset_frame(100, 10, 10),
+            mark_frame(130, 4, 10, 5, 130),
+            mark_frame(132, 10, 10, 4, 130),
+        ];
+        let eats = vec![eat(131, 4, 10, 5, "interaction", Some("run-1"), true)];
+        let attacks = vec![AttackAction {
+            tick: 95,
+            accepted: true,
+            owner_run: Some("run-1".to_owned()),
+            real_wire: true,
+        }];
+        assert_eq!(
+            evaluate_combat(99, &frames, &eats, &attacks),
+            OracleDecision::Pass
+        );
+        assert!(matches!(
+            evaluate_combat(99, &frames, &eats, &[]),
+            OracleDecision::Fail(reason) if reason.contains("shares the Eat run")
+        ));
+        let synthetic_eat = vec![eat(131, 4, 10, 5, "interaction", Some("run-1"), false)];
+        assert!(matches!(
+            evaluate_combat(99, &frames, &synthetic_eat, &attacks),
+            OracleDecision::Fail(reason) if reason.contains("accepted real Lobster action")
+        ));
+    }
+
+    #[test]
+    fn combat_oracle_rejects_early_late_duplicate_bites_and_death() {
+        let frames = vec![
+            onset_frame(100, 10, 10),
+            mark_frame(130, 4, 10, 5, 130),
+            mark_frame(132, 10, 10, 4, 130),
+        ];
+        let eat = eat(131, 4, 10, 5, "interaction", Some("run-1"), true);
+        let attacks = vec![AttackAction {
+            tick: 95,
+            accepted: true,
+            owner_run: Some("run-1".to_owned()),
+            real_wire: true,
+        }];
+        let mut early = eat.clone();
+        early.tick = 110;
+        assert!(matches!(
+            evaluate_combat(99, &frames, &[early], &attacks),
+            OracleDecision::Fail(reason) if reason.contains("before the first poison mark")
+        ));
+        let mut late = frames[..2].to_vec();
+        late.push(mark_frame(134, 4, 10, 5, 130));
+        assert!(matches!(
+            evaluate_combat(99, &late, &[], &attacks),
+            OracleDecision::Fail(reason) if reason.contains("within three ticks")
+        ));
+        assert!(matches!(
+            evaluate_combat(99, &frames, &[eat.clone(), eat.clone()], &attacks),
+            OracleDecision::Fail(reason) if reason.contains("multiple combat bites")
+        ));
+        let mut dead = frames;
+        dead[1].hp = 0;
+        assert!(matches!(
+            evaluate_combat(99, &dead, &[eat], &attacks),
+            OracleDecision::Fail(reason) if reason.contains("died")
+        ));
+    }
+}

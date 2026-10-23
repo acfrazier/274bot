@@ -1298,6 +1298,30 @@
       "reason": "T3.3 operator command seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|CurePoison",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "CurePoison",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Survival profile policy shared with the panel and TUI."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|SurvivalSettings",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "SurvivalSettings",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Copyable survival policy view with no owned allocation."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|SurvivalDraft",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "SurvivalDraft",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "Mutable borrowed profile survival settings used by the forms."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/profile_draft.rs|GuardianPolicy",
       "path": "crates/frontend-core/src/profile_draft.rs",
       "symbol": "GuardianPolicy",
@@ -1384,6 +1408,14 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|SurvivalEdit",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "SurvivalEdit",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Staged SetSurvival policy value with no owned allocation."
     },
     {
       "id": "seam_type|crates/frontend-core/src/session/commands.rs|GuardianEdit",

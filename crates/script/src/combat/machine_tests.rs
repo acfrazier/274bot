@@ -36,6 +36,7 @@ struct Runtime {
     reach: Option<api::query::ReachQueryView>,
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
+    cure_poison: crate::survival::CurePoison,
 }
 impl Runtime {
     fn context<R>(
@@ -65,7 +66,7 @@ impl Runtime {
         let mut cx = ActionContext {
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
-            cure_poison: crate::survival::CurePoison::WhenNeeded,
+            cure_poison: self.cure_poison,
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
@@ -150,6 +151,7 @@ impl Harness {
             reach: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
         };
         let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
             let lease = actions.begin::<Lease>((), cx).unwrap();
@@ -734,6 +736,63 @@ fn combat_machine_cure_row_precedes_eat_row() {
             "branch={branch:?}: the bite must be planned after the dose drop settles"
         );
     }
+}
+
+#[test]
+fn combat_machine_never_policy_keeps_the_cure_and_eats() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.stat(3, 5, 40);
+    let mut food = scene.held("lobster", 0);
+    food.actions = vec![Some("Eat".into())];
+    scene.inventory.push(food);
+    scene.inventory.push(scene.held("4doseantipoison", 1));
+    scene.refresh();
+    let mut request = scene.request();
+    request.allow.food = true;
+    request.allow.prayer = false;
+    request.allow.potions = true;
+    request.allow.retaliate_toggle = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.cure_poison = crate::survival::CurePoison::Never;
+    harness.runtime.condition = Some(api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: 5,
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        cures: api::condition::CureDoses {
+            antipoison: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let batch = harness.drain(None);
+    assert!(
+        (0..batch.len()).any(|index| matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Lobster" && action == "Eat"
+        )),
+        "Never must allow the due health bite"
+    );
+    assert!(
+        (0..batch.len()).all(|index| !matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { action, .. }))
+                if action == "Drink"
+        )),
+        "Never must not consume the held antipoison"
+    );
 }
 
 #[test]

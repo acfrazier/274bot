@@ -1168,7 +1168,10 @@ mod tests {
         scene.launch_arrow();
         scene.set_missiles(true);
         let mut guard = scene.begin().unwrap();
-        assert_eq!(guard.tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded), None);
+        assert_eq!(
+            guard.tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded),
+            None
+        );
         assert_eq!(guard.end().0, GuardOp::IfButton { component: 0 });
     }
 
@@ -1177,7 +1180,13 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let click = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let click = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         guard.admitted(&click, &scene.view_at(0));
         scene.set_missiles(true);
         guard.observe_prayer(&scene.view_at(4));
@@ -1194,7 +1203,11 @@ mod tests {
         let mut scene = Scene::new(37);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        match guard.tick(&scene.view(), scene.condition(), crate::survival::CurePoison::WhenNeeded) {
+        match guard.tick(
+            &scene.view(),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        ) {
             Some(GuardOp::Unprotectable {
                 protect: GuardProtect::Missiles,
                 reason: GuardFailure::PrayerLevel,
@@ -1225,7 +1238,13 @@ mod tests {
 
         scene.launch_spell();
         let magic_component = scene.magic().button_com;
-        let magic = guard.tick(&scene.view_at(1), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let magic = guard
+            .tick(
+                &scene.view_at(1),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(
             magic,
             GuardOp::IfButton {
@@ -1267,7 +1286,11 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view_at(0),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         let missiles = scene.missiles();
         assert_eq!(
             op,
@@ -1306,7 +1329,13 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let first = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert!(matches!(first, GuardOp::IfButton { .. }), "{first:?}");
         assert_eq!(guard.pending_protect(), None);
         assert_eq!(guard.pending_protect_tick(), None);
@@ -1335,19 +1364,33 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let first = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert!(matches!(first, GuardOp::IfButton { .. }));
         assert_eq!(guard.pending_protect(), None);
         assert!(!guard.blocks_follow(0));
 
-        let retry = guard.tick(&scene.view_at(1), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let retry = guard
+            .tick(
+                &scene.view_at(1),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(retry, first, "a refused host send must remain retryable");
         guard.admitted(&retry, &scene.view_at(1));
         assert_eq!(guard.pending_protect(), Some(scene.missiles().button_com));
         assert_eq!(guard.pending_protect_tick(), Some(1));
         assert!(guard.blocks_follow(1));
         assert!(
-            guard.tick(&scene.view_at(2), scene.condition(), CurePoison::WhenNeeded).is_none(),
+            guard
+                .tick(&scene.view_at(2), scene.condition(), CurePoison::WhenNeeded)
+                .is_none(),
             "pacing starts only after the successful retry"
         );
     }
@@ -1357,7 +1400,13 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let click = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let click = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         guard.admitted(&click, &scene.view_at(0));
         assert_eq!(
             guard.end().0,
@@ -1376,7 +1425,13 @@ mod tests {
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
         let missiles = scene.missiles().button_com;
-        let click = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let click = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(
             click,
             GuardOp::IfButton {
@@ -1410,10 +1465,18 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let click = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let click = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         guard.admitted(&click, &scene.view_at(0));
         scene.set_missiles(true);
-        assert!(guard.tick(&scene.view_at(3), scene.condition(), CurePoison::WhenNeeded).is_none());
+        assert!(guard
+            .tick(&scene.view_at(3), scene.condition(), CurePoison::WhenNeeded)
+            .is_none());
         scene.set_missiles(false);
         guard.observe_prayer(&scene.view_at(4));
         assert_eq!(
@@ -1428,10 +1491,18 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let click = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let click = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         guard.admitted(&click, &scene.view_at(0));
         scene.set_missiles(true);
-        assert!(guard.tick(&scene.view_at(3), scene.condition(), CurePoison::WhenNeeded).is_none());
+        assert!(guard
+            .tick(&scene.view_at(3), scene.condition(), CurePoison::WhenNeeded)
+            .is_none());
         let missiles = scene.missiles().button_com;
         assert_eq!(
             guard.end().0,
@@ -1450,7 +1521,11 @@ mod tests {
             scene.launch_arrow();
             scene.set_missiles(true);
             let mut guard = scene.begin().unwrap();
-            let op = guard.tick(&scene.view_at(10), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let op = guard.tick(
+                &scene.view_at(10),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert_eq!(
                 matches!(&op, Some(GuardOp::Drink { .. })),
                 due,
@@ -1466,13 +1541,23 @@ mod tests {
         scene.add_prayer_potion();
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let drink = guard.tick(&scene.view_at(10), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let drink = guard
+            .tick(
+                &scene.view_at(10),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert!(matches!(drink, GuardOp::Drink { .. }), "got {drink:?}");
         assert!(!guard.blocks_follow(11), "a drink proposal is not admitted");
         guard.admitted(&drink, &scene.view_at(10));
         assert!(guard.blocks_follow(11));
         assert_eq!(
-            guard.tick(&scene.view_at(11), scene.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &scene.view_at(11),
+                scene.condition(),
+                CurePoison::WhenNeeded
+            ),
             Some(GuardOp::Locked { until: 13 })
         );
         assert!(guard.blocks_follow(12));
@@ -1486,7 +1571,13 @@ mod tests {
         scene.add_prayer_potion();
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let drink = guard.tick(&scene.view_at(10), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let drink = guard
+            .tick(
+                &scene.view_at(10),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert!(matches!(drink, GuardOp::Drink { .. }));
         guard.admitted(&drink, &scene.view_at(10));
 
@@ -1516,14 +1607,22 @@ mod tests {
         scene.npcs[0].animation_frame = 0;
         scene.refresh();
         assert_eq!(
-            guard.tick(&scene.view_at(11), scene.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &scene.view_at(11),
+                scene.condition(),
+                CurePoison::WhenNeeded
+            ),
             Some(GuardOp::Locked { until: 13 })
         );
 
         scene.npcs.clear();
         scene.refresh();
         assert_eq!(
-            guard.tick(&scene.view_at(12), scene.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &scene.view_at(12),
+                scene.condition(),
+                CurePoison::WhenNeeded
+            ),
             Some(GuardOp::Locked { until: 13 })
         );
         let melee_component = scene
@@ -1532,7 +1631,11 @@ mod tests {
             .unwrap()
             .button_com;
         assert_eq!(
-            guard.tick(&scene.view_at(13), scene.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &scene.view_at(13),
+                scene.condition(),
+                CurePoison::WhenNeeded
+            ),
             Some(GuardOp::IfButton {
                 component: melee_component
             }),
@@ -1571,7 +1674,13 @@ mod tests {
         let missiles = scene.missiles().button_com;
         let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap().clone();
         let mut guard = scene.begin().unwrap();
-        let first = guard.tick(&scene.view_at(10), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(10),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(
             first,
             GuardOp::IfButton {
@@ -1582,7 +1691,13 @@ mod tests {
         scene.set_missiles(true);
         scene.projectiles.clear();
         scene.refresh();
-        let second = guard.tick(&scene.view_at(11), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let second = guard
+            .tick(
+                &scene.view_at(11),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(
             second,
             GuardOp::IfButton {
@@ -1594,7 +1709,13 @@ mod tests {
         scene.set_missiles(false);
         scene.set_protect_varp(melee.varp, true);
         scene.launch_style(276);
-        let third = guard.tick(&scene.view_at(12), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let third = guard
+            .tick(
+                &scene.view_at(12),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eq!(
             third,
             GuardOp::IfButton {
@@ -1632,7 +1753,11 @@ mod tests {
             loop_cycle: 364,
         });
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view(), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view(),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert_eq!(
             op,
             Some(GuardOp::IfButton {
@@ -1667,7 +1792,11 @@ mod tests {
             loop_cycle: 360,
         });
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view(), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view(),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap();
         assert_ne!(
             op,
@@ -1690,7 +1819,11 @@ mod tests {
         let mut scene = Scene::new(43);
         scene.launch_spell();
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view(), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view(),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         let magic = scene.magic();
         let missiles = scene.missiles();
         assert_eq!(
@@ -1766,15 +1899,33 @@ mod tests {
         scene.add_prayer_potion();
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
-        let first = guard.tick(&scene.view_at(10), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(10),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert!(matches!(first, GuardOp::Drink { .. }), "got {first:?}");
         guard.admitted(&first, &scene.view_at(10));
         assert_eq!(
-            guard.tick(&scene.view_at(11), scene.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &scene.view_at(11),
+                scene.condition(),
+                CurePoison::WhenNeeded
+            ),
             Some(GuardOp::Locked { until: 13 })
         );
-        let _ = guard.tick(&scene.view_at(12), scene.condition(), crate::survival::CurePoison::WhenNeeded);
-        let second = guard.tick(&scene.view_at(13), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let _ = guard.tick(
+            &scene.view_at(12),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
+        let second = guard.tick(
+            &scene.view_at(13),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(
             matches!(second, Some(GuardOp::Drink { .. })),
             "a later dose may be proposed after the admitted dose times out"
@@ -1802,7 +1953,11 @@ mod tests {
         scene.launch_troll_rock();
         let mut guard = scene.begin().unwrap();
 
-        let op = guard.tick(&scene.view(), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view(),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert_eat(op.as_ref(), "Lobster");
     }
 
@@ -1813,7 +1968,11 @@ mod tests {
         scene.add_food("lobster", 0, 1);
         let mut guard = scene.begin().unwrap();
 
-        let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view_at(0),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(!is_eat(&op), "a Some(0) danger must not eat: {op:?}");
         assert_eq!(op, None);
     }
@@ -1827,7 +1986,11 @@ mod tests {
             scene.add_food("lobster", 0, 1);
             let mut guard = scene.begin().unwrap();
 
-            let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let op = guard.tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert_eq!(is_eat(&op), should_eat, "unknown danger at {hp}/40: {op:?}");
         }
 
@@ -1838,7 +2001,11 @@ mod tests {
             scene.add_food("tbwt_cooked_karambwan", 0, 1);
             let mut guard = scene.begin().unwrap();
 
-            let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let op = guard.tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert_eq!(
                 is_eat(&op),
                 should_eat,
@@ -1855,13 +2022,23 @@ mod tests {
         scene.add_food("lobster", 0, 2);
         let mut guard = scene.begin().unwrap();
 
-        let first = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eat(Some(&first), "Lobster");
         guard.admitted(&first, &scene.view_at(0));
 
         scene.inventory[0].count = 1;
         scene.refresh();
-        let observed = guard.tick(&scene.view_at(1), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let observed = guard.tick(
+            &scene.view_at(1),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(
             !is_eat(&observed),
             "the next-food clock is not ready: {observed:?}"
@@ -1869,9 +2046,17 @@ mod tests {
         assert!(!guard.schedule.pending(OpKind::Eat));
         assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
 
-        let early = guard.tick(&scene.view_at(2), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let early = guard.tick(
+            &scene.view_at(2),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(!is_eat(&early), "food must wait through tick 2: {early:?}");
-        let ready = guard.tick(&scene.view_at(3), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let ready = guard.tick(
+            &scene.view_at(3),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert_eat(ready.as_ref(), "Lobster");
     }
 
@@ -1883,13 +2068,23 @@ mod tests {
         scene.add_food("lobster", 0, 1);
         let mut guard = scene.begin().unwrap();
 
-        let eat = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let eat = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         guard.admitted(&eat, &scene.view_at(0));
         assert!(guard.schedule.pending(OpKind::Eat));
 
         scene.stats[3].effective = 40;
         scene.refresh();
-        let _ = guard.tick(&scene.view_at(1), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let _ = guard.tick(
+            &scene.view_at(1),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(!guard.schedule.pending(OpKind::Eat));
         assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], 0);
     }
@@ -1915,11 +2110,21 @@ mod tests {
 
         for tick in [0, 4, 8, 12] {
             assert_eq!(scene.stats[3].effective, emergency);
-            let eat = guard.tick(&scene.view_at(tick), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+            let eat = guard
+                .tick(
+                    &scene.view_at(tick),
+                    scene.condition(),
+                    crate::survival::CurePoison::WhenNeeded,
+                )
+                .unwrap();
             assert_eat(Some(&eat), "Cooked karambwan");
             guard.admitted(&eat, &scene.view_at(tick));
 
-            let pending = guard.tick(&scene.view_at(tick.wrapping_add(1)), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let pending = guard.tick(
+                &scene.view_at(tick.wrapping_add(1)),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert!(
                 !is_eat(&pending),
                 "a pending Eat must not repeat: {pending:?}"
@@ -1932,7 +2137,11 @@ mod tests {
 
             scene.inventory.remove(0);
             scene.refresh();
-            let settled = guard.tick(&scene.view_at(tick.wrapping_add(2)), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let settled = guard.tick(
+                &scene.view_at(tick.wrapping_add(2)),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert!(
                 !is_eat(&settled),
                 "the combo input lock is still active: {settled:?}"
@@ -1954,24 +2163,42 @@ mod tests {
         scene.add_food("lobster", 0, 1);
         let mut guard = scene.begin().unwrap();
 
-        let first = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let first = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eat(Some(&first), "Lobster");
         guard.admitted(&first, &scene.view_at(0));
         let window = u16::from(EAT_OBSERVATION_WINDOW_TICKS);
         for tick in 1..window {
-            let op = guard.tick(&scene.view_at(tick), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let op = guard.tick(
+                &scene.view_at(tick),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert!(!is_eat(&op), "a pending Eat must not repeat: {op:?}");
             assert!(guard.schedule.pending(OpKind::Eat));
         }
 
         for (tick, unsettled) in [(window, 1), (window * 2, 2)] {
-            let op = guard.tick(&scene.view_at(tick), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+            let op = guard.tick(
+                &scene.view_at(tick),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            );
             assert_eat(op.as_ref(), "Lobster");
             assert_eq!(guard.schedule.unsettled[OpKind::Eat.index()], unsettled);
             guard.admitted(op.as_ref().unwrap(), &scene.view_at(tick));
         }
 
-        let stopped = guard.tick(&scene.view_at(window * 3), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let stopped = guard.tick(
+            &scene.view_at(window * 3),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(
             !is_eat(&stopped),
             "third timeout must stop food: {stopped:?}"
@@ -1988,7 +2215,13 @@ mod tests {
         scene.add_food("tbwt_cooked_karambwan", 0, 1);
         let mut guard = scene.begin().unwrap();
 
-        let eat = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).unwrap();
+        let eat = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
         assert_eat(Some(&eat), "Cooked karambwan");
         guard.admitted(&eat, &scene.view_at(0));
         assert!(guard.blocks_follow(1));
@@ -2022,14 +2255,24 @@ mod tests {
         scene.refresh();
         let mut guard = scene.begin().unwrap();
         assert_eat(
-            guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).as_ref(),
+            guard
+                .tick(
+                    &scene.view_at(0),
+                    scene.condition(),
+                    crate::survival::CurePoison::WhenNeeded,
+                )
+                .as_ref(),
             "Lobster",
         );
 
         scene.stats[3].effective = lines.emergency + 1;
         scene.refresh();
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view_at(0),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(
             matches!(
                 op,
@@ -2084,7 +2327,8 @@ mod tests {
                 WalkGuard::begin_with(&request, &scene.view_at(0), Arc::clone(&scene.tables))
                     .unwrap()
             };
-            let op = guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+            let op = guard
+                .tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
                 .unwrap();
             assert!(
                 matches!(
@@ -2160,7 +2404,8 @@ mod tests {
             Arc::clone(&scene.tables),
         )
         .unwrap();
-        let op = guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+        let op = guard
+            .tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
             .unwrap();
         assert!(
             matches!(
@@ -2180,7 +2425,9 @@ mod tests {
         scene.launch_known_melee_threat();
         scene.add_antipoison();
         let mut guard = scene.begin().unwrap();
-        let op = guard.tick(&scene.view_at(0), None, CurePoison::WhenNeeded).unwrap();
+        let op = guard
+            .tick(&scene.view_at(0), None, CurePoison::WhenNeeded)
+            .unwrap();
         assert!(
             matches!(op, GuardOp::IfButton { .. }),
             "without a condition fact, the guard keeps its protection behavior: {op:?}"
@@ -2215,7 +2462,8 @@ mod tests {
                 ..api::condition::CureDoses::default()
             },
         };
-        let drink = guard.tick(&scene.view_at(0), Some(&active), CurePoison::WhenNeeded)
+        let drink = guard
+            .tick(&scene.view_at(0), Some(&active), CurePoison::WhenNeeded)
             .unwrap();
         assert!(matches!(
             drink,
@@ -2275,7 +2523,8 @@ mod tests {
             Arc::clone(&scene.tables),
         )
         .unwrap();
-        let fruit = guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+        let fruit = guard
+            .tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
             .unwrap();
         assert!(matches!(
             fruit,
@@ -2309,7 +2558,11 @@ mod tests {
         request.allow.food = false;
         let mut guard =
             WalkGuard::begin_with(&request, &scene.view(), Arc::clone(&scene.tables)).unwrap();
-        let op = guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded);
+        let op = guard.tick(
+            &scene.view_at(0),
+            scene.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         assert!(
             matches!(
                 op,
@@ -2526,7 +2779,11 @@ mod tests {
         at_eight.set_poisoned(6);
         let mut guard = at_eight.begin().unwrap();
         assert_eq!(
-            guard.tick(&at_eight.view_at(0), at_eight.condition(), CurePoison::WhenNeeded),
+            guard.tick(
+                &at_eight.view_at(0),
+                at_eight.condition(),
+                CurePoison::WhenNeeded
+            ),
             None,
             "the guard's line 7 rejects a bite at HP 8"
         );
@@ -2536,7 +2793,12 @@ mod tests {
         at_seven.set_poisoned(6);
         let mut guard = at_seven.begin().unwrap();
         assert_eat(
-            guard.tick(&at_seven.view_at(0), at_seven.condition(), crate::survival::CurePoison::WhenNeeded)
+            guard
+                .tick(
+                    &at_seven.view_at(0),
+                    at_seven.condition(),
+                    crate::survival::CurePoison::WhenNeeded,
+                )
                 .as_ref(),
             "Lobster",
         );
@@ -2548,7 +2810,10 @@ mod tests {
         scene.stats[3].effective = 7;
         scene.add_food("lobster", 0, 1);
         let mut guard = scene.begin().unwrap();
-        assert_eq!(guard.tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded), None);
+        assert_eq!(
+            guard.tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded),
+            None
+        );
 
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 7;
@@ -2556,7 +2821,13 @@ mod tests {
         scene.set_poisoned(6);
         let mut guard = scene.begin().unwrap();
         assert_eat(
-            guard.tick(&scene.view_at(0), scene.condition(), crate::survival::CurePoison::WhenNeeded).as_ref(),
+            guard
+                .tick(
+                    &scene.view_at(0),
+                    scene.condition(),
+                    crate::survival::CurePoison::WhenNeeded,
+                )
+                .as_ref(),
             "Lobster",
         );
     }
