@@ -279,12 +279,8 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
         }
         if ui.checkbox(column.title(), &mut on) {
             fleet_columns::set_visible(&mut session.ui.fleet_columns, column, on);
-            let value = (on != column.default_on())
-                .then_some(serde_json::Value::Bool(on));
-            let _ = session.persist_panel_member(
-                &["fleet_columns", column.id()],
-                value,
-            );
+            let value = (on != column.default_on()).then_some(serde_json::Value::Bool(on));
+            let _ = session.persist_panel_member(&["fleet_columns", column.id()], value);
         }
     }
 }

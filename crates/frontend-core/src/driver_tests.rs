@@ -31,6 +31,63 @@ fn open_driver(state: &Path) -> HeadlessDriver {
     HeadlessDriver::open(state, InstancePermit::skip())
 }
 
+#[test]
+fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
+    let dir = scratch("cold-preferences-startup");
+    let mut driver = open_driver(&dir.join("provisional"));
+    let _source = crate::quester_paths::registry_source_test_lock();
+    let state = dir.join("saved");
+    let path = state.join("panel-ui.json");
+    let saved = br#"{"capture":false,"sidecar_50":true,"focused_50":false,"map_bake":"always","quester_paths":{"enabled":false,"folder":"saved-source"},"nav":{"allow_teleports":true,"pause_script_on_manual_walk_abort":false}}"#;
+    vault::write_private_file(&path, saved).unwrap();
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(state),
+        std::sync::Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    driver.session.bind_local_state(service);
+    driver.preferences_adopted = false;
+    driver.models.walk_globals = driver.session.adopt_operator_preferences();
+    for _ in 0..4 {
+        driver.poll();
+        assert!(!driver.preferences_adopted);
+        assert!(!driver.models.walk_globals.globals().allow_teleports());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+    }
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !driver.preferences_adopted && std::time::Instant::now() < deadline {
+        driver.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(driver.preferences_adopted);
+    assert!(driver.models.walk_globals.globals().allow_teleports());
+    assert!(!driver.session.running_pause_script_on_manual_walk_abort());
+    assert!(!driver.models.draw.capture());
+    assert!(driver.models.draw.sidecar_50());
+    assert!(!driver.models.draw.focused_50());
+    assert_eq!(
+        driver.models.map.bake_gate().choice(),
+        crate::MapBakeChoice::Always
+    );
+    assert_eq!(
+        driver.models.quester.settings().folder(),
+        Path::new("saved-source")
+    );
+    assert_eq!(std::fs::read(path).unwrap(), saved);
+}
+
 /// A real vault file at `dir/vault` holding `names`.
 fn vault_with(dir: &Path, names: &[&str]) -> PathBuf {
     let path = dir.join("vault");
@@ -499,7 +556,9 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert_eq!(file["session_log_file"], serde_json::Value::Bool(true));
     assert_eq!(file["map_bake"], serde_json::Value::String("always".into()));
     // A new session over the same state root.
-    let again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir.join("state"));
+    again.session().preferences().unwrap().reload().unwrap();
+    again.poll();
     assert_eq!(
         again
             .session()

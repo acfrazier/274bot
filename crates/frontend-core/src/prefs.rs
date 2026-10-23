@@ -3,17 +3,15 @@
 //! domain (the T5.2 I-state-port service), opened by the core
 //! ([`crate::OperatorSession::open_process_state`]).
 //!
-//! Operator preference changes go through their commands
-//! (`SetNavPreference`, `SetDangerLevel`, `SetSessionLog`,
-//! `SetMapBakeChoice`, `SetQuesterPaths`, `SetDraw`); a front end writes
-//! its own presentation state (window layout, last focus) through
-//! [`UiPreferences::update`].
+//! Operator commands submit changed-member intent to the process writer.
+//! Reads use its immutable cache. Neither operation waits for storage.
 
+#[cfg(any(test, feature = "test-support"))]
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use host_play::local_state::Update;
+pub use host_play::local_state::{PreferenceError, PreferencePatch, Update};
 use serde_json::{Map, Value};
 
 /// A handle on the preferences document. [`Self::share`] gives another
@@ -41,8 +39,8 @@ impl UiPreferences {
         self.inner.path()
     }
 
-    /// The current document (read again only when it is stale).
-    pub fn document(&self) -> io::Result<Arc<Map<String, Value>>> {
+    /// The cached document, or its cold/refused state. This never waits.
+    pub fn document(&self) -> Result<Arc<Map<String, Value>>, PreferenceError> {
         self.inner.document()
     }
 
@@ -52,40 +50,41 @@ impl UiPreferences {
         self.inner.value(key)
     }
 
-    /// Read the file again now, whatever its freshness.
+    /// Whether the process writer published a readable preferences snapshot.
+    pub fn ready(&self) -> bool {
+        self.document().is_ok()
+    }
+
+    /// Submit only the members this action changed, without waiting.
+    /// The process service owns accepted intent until terminal settlement.
+    pub fn begin_patch(&self, patch: PreferencePatch) -> Result<Update, PreferenceError> {
+        self.inner.begin_patch(patch)
+    }
+
+    /// Submit one top-level member without waiting.
+    pub(crate) fn begin_set(&self, key: &str, value: Value) -> Result<Update, PreferenceError> {
+        self.inner.begin_set(key, value)
+    }
+
+    /// Fixture-only readback. Product readers use the cached document.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
         self.inner.reload()
     }
 
-    /// Read the current document, let `merge` change it, and write each
-    /// changed top-level preference durably (retried on a conflicting
-    /// writer).
+    /// Fixture-only synchronous mutation.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn update(
         &self,
-        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
+        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()> + Send + 'static,
     ) -> io::Result<()> {
         self.inner.update(merge)
     }
 
-    /// Write one top-level preference.
+    /// Fixture-only synchronous member replacement.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set(&self, key: &str, value: Value) -> io::Result<()> {
         self.inner.set(key, value)
-    }
-
-    /// [`Self::update`] for an operator command: when the bounded wait
-    /// ends with the write still queued, the rest of the update comes
-    /// back as [`Update::Queued`] for the command to settle from
-    /// ([`crate::OperatorSession::poll`]), instead of a failure.
-    pub(crate) fn begin_update(
-        &self,
-        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()> + Send + 'static,
-    ) -> io::Result<Update> {
-        self.inner.begin_update(merge)
-    }
-
-    /// [`Self::set`] through [`Self::begin_update`].
-    pub(crate) fn begin_set(&self, key: &str, value: Value) -> io::Result<Update> {
-        self.inner.begin_set(key, value)
     }
 }
 
@@ -94,15 +93,16 @@ impl UiPreferences {
 /// refused, or cancelled when its service stops), so this waits for that
 /// settlement; [`WRITE_HANG_GUARD`] only ends a test whose writer hung.
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn settled_for_test(write: io::Result<Update>) -> io::Result<()> {
-    match write? {
+pub(crate) fn settled_for_test(write: Result<Update, PreferenceError>) -> io::Result<()> {
+    match write.map_err(io::Error::other)? {
         Update::Durable => Ok(()),
-        Update::Queued(mut queued) => queued.wait(WRITE_HANG_GUARD).unwrap_or_else(|| {
-            Err(io::Error::new(
+        Update::Queued(mut queued) => match queued.wait(WRITE_HANG_GUARD) {
+            Some(result) => result.map_err(io::Error::other),
+            None => Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("the preference write was still queued after {WRITE_HANG_GUARD:?}"),
-            ))
-        }),
+            )),
+        },
     }
 }
 

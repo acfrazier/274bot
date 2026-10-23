@@ -1423,6 +1423,21 @@ fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
     );
 }
 
+fn settle_preferences(session: &mut TuiSession, app: &mut TuiApp) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.pump(app);
+        if !session.core.preferences_pending() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the preference commands did not finish"
+        );
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let iso = IsolatedStores::enter("tui-initial-load");
@@ -2608,6 +2623,7 @@ fn two_arm_play() -> Play {
 }
 
 fn pump_two_slots(session: &mut TuiSession) -> TuiApp {
+    session.preferences.reload().unwrap();
     session.inject_play(two_arm_play());
     session.names = vec!["alice".into(), "bob".into()];
     let mut app = TuiApp::new("tui");
@@ -2639,6 +2655,7 @@ fn tui_notice_uses_shared_ack_file() {
     let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
     dispatch(&mut session, &mut app, AppAction::AckBackground);
+    settle_preferences(&mut session, &mut app);
 
     session.expire_ack_cache();
     session.pump(&mut app);
@@ -2658,15 +2675,17 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
     )
     .unwrap();
     let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    session.pump(&mut app);
     assert_eq!(
         session.map_desk.bake_gate().choice(),
         frontend_core::MapBakeChoice::Always,
         "the panel's remembered choice is read at start"
     );
-    let mut app = TuiApp::new("tui");
     app.map_bake = frontend_core::MapBakeChoice::Ask;
     app.map_bake_dirty = true;
-    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert!(!app.map_bake_dirty);
     assert_eq!(
         session.map_desk.bake_gate().choice(),
@@ -2695,7 +2714,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     let mut app = TuiApp::new("tui");
     app.map_bake = frontend_core::MapBakeChoice::Always;
     app.map_bake_dirty = true;
-    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
     app.loadouts_state = crate::loadouts::LoadoutsState {
         open: true,
@@ -2713,6 +2732,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
     let peer = host_play::local_state::LocalStateService::open_process(root.clone());
+    peer.preferences().reload().unwrap();
     assert_eq!(
         peer.preferences().value("map_bake"),
         Some(serde_json::json!("always"))
@@ -2749,7 +2769,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
     assert_eq!(session.loadouts.status(), "Saved.");
     app.map_bake = frontend_core::MapBakeChoice::Ask;
     app.map_bake_dirty = true;
-    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
     let mut reread = Loadouts::operator(&peer);
     reread.reload_for_test().unwrap();
@@ -2943,6 +2963,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     )
     .unwrap();
     let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
     Seam::restore_preferences(&mut app, session.preferences.share());
 
@@ -2950,7 +2971,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
 
     app.pause_script_on_manual_walk_abort = true;
     app.pause_script_on_manual_walk_abort_dirty = true;
-    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
     let prefs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
     assert_eq!(prefs["capture"], false);
@@ -2987,6 +3008,7 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
 fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands() {
     let iso = IsolatedStores::enter("tui-walk-globals-commands");
     let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
     Seam::restore_preferences(&mut app, session.preferences.share());
 
@@ -3000,7 +3022,7 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
         app.on_key(settings_key(crossterm::event::KeyCode::Char('d'))),
         AppAction::None
     );
-    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
     let prefs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
@@ -3015,6 +3037,91 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     );
     assert!(app.walk_permissions.script_scope_notice_ack());
     let _iso = iso;
+}
+
+#[test]
+fn tui_refresh_preserves_unsaved_checkbox_and_folder_draft() {
+    let _iso = IsolatedStores::enter("tui-preference-draft-refresh");
+    let session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 5;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None,
+    );
+    assert!(app.nav.allow_teleports());
+    app.settings_state.row = 13;
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
+    let folder = app.quester_paths.folder().to_path_buf();
+    for _ in 0..4 {
+        app.refresh_walk_permissions();
+        assert!(
+            app.nav.allow_teleports(),
+            "an unchanged durable snapshot must not erase the checkbox draft"
+        );
+        assert_eq!(app.quester_paths.folder(), folder);
+    }
+    app.settings_state.open = false;
+    app.settings_state.open = true;
+    assert!(app.nav.allow_teleports());
+    assert_eq!(app.quester_paths.folder(), folder);
+}
+
+#[test]
+fn pending_preferences_survive_settings_reopen_and_keep_the_folder_draft() {
+    let _iso = IsolatedStores::enter("tui-preference-pending-reopen");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    app.settings_state.open = true;
+    app.settings_state.row = 5;
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(app.settings_state.preferences_pending);
+    assert!(!app.walk_permissions.globals().allow_teleports());
+    app.settings_state.row = 13;
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
+    let folder = app.quester_paths.folder().to_path_buf();
+    for _ in 0..4 {
+        session.pump(&mut app);
+        assert!(app.nav.allow_teleports());
+        assert_eq!(app.quester_paths.folder(), folder);
+    }
+    app.settings_state.open = false;
+    session.pump(&mut app);
+    app.settings_state.open = true;
+    for (width, height) in [(120, 40), (80, 24)] {
+        let shown = crate::test_support::text(&crate::test_support::draw(&mut app, width, height));
+        assert!(shown.contains("Saving preferences"), "{shown}");
+    }
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.core.preferences_pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!session.core.preferences_pending());
+    assert!(app.walk_permissions.globals().allow_teleports());
+    assert_eq!(app.quester_paths.folder(), folder);
+    assert!(!app.settings_state.preferences_pending);
 }
 
 /// Quit goes through the `Quit` command: every loaded member's Quit
@@ -3462,6 +3569,7 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     dispatch(&mut session, &mut app, AppAction::SetSessionLog(true));
+    settle_preferences(&mut session, &mut app);
     assert!(frontend_core::log_file::session_log_setting(
         &session.preferences
     ));
@@ -3474,6 +3582,7 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
         app.log.status
     );
     dispatch(&mut session, &mut app, AppAction::SetSessionLog(false));
+    settle_preferences(&mut session, &mut app);
     assert!(!frontend_core::log_file::session_log_setting(
         &session.preferences
     ));
@@ -3578,6 +3687,7 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .unwrap();
 
     let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.share());
     assert!(app.quester_paths.enabled());
@@ -3673,6 +3783,7 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     let parent = session.preferences.path().parent().unwrap().to_path_buf();
     let _ = std::fs::remove_dir_all(&parent);
     std::fs::write(&parent, b"not-a-dir").unwrap();
+    assert!(session.preferences.reload().is_err());
     app.error = None;
     session.ack_background_bots(&mut app);
     assert!(
@@ -3690,7 +3801,9 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
         &session.preferences
     ));
     std::fs::remove_file(&parent).unwrap();
+    session.preferences.reload().unwrap();
     session.ack_background_bots(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert!(app.background_notice.is_none());
     assert!(app.error.is_none(), "got {:?}", app.error);
     assert!(frontend_core::resources::background_bots_acked(
@@ -3706,6 +3819,7 @@ fn tui_successful_ack_preserves_unrelated_error() {
     let mut app = pump_two_slots(&mut session);
     app.error = Some("script: no focused profile".into());
     session.ack_background_bots(&mut app);
+    settle_preferences(&mut session, &mut app);
     assert!(app.background_notice.is_none());
     assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
     assert!(frontend_core::resources::background_bots_acked(

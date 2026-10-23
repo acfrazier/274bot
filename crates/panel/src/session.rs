@@ -34,6 +34,7 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
+use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
 use frontend_core::scripts::{
     CardSource, LoadoutForm, PaintFrame, SchemaRef, ScriptChoice, ScriptRunState,
 };
@@ -43,7 +44,6 @@ use frontend_core::walk_map::{
     WalkRoutePath, WalkRouteSource, WalkSlotStatus, WalkSourceStatus,
 };
 use frontend_core::MapBakeChoice;
-use frontend_core::prefs::{PreferencePatch, Update};
 #[cfg(test)]
 use host_play::SlotStatus;
 use nav::paint::{
@@ -57,7 +57,10 @@ use nav::world::NavWorld;
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
-use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
+use frontend_core::{
+    GuardianEdit, GuardianPolicy, OperatorCommand, OperatorSession, SlotAttach, SlotSurface,
+    Targets,
+};
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
@@ -870,7 +873,6 @@ struct PanelPreferenceWrite {
     members: Vec<PanelPreferenceMember>,
 }
 
-
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -1425,7 +1427,7 @@ fn apply_walk_permission(
     *nav_member_mut(nav, key) = value;
 }
 
-fn nav_member_mut(nav: &mut NavSettings, key: &'static str) -> &mut bool {
+fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bool {
     match key {
         "allow_teleports" => &mut nav.allow_teleports,
         "allow_wilderness" => &mut nav.allow_wilderness,
@@ -1593,6 +1595,7 @@ impl Session {
             pending_panel_members: HashMap::new(),
             pending_nav_members,
             preference_write_error: None,
+            quester_paths,
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
             map_desk,
@@ -1703,10 +1706,9 @@ impl Session {
             let write = self.panel_preference_writes.swap_remove(index);
             match outcome {
                 Ok(()) => self.clear_succeeded_panel_members(&write.members),
-                Err(error) => self.set_preference_write_error(
-                    write.members.first(),
-                    error.to_string(),
-                ),
+                Err(error) => {
+                    self.set_preference_write_error(write.members.first(), error.to_string())
+                }
             }
         }
 
@@ -1721,6 +1723,7 @@ impl Session {
         self.preferences_ready
     }
 
+    #[cfg(test)]
     pub(crate) fn panel_preference_writes_pending(&self) -> usize {
         self.panel_preference_writes.len()
     }
@@ -1782,7 +1785,7 @@ impl Session {
             }
         }
     }
-    pub(crate) fn persist_panel_serializable<T: serde::Serialize>(
+    pub(crate) fn persist_panel_serializable<T: serde::Serialize + ?Sized>(
         &mut self,
         path: &[&str],
         value: &T,
@@ -1848,12 +1851,10 @@ impl Session {
         self.ui.capture = self.draw.capture();
         self.ui.sidecar_50 = self.draw.sidecar_50();
         self.ui.focused_50 = self.draw.focused_50();
-        self.map_desk.adopt_bake_choice(frontend_core::load_map_bake_choice(
-            &self.preferences,
-        ));
-        self.script_load_dir = crate::script_picker::default_load_browse_dir(
-            self.ui.script_load_last_dir.as_deref(),
-        );
+        self.map_desk
+            .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
+        self.script_load_dir =
+            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
         self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
             self.ui.script_catalog_last_dir.as_deref(),
         );
@@ -1898,10 +1899,7 @@ impl Session {
             .retain(|path, value| !json_member_matches(document, path, value));
     }
 
-    fn clear_cached_nav_members(
-        &mut self,
-        document: &serde_json::Map<String, serde_json::Value>,
-    ) {
+    fn clear_cached_nav_members(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
         for key in ["show_special_areas", "pause_script_on_manual_walk_abort"] {
             let stored = document
                 .get("nav")
@@ -3244,10 +3242,8 @@ impl Session {
         if self.persist_ui {
             let focus = name.to_string();
             self.ui.last_focus = Some(focus.clone());
-            let _ = self.persist_panel_member(
-                &["last_focus"],
-                Some(serde_json::Value::String(focus)),
-            );
+            let _ =
+                self.persist_panel_member(&["last_focus"], Some(serde_json::Value::String(focus)));
         }
         // The core owns the selection (and mirrors it onto the play, waking
         // the outgoing and incoming slots); `focus.focused` is the render
@@ -3679,8 +3675,7 @@ impl Session {
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name)
-        {
+        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name) {
             self.error = Some(e);
         }
     }
@@ -3708,8 +3703,7 @@ impl Session {
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         self.ui.lowmem = lowmem;
-        let _ = self
-            .persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
+        let _ = self.persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
         self.error = None;
         let Some(name) = self.focused_name() else {
             return true;
@@ -4651,9 +4645,8 @@ impl Session {
         } else {
             self.quester_paths.settings().folder().to_path_buf()
         };
-        let result = self.persist_quester_paths(frontend_core::QuesterPathsView::new(
-            enabled, folder,
-        ));
+        let result =
+            self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder));
         if result.is_ok() && folder_committed {
             self.quester_paths_folder_dirty = false;
             self.quester_paths_folder_edit = self

@@ -1621,10 +1621,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            let _ = state.session.persist_panel_member(
-                &["rail_preview", name],
-                Some(serde_json::Value::Bool(next)),
-            );
+            let _ = state
+                .session
+                .persist_panel_member(&["rail_preview", name], Some(serde_json::Value::Bool(next)));
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {
@@ -1969,8 +1968,7 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
                 if let Some(from) = heading_from_key(p.data) {
                     let mut order = resolve_heading_order(&session.ui.section_order);
                     move_heading(&mut order, &from, id);
-                    let _ =
-                        session.persist_panel_serializable(&["section_order"], &order);
+                    let _ = session.persist_panel_serializable(&["section_order"], &order);
                     session.ui.section_order = order;
                 }
             }
@@ -2630,8 +2628,7 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
-                    let _ =
-                        session.persist_panel_serializable(&["script_category_order"], &order);
+                    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
                     session.ui.script_category_order = order;
                 }
             }
@@ -2815,8 +2812,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
-        let _ = session
-            .persist_panel_serializable(&["script_category_order"], &order);
+        let _ = session.persist_panel_serializable(&["script_category_order"], &order);
     }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
@@ -2950,13 +2946,11 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         match mode {
             DialogMode::File => {
                 let path = session.script_load_dir.clone();
-                let _ = session
-                    .persist_panel_serializable(&["script_load_last_dir"], &path);
+                let _ = session.persist_panel_serializable(&["script_load_last_dir"], &path);
             }
             DialogMode::Folder => {
                 let path = session.rs2b0t_catalog_dir.clone();
-                let _ = session
-                    .persist_panel_serializable(&["script_catalog_last_dir"], &path);
+                let _ = session.persist_panel_serializable(&["script_catalog_last_dir"], &path);
             }
         }
     }
@@ -3508,10 +3502,9 @@ fn commit_nav_settings(
     macro_rules! persist_panel_nav_member {
         ($field:ident) => {
             if before.$field != after.$field {
-                if let Err(error) = session.persist_panel_serializable(
-                    &["nav", stringify!($field)],
-                    &after.$field,
-                ) {
+                if let Err(error) =
+                    session.persist_panel_serializable(&["nav", stringify!($field)], &after.$field)
+                {
                     failure.get_or_insert(error);
                 }
             }
@@ -4756,10 +4749,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
             if *id == "parameters" {
                 let _ = session.persist_panel_member(&["show_parameters_rail"], Some(value));
             } else {
-                let _ = session.persist_panel_member(
-                    &["panel_sections", id],
-                    Some(value),
-                );
+                let _ = session.persist_panel_member(&["panel_sections", id], Some(value));
             }
         }
     }
@@ -5430,10 +5420,9 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            let _ = state.session.persist_panel_member(
-                &["rail_preview", name],
-                Some(serde_json::Value::Bool(next)),
-            );
+            let _ = state
+                .session
+                .persist_panel_member(&["rail_preview", name], Some(serde_json::Value::Bool(next)));
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {

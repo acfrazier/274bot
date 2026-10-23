@@ -216,11 +216,6 @@ const CORE: &[(&str, Decision)] = &[
         "profile_editor.rs::ProfileEditor::settle",
         Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
     ),
-    // prefs.rs: the preferences document handle.
-    (
-        "prefs.rs::UiPreferences::update",
-        Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
-    ),
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
@@ -594,6 +589,10 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::take_settled_starts", Excluded(RESULT)),
     // session/map.rs: the map desk stages row inputs and adopts owner results.
     ("session/map.rs::MapDesk::clear_walk_dest", Excluded(PROJECTION)),
+    (
+        "session/map.rs::MapDesk::adopt_bake_choice",
+        Excluded("adopts the process writer's ready preference without saving it"),
+    ),
     (
         "session/map.rs::MapDesk::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),

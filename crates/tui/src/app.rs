@@ -534,6 +534,7 @@ pub struct TuiApp {
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
     shared_preferences: Option<frontend_core::UiPreferences>,
+    preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: ScriptRunState,
@@ -664,6 +665,7 @@ impl TuiApp {
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
             shared_preferences: None,
+            preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: ScriptRunState::Idle,
@@ -706,6 +708,16 @@ impl TuiApp {
     /// Bind the shared process-service preferences. Walk permissions are
     /// refreshed again for every relevant render and admission.
     pub fn restore_preferences(&mut self, preferences: frontend_core::UiPreferences) {
+        self.shared_preferences = Some(preferences.share());
+        if !preferences.ready() {
+            let view = WalkGlobalsView::read(&preferences);
+            self.walk_permissions = view;
+            self.nav = view.globals();
+            return;
+        }
+        self.preferences_adopted = true;
+        let preserve_folder = self.settings_state.folder_changed || self.quester_paths_dirty;
+        let preserve_enabled = self.quester_paths_dirty;
         self.quester_paths_controller.restore(&preferences);
         let enabled = self.quester_paths_controller.settings().enabled();
         let folder = self
@@ -713,14 +725,22 @@ impl TuiApp {
             .settings()
             .folder()
             .to_path_buf();
-        self.quester_paths.set_enabled(enabled);
-        self.quester_paths.set_folder(folder);
-        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
-            &preferences,
-            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-        )
-        .unwrap_or(true);
-        self.shared_preferences = Some(preferences.share());
+        if !preserve_enabled {
+            self.quester_paths.set_enabled(enabled);
+        }
+        if !preserve_folder {
+            self.quester_paths.set_folder(folder);
+        }
+        if !self.pause_script_on_manual_walk_abort_dirty {
+            self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
+                &preferences,
+                frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            )
+            .unwrap_or(true);
+        }
+        if !self.map_bake_dirty {
+            self.map_bake = frontend_core::load_map_bake_choice(&preferences);
+        }
         self.refresh_walk_permissions();
         self.map.restore_persisted_wilderness(&preferences);
     }
@@ -730,6 +750,15 @@ impl TuiApp {
     /// widgets; production binds and rereads the shared preferences (cheap
     /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
+        if !self.preferences_adopted {
+            if let Some(preferences) = self
+                .shared_preferences
+                .as_ref()
+                .filter(|prefs| prefs.ready())
+            {
+                self.restore_preferences(preferences.share());
+            }
+        }
         let view = self.shared_preferences.as_ref().map_or(
             WalkGlobalsView::new(
                 self.nav,
@@ -738,17 +767,59 @@ impl TuiApp {
             ),
             WalkGlobalsView::read,
         );
-        self.adopt_walk_permissions(view);
+        if !self.preferences_adopted && self.shared_preferences.is_some() {
+            self.walk_permissions = view;
+        } else if view != self.walk_permissions {
+            self.adopt_walk_permissions(view);
+        }
     }
 
     /// Adopt `view`, the durable walk permissions the core just read, into
     /// every TUI view of them (the edit buffer, the acknowledgements, the
     /// one-shot zone grant and an open parameters popup).
     pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
+        let before = self.walk_permissions;
+        let old = before.globals();
+        let next = view.globals();
+        let changed = |draft, old, next| if old == next { draft } else { next };
+        self.nav = frontend_core::WalkGlobals::new(
+            changed(
+                self.nav.allow_teleports(),
+                old.allow_teleports(),
+                next.allow_teleports(),
+            ),
+            changed(
+                self.nav.allow_wilderness(),
+                old.allow_wilderness(),
+                next.allow_wilderness(),
+            ),
+            changed(
+                self.nav.allow_bank_fetch(),
+                old.allow_bank_fetch(),
+                next.allow_bank_fetch(),
+            ),
+            changed(
+                self.nav.allow_danger_zones(),
+                old.allow_danger_zones(),
+                next.allow_danger_zones(),
+            ),
+            changed(
+                self.nav.survivable_routing(),
+                old.survivable_routing(),
+                next.survivable_routing(),
+            ),
+        );
+        self.script_scope_notice_ack = changed(
+            self.script_scope_notice_ack,
+            before.script_scope_notice_ack(),
+            view.script_scope_notice_ack(),
+        );
+        self.survivable_routing_notice_ack = changed(
+            self.survivable_routing_notice_ack,
+            before.survivable_routing_notice_ack(),
+            view.survivable_routing_notice_ack(),
+        );
         self.walk_permissions = view;
-        self.nav = view.globals();
-        self.script_scope_notice_ack = view.script_scope_notice_ack();
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         if !view.danger_this_walk(true) {
             self.map_route_through_zones = false;
         }

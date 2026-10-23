@@ -53,6 +53,8 @@ pub struct SettingsState {
     pub folder_editing: bool,
     /// Text changed during this folder edit and needs persistence when closed.
     pub folder_changed: bool,
+    /// A process-owned shared-preferences save has not settled yet.
+    pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
     pub row_areas: [Rect; 15],
 }
@@ -583,7 +585,10 @@ impl Widget for SettingsPane<'_> {
             height,
         };
         Clear.render(popup, buf);
-        let block = Block::default().borders(Borders::ALL).title(self.title);
+        let mut block = Block::default().borders(Borders::ALL).title(self.title);
+        if self.state.preferences_pending {
+            block = block.title_bottom(" Saving preferences… ");
+        }
         let inner = block.inner(popup);
         block.render(popup, buf);
 

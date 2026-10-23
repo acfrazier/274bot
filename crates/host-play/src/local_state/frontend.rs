@@ -18,21 +18,23 @@ use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
 use std::time::Instant;
 
-use api::identity::{Cancellation, RequestId, Settlement};
+use api::identity::{RequestId, Settlement};
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, DurableReceipt, ErrorCode,
-    LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, SubmitReceipt, ValidationReason,
-    MAX_PREF_EDIT_BYTES, MAX_PREF_EDIT_CHANGES, MAX_PREF_KEY_CHARS, MAX_PREF_VALUE_BYTES,
+    LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, StoreVersion, SubmitReceipt,
+    ValidationReason, MAX_PREF_EDIT_BYTES, MAX_PREF_EDIT_CHANGES, MAX_PREF_KEY_CHARS,
+    MAX_PREF_VALUE_BYTES,
 };
 #[cfg(any(test, feature = "test-support"))]
-use api::local_state::{PreferenceChange, PreferencesEdit, StoreVersion};
+use api::local_state::{PreferenceChange, PreferencesEdit};
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
-use script::local_state::StatePort;
 use script::{LoadoutsBacking, LoadoutsBaseline, LoadoutsSaveError};
 use serde_json::{Map, Value};
 
-use super::{files, LocalStateService, PreferenceWatchPoll, ReadbackTicket, RequestState};
+#[cfg(any(test, feature = "test-support"))]
+use super::{files, ReadbackTicket};
+use super::{LocalStateService, PreferenceWatchPoll, RequestState};
 
 /// How long loadout-form operations and fixture-only preference helpers wait.
 pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -84,11 +86,7 @@ impl PreferenceError {
         }
     }
 
-    pub(super) fn from_cached(
-        path: Arc<str>,
-        cause: Arc<str>,
-        code: Option<ErrorCode>,
-    ) -> Self {
+    pub(super) fn from_cached(path: Arc<str>, cause: Arc<str>, code: Option<ErrorCode>) -> Self {
         Self { path, cause, code }
     }
 
@@ -253,12 +251,12 @@ impl PreferencePatch {
         path: &[&str],
         value: Option<Value>,
     ) -> Result<(), PreferenceError> {
-        let mut plan = PatchPlan::default();
-        match value.as_ref() {
-            Some(value) => plan_value(path, value, &mut plan)?,
-            None => plan_add(path, None, path_bytes(path)?, &mut plan)?,
+        let mut addition = Self::new();
+        match value {
+            Some(value) => plan_owned_value(path, value, &mut addition)?,
+            None => add_owned_member(path, None, path_bytes(path)?, &mut addition)?,
         }
-        self.append_plan(plan)
+        self.append_patch(addition)
     }
 
     /// Whether this patch has no changed-member intent.
@@ -281,9 +279,9 @@ impl PreferencePatch {
         }
     }
 
-    fn append_plan(&mut self, plan: PatchPlan<'_>) -> Result<(), PreferenceError> {
-        let count = self.members.len().saturating_add(plan.members.len());
-        let bytes = self.encoded_bytes.saturating_add(plan.encoded_bytes);
+    fn append_patch(&mut self, mut addition: Self) -> Result<(), PreferenceError> {
+        let count = self.members.len().saturating_add(addition.members.len());
+        let bytes = self.encoded_bytes.saturating_add(addition.encoded_bytes);
         if count > MAX_PREF_EDIT_CHANGES || bytes > MAX_PREF_EDIT_BYTES {
             return Err(PreferenceError::validation(
                 "<document>",
@@ -291,14 +289,67 @@ impl PreferencePatch {
                 "the preference patch exceeds its change or byte limit",
             ));
         }
-        self.members.reserve(plan.members.len());
-        self.members.extend(plan.members.into_iter().map(|member| PatchMember {
-            path: member.path,
-            value: member.value.cloned(),
-        }));
-        self.encoded_bytes = bytes;
+        if self.members.is_empty() {
+            *self = addition;
+        } else {
+            self.members.append(&mut addition.members);
+            self.encoded_bytes = bytes;
+        }
         Ok(())
     }
+}
+
+fn plan_owned_value(
+    path: &[&str],
+    value: Value,
+    patch: &mut PreferencePatch,
+) -> Result<(), PreferenceError> {
+    let key_bytes = path_bytes(path)?;
+    let encoded_len = encoded_json_len(&value).map_err(|error| {
+        PreferenceError::caused(
+            join_path(path),
+            format!("cannot encode JSON value: {error}"),
+        )
+    })?;
+    if encoded_len <= MAX_PREF_VALUE_BYTES {
+        return add_owned_member(path, Some(value), key_bytes + encoded_len, patch);
+    }
+    let Value::Object(members) = value else {
+        return Err(PreferenceError::validation(
+            join_path(path),
+            ValidationReason::TooLong,
+            "a preference value exceeds the per-member byte limit",
+        ));
+    };
+    add_owned_member(path, None, key_bytes, patch)?;
+    for (member, value) in members {
+        let mut nested = path.to_vec();
+        nested.push(&member);
+        plan_owned_value(&nested, value, patch)?;
+    }
+    Ok(())
+}
+
+fn add_owned_member(
+    path: &[&str],
+    value: Option<Value>,
+    encoded_bytes: usize,
+    patch: &mut PreferencePatch,
+) -> Result<(), PreferenceError> {
+    let next_bytes = patch.encoded_bytes.saturating_add(encoded_bytes);
+    if patch.members.len() >= MAX_PREF_EDIT_CHANGES || next_bytes > MAX_PREF_EDIT_BYTES {
+        return Err(PreferenceError::validation(
+            join_path(path),
+            ValidationReason::TooLong,
+            "the preference patch exceeds its change or byte limit",
+        ));
+    }
+    patch.members.push(PatchMember {
+        path: path.iter().map(|member| (*member).to_string()).collect(),
+        value,
+    });
+    patch.encoded_bytes = next_bytes;
+    Ok(())
 }
 
 fn collect_patch_diff<'a>(
@@ -336,7 +387,10 @@ fn plan_value<'a>(
 ) -> Result<(), PreferenceError> {
     let key_bytes = path_bytes(path)?;
     let encoded_len = encoded_json_len(value).map_err(|error| {
-        PreferenceError::caused(join_path(path), format!("cannot encode JSON value: {error}"))
+        PreferenceError::caused(
+            join_path(path),
+            format!("cannot encode JSON value: {error}"),
+        )
     })?;
     if encoded_len <= MAX_PREF_VALUE_BYTES {
         return plan_add(path, Some(value), key_bytes + encoded_len, plan);
@@ -401,9 +455,7 @@ fn path_bytes(path: &[&str]) -> Result<usize, PreferenceError> {
         member.is_empty()
             || !member
                 .bytes()
-                .all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-                })
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     }) {
         return Err(PreferenceError::validation(
             join_path(path),
@@ -439,7 +491,6 @@ pub(super) fn write_preference_path(path: &[&str], output: &mut String) {
         }
     }
 }
-
 
 /// The operator preferences shared by the panel, the TUI and the
 /// composition (walk permissions, the quester Path folder, the session log
@@ -546,10 +597,7 @@ impl Preferences {
             .then(|| QueuedUpdate::service(self.clone(), request))
     }
 
-    fn poll_preference(
-        &self,
-        request: RequestId,
-    ) -> Option<Result<(), PreferenceError>> {
+    fn poll_preference(&self, request: RequestId) -> Option<Result<(), PreferenceError>> {
         self.project_watch(self.shared.service.poll_preference_watch(request))
     }
 
@@ -559,17 +607,10 @@ impl Preferences {
         request: RequestId,
         wait: Duration,
     ) -> Option<Result<(), PreferenceError>> {
-        self.project_watch(
-            self.shared
-                .service
-                .wait_preference_watch(request, wait),
-        )
+        self.project_watch(self.shared.service.wait_preference_watch(request, wait))
     }
 
-    fn project_watch(
-        &self,
-        poll: PreferenceWatchPoll,
-    ) -> Option<Result<(), PreferenceError>> {
+    fn project_watch(&self, poll: PreferenceWatchPoll) -> Option<Result<(), PreferenceError>> {
         let path = || self.path().display().to_string();
         match poll {
             PreferenceWatchPoll::Pending => None,
@@ -581,12 +622,9 @@ impl Preferences {
             PreferenceWatchPoll::Settled(Settlement::Failed(code)) => {
                 Some(Err(PreferenceError::from_code(path(), code)))
             }
-            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => {
-                Some(Err(PreferenceError::caused(
-                    path(),
-                    format!("request cancelled ({cancellation:?})"),
-                )))
-            }
+            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => Some(Err(
+                PreferenceError::caused(path(), format!("request cancelled ({cancellation:?})")),
+            )),
         }
     }
 
@@ -605,7 +643,6 @@ impl Preferences {
         let (lease, _) = read.map_err(|code| self.error(code))?;
         self.adopt(&lease)
     }
-
 
     /// Read the current document from the file, let `merge` change it, and
     /// write every changed top-level preference (an object too long for
@@ -661,7 +698,6 @@ impl Preferences {
             None => Update::Queued(QueuedUpdate::legacy(self.clone(), run)),
         })
     }
-
 
     /// Queue the update's first read (a save's read: see
     /// [`LocalStateService::start_readback`]).
@@ -968,13 +1004,11 @@ impl QueuedUpdate {
         match &mut self.kind {
             QueuedKind::Service(request) => self.preferences.poll_preference(*request),
             #[cfg(any(test, feature = "test-support"))]
-            QueuedKind::Legacy(run) => self
-                .preferences
-                .drive(run, None)
-                .map(|result| result.map_err(|error| PreferenceError::from_io(
-                    self.preferences.path().display().to_string(),
-                    error,
-                ))),
+            QueuedKind::Legacy(run) => self.preferences.drive(run, None).map(|result| {
+                result.map_err(|error| {
+                    PreferenceError::from_io(self.preferences.path().display().to_string(), error)
+                })
+            }),
         }
     }
 
@@ -982,16 +1016,12 @@ impl QueuedUpdate {
     #[cfg(any(test, feature = "test-support"))]
     pub fn wait(&mut self, wait: Duration) -> Option<Result<(), PreferenceError>> {
         match &mut self.kind {
-            QueuedKind::Service(request) => {
-                self.preferences.wait_preference(*request, wait)
-            }
-            QueuedKind::Legacy(run) => self
-                .preferences
-                .drive(run, Some(wait))
-                .map(|result| result.map_err(|error| PreferenceError::from_io(
-                    self.preferences.path().display().to_string(),
-                    error,
-                ))),
+            QueuedKind::Service(request) => self.preferences.wait_preference(*request, wait),
+            QueuedKind::Legacy(run) => self.preferences.drive(run, Some(wait)).map(|result| {
+                result.map_err(|error| {
+                    PreferenceError::from_io(self.preferences.path().display().to_string(), error)
+                })
+            }),
         }
     }
 }
