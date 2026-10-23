@@ -71,8 +71,8 @@ impl Driver for LockProbe {
     fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
         None
     }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
-        &mut self.sink
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.sink)
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         true

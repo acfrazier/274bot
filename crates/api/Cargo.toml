@@ -8,6 +8,8 @@ publish = false
 debug-catalog = []
 path-schema = ["dep:schemars"]
 test-hooks = []
+# Raw packet recorders for tests only. Product dependencies must not enable this.
+test-support = []
 
 [dependencies]
 client = { workspace = true }
@@ -21,6 +23,7 @@ smallvec = "=1.15.2"
 thiserror = "=2.0.20"
 
 [dev-dependencies]
+api = { path = ".", features = ["test-support"] }
 allocation-counter = "=0.8.1"
 
 [build-dependencies]
