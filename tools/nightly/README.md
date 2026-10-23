@@ -472,6 +472,9 @@ on this host. Do not stop another agent's guest to obtain the nightly slot.
    The host stages the runner, catalog, fixtures, engines and isohome helper
    as read-only inputs. Main uses the host Engine A forward; quest runs private
    Engine Q in the clone.
+   Keep a dedicated rs2b0t checkout at the catalog path, pinned to the same
+   revision as the other nightlies. Do not use the operator's working copy.
+   Change the pin between runs, never during a run.
    ```sh
    mkdir -p ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
      ~/.local/state/274bot-nightly-mac ~/.local/state/274bot-nightly-malbec-pull \
@@ -481,7 +484,7 @@ on this host. Do not stop another agent's guest to obtain the nightly slot.
    NIGHTLY_MAC_ROOT=/Volumes/dev-scratch/274bot-nightly
    NIGHTLY_MAC_RUNS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY
    NIGHTLY_MAC_STATUS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
-   NIGHTLY_MAC_CATALOG=$HOME/experiments/rs2b0t
+   NIGHTLY_MAC_CATALOG=/Volumes/dev-scratch/274bot-nightly/rs2b0t
    NIGHTLY_MAC_ENGINE_A=$HOME/experiments/lostcity-289
    NIGHTLY_MAC_ENGINE_Q=$HOME/experiments/lostcity-289-q
    NIGHTLY_MAC_QUIET_LOCK=/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
