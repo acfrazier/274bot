@@ -155,6 +155,12 @@ cell rows also have `frontend` (`tui` or `panel`) and `renderer` (`cpu` for
 adds `latency_band`, `latency_rtt_ms` and `latency_class`. A zero-latency row
 never has those keys. See [Latency lane](#latency-lane).
 
+Every summary also carries one `rs2b0t API` line. The runner reads the frozen
+revision from the tested tree's `crates/script/compat-js/abi-contract.json`,
+fetches upstream `main` once into the catalog checkout, and diffs the two
+`rs2b0t-api` files. The line reads `unchanged`, `CHANGED` with per-file counts
+and up to 10 commits, or `UNAVAILABLE` with the reason. The check reports only.
+
 ## Run one night by hand
 
 On the VM, through the same unit the timer starts:

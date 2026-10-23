@@ -945,6 +945,188 @@ def mirror_fetch(url: str, mirror: Path, refspecs: list[str], build_log: Path) -
 def has_commit(repo: Path, sha: str) -> bool:
     return run(git_cmd("-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"), check=False).returncode == 0
 
+# ---------------------------------------------------------------- rs2b0t API drift
+
+
+# The compat contract is generated from upstream's rs2b0t-api package at the
+# frozen revision named in the tested tree's abi-contract.json. A change in
+# either file on upstream main is the signal that a refreeze is due. The
+# check is informational: it never changes a cell's outcome or the run's
+# exit status.
+RS2B0T_API_FILES = ("packages/rs2b0t-api/index.d.ts", "packages/rs2b0t-api/index.js")
+RS2B0T_UPSTREAM_REF = "refs/nightly/upstream-main"
+# One anonymous fetch of a single branch tip. 120 s bounds a stalled network
+# without consuming a step deadline; there is no retry. A miss reports
+# UNAVAILABLE and the next night tries again.
+RS2B0T_FETCH_TIMEOUT_S = 120
+RS2B0T_MAX_COMMITS = 10
+ABI_CONTRACT_REL = Path("crates/script/compat-js/abi-contract.json")
+# One fetch per nightly run, not per branch: branches in one process share
+# the fetched tip through this cache (success and failure alike).
+_api_upstream: dict[tuple[str, str], tuple[str | None, str]] = {}
+
+
+def read_api_freeze(tree: Path) -> tuple[str, str]:
+    """The frozen rs2b0t repository URL and revision from the tested tree.
+
+    Both come from the tree's `abi-contract.json`, never from a constant,
+    so the check follows the freeze the compat contract was built from.
+    """
+    try:
+        frozen = json.loads(rtext(tree / ABI_CONTRACT_REL))["frozen_source"]
+        return frozen["repository"], frozen["revision"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(f"freeze revision not read from {ABI_CONTRACT_REL}: {error}") from error
+
+
+def _short_line(text: object, limit: int = 200) -> str:
+    """One line of at most `limit` characters for a summary reason."""
+    return " ".join(str(text).split())[:limit] or "unknown reason"
+
+
+def fetch_upstream_main(catalog: Path, repository: str,
+                        timeout: float = RS2B0T_FETCH_TIMEOUT_S) -> str:
+    """Fetch upstream `main` into `refs/nightly/upstream-main`; return the tip.
+
+    The fetch moves no branch and no checkout: it only adds objects and that
+    one namespaced ref, so the catalog's checked-out commit never changes.
+    One fetch per process: later branches reuse the cached tip or failure.
+    """
+    key = (str(catalog), repository)
+    if key not in _api_upstream:
+        try:
+            fetched = run(git_cmd("-C", str(catalog), "fetch", "--no-tags", repository,
+                                  f"+refs/heads/main:{RS2B0T_UPSTREAM_REF}"),
+                          env=git_env(), check=False, timeout=timeout)
+            if fetched.returncode != 0:
+                detail = _short_line(fetched.stdout)
+                suffix = f": {detail}" if detail != "unknown reason" else ""
+                raise RuntimeError(f"fetch failed (exit {fetched.returncode}){suffix}")
+            tip = run(git_cmd("-C", str(catalog), "rev-parse", f"{RS2B0T_UPSTREAM_REF}^{{commit}}"),
+                      env=git_env(), check=False).stdout.strip()
+            if not tip:
+                raise RuntimeError("fetch ok but the upstream ref is empty")
+        except subprocess.TimeoutExpired:
+            _api_upstream[key] = (None, f"fetch timed out after {timeout:g} s")
+        except (OSError, RuntimeError) as error:
+            _api_upstream[key] = (None, _short_line(error))
+        else:
+            _api_upstream[key] = (tip, "")
+    tip, reason = _api_upstream[key]
+    if tip is None:
+        raise RuntimeError(reason)
+    return tip
+
+
+def _api_unavailable(repository: str | None, freeze_rev: str | None, reason: object) -> dict:
+    """The `rs2b0t_api` metadata for a check that did not run to a diff."""
+    return {
+        "status": "unavailable",
+        "repository": repository,
+        "freeze_revision": freeze_rev,
+        "freeze_short": (freeze_rev or "")[:8] or None,
+        "upstream_revision": None,
+        "upstream_short": None,
+        "files": {},
+        "commits": [],
+        "commit_count": 0,
+        "reason": _short_line(reason),
+    }
+
+
+def check_rs2b0t_api_drift(tree: Path | None, catalog: Path,
+                           timeout: float = RS2B0T_FETCH_TIMEOUT_S) -> dict:
+    """Compare the frozen rs2b0t API files against upstream `main`.
+
+    The freeze revision comes from the tested tree's `abi-contract.json`.
+    Upstream `main` is fetched once per process into the catalog checkout
+    (see `fetch_upstream_main`). The result feeds `summary.json`
+    (`rs2b0t_api`) and one `summary.md` line. It never raises: every
+    failure reports `unavailable`, never `unchanged`.
+    """
+    try:
+        return _check_rs2b0t_api_drift(tree, catalog, timeout)
+    except Exception as error:  # informational only; the night runs on
+        return _api_unavailable(None, None, f"check failed: {error}")
+
+
+def _check_rs2b0t_api_drift(tree: Path | None, catalog: Path, timeout: float) -> dict:
+    if tree is None:
+        return _api_unavailable(None, None, "no tested tree: the sources step did not produce one")
+    try:
+        repository, freeze_rev = read_api_freeze(tree)
+    except RuntimeError as error:
+        return _api_unavailable(None, None, str(error))
+    if not repository or not freeze_rev:
+        return _api_unavailable(repository or None, freeze_rev or None,
+                                "abi-contract.json names no frozen repository or revision")
+    try:
+        tip = fetch_upstream_main(catalog, repository, timeout)
+    except RuntimeError as error:
+        return _api_unavailable(repository, freeze_rev, str(error))
+    base = {
+        "repository": repository,
+        "freeze_revision": freeze_rev,
+        "freeze_short": freeze_rev[:8],
+        "upstream_revision": tip,
+        "upstream_short": tip[:8],
+    }
+    if not has_commit(catalog, freeze_rev):
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"freeze revision {freeze_rev[:8]} is not in the fetched history"}
+    diff = run(git_cmd("-C", str(catalog), "diff", "--numstat", freeze_rev, tip,
+                       "--", *RS2B0T_API_FILES), env=git_env(), check=False)
+    if diff.returncode != 0:
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"comparison failed (exit {diff.returncode})"}
+    files: dict[str, dict[str, int]] = {}
+    for line in diff.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        try:
+            added = int(parts[0])
+        except ValueError:
+            added = 0
+        try:
+            deleted = int(parts[1])
+        except ValueError:
+            deleted = 0
+        files[parts[2]] = {"added": added, "deleted": deleted}
+    if not files:
+        return {**base, "status": "unchanged", "files": {}, "commits": [], "commit_count": 0}
+    logged = run(git_cmd("-C", str(catalog), "log", "--format=%H%x00%s", f"{freeze_rev}..{tip}",
+                         "--", *RS2B0T_API_FILES), env=git_env(), check=False)
+    entries = []
+    if logged.returncode == 0:
+        for line in logged.stdout.splitlines():
+            sha, _, subject = line.partition("\x00")
+            if sha:
+                entries.append({"sha": sha[:8], "subject": subject})
+    return {**base, "status": "changed", "files": files,
+            "commits": entries[:RS2B0T_MAX_COMMITS], "commit_count": len(entries)}
+
+
+def api_drift_md_line(info: dict) -> str:
+    """The one `summary.md` line for an `rs2b0t_api` metadata dict."""
+    if info.get("status") == "unchanged":
+        return (f"rs2b0t API: unchanged since {info['freeze_short']} "
+                f"(upstream main {info['upstream_short']})")
+    if info.get("status") == "changed":
+        stats = ", ".join(f"{Path(path).name} +{counts['added']} -{counts['deleted']}"
+                          for path, counts in info.get("files", {}).items())
+        line = (f"rs2b0t API: CHANGED since freeze {info['freeze_short']} "
+                f"(upstream main {info['upstream_short']}): {stats}")
+        commits = info.get("commits") or []
+        if commits:
+            listed = ", ".join(f"{entry['sha']} {entry['subject']}" for entry in commits)
+            extra = (info.get("commit_count") or len(commits)) - len(commits)
+            if extra > 0:
+                listed += f" (+{extra} more)"
+            line += f"; commits: {listed}"
+        return line
+    return f"rs2b0t API: UNAVAILABLE ({info.get('reason') or 'unknown reason'})"
+
 
 def fresh_tree(branch: str, build_log: Path) -> tuple[Path, str, str]:
     """Fetch the branch tip into the bare mirrors and clone it into the tree.
@@ -2484,6 +2666,8 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
     ]
+    md.append("- " + api_drift_md_line(
+        meta.get("rs2b0t_api") or {"status": "unavailable", "reason": "not checked"}))
     if meta.get("quiet_lock"):
         md.append(f"- Quiet lock stopped further work: `{meta['quiet_lock']}`")
     if meta.get("session"):
@@ -2812,6 +2996,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
         tree=str(tree) if tree else None,
     )
+    # Informational only: a failed check reports UNAVAILABLE and never
+    # changes a cell's outcome or the run's exit status.
+    meta["rs2b0t_api"] = check_rs2b0t_api_drift(tree, CATALOG)
     if latency_meta is not None:
         meta["latency"] = latency_meta
     write_summary(run_dir, meta, lanes, panel, results, latency_rows)

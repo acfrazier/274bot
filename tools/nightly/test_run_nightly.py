@@ -2096,5 +2096,241 @@ class LatencyRunBranchTests(unittest.TestCase):
                       summary["build"]["error"])
 
 
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class Rs2b0tApiDriftTests(unittest.TestCase):
+    """The rs2b0t API drift check: freeze from the tree, diff from the catalog.
+
+    A temporary git repository stands in for upstream rs2b0t, so no test
+    touches the network. The catalog checkout plays the object store: the
+    check fetches upstream `main` into `refs/nightly/upstream-main` and
+    never moves the catalog's checked-out commit.
+    """
+
+    def setUp(self):
+        rn._api_upstream.clear()
+        self.addCleanup(rn._api_upstream.clear)
+
+    @staticmethod
+    def write_api(repo: Path, marker: str) -> None:
+        package = repo / "packages" / "rs2b0t-api"
+        package.mkdir(parents=True, exist_ok=True)
+        (package / "index.d.ts").write_text(
+            f"export declare const marker: string; // {marker}\n", encoding="utf-8")
+        (package / "index.js").write_text(
+            f"module.exports = {{ marker: '{marker}' }};\n", encoding="utf-8")
+
+    def commit_api(self, repo: Path, message: str, marker: str) -> str:
+        self.write_api(repo, marker)
+        git("add", ".", cwd=repo)
+        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", message, cwd=repo)
+        return git("rev-parse", "HEAD", cwd=repo)
+
+    def make_repo(self, root: Path, name: str, *, branch: str = "main") -> Path:
+        repo = root / name
+        repo.mkdir()
+        git("init", "-q", cwd=repo)
+        git("symbolic-ref", "HEAD", f"refs/heads/{branch}", cwd=repo)
+        return repo
+
+    def make_tree(self, root: Path, repository: str, revision: str) -> Path:
+        tree = root / "tree"
+        contract = tree / "crates" / "script" / "compat-js"
+        contract.mkdir(parents=True)
+        (contract / "abi-contract.json").write_text(json.dumps({
+            "frozen_source": {
+                "repository": repository,
+                "revision": revision,
+                "runtime_declarations": "packages/rs2b0t-api/index.js",
+                "typed_declarations": "packages/rs2b0t-api/index.d.ts",
+            },
+        }), encoding="utf-8")
+        return tree
+
+    def test_unchanged_names_both_shorts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unchanged")
+            self.assertEqual(info["freeze_revision"], frozen)
+            self.assertEqual(info["upstream_revision"], frozen)
+            self.assertEqual(info["files"], {})
+            self.assertEqual(info["commit_count"], 0)
+            self.assertEqual(rn.api_drift_md_line(info),
+                             f"rs2b0t API: unchanged since {frozen[:8]} (upstream main {frozen[:8]})")
+
+    def test_changed_reports_file_stats_and_commits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(info["freeze_revision"], frozen)
+            self.assertEqual(info["upstream_revision"], tip)
+            self.assertEqual(info["files"], {
+                "packages/rs2b0t-api/index.d.ts": {"added": 1, "deleted": 1},
+                "packages/rs2b0t-api/index.js": {"added": 1, "deleted": 1},
+            })
+            self.assertEqual(info["commits"], [{"sha": tip[:8], "subject": "api v2"}])
+            self.assertEqual(info["commit_count"], 1)
+            line = rn.api_drift_md_line(info)
+            self.assertIn(f"rs2b0t API: CHANGED since freeze {frozen[:8]} (upstream main {tip[:8]})", line)
+            self.assertIn("index.d.ts +1 -1", line)
+            self.assertIn("index.js +1 -1", line)
+            self.assertIn(f"commits: {tip[:8]} api v2", line)
+
+    def test_commit_list_caps_at_ten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = frozen
+            for seq in range(12):
+                tip = self.commit_api(upstream, f"api change {seq}", f"v{seq}")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(info["commit_count"], 12)
+            self.assertEqual(len(info["commits"]), 10)
+            line = rn.api_drift_md_line(info)
+            self.assertIn("(+2 more)", line)
+            self.assertNotIn("api change 0", line)
+
+    def test_fetch_failure_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(root / "no-such-upstream"), "0" * 40)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIsNone(info["upstream_revision"])
+            self.assertTrue(info["reason"])
+            line = rn.api_drift_md_line(info)
+            self.assertTrue(line.startswith("rs2b0t API: UNAVAILABLE ("))
+            self.assertNotIn("unchanged", line)
+
+    def test_catalog_checkout_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            head_before = git("rev-parse", "HEAD", cwd=catalog)
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=catalog), head_before)
+            self.assertEqual(
+                git("rev-parse", rn.RS2B0T_UPSTREAM_REF, cwd=catalog), tip)
+
+    def test_freeze_revision_comes_from_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            old = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+
+            old_info = rn.check_rs2b0t_api_drift(self.make_tree(root, str(upstream), old), catalog)
+            rn._api_upstream.clear()
+            new_tree = root / "tree"
+            contract = new_tree / "crates" / "script" / "compat-js" / "abi-contract.json"
+            contract.write_text(json.dumps({"frozen_source": {"repository": str(upstream),
+                                                              "revision": tip}}), encoding="utf-8")
+            new_info = rn.check_rs2b0t_api_drift(new_tree, catalog)
+
+            self.assertEqual(old_info["freeze_revision"], old)
+            self.assertEqual(old_info["status"], "changed")
+            self.assertEqual(new_info["freeze_revision"], tip)
+            self.assertEqual(new_info["status"], "unchanged")
+
+    def test_missing_contract_checks_nothing_and_reports_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = root / "tree"
+            tree.mkdir()
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("abi-contract", info["reason"])
+            fetched = subprocess.run(
+                ["git", "rev-parse", rn.RS2B0T_UPSTREAM_REF], cwd=catalog,
+                capture_output=True, text=True)
+            self.assertNotEqual(fetched.returncode, 0)
+
+    def test_missing_tree_is_unavailable_never_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+
+            info = rn.check_rs2b0t_api_drift(None, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertNotEqual(info["status"], "unchanged")
+
+    def test_run_branch_summary_carries_the_drift_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "b" * 40, "b" * 9
+
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="test night off")
+            finally:
+                for patch in reversed(patches):
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            # The fake tree has no abi-contract.json, so no fetch runs.
+            self.assertEqual(summary["rs2b0t_api"]["status"], "unavailable")
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("- rs2b0t API: UNAVAILABLE (", md)
+
+
 if __name__ == "__main__":
     unittest.main()
