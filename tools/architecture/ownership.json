@@ -1663,10 +1663,6 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-executor/src/traveller/legacy_grid.rs",
-      "owner": "T5"
-    },
-    {
       "path": "crates/nav-executor/src/traveller/n1_tests.rs",
       "owner": "T5"
     },

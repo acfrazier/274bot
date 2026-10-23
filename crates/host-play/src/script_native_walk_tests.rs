@@ -5365,7 +5365,9 @@ fn s2b_admission_per_bot_layouts() {
     // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
     // Neither fence retains a scene or allocates a per-bot heap payload.
     // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
-    // account to NavBot's retained QuestEvidence. The 3760 B pin has no headroom.
+    // account to NavBot's retained QuestEvidence.
+    // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
+    // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
@@ -5382,7 +5384,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4608, 512, 264)
+        (3672, 4608, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5397,7 +5399,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4488, 512, 264)
+        (3672, 4488, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

@@ -35,11 +35,6 @@ const PRODUCTION_ALLOW: &[&str] = &[
     "essence::in_essence_mine",
     "essence::is_essence_entry_edge",
     "essence::ESSENCE_MINE_EXIT_ARRIVE_RADIUS",
-    "router::GridRoute",
-    "router::GridLeg",
-    "tile::Tile",
-    "tile::chebyshev",
-    "arrival::arrived",
 ];
 
 const TEST_ALLOW: &[&str] = &[
@@ -48,9 +43,6 @@ const TEST_ALLOW: &[&str] = &[
     "test_support::tbwt_evidence",
     "test_support::window",
     "test_support::source_scan",
-    "grid::StepGrid",
-    "router::find_on_grid",
-    "tile::Tile",
     "world::NavWorld::load_default_pack_or_skip",
 ];
 
@@ -124,7 +116,7 @@ fn executor_names_only_the_planner_surface_lists() {
     let violations = surface_violations(&report);
     assert!(
         violations.is_empty(),
-        "executor names planner paths outside lists A, B, and C: {violations:#?}"
+        "executor names planner paths outside lists A and B: {violations:#?}"
     );
 }
 
@@ -211,7 +203,7 @@ fn planner_scan_rejects_the_equivalent_action_path_fixtures() {
 fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
     let test_list = scan_fixture(
         "#[cfg(all(test, target_os = \"macos\"))] mod tests {\
-         use nav::test_support::family; use nav::tile::Tile;\
+         use nav::test_support::family; use nav::test_support::window;\
          }",
     );
     assert!(
@@ -220,14 +212,31 @@ fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
         surface_violations(&test_list)
     );
 
-    let production_grid = scan_fixture("use nav::grid::StepGrid;");
-    assert_eq!(surface_violations(&production_grid).len(), 1);
+    let production_window = scan_fixture("use nav::test_support::window;");
+    assert_eq!(surface_violations(&production_window).len(), 1);
 
     let cfg_attr = scan_fixture("#[cfg_attr(feature = \"x\", cfg(test))] mod m {}");
     assert!(cfg_attr
         .findings
         .iter()
         .any(|finding| finding.kind == FindingKind::UnsupportedCfgAttr));
+}
+
+#[test]
+fn production_scope_rejects_removed_list_c_items() {
+    for path in [
+        "router::GridRoute",
+        "router::GridLeg",
+        "tile::Tile",
+        "tile::chebyshev",
+        "arrival::arrived",
+    ] {
+        let source = format!("use nav::{path};");
+        let report = scan_fixture(&source);
+        let violations = surface_violations(&report);
+        assert_eq!(violations.len(), 1, "{path}: {violations:#?}");
+        assert_eq!(violations[0].path, format!("nav::{path}"));
+    }
 }
 
 #[test]
