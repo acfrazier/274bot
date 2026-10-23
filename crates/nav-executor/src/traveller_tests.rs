@@ -8273,6 +8273,7 @@ impl Out for Sink {
 
 #[test]
 fn executor_state_size_pins() {
-    assert_eq!(std::mem::size_of::<Traveller>(), 816);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
+    // +16 B: stall diagnostic: original send tile and tick across resends.
+    assert_eq!(std::mem::size_of::<Traveller>(), 832);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 792);
 }

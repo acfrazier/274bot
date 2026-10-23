@@ -1,5 +1,131 @@
 use super::*;
 
+type StallLog = (String, api::hostlog::Source, api::hostlog::Level, String);
+
+struct StallLogSink(std::sync::Mutex<Vec<StallLog>>);
+
+static STALL_LOGS: StallLogSink = StallLogSink(std::sync::Mutex::new(Vec::new()));
+
+impl api::hostlog::Sink for StallLogSink {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if let Some(slot) = record
+            .slot
+            .filter(|slot| slot.starts_with("walk-stall-test-"))
+        {
+            self.0.lock().unwrap().push((
+                slot.to_owned(),
+                record.source,
+                record.level,
+                record.message.to_owned(),
+            ));
+        }
+    }
+}
+
+fn stall_logs(slot: &str) -> Vec<StallLog> {
+    STALL_LOGS
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|record| record.0 == slot)
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn walk_stall_writes_one_info_nav_line_with_hop_facts() {
+    assert!(api::hostlog::install_sink(&STALL_LOGS));
+    std::thread::spawn(|| {
+        for moved in [false, true] {
+            for disconnected in [false, true] {
+                let slot = format!("walk-stall-test-{moved}-{disconnected}");
+                api::hostlog::bind_slot(&slot);
+                let mut c = scene_client();
+                c.runenergy = 17;
+                Arc::get_mut(&mut c.cache)
+                    .unwrap()
+                    .varps
+                    .resize_with(174, Default::default);
+                c.var = vec![0; 174];
+                c.var[173] = i32::from(moved);
+                let mut snapshot = snap_at(&mut c, 0, 0);
+                let start = WorldTile { x: 3200, z: 3200, level: 0 };
+                let aim = WorldTile { x: 3210, ..start };
+                let route = Route {
+                    legs: vec![walk_leg(&[(3200, 3200), (3210, 3200)])],
+                    dest: aim,
+                    ticks: 10.0,
+                };
+                let mut traveller = Traveller::new();
+                let mut driver = FollowRec {
+                    route: Some((0, 0)),
+                    ..FollowRec::default()
+                };
+                let mut options = TravelOptions {
+                    budget_ticks_per_hop: 8,
+                    ..TravelOptions::default()
+                };
+                assert!(traveller
+                    .follow(&mut driver, &snapshot, route.clone(), &mut options)
+                    .is_none());
+                for tick in 2..=10 {
+                    if moved && (tick == 2 || tick == 7) {
+                        let x = if tick == 2 { 1 } else { 2 };
+                        plant_player(&mut c, x, 0);
+                        driver.route = Some((x, 0));
+                    }
+                    if tick == 4 {
+                        c.scene_state = 1;
+                        c.bump_gens(ServerProt::REBUILD_NORMAL);
+                    } else if tick == 5 {
+                        c.scene_state = 2;
+                    } else if tick == 8 {
+                        // A loc refresh is not another scene rebuild.
+                        c.gens.scene += 1;
+                    }
+                    if disconnected && tick == 10 {
+                        c.stream = None;
+                    }
+                    c.bump_gens(ServerProt::PLAYER_INFO);
+                    snapshot.rebuild(&c);
+                    api::hostlog::set_tick(snapshot.tick());
+                    let outcome =
+                        traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
+                    if tick < 10 {
+                        assert_eq!(outcome, None);
+                        assert!(stall_logs(&slot).is_empty(), "no per-tick stall logging");
+                    } else {
+                        let why = if disconnected || !moved {
+                            HopFailure::Dropped
+                        } else {
+                            HopFailure::Expired
+                        };
+                        let end = WorldTile { x: 3200 + if moved { 2 } else { 0 }, ..start };
+                        assert_eq!(outcome, Some(TravelOutcome::Stalled { at: end, aiming: aim, why, tries: 2 }));
+                        let logs = stall_logs(&slot);
+                        assert_eq!(logs.len(), 1);
+                        assert_eq!(logs[0].1, api::hostlog::Source::Nav);
+                        assert_eq!(logs[0].2, api::hostlog::Level::Info);
+                        assert_eq!(logs[0].3, format!(
+                            "walk-stall why={why:?} start={start:?} end={end:?} aim={aim:?} first_send_tick=1 last_send_tick=6 tries=2 waited_calls={} idle_ticks=4 last_scene_rebuild_tick=Some(4) run_energy=17 run_mode={moved} last_server_movement_tick={:?}",
+                            if disconnected { 8 } else { 9 },
+                            moved.then_some(7),
+                        ));
+                        assert_eq!(traveller.current_aim(), None);
+                        let settled = Route { legs: Vec::new(), dest: end, ticks: 0.0 };
+                        assert_eq!(traveller.follow(&mut driver, &snapshot, settled, &mut options), Some(TravelOutcome::Arrived { at: end }));
+                        assert_eq!(stall_logs(&slot).len(), 1, "the completed stall is not logged again");
+                    }
+                }
+                assert_eq!(driver.walked.len(), 2, "one idle-window resend");
+            }
+        }
+    })
+    .join()
+    .unwrap();
+}
+
 #[test]
 fn adult_spirit_tree_with_one_packed_destination_does_not_decline() {
     let mut c = scene_client();
