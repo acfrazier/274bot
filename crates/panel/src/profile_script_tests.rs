@@ -1337,6 +1337,76 @@ fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+/// The bot's Start runs the card its Script section shows. An earlier Browse
+/// pick stays the shared Browse card after the fleet assigns another card;
+/// it must not replace the card shown (operator report, 2026-10-23).
+#[test]
+fn start_runs_the_shown_card_after_a_fleet_assign_over_an_older_browse_pick() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let old = s
+        .scripts
+        .load_card(&write_bot(&dir, "old.ts", BOT_TS))
+        .unwrap();
+    let new = s
+        .scripts
+        .load_card(&write_bot(&dir, "new.ts", BOT_TS))
+        .unwrap();
+    focus_profile(&mut s, "alice");
+    select_for_profile(
+        &mut s,
+        "alice",
+        ScriptChoice::loaded(old.source(), old.identity_id()),
+    )
+    .unwrap();
+
+    let identity = s.core.profile_identity("alice").unwrap();
+    s.fleet_model.set_mark_for_test(identity, true);
+    pin_fleet_card(
+        &mut s,
+        ScriptChoice::loaded(new.source(), new.identity_id()),
+    );
+    plan(&mut s, FleetAction::Assign);
+    if s.core.fleet_plan().is_some() {
+        s.confirm_fleet_plan();
+    }
+    s.core.flush_writes();
+    settle_fleet_result(&mut s);
+    assert_eq!(
+        s.profile_assignment("alice").unwrap().key(),
+        new.identity_key().to_owned()
+    );
+    assert_eq!(
+        s.scripts
+            .heading(&s.core, "alice")
+            .map(|card| card.label().to_owned()),
+        Some(
+            ScriptChoice::loaded(new.source(), new.identity_id())
+                .label()
+                .to_owned()
+        ),
+        "the Script section shows the assigned card"
+    );
+
+    s.script_start_selected();
+    settle(&mut s);
+    assert_eq!(s.error, None, "{:?}", s.error);
+    wait_state(&s, "alice", ScriptRunState::Running);
+    assert_eq!(
+        s.core
+            .play_for_test()
+            .unwrap()
+            .script_source_identity("alice")
+            .as_deref(),
+        Some(new.identity_key()),
+        "Start ran {:?}, not the shown card",
+        s.core
+            .play_for_test()
+            .unwrap()
+            .script_source_identity("alice")
+    );
+    s.core.play_for_test().unwrap().script_stop("alice");
+}
+
 fn focus_profile(s: &mut Session, name: &str) {
     s.set_focus_for_test(name);
     s.restore_script_heading(name);
