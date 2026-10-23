@@ -1289,6 +1289,7 @@ impl Combat {
             RowKind::Eat => super::schedule::InputEffect::Food(
                 self.tables.food(row.id).expect("planned food fact"),
             ),
+            RowKind::CureFruit => super::schedule::InputEffect::CureFruit,
             RowKind::Attack if self.request.style == Style::Ranged => {
                 super::schedule::InputEffect::RangedAttack
             }
@@ -1402,6 +1403,7 @@ impl Combat {
                 RowKind::Eat => super::schedule::InputEffect::Food(
                     self.tables.food(row.id).expect("planned food fact"),
                 ),
+                RowKind::CureFruit => super::schedule::InputEffect::CureFruit,
                 RowKind::Attack if self.request.style == Style::Ranged => {
                     super::schedule::InputEffect::RangedAttack
                 }
