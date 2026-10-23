@@ -669,7 +669,6 @@ impl Preferences {
         })
     }
 
-
     /// Queue the update's first read (a save's read: see
     /// [`LocalStateService::start_readback`]).
     #[cfg(any(test, feature = "test-support"))]
@@ -894,7 +893,6 @@ fn preference_changes(
     Ok(changes)
 }
 
-
 /// One fixture-only preferences update in progress: its read, then write.
 #[cfg(any(test, feature = "test-support"))]
 struct UpdateRun<F> {
@@ -925,7 +923,6 @@ impl std::fmt::Debug for Update {
         }
     }
 }
-
 
 /// A watch on one process-service-owned preference request. Dropping the
 /// watch only unsubscribes; it does not cancel the accepted intent.
