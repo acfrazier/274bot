@@ -29,6 +29,7 @@ pub mod layout;
 pub mod loadouts;
 pub mod log_pane;
 pub mod map;
+pub mod new_profile;
 pub mod overlay;
 pub mod palette;
 pub mod profile_import;

@@ -1128,6 +1128,17 @@ const SURFACE: &[(&str, Decision)] = &[
         ),
     ),
     (
+        "tui/bin.rs::TuiSession::new_profile_key",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+                C::CloseProfileForm(FormClose::Form),
+            ],
+            "the New profile overlay keys: typing stages the focused field's draft edit, Enter saves through `new_profile_save` (the CreateProfile handler), Esc closes the form",
+        ),
+    ),
+    (
         "tui/bin.rs::TuiSession::params_key",
         Rows(
             &[

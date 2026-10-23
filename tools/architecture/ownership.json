@@ -5659,6 +5659,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/new_profile.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/overlay.rs",
       "owner": "T3"
     },

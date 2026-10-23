@@ -317,6 +317,11 @@ pub enum AppAction {
     SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
     ProfileImport(crate::profile_import::ImportAction),
+    /// Open the shared New profile form (`OpenNewProfileForm`); the
+    /// overlay is already open, the binary opens the editor behind it.
+    OpenNewProfile,
+    /// A key for the New profile overlay: the binary owns the editor.
+    NewProfileKey(KeyEvent),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
     /// A key for the loadouts popup: the binary owns the form.
