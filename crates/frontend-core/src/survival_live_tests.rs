@@ -580,6 +580,7 @@ fn run_guard_cure_live(
         http_port: Some(1080),
         engine_dir: Some(required_path("ENGINE_DIR")?),
         cache_dir: Some(required_path("BOT_CACHE_DIR")?),
+        unpack_dir: Some(vault_path.with_extension("runtime-cache")),
         nav_pack: Some(nav_pack),
         nav_flags: Some(nav_flags),
         catalog_root: script::rs2b0t_root(),
@@ -588,7 +589,7 @@ fn run_guard_cure_live(
     }
     .resolve(None)
     .map_err(|error| format!("resolve local Engine A profile: {error}"))?
-    .bind()
+    .bind_runtime()
     .map_err(|error| format!("bind local Engine A profile: {error}"))?;
     if !profile.map_members() {
         return Err("fixture requires Engine A's members world".into());
