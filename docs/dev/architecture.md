@@ -1,7 +1,7 @@
 # Architecture
 
 > **Developer reference.** This page is for people who change 274bot.
-> To use 274bot, start at the [README](../README.md); to find another page, see the [docs index](README.md).
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
 
 274bot is a Rust bot host over a vendored client library. Ownership is crate
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
@@ -127,9 +127,9 @@ The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/ac
 workspace members, edges with their kinds and migrations, and the
 configuration feature/activation fields, all protected. The fine data lives
 beside the runner and is reviewed like code:
-[`tools/architecture/ownership.json`](../tools/architecture/ownership.json),
-[`tools/architecture/inventories.json`](../tools/architecture/inventories.json),
-[`tools/architecture/foreign_types.json`](../tools/architecture/foreign_types.json).
+[`tools/architecture/ownership.json`](../../tools/architecture/ownership.json),
+[`tools/architecture/inventories.json`](../../tools/architecture/inventories.json),
+[`tools/architecture/foreign_types.json`](../../tools/architecture/foreign_types.json).
 The checker loads that data from the checked tree, refuses malformed or
 stale data, and cannot widen the protected edge policy.
 Every workspace member must appear in protected `policy.toml`. Every edge
@@ -904,7 +904,7 @@ snapshot Rust already holds.
 
 | Machine | Card | What it does |
 | --- | --- | --- |
-| Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](quester-paths.md). |
+| Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](../quester-paths.md). |
 | Grinch (`script/src/grinch.rs`) | `Grinch` | Collects selected visible base ground-item IDs inside a same-plane anchor square, deposits selected IDs only, then returns to the exact anchor. |
 | Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
 | Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |
@@ -916,7 +916,7 @@ the compat isolate (JS API v1). The shim maps those names onto host verbs,
 step machines or `not impl`: name maps, value coercion and await plumbing
 only. Loops, tables, decisions, retries and sequencing live in Rust step
 machines that read the snapshot Rust already holds. Scripts written for the
-host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](api/js-api-v2.md)).
+host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](../api/js-api-v2.md)).
 
 The only JS↔Rust wire is the FlatBuffer: `IsolateBuf` posts snapshots into
 each isolate and decodes the shim's interact batches back. Bounded
