@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
-import { extractGatheringFamily, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits } from './extractors/combat.ts';
@@ -17,6 +17,8 @@ import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
+import { loadServerOrderedFacts, serverOrderedContentFiles, serverOrderedEngineInputPaths } from './extractors/server-ordered.ts';
+import { extractNpcTransformClosure, npcTransformInputPaths, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null };
@@ -111,6 +113,15 @@ export function assertPinned(spec: Revision) {
     const dirtyContent = contentDirt(spec.content, spec.generatedInputs?.content);
     if (dirtyContent) throw new Error(`${spec.revision}: relevant content inputs are dirty:\n${dirtyContent}`);
     return { engineCommit, contentCommit };
+}
+/** Apply the wider source check only to the server-ordered proof owner. */
+export function assertServerOrderedPinned(spec: Revision) {
+    if (spec.revision === 289) {
+        const paths = serverOrderedInputPaths(spec.engine, spec.content);
+        const selectedGenerated = spec.generatedInputs?.engine.filter(input => paths.engine.includes(input.path)) ?? [];
+        const dirty = inputDirt(spec.engine, paths.engine, selectedGenerated);
+        if (dirty) throw new Error(`${spec.revision}: server-ordered engine inputs are dirty:\n${dirty}`);
+    }
 }
 /**
  * Complete conservative input closure: journals, included scripts/configs, all
@@ -209,7 +220,8 @@ function selectedInputHashes(spec: Revision): InputHash[] {
         ['content', spec.content, CONTENT_TREE_PATHSPECS, spec.generatedInputs?.content ?? []],
         ['engine', spec.engine, ENGINE_INPUT_PATHS, spec.generatedInputs?.engine ?? []],
     ] as const) {
-        const names = new Set([...gitFiles(base, paths, ['--cached']), ...generated.map(input => input.path)]);
+        const selectedGenerated = generated.filter(input => paths.some(relative => input.path === relative || input.path.startsWith(`${relative}/`)));
+        const names = new Set([...gitFiles(base, paths, ['--cached']), ...selectedGenerated.map(input => input.path)]);
         for (const relative of names) inputs.push({ ...checkedInput(base, relative), path: `${scope}/${relative}` });
     }
     return inputs.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
@@ -2933,6 +2945,60 @@ export function baseProvenanceInputs(engineDir: string, contentDir: string): { i
         content_inputs: contentFiles.map((file) => sourceFile(contentDir, file)),
     };
 }
+
+export type ServerOrderedSourceInputs = { engine: InputHash[]; content: InputHash[] };
+/** Exact server-ordered read closure, independent of the shared family inputs. */
+export function serverOrderedInputPaths(engineDir: string, contentDir: string) {
+    const npc = npcTransformInputPaths(engineDir, contentDir);
+    return {
+        engine: [...new Set([...npc.engine, ...gitFiles(engineDir, ['src'], ['--cached']).filter(file => file.endsWith('.ts')), ...serverOrderedEngineInputPaths])].sort(compareCodepoint),
+        content: [...new Set([...npc.content, ...serverOrderedContentFiles])].sort(compareCodepoint),
+    };
+}
+
+/** Runtime admission rows contain no refused proofs or development inventories. */
+export function runtimeNpcOperations(evidence: NpcTransformClosureEvidence) {
+    const accepted = evidence.engine.complete ? evidence.proofs.filter(proof =>
+        proof.status === 'unchanged' || proof.status === 'consistent') : [];
+    return {
+        schema: 1,
+        evidence_sha256: crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'),
+        operations: accepted.map(proof => {
+            const action = evidence.actions.find(row => row.npc_type_id === proof.npc_type_id && row.slot === proof.slot);
+            if (!action || action.state !== 'present' || !action.operation_fingerprint || action.trigger_code === null
+                || proof.evidence_refs.length === 0
+                || proof.unresolved_refs.length || proof.mismatched_npc_type_ids.length
+                || !proof.reachable_npc_type_ids.includes(proof.npc_type_id)
+                || proof.reachable_npc_type_ids.some(id =>
+                    !evidence.npc_types.some(row => row.npc_type_id === id && row.config_state === 'complete')
+                    || evidence.actions.every(row =>
+                        row.npc_type_id !== id || row.slot !== proof.slot || row.state !== 'present'
+                        || row.trigger_code !== action.trigger_code
+                        || row.operation_fingerprint !== action.operation_fingerprint))) {
+                throw new Error('server_ordered: positive NPC proof disagrees with its action closure');
+            }
+            return { npc_type_id: action.npc_type_id, slot: action.slot, operation_fingerprint: action.operation_fingerprint };
+        }),
+    };
+}
+
+/** Stable development-only evidence serialization, never loaded by the product. */
+export function npcEvidenceBytes(evidence: NpcTransformClosureEvidence): string {
+    return `${JSON.stringify(evidence, null, 2)}\n`;
+}
+/** Keep the contract proof's complete closure separate from the base and debug families. */
+export function serverOrderedProvenanceInputs(engineDir: string, contentDir: string, npcInputs: ServerOrderedSourceInputs): ServerOrderedSourceInputs {
+    const engine = [...new Map([
+        ...npcInputs.engine,
+        ...serverOrderedEngineInputPaths.map((file) => sourceFile(engineDir, file)),
+    ].map((input) => [input.path, input])).values()].sort((a, b) => compareCodepoint(a.path, b.path));
+    const contentPaths = [...new Set([
+        ...serverOrderedContentFiles,
+        ...npcInputs.content.map((input) => input.path),
+    ])].sort(compareCodepoint);
+    return { engine, content: contentPaths.map((file) => sourceFile(contentDir, file)) };
+}
+
 /** Debug-only engine digests: the cheat handler, PlayerStat and the npc.dat join. */
 export function debugProvenanceInputs(engineDir: string): InputHash[] {
     return DEBUG_ENGINE_INPUT_PATHS.map((file) => sourceFile(engineDir, file));
@@ -2953,6 +3019,7 @@ export function debugArtifactBytes(artifact: DebugArtifact): string {
 const hiddenSites = new Map<number, GatherSiteWire[]>();
 async function generate(spec: Revision) {
     const pinned = assertPinned(spec);
+    assertServerOrderedPinned(spec);
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
     for (const requiredInput of ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']) if (!fs.existsSync(path.join(spec.engine, requiredInput))) throw new Error(`${spec.revision}: missing ${requiredInput}`);
     process.chdir(spec.engine); const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node: { members: boolean } } };
@@ -3015,6 +3082,25 @@ async function generate(spec: Revision) {
     const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
     Object.assign(facts, { quest_starts: questStarts });
     Object.assign(facts, { dialogue_ui: extractDialogueUiFacts(spec.content) });
+    const npcEvidence = spec.revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
+    if (npcEvidence) {
+        const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
+        fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
+        fs.writeFileSync(evidenceFile, npcEvidenceBytes(npcEvidence));
+    }
+    const serverOrdered = spec.revision === 289 ? {
+        ...await loadServerOrderedFacts({
+            contentRoot: spec.content,
+            engineRoot: spec.engine,
+            revision: spec.revision,
+            engineCommit: pinned.engineCommit,
+            contentCommit: pinned.contentCommit,
+            cacheId: spec.cacheIdentity.cache_id,
+            contentId,
+        }),
+        npc_transforms: runtimeNpcOperations(npcEvidence!),
+    } : undefined;
+    if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
     const deathRow = questIdentity.rows.find((row) => row.id === 'death');
     if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
@@ -3095,6 +3181,9 @@ async function generate(spec: Revision) {
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
     const payload = { schema_version: 5, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
     Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
+    if (serverOrdered) Object.assign(payload.provenance, {
+        server_ordered_inputs: serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence!.source_inputs),
+    });
     const debugArtifact = buildDebugArtifact(spec.revision, { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs: debugProvenanceInputs(spec.engine), content_inputs: debugCatalog.inputs, cache_identity: spec.cacheIdentity }, debugCatalog);
     const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
     fs.mkdirSync(path.dirname(debugFile), { recursive: true });

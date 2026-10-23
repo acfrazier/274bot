@@ -16,6 +16,8 @@ use crate::snapshot::{
 mod driver;
 pub use driver::*;
 
+/// Selected, source-proven facts for named server-ordered content operations.
+pub mod server_ordered;
 // ---------------------------------------------------------------------------
 // Wire types. `Interactions` resolves a `WireCommand` from
 // a target/action pair, gates it, and returns a `SendResult`; these enums

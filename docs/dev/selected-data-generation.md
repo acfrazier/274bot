@@ -45,3 +45,56 @@ manifest beside the live revision directory. Nav must bind the emitted quest
 digest **and** schema; sources are rechecked before publication. A refused build
 removes staging and leaves the previous assets intact. The final manifest's
 digest is computed externally, never embedded in its own bytes.
+
+## Server-ordered content contracts
+
+The revision 289 core includes a generated `server_ordered` catalog.
+The extractor joins content aliases, decoded interface properties, and the selected engine paths.
+It refuses missing or ambiguous aliases, changed controls, and incorrect interface ancestry.
+The selected font and message animation must prove one banker player page for `bank_open_deposit`.
+If that page is unproved, only this recipe is unavailable.
+Unproved revisions do not inherit revision 289 identities.
+The complete catalog source digests are in `provenance.server_ordered_inputs`.
+This exact read inventory is separate from the shared family, base, and debug input lists.
+Changes to server-ordered proof inputs do not change the existing quest or gathering digests.
+
+NPC numeric operations require a complete transform closure.
+Static transforms, scripted transforms, temporary types, and reversion all participate in that proof.
+For a visible temporary type, the closure first includes its possible base types.
+It then follows all forward transforms from those types.
+An unresolved dynamic transform cannot authorize an NPC operation.
+Each action compares the ordered OPNPC/APNPC handler pair, with type, category, then global resolution.
+The `_` script subject selects the global handler.
+A bare subject selects an NPC type, even when a category has the same name.
+Only an underscore prefix selects a category, for example `_saltfish`.
+The runtime catalog contains only positive operation rows and a complete-evidence SHA-256 digest.
+Generation writes accepted and refused evidence to `tools/game-data/evidence/289-npc-transforms.json`. Git ignores this reproducible development output.
+Run `bun tools/game-data/generate.ts --revision 289` to regenerate the evidence file and the revision 289 catalog.
+The verifier reads a local evidence file when one exists and checks its SHA-256 against `server_ordered.npc_transforms.evidence_sha256`.
+If no local evidence file exists, the verifier writes freshly generated evidence to a temporary location and checks its SHA-256. A missing local file is not an error.
+A stale local evidence file fails the digest check.
+This development-only output is not shipped or loaded by the product.
+Unknown label callers and unsupported NPC parameters remain conservative analysis limits, not proved dynamic content.
+
+The API retains one immutable catalog with the selected game data.
+Its accessor requires the exact selected pin.
+Private decoders construct the inner facts. Public accessors borrow them without exposing constructors or `Deserialize`.
+Recipe budgets, deadlines, and recovery limits are reviewed host policy.
+Each predicate, outcome, cleanup condition, and predecessor has an explicit `basis`.
+`checked` identifies a declaration that the generator checks against selected source.
+`host-policy` identifies a host requirement or an unproved engine assumption.
+Host-policy conditions do not assert engine behaviour, even when their names describe engine checks.
+The inventory-reference, location, held-use, and appearance-handler assumptions remain unproved policy.
+Existing source guards still check the content paths, count resume, and modal cleanup.
+Each checked condition and predecessor cites the source spans for its check.
+`synchronous` means only a checked synchronous server path.
+Host-order edges have `basis: "host-policy"` and `synchronous: false`.
+This includes the banker pause-resume edge, whose engine handler is not checked.
+Loading these facts does not change existing interaction producers or send packets.
+
+Run the extractor tests with the generation checks:
+
+```bash
+bun tools/game-data/server-ordered.test.ts
+bun tools/game-data/npc-transforms.test.ts
+```

@@ -1393,6 +1393,12 @@ pub struct SelectedGameData {
     special: Option<SpecialControls>,
     #[serde(default)]
     dialogue_ui: Option<DialogueUiIds>,
+    #[serde(default, rename = "server_ordered")]
+    server_ordered_wire: Option<crate::interact::server_ordered::CatalogWire>,
+    #[serde(skip)]
+    server_ordered: Option<crate::interact::server_ordered::ServerOrderedCatalog>,
+    #[serde(skip)]
+    server_ordered_status: Option<Result<(), crate::interact::server_ordered::ContractError>>,
     #[serde(default)]
     teleports: Vec<TeleportSpell>,
     #[serde(default)]
@@ -1476,6 +1482,37 @@ impl SelectedGameData {
                 crate::selected::PIN_FAMILY.clone(),
             ))
         })
+    }
+
+    /// Return the immutable server-ordered catalog for the exact selected pin.
+    ///
+    /// This cache-only access neither decodes nor allocates. Unproved revisions,
+    /// unbound facts, and a different pin cannot authorize a content operation.
+    pub fn server_ordered_catalog(
+        &self,
+        pin: &SelectedPin,
+    ) -> Result<
+        &crate::interact::server_ordered::ServerOrderedCatalog,
+        crate::interact::server_ordered::ContractError,
+    > {
+        use crate::interact::server_ordered::ContractError;
+        let bound = self
+            .selected_pin
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)?
+            .as_ref()
+            .map_err(|_| ContractError::PinMismatch)?;
+        if bound.as_ref() != pin {
+            return Err(ContractError::PinMismatch);
+        }
+        self.server_ordered_status
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)?
+            .as_ref()
+            .map_err(|error| *error)?;
+        self.server_ordered
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)
     }
 
     /// Return the verified quest artifact identity after preparation.
@@ -1842,6 +1879,22 @@ impl SelectedGameData {
             MANIFEST,
             expected_revision,
         ));
+        let catalog = match (data.server_ordered_wire.take(), &data.selected_pin) {
+            (Some(facts), Some(Ok(pin))) => {
+                crate::interact::server_ordered::ServerOrderedCatalog::bind(facts, pin)
+            }
+            (Some(_), Some(Err(_))) => {
+                Err(crate::interact::server_ordered::ContractError::PinMismatch)
+            }
+            _ => Err(crate::interact::server_ordered::ContractError::ContractUnavailable),
+        };
+        data.server_ordered_status = Some(match catalog {
+            Ok(catalog) => {
+                data.server_ordered = Some(catalog);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        });
         Ok(Arc::new(data))
     }
 
