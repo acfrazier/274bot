@@ -89,7 +89,8 @@ The **script** section shows rows such as `Quest` and `Queue`. `Quest` names the
 quest that runs. `Queue` has one letter for each quest: `D` done, `R` running,
 `Y` ready, `P` parked, `B` blocked or `?` not known yet. In the panel, the
 **status** section shows what the bot does in its `phase` row. It reads
-`walking`, `talking`, `fighting`, `banking`, `waiting` or `working`.
+`walking`, `talking`, `fighting`, `banking`, `waiting` or `working`. The same
+section also shows the current step comment.
 
 A quest that fails is parked (`P`) with a reason, and the Quester goes on with the
 next quest. Two stops need your action:
@@ -100,11 +101,11 @@ next quest. Two stops need your action:
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
 The Log window shows the run in more detail. When a guide starts, the Log names
-the guide, where it loaded from, and a fingerprint of the exact file. Stage
-changes, step starts, step skips and step finishes follow. A skip line names the
-check that passed. Warnings name failed steps and the reason a run parked.
-Repeated retries fold into one line with a count. The trace keeps the last 32
-different events.
+the guide, where it loaded from, a fingerprint of the exact file, and the first
+step's comment. Stage changes, step starts, step skips and step finishes follow.
+A skip line names the check that passed. Warnings name failed steps and the
+reason a run parked. Repeated retries fold into one line with a count. The trace
+keeps the last 32 different events.
 
 If a quest needs items first, the Quester collects them before the quest steps
 begin. Those lines look the same as the lines of a collect step. A step start
@@ -120,7 +121,8 @@ The setting is off at first. The default folder is `~/.274bot/quester/paths/289`
 274bot does not create it for you.
 
 The guides are for revision 289. New guides appear as drafts. In the terminal
-app, press `o` on the Overview screen to find the same two rows.
+app, press `o` on the Overview screen to find the load checkbox, the folder, and
+**Reload Paths**.
 
 Put each guide in `<folder>/<id>.json`. The `id` inside the file must match the
 file name. An optional `index.json` lists guides in the order they appear:
@@ -145,9 +147,9 @@ A bad changed file falls back to the shipped guide. A bad draft stays in the
 list but cannot run.
 
 The rest still load. Guides the server cannot run stay unavailable. Linked
-files work if their target is a normal file. The report lists up to 32 problems,
-then a count of the rest. The terminal app shows the short form only. Full
-details are in the Logs.
+files work if their target is a normal file. The report lists up to 31 problems.
+When more remain, a last line reads `N more validation diagnostics omitted`. The
+terminal app shows the short form only. Full details are in the Logs.
 
 [Quest guides](../scripting/quest-guides.md#quest-guide-files) describes the file
 format.
