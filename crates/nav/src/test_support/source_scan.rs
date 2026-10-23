@@ -1,30 +1,12 @@
-//! Syntax-based source scanning for navigation crate boundaries.
+//! Syntax-based scanning for the navigation planner surface.
 //!
-//! The scanner reads Rust source files through `syn`. It follows attached modules,
-//! tracks test scope, expands imports, resolves aliases, and reads macro tokens.
+//! This test helper walks attached Rust sources to check planner allowlists,
+//! test-only scope, unsupported source forms, and unattached Rust files. It
+//! follows modules, includes, imports, aliases, and macro tokens to support
+//! those source-level checks.
 //!
-//! # Known limits
-//!
-//! This scanner is a test-only guard over source text. It does not implement
-//! Rust name resolution. The crate graph and the architecture check provide the
-//! main enforcement. The scanner models the re-export forms that the real
-//! `api` and `client` trees use (named and glob `use`, module and crate aliases,
-//! `pub extern crate`, `pub mod` children, plain-path `type` aliases, `include!`)
-//! and fails closed on the item kinds and macros it does not model.
-//!
-//! It can still miss a path that goes through these forms, which the real trees
-//! do not contain:
-//! - a path step through a non-public name (`pub(crate) use`, a private or
-//!   `pub(crate)` type alias, `self::X` where `X` came from a glob import);
-//! - a multi-segment path whose first segment came from a glob import;
-//! - a nested module whose name shadows a crate-root module of the same name;
-//! - raw identifiers (`r#client`, `r#thread_local`);
-//! - value items (`const`, `static`) whose type names a denied item;
-//! - trait projections (`<X as T>::A`), macro expansion beyond `include!`, and
-//!   indirect use through functions or `#[macro_export]` macros.
-//!
-//! Review catches these forms in planner code. A compiler-resolved lint replaces
-//! this scan in nav split slice S3 (NAV-SPLIT-S1 Main's final ruling).
+//! The scanner does not implement Rust name resolution and is not the action
+//! capability deny list. Compiler-resolved Clippy lints enforce that boundary.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -32,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 
 use syn::parse::Parser;
 use syn::visit::Visit;
-use syn::{Attribute, Expr, ExprLit, Item, ItemUse, Lit, Meta, UseTree, Visibility};
+use syn::{Attribute, Expr, ExprLit, Item, ItemUse, Lit, Meta, UseTree};
 
 /// Source files keyed by paths relative to a package root.
 pub type SourceMap = BTreeMap<PathBuf, String>;
@@ -99,13 +81,6 @@ pub struct ScanReport {
     pub findings: Vec<Finding>,
 }
 
-/// The deny closure plus any unresolved public re-export or source error.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ClosureReport {
-    pub denied: BTreeSet<String>,
-    pub findings: Vec<Finding>,
-}
-
 #[derive(Clone)]
 struct Entry {
     file: PathBuf,
@@ -156,28 +131,11 @@ struct Resolution<'a> {
     aliases: &'a AliasMap,
 }
 
-#[derive(Clone)]
-struct Reexport {
-    owner: Vec<String>,
-    name: String,
-    target: Vec<String>,
-    glob: bool,
-    unsupported_type: bool,
-    file: PathBuf,
-}
-
-#[derive(Clone, Copy)]
-struct ReexportContext<'a> {
-    resolution: Resolution<'a>,
-    denied: &'a BTreeSet<String>,
-    macro_shadows: &'a BTreeSet<String>,
-}
-
 /// Scan all assigned Rust roots in a crate directory.
 ///
-/// Roots are `src/lib.rs`, each direct `src/bin/*.rs`, `build.rs`, each direct
-/// `examples/*.rs`, and each direct `tests/*.rs`. Files under `src` that no root
-/// reaches are findings.
+/// Roots are `src/main.rs`, `src/lib.rs`, each direct `src/bin/*.rs`, `build.rs`,
+/// each direct `examples/*.rs`, and each direct `tests/*.rs`. Files under `src`
+/// that no root reaches are findings.
 pub fn scan_package(
     package_root: &Path,
     package_name: &str,
@@ -236,262 +194,6 @@ pub fn scan_text(
         denied_prefixes,
         false,
     )
-}
-
-/// Compute the seed closure over public re-exports in the supplied crate sources.
-///
-/// Each tuple contains a crate name and its `src` directory. The source scanner
-/// follows `lib.rs`, attached modules and literal `include!` files. Public type,
-/// module and crate aliases and globs include seeds reached through public paths.
-/// Unresolved targets, recursive aliases and unclassified item kinds fail closed.
-pub fn compute_deny_closure(crates: &[(&str, &Path)], seeds: &[&str]) -> ClosureReport {
-    let mut owned_sources = Vec::new();
-    let mut read_findings = Vec::new();
-    for (package_name, source_root) in crates {
-        let (files, mut findings) = read_source_map(source_root);
-        owned_sources.push(((*package_name).to_owned(), files));
-        read_findings.append(&mut findings);
-    }
-    let sources: Vec<_> = owned_sources
-        .iter()
-        .map(|(package_name, files)| (package_name.as_str(), files))
-        .collect();
-    let mut report = compute_deny_closure_sources(&sources, seeds);
-    report.findings.append(&mut read_findings);
-    report.findings.sort();
-    report
-}
-
-/// Compute a deny closure from source maps rooted at each crate's `src` directory.
-pub fn compute_deny_closure_sources(
-    crates: &[(&str, &SourceMap)],
-    seeds: &[&str],
-) -> ClosureReport {
-    let mut report = ClosureReport {
-        denied: seeds.iter().map(|seed| (*seed).to_owned()).collect(),
-        findings: Vec::new(),
-    };
-    let mut all_exports = Vec::new();
-    let mut all_modules = BTreeSet::new();
-    let mut parsed = Vec::new();
-
-    for (package_name, files) in crates {
-        let entry = Entry {
-            file: PathBuf::from("lib.rs"),
-            root_file: PathBuf::from("lib.rs"),
-            module_path: vec![(*package_name).to_owned()],
-            module_dir: PathBuf::new(),
-            scope: Scope::Production,
-        };
-        let tree = load_units(files, &[entry]);
-        report.findings.extend(tree.findings);
-        all_modules.extend(tree.modules);
-        parsed.push((*package_name, tree.units, tree.macro_shadows));
-    }
-
-    for (package_name, units, macro_shadows) in &parsed {
-        let top_modules = top_level_modules(&all_modules, package_name);
-        let aliases = file_aliases(units, package_name, &top_modules, &all_modules);
-        for unit in units {
-            collect_reexports(
-                &unit.ast.items,
-                &unit.module_path,
-                &unit.file,
-                unit.scope,
-                ReexportContext {
-                    resolution: Resolution {
-                        package_name,
-                        top_modules: &top_modules,
-                        modules: &all_modules,
-                        aliases: &aliases[&unit.root_file],
-                    },
-                    denied: &report.denied,
-                    macro_shadows,
-                },
-                &mut all_exports,
-                &mut report.findings,
-            );
-        }
-    }
-
-    // Expand public glob chains, including public module declarations.
-    let mut expanded = BTreeSet::new();
-    loop {
-        let mut additions = Vec::new();
-        for reexport in &all_exports {
-            if !reexport.glob || is_denied(&join_path(&reexport.owner), &report.denied) {
-                continue;
-            }
-            let target_name = join_path(&reexport.target);
-            if is_denied(&target_name, &report.denied) {
-                let key = format!(
-                    "denied|{}|{}|{target_name}",
-                    reexport.file.display(),
-                    join_path(&reexport.owner)
-                );
-                if expanded.insert(key) {
-                    report.findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexportGlob,
-                        path: Some(format!("{target_name}::*")),
-                        scope: Scope::Production,
-                        file: reexport.file.clone(),
-                        detail: "public glob outside a denied namespace targets denied items"
-                            .to_owned(),
-                    });
-                }
-                continue;
-            }
-            if !all_modules.contains(&reexport.target) {
-                let is_local_target = reexport
-                    .target
-                    .first()
-                    .is_some_and(|root| all_modules.contains(&vec![root.clone()]));
-                if is_local_target {
-                    let key = format!(
-                        "unresolved|{}|{}|{target_name}",
-                        reexport.file.display(),
-                        join_path(&reexport.owner)
-                    );
-                    if expanded.insert(key) {
-                        report.findings.push(Finding {
-                            kind: FindingKind::UnsupportedReexportGlob,
-                            path: Some(format!("{target_name}::*")),
-                            scope: Scope::Production,
-                            file: reexport.file.clone(),
-                            detail: "public glob target is not a resolved local module".to_owned(),
-                        });
-                    }
-                }
-                continue;
-            }
-            for exported in &all_exports {
-                if exported.owner != reexport.target {
-                    continue;
-                }
-                let copied = Reexport {
-                    owner: reexport.owner.clone(),
-                    name: exported.name.clone(),
-                    target: exported.target.clone(),
-                    glob: exported.glob,
-                    unsupported_type: exported.unsupported_type,
-                    file: reexport.file.clone(),
-                };
-                let key = format!("expanded|{}", export_key(&copied));
-                if expanded.insert(key) {
-                    additions.push(copied);
-                }
-            }
-        }
-        if additions.is_empty() {
-            break;
-        }
-        all_exports.extend(additions);
-    }
-
-    let mut public_paths: BTreeSet<_> = all_exports
-        .iter()
-        .filter(|export| !export.glob)
-        .map(|export| {
-            let mut path = export.owner.clone();
-            path.push(export.name.clone());
-            path
-        })
-        .collect();
-    // Each derived path retains its export route. Repeated edges can expose
-    // infinitely nested aliases, so fail closed instead of truncating them.
-    let mut pending: Vec<_> = seeds
-        .iter()
-        .map(|seed| {
-            (
-                seed.split("::").map(str::to_owned).collect::<Vec<_>>(),
-                Vec::<usize>::new(),
-            )
-        })
-        .collect();
-    while let Some((denied, route)) = pending.pop() {
-        for (index, export) in all_exports.iter().enumerate() {
-            if export.glob || is_denied(&join_path(&export.owner), &report.denied) {
-                continue;
-            }
-            let remainder: &[String] = if export.target.starts_with(&denied) {
-                &[]
-            } else if denied.starts_with(&export.target) {
-                &denied[export.target.len()..]
-            } else {
-                continue;
-            };
-            let mut exported_path = export.owner.clone();
-            exported_path.push(export.name.clone());
-            let alias_len = exported_path.len();
-            exported_path.extend_from_slice(remainder);
-            let exported_name = join_path(&exported_path);
-            if is_denied(&exported_name, &report.denied) {
-                continue;
-            }
-            if export.unsupported_type {
-                // Retain the diagnostic for non-path aliases, but also deny the
-                // alias itself so downstream aliases cannot hide the capability.
-                report.denied.insert(exported_name.clone());
-                pending.push((exported_path, route.clone()));
-                let key = format!("type|{}|{exported_name}", export.file.display());
-                if expanded.insert(key)
-                    && !report.findings.iter().any(|finding| {
-                        finding.kind == FindingKind::UnsupportedReexport
-                            && finding.file == export.file
-                            && finding.path.as_deref() == Some(exported_name.as_str())
-                    })
-                {
-                    report.findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexport,
-                        path: Some(exported_name),
-                        scope: Scope::Production,
-                        file: export.file.clone(),
-                        detail: "public non-path type alias can name a denied item".to_owned(),
-                    });
-                }
-                continue;
-            }
-            let unresolved = !remainder.is_empty()
-                && !all_modules.contains(&export.target)
-                && !public_paths.contains(&export.target);
-            if unresolved || route.contains(&index) {
-                let key = format!("unsupported|{}", export_key(export));
-                if expanded.insert(key) {
-                    report.findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexport,
-                        path: Some(join_path(&export.target)),
-                        scope: Scope::Production,
-                        file: export.file.clone(),
-                        detail: if unresolved {
-                            "public module alias target is not a resolved local module"
-                        } else {
-                            "recursive public module aliases cannot be resolved completely"
-                        }
-                        .to_owned(),
-                    });
-                }
-                continue;
-            }
-            // Do not expose a seed through a private module descendant.
-            if !remainder.is_empty()
-                && !(export.target.len() + 1..=denied.len())
-                    .all(|end| public_paths.contains(&denied[..end]))
-            {
-                continue;
-            }
-            // Preserve public descendant paths for aliases of this alias.
-            for end in alias_len..=exported_path.len() {
-                public_paths.insert(exported_path[..end].to_vec());
-            }
-            report.denied.insert(exported_name);
-            let mut next_route = route.clone();
-            next_route.push(index);
-            pending.push((exported_path, next_route));
-        }
-    }
-
-    report.findings.sort();
-    report
 }
 
 fn scan_entries(
@@ -565,6 +267,7 @@ fn cargo_roots(files: &SourceMap, package_name: &str) -> Vec<Entry> {
             });
         }
     };
+    add(PathBuf::from("build.rs"), Scope::Production);
     add(PathBuf::from("src/main.rs"), Scope::Production);
     add(PathBuf::from("src/lib.rs"), Scope::Production);
     let mut bins: Vec<_> = files
@@ -1100,10 +803,6 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 fn join_path(path: &[String]) -> String {
     path.join("::")
-}
-
-fn is_denied(path: &str, denied: &BTreeSet<String>) -> bool {
-    denied.iter().any(|prefix| is_at_or_under(path, prefix))
 }
 
 fn is_at_or_under(path: &str, prefix: &str) -> bool {
@@ -2037,294 +1736,6 @@ fn root_is_relevant(
 fn parse_grouped_use(prefix: &[String], group: &proc_macro2::Group) -> syn::Result<ItemUse> {
     let source = format!("use {}::{{{}}};", join_path(prefix), group.stream());
     syn::parse_str(&source)
-}
-
-#[derive(Default)]
-struct TypeAliasPaths {
-    paths: Vec<Vec<String>>,
-    opaque: bool,
-    parameters: BTreeSet<String>,
-}
-
-impl<'ast> Visit<'ast> for TypeAliasPaths {
-    fn visit_path(&mut self, path: &'ast syn::Path) {
-        let raw: Vec<_> = path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.to_string())
-            .collect();
-        if !raw
-            .first()
-            .is_some_and(|name| self.parameters.contains(name))
-        {
-            self.paths.push(raw);
-        }
-        syn::visit::visit_path(self, path);
-    }
-
-    fn visit_type(&mut self, ty: &'ast syn::Type) {
-        match ty {
-            syn::Type::Array(_)
-            | syn::Type::BareFn(_)
-            | syn::Type::Group(_)
-            | syn::Type::ImplTrait(_)
-            | syn::Type::Never(_)
-            | syn::Type::Paren(_)
-            | syn::Type::Path(_)
-            | syn::Type::Ptr(_)
-            | syn::Type::Reference(_)
-            | syn::Type::Slice(_)
-            | syn::Type::TraitObject(_)
-            | syn::Type::Tuple(_) => syn::visit::visit_type(self, ty),
-            _ => self.opaque = true,
-        }
-    }
-
-    fn visit_generic_argument(&mut self, argument: &'ast syn::GenericArgument) {
-        match argument {
-            syn::GenericArgument::Lifetime(_)
-            | syn::GenericArgument::Type(_)
-            | syn::GenericArgument::Const(_)
-            | syn::GenericArgument::AssocType(_)
-            | syn::GenericArgument::AssocConst(_)
-            | syn::GenericArgument::Constraint(_) => {
-                syn::visit::visit_generic_argument(self, argument);
-            }
-            _ => self.opaque = true,
-        }
-    }
-
-    fn visit_type_param_bound(&mut self, bound: &'ast syn::TypeParamBound) {
-        match bound {
-            syn::TypeParamBound::Trait(_) | syn::TypeParamBound::Lifetime(_) => {
-                syn::visit::visit_type_param_bound(self, bound);
-            }
-            _ => self.opaque = true,
-        }
-    }
-
-    fn visit_macro(&mut self, _mac: &'ast syn::Macro) {
-        self.opaque = true;
-    }
-}
-
-fn reexport_targets(
-    raw: &[String],
-    module_path: &[String],
-    file: &Path,
-    resolution: Resolution<'_>,
-    findings: &mut Vec<Finding>,
-) -> Vec<Vec<String>> {
-    let targets = resolve_path(raw, module_path, Scope::Production, resolution, 0);
-    if targets.is_empty() {
-        findings.push(Finding {
-            kind: FindingKind::UnsupportedReexport,
-            path: Some(join_path(raw)),
-            scope: Scope::Production,
-            file: file.to_path_buf(),
-            detail: "public target does not resolve to a known item or extern crate".to_owned(),
-        });
-    }
-    targets
-}
-
-fn collect_reexports(
-    items: &[Item],
-    module_path: &[String],
-    file: &Path,
-    inherited_scope: Scope,
-    context: ReexportContext<'_>,
-    output: &mut Vec<Reexport>,
-    findings: &mut Vec<Finding>,
-) {
-    for item in items {
-        let scope = scope_after_attrs(item_attrs(item), inherited_scope);
-        if scope != Scope::Production {
-            continue;
-        }
-        match item {
-            Item::Use(item_use) if matches!(&item_use.vis, Visibility::Public(_)) => {
-                let mut leaves = Vec::new();
-                flatten_use_tree(&item_use.tree, &mut Vec::new(), &mut leaves);
-                for leaf in leaves {
-                    for target in reexport_targets(
-                        &leaf.path,
-                        module_path,
-                        file,
-                        context.resolution,
-                        findings,
-                    ) {
-                        let name = leaf.local_name.clone().or_else(|| target.last().cloned());
-                        if let Some(name) = name {
-                            output.push(Reexport {
-                                owner: module_path.to_vec(),
-                                name,
-                                target,
-                                glob: leaf.glob,
-                                unsupported_type: false,
-                                file: file.to_path_buf(),
-                            });
-                        }
-                    }
-                }
-            }
-            Item::ExternCrate(item_extern) if matches!(&item_extern.vis, Visibility::Public(_)) => {
-                let target = if item_extern.ident == "self" {
-                    context.resolution.package_name.to_owned()
-                } else {
-                    item_extern.ident.to_string()
-                };
-                output.push(Reexport {
-                    owner: module_path.to_vec(),
-                    name: item_extern
-                        .rename
-                        .as_ref()
-                        .map(|(_, name)| name.to_string())
-                        .unwrap_or_else(|| item_extern.ident.to_string()),
-                    target: vec![target],
-                    glob: false,
-                    file: file.to_path_buf(),
-                    unsupported_type: false,
-                });
-            }
-            Item::Type(alias) if matches!(&alias.vis, Visibility::Public(_)) => {
-                let mut paths = TypeAliasPaths {
-                    parameters: alias
-                        .generics
-                        .params
-                        .iter()
-                        .filter_map(|parameter| match parameter {
-                            syn::GenericParam::Type(parameter) => Some(parameter.ident.to_string()),
-                            syn::GenericParam::Const(parameter) => {
-                                Some(parameter.ident.to_string())
-                            }
-                            syn::GenericParam::Lifetime(_) => None,
-                        })
-                        .collect(),
-                    ..TypeAliasPaths::default()
-                };
-                let plain = matches!(&*alias.ty, syn::Type::Path(path) if path.qself.is_none());
-                paths.visit_type(&alias.ty);
-                paths.visit_generics(&alias.generics);
-                let mut unresolved = paths.opaque;
-                for path in paths.paths {
-                    let targets = resolve_path(&path, module_path, scope, context.resolution, 0);
-                    unresolved |= targets.is_empty();
-                    for target in targets {
-                        output.push(Reexport {
-                            owner: module_path.to_vec(),
-                            name: alias.ident.to_string(),
-                            target,
-                            glob: false,
-                            unsupported_type: !plain,
-                            file: file.to_path_buf(),
-                        });
-                    }
-                }
-                if unresolved {
-                    let mut path = module_path.to_vec();
-                    path.push(alias.ident.to_string());
-                    findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexport,
-                        path: Some(join_path(&path)),
-                        scope,
-                        file: file.to_path_buf(),
-                        detail: "public type alias contains an unknown or unmodelled type"
-                            .to_owned(),
-                    });
-                }
-            }
-            Item::Macro(invocation) => {
-                let path: Vec<_> = invocation
-                    .mac
-                    .path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.to_string())
-                    .collect();
-                let thread_local = path == ["thread_local"] || path == ["std", "thread_local"];
-                if invocation.ident.is_none()
-                    && (!(is_include(invocation) || thread_local)
-                        || macro_is_shadowed(invocation, context.macro_shadows))
-                    && !is_denied(&join_path(module_path), context.denied)
-                {
-                    findings.push(Finding {
-                        kind: FindingKind::UnsupportedReexport,
-                        path: Some(join_path(module_path)),
-                        scope,
-                        file: file.to_path_buf(),
-                        detail: format!(
-                            "item-position macro {}! may introduce public paths",
-                            join_path(&path)
-                        ),
-                    });
-                }
-            }
-            Item::Mod(module) => {
-                let mut child_path = module_path.to_vec();
-                let name = module.ident.to_string();
-                child_path.push(name.clone());
-                if matches!(&module.vis, Visibility::Public(_)) {
-                    output.push(Reexport {
-                        owner: module_path.to_vec(),
-                        name,
-                        target: child_path.clone(),
-                        glob: false,
-                        unsupported_type: false,
-                        file: file.to_path_buf(),
-                    });
-                }
-                if let Some((_, nested)) = &module.content {
-                    collect_reexports(nested, &child_path, file, scope, context, output, findings);
-                }
-            }
-            Item::TraitAlias(alias) if matches!(&alias.vis, Visibility::Public(_)) => {
-                let mut path = module_path.to_vec();
-                path.push(alias.ident.to_string());
-                findings.push(Finding {
-                    kind: FindingKind::UnsupportedReexport,
-                    path: Some(join_path(&path)),
-                    scope,
-                    file: file.to_path_buf(),
-                    detail: "public trait alias is not modelled by the re-export collector"
-                        .to_owned(),
-                });
-            }
-            // These declarations do not give another public name to an existing
-            // item. Public macro 2.0 syntax is opaque Item::Verbatim and fails below.
-            Item::Const(_)
-            | Item::Enum(_)
-            | Item::Fn(_)
-            | Item::ForeignMod(_)
-            | Item::Impl(_)
-            | Item::Static(_)
-            | Item::Struct(_)
-            | Item::Trait(_)
-            | Item::Type(_)
-            | Item::Union(_)
-            | Item::Use(_)
-            | Item::ExternCrate(_)
-            | Item::TraitAlias(_) => {}
-            // syn::Item is non-exhaustive. Reject Item::Verbatim and all future
-            // variants that could introduce another public namespace.
-            _ => findings.push(Finding {
-                kind: FindingKind::UnsupportedReexport,
-                path: Some(join_path(module_path)),
-                scope,
-                file: file.to_path_buf(),
-                detail: "unclassified Rust item may introduce public module paths".to_owned(),
-            }),
-        }
-    }
-}
-
-fn export_key(export: &Reexport) -> String {
-    format!(
-        "{}|{}|{}",
-        join_path(&export.owner),
-        export.name,
-        join_path(&export.target)
-    )
 }
 
 fn sort_report(report: &mut ScanReport) {

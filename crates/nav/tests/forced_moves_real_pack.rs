@@ -1,6 +1,10 @@
 //! Original Hero Ice Queen city routes plus the real, gated loc 2634 Mine crossing.
 use std::path::PathBuf;
 
+#[expect(
+    clippy::disallowed_types,
+    reason = "read-only revision value selects real-pack fixture data and does not perform an action"
+)]
 use api::selected::ClientRevision;
 use api::snapshot::{stat_name, stat_used, GameSnapshot, StatView};
 use api::WorldTile;

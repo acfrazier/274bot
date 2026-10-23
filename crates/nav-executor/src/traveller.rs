@@ -27,6 +27,7 @@ use nav::executor_adapter::{
 };
 use nav::router::{Leg, Route};
 use nav::transport::{DoorDir, TransportEdge, TransportKind};
+use thiserror::Error;
 
 mod dialog;
 mod npc_hop;
@@ -85,6 +86,175 @@ pub enum HopFailure {
     EndBlocked,
 }
 
+/// A transport-specific failure that prevents a web cut from being sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum WebCutFailure {
+    /// The packed candidate edges needed to select a current cutting action
+    /// were not supplied.
+    #[error("the packed transport edge list is unavailable")]
+    PackedTransportEdgesUnavailable,
+    /// No worn blade or carried knife qualifies against the live snapshot.
+    #[error("neither a worn slash blade nor a carried knife qualifies")]
+    NoQualifyingSlashTool,
+}
+
+/// A reason an NPC transport hop could not recover before its budget ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum NpcHopBlockReason {
+    /// The tracked NPC no longer exists in the loaded scene.
+    #[error("tracked target missing")]
+    TrackedTargetMissing,
+    /// No operable stand remained for the target.
+    #[error("no reachable operable stand")]
+    NoReachableOperableStand,
+    /// The driver refused the walk to the NPC's selected stand.
+    #[error("approach route refused")]
+    ApproachRouteRefused,
+    /// The NPC interaction failed its reach check.
+    #[error("reach failure")]
+    ReachFailure,
+    /// The active dialogue page had no recognized affirmative choice.
+    #[error("unrecognized journey dialogue")]
+    UnrecognizedJourneyDialogue,
+}
+
+fn blocked_target_word(kind: &TransportKind) -> &'static str {
+    if is_npc_backed_kind(*kind) {
+        "npc"
+    } else {
+        "loc"
+    }
+}
+
+/// The typed reason a route leg could not be worked.
+///
+/// Each variant preserves the human-readable detail emitted by the previous
+/// string-based blocked outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum BlockedWhy {
+    /// A carried teleport item never acquired a usable inventory control.
+    #[error("charged teleport item {item_id} never acquired a usable inventory control")]
+    TeleportInventoryControlUnavailable { item_id: i32 },
+    /// A spellbook teleport button was not accepted by the driver.
+    #[error("teleport spell button {button_id} was not accepted by the driver")]
+    TeleportSpellButtonRejected { button_id: i32 },
+    /// The live effective level did not meet the packed skill prerequisite.
+    #[error("teleport needs skill {skill} level {level}; observed {observed:?}")]
+    TeleportSkillRequirementUnmet {
+        skill: i32,
+        level: i32,
+        observed: Option<i32>,
+    },
+    /// The live inventory did not meet the packed item prerequisite.
+    #[error(
+        "teleport needs {count} of item {item_id} (runes or a charged item); carrying {carried}"
+    )]
+    TeleportItemRequirementUnmet {
+        count: i32,
+        item_id: i32,
+        carried: i32,
+    },
+    /// A packed spell landing is not one of the standard spellbook teleports.
+    #[error(
+        "packed spell teleport to ({}, {}, {}) is not one of the seven standard spellbook teleports",
+        .to.x,
+        .to.z,
+        .to.level
+    )]
+    UnsupportedSpellTeleport { to: WorldTile },
+    /// No reachable operable NPC target appeared within the search radius.
+    #[error(
+        "transport npc {loc_id} has no reachable operable target within {radius} tiles of ({}, {}, {}) in the loaded scene",
+        .at.x,
+        .at.z,
+        .at.level
+    )]
+    NpcTargetUnavailable {
+        loc_id: i32,
+        radius: i32,
+        at: WorldTile,
+    },
+    /// No flood-reachable stand was found for the transport target.
+    #[error(
+        "no flood-reachable operable stand for transport {} {} at ({}, {}, {}) in the loaded scene",
+        blocked_target_word(.kind),
+        .loc_id,
+        .at.x,
+        .at.z,
+        .at.level
+    )]
+    TransportApproachUnavailable {
+        kind: TransportKind,
+        loc_id: i32,
+        at: WorldTile,
+    },
+    /// The transport target did not appear within its three-tile search area.
+    #[error(
+        "transport {} {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
+        blocked_target_word(.kind),
+        .loc_id,
+        .at.x,
+        .at.z,
+        .at.level
+    )]
+    TransportTargetOutOfRange {
+        kind: TransportKind,
+        loc_id: i32,
+        at: WorldTile,
+    },
+    /// A conjunctive worn-item prerequisite was not equipped.
+    #[error(
+        "transport {} {} requires worn_all_req item {item_id}",
+        blocked_target_word(.kind),
+        .loc_id
+    )]
+    WornAllRequirementUnmet {
+        kind: TransportKind,
+        loc_id: i32,
+        item_id: i32,
+    },
+    /// A slashable web could not be cut for the typed reason.
+    #[error("slashable web loc {loc_id} cannot be cut: {reason}")]
+    SlashableWebCannotBeCut { loc_id: i32, reason: WebCutFailure },
+    /// A web disappeared after its observed cut failure and before retry.
+    #[error("slashable web loc {loc_id} disappeared before retrying its observed cut failure")]
+    SlashableWebMissingOnRetry { loc_id: i32 },
+    /// The live fare inventory did not meet the transport's consumption rule.
+    #[error(
+        "transport {loc_id} needs {count} of item {item_id} to pay the fare; carrying {carried}"
+    )]
+    FareUnavailable {
+        loc_id: i32,
+        count: i32,
+        item_id: i32,
+        carried: i32,
+    },
+    /// The active journey dialogue page had no recognized choice.
+    #[error("unrecognized journey dialogue")]
+    UnrecognizedJourneyDialogue,
+    /// No standable tile was found adjacent to the expected troll door.
+    #[error(
+        "troll door loc {loc_id} has no standable tile within 1 of {tile:?} in the loaded scene"
+    )]
+    TrollDoorApproachUnavailable { loc_id: i32, tile: WorldTile },
+    /// The expected troll-door loc was absent at its packed tile.
+    #[error("troll door loc {loc_id} is not at {tile:?} in the loaded scene")]
+    TrollDoorMissing { loc_id: i32, tile: WorldTile },
+    /// An NPC hop's typed recovery failure outlasted the leg budget.
+    #[error(
+        "npc hop {loc_id}: {reason}; {attempts} attempts, leg budget {budget} ticks exhausted"
+    )]
+    NpcHopExpired {
+        loc_id: i32,
+        reason: NpcHopBlockReason,
+        attempts: u32,
+        budget: u32,
+    },
+    /// The NPC hop exhausted its bounded reach retries.
+    #[error("npc hop {loc_id} gave up after {attempts} attempts: reach failure")]
+    NpcReachRetriesExhausted { loc_id: i32, attempts: u32 },
+}
+
 /// The terminal outcome of a [`Traveller::follow`] run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TravelOutcome {
@@ -106,7 +276,7 @@ pub enum TravelOutcome {
     Blocked {
         at: WorldTile,
         leg: usize,
-        detail: String,
+        why: BlockedWhy,
     },
     /// A gated transport leg whose quest evidence did not prove its gates
     /// before the transport interaction was sent: nothing was sent for it.
@@ -182,6 +352,9 @@ pub enum TravelEvent {
     },
 }
 
+/// A callback that observes each active route leg's phase transitions.
+pub type TravelLegCallback<'a> = Box<dyn FnMut(&Leg, LegPhase) + 'a>;
+
 /// How a [`Traveller::follow`] run is parameterized. `on_leg` fires once
 /// per phase transition; the same options are passed on every poll.
 pub struct TravelOptions<'a> {
@@ -210,8 +383,7 @@ pub struct TravelOptions<'a> {
     pub quest_evidence: Option<&'a nav::quest_gates::QuestEvidence>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
-    #[allow(clippy::type_complexity)]
-    pub on_leg: Option<Box<dyn FnMut(&Leg, LegPhase) + 'a>>,
+    pub on_leg: Option<TravelLegCallback<'a>>,
 }
 
 impl Default for TravelOptions<'_> {
@@ -747,18 +919,18 @@ impl FollowRun {
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
                                         leg: self.leg_index,
-                                        detail: reason.detail(),
+                                        why: reason.into(),
                                     });
                                 }
                                 self.requeue_transport(leg);
                                 return None;
                             }
-                            TeleportSend::Blocked(detail) => {
+                            TeleportSend::Blocked(why) => {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Blocked {
                                     at: here,
                                     leg: self.leg_index,
-                                    detail,
+                                    why,
                                 });
                             }
                         }
@@ -821,15 +993,11 @@ impl FollowRun {
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
                                         leg: self.leg_index,
-                                        detail: format!(
-                                            "transport {} {} has no reachable operable target within {} tiles of ({}, {}, {}) in the loaded scene",
-                                            target_word(edge),
-                                            edge.loc_id,
-                                            NPC_SEARCH_RADIUS,
-                                            edge.at.x,
-                                            edge.at.z,
-                                            edge.at.level
-                                        ),
+                                        why: BlockedWhy::NpcTargetUnavailable {
+                                            loc_id: edge.loc_id,
+                                            radius: NPC_SEARCH_RADIUS,
+                                            at: edge.at,
+                                        },
                                     });
                                 }
                                 self.requeue_transport(leg);
@@ -892,14 +1060,11 @@ impl FollowRun {
                                 return Some(TravelOutcome::Blocked {
                                     at: here,
                                     leg: self.leg_index,
-                                    detail: format!(
-                                        "no flood-reachable operable stand for transport {} {} at ({}, {}, {}) in the loaded scene",
-                                        target_word(edge),
-                                        edge.loc_id,
-                                        edge.at.x,
-                                        edge.at.z,
-                                        edge.at.level
-                                    ),
+                                    why: BlockedWhy::TransportApproachUnavailable {
+                                        kind: edge.kind,
+                                        loc_id: edge.loc_id,
+                                        at: edge.at,
+                                    },
                                 });
                             }
                             self.requeue_transport(leg);
@@ -1057,14 +1222,11 @@ impl FollowRun {
                                 return Some(TravelOutcome::Blocked {
                                     at: here,
                                     leg: self.leg_index,
-                                    detail: format!(
-                                        "transport {} {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
-                                        target_word(edge),
-                                        edge.loc_id,
-                                        edge.at.x,
-                                        edge.at.z,
-                                        edge.at.level
-                                    ),
+                                    why: BlockedWhy::TransportTargetOutOfRange {
+                                        kind: edge.kind,
+                                        loc_id: edge.loc_id,
+                                        at: edge.at,
+                                    },
                                 });
                             }
                             self.requeue_transport(leg);
@@ -1104,11 +1266,11 @@ impl FollowRun {
             return Some(TravelOutcome::Blocked {
                 at,
                 leg: self.leg_index,
-                detail: format!(
-                    "transport {} {} requires worn_all_req item {missing}",
-                    target_word(edge),
-                    edge.loc_id,
-                ),
+                why: BlockedWhy::WornAllRequirementUnmet {
+                    kind: edge.kind,
+                    loc_id: edge.loc_id,
+                    item_id: *missing,
+                },
             });
         }
         use api::selected::Truth;

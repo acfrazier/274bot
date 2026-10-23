@@ -466,8 +466,10 @@ fn toll_gate_live_refuses_without_coins() {
     drop(options);
     match &outcome {
         // The traveller's fare recheck names the consumed item and the fare.
-        TravelOutcome::Blocked { detail, .. }
-            if detail.contains(&format!("needs 10 of item {COINS} to pay the fare")) => {}
+        TravelOutcome::Blocked { why, .. }
+            if why
+                .to_string()
+                .contains(&format!("needs 10 of item {COINS} to pay the fare")) => {}
         other => panic!(
             "expected Blocked(coins) without paying, got {other:?}; tile={:?} options={:?}",
             snapshot.tile(),

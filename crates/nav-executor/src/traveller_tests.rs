@@ -10,8 +10,8 @@ use client::io::{ClientStream, ServerProt};
 use std::sync::Arc;
 
 use crate::traveller::{
-    door_tile, FollowRun, HopFailure, LegPhase, Poll, TransportHop, TravelOptions, TravelOutcome,
-    Traveller,
+    door_tile, BlockedWhy, FollowRun, HopFailure, LegPhase, NpcHopBlockReason, Poll, TransportHop,
+    TravelOptions, TravelOutcome, Traveller, WebCutFailure,
 };
 use nav::essence::essence_session_for_wizard;
 use nav::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
@@ -315,10 +315,27 @@ fn plant_door_at(c: &mut Client, open: bool, scene_x: i32, scene_z: i32) {
 /// A wall loc at scene (`scene_x`, `scene_z`) with `id`/`name`/`op1`:
 /// the generic wall-planting shape (the essence exit portal, …).
 fn plant_loc(c: &mut Client, id: i32, name: &str, op1: &str, scene_x: i32, scene_z: i32) {
-    plant_loc_sized(c, id, name, op1, scene_x, scene_z, 1, 1, 1);
+    plant_loc_sized(
+        c,
+        id,
+        name,
+        op1,
+        scene_x,
+        scene_z,
+        LocGeometry {
+            width: 1,
+            length: 1,
+            angle: 1,
+        },
+    );
 }
 
-#[allow(clippy::too_many_arguments)] // test helper plants loc geometry fields together
+struct LocGeometry {
+    width: i32,
+    length: i32,
+    angle: i32,
+}
+
 fn plant_loc_sized(
     c: &mut Client,
     id: i32,
@@ -326,9 +343,7 @@ fn plant_loc_sized(
     op1: &str,
     scene_x: i32,
     scene_z: i32,
-    width: i32,
-    length: i32,
-    angle: i32,
+    geometry: LocGeometry,
 ) {
     {
         let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
@@ -339,8 +354,8 @@ fn plant_loc_sized(
             id,
             name: name.into(),
             op: vec![Some(op1.into()), None, None, None, None],
-            width,
-            length,
+            width: geometry.width,
+            length: geometry.length,
             ..Default::default()
         };
     }
@@ -353,7 +368,7 @@ fn plant_loc_sized(
         0,
         0,
         typecode,
-        angle << 6,
+        geometry.angle << 6,
         0,
         0,
         0,
@@ -525,7 +540,19 @@ fn find_transport_loc_matches_inbound_swing_on_rotated_footprint() {
     let mut c = scene_client();
     // Origin (3205,3209), start at (3209,3209): Chebyshev 4 to origin,
     // on the length-6 angle-1 footprint (x=3205..3210).
-    plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 6, 1);
+    plant_loc_sized(
+        &mut c,
+        2322,
+        "Ropeswing",
+        "Swing-on",
+        5,
+        9,
+        LocGeometry {
+            width: 1,
+            length: 6,
+            angle: 1,
+        },
+    );
     let snap = snap_at(&mut c, 9, 9);
     let loc = snap.locs().iter().find(|l| l.id == 2322).expect("planted");
     assert_eq!(
@@ -555,8 +582,32 @@ fn find_transport_loc_matches_inbound_swing_on_rotated_footprint() {
 fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
     let mut c = scene_client();
     // 1×1 loc four tiles west of at: origin gap 4, footprint does not reach.
-    plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 1, 0);
-    plant_loc_sized(&mut c, 1, "Door", "Open", 1, 1, 1, 1, 0);
+    plant_loc_sized(
+        &mut c,
+        2322,
+        "Ropeswing",
+        "Swing-on",
+        5,
+        9,
+        LocGeometry {
+            width: 1,
+            length: 1,
+            angle: 0,
+        },
+    );
+    plant_loc_sized(
+        &mut c,
+        1,
+        "Door",
+        "Open",
+        1,
+        1,
+        LocGeometry {
+            width: 1,
+            length: 1,
+            angle: 0,
+        },
+    );
     let snap = snap_at(&mut c, 9, 9);
     let at = WorldTile {
         x: 3209,
@@ -966,7 +1017,7 @@ fn follow_does_not_arrive_short_of_the_last_walk_tile() {
 
     plant_player(&mut c, 0, 2);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -1002,8 +1053,7 @@ fn current_aim_is_none_idle_and_the_walk_hop_aim_in_follow() {
     };
     let mut options = TravelOptions::default();
     assert!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options)
-            .is_none(),
+        t.follow(&mut rec, &snap, route, &mut options).is_none(),
         "the run must be active after the first poll"
     );
     // A short leg aims at its last tile (the same `pick_aim` the walk
@@ -1122,8 +1172,8 @@ fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
     let outcome = traveller.follow(&mut rec, &snapshot, route, &mut TravelOptions::default());
     assert!(matches!(
         outcome,
-        Some(TravelOutcome::Blocked { detail, .. })
-            if detail.contains("worn_all_req item 946")
+        Some(TravelOutcome::Blocked { why, .. })
+            if why.to_string().contains("worn_all_req item 946")
     ));
     assert_eq!(rec.loc_ops, 0, "a carried item does not authorize the hop");
 }
@@ -1280,7 +1330,7 @@ fn follow_trapdoor_open_then_climb_arrives_cellar_offset() {
     assert_eq!(*attempts.borrow(), vec![1568, 1570]);
     plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
             assert_ne!(at, dest);
@@ -1335,7 +1385,7 @@ fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
     assert_eq!(*attempts.borrow(), vec![1570]);
     plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
             assert_ne!(at, dest);
@@ -1620,7 +1670,7 @@ fn follow_agility_shortcut_waits_packed_ticks_after_landing() {
             "still on the anim delay after landing poll {i}"
         );
     }
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => assert_eq!(at, dest),
         other => panic!("expected Arrived after packed ticks, got {other:?}"),
     }
@@ -1780,7 +1830,8 @@ fn follow_web_without_a_qualifying_action_fails_without_sending() {
     bump_rebuild(&mut c, &mut snap);
 
     match traveller.follow(&mut rec, &snap, route, &mut options) {
-        Some(TravelOutcome::Blocked { detail, .. }) => {
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
             assert!(
                 detail.contains("neither a worn slash blade nor a carried knife qualifies"),
                 "explicit failure detail: {detail}"
@@ -2276,7 +2327,7 @@ fn follow_glider_answers_talk_then_presses_the_map_dest() {
     );
     plant_player(&mut c, -229, -231); // world (2971, 2969)
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => assert_eq!(at, gandius),
         other => panic!("expected Arrived, got {other:?}"),
     }
@@ -2338,7 +2389,7 @@ fn follow_glider_arrives_within_map_findsquare_radius_1() {
         .is_none());
     plant_player(&mut c, 85, 11); // world (3285, 3211), cheb 1 of the pad
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => assert_eq!(
             at,
             WorldTile {
@@ -2460,7 +2511,7 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
     );
     plant_player(&mut c, -21, 307);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(at, varrock);
         }
@@ -2512,7 +2563,7 @@ fn follow_approaches_an_npc_before_interacting() {
     plant_player(&mut c, 100, 0);
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { .. })
     ));
 }
@@ -2560,9 +2611,7 @@ fn follow_sits_out_a_refused_npc_approach_right_after_a_scene_change() {
         "the retry waits the frozen two ticks"
     );
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.walked,
         vec![(1, 2)],
@@ -2656,7 +2705,7 @@ fn follow_npc_edge_approaches_the_live_tile_when_the_driver_wandered() {
     // The cart carries the player to `edge.to`: the run arrives.
     plant_player(&mut c, 100, 0);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -2738,9 +2787,7 @@ fn follow_reapproaches_when_the_tracked_npc_network_tile_moves_after_approach() 
         }
     );
 
-    assert!(t
-        .follow(&mut c, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut c, &snap, route, &mut options).is_none());
     assert_eq!(
         transports.get(),
         0,
@@ -2869,9 +2916,7 @@ fn follow_reapproaches_tracked_npc_beyond_the_initial_search_radius() {
     // the tracked instance even though a fresh candidate search would omit it.
     c.npc[0].as_mut().unwrap().entity.route_x[0] = 12;
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut c, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut c, &snap, route, &mut options).is_none());
 
     assert_eq!(
         walks.borrow().as_slice(),
@@ -2952,9 +2997,7 @@ fn follow_revalidates_after_a_wanderer_temporarily_has_no_standable_ring() {
         npc.entity.route_z[0] = 1;
     }
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut c, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut c, &snap, route, &mut options).is_none());
     assert_eq!(
         walks.borrow().last(),
         Some(&WorldTile {
@@ -3055,7 +3098,8 @@ fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
         bump_rebuild(&mut c, &mut snap);
     }
     match outcome {
-        Some(TravelOutcome::Blocked { detail, .. }) => {
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
             assert!(
                 detail.contains("npc"),
                 "the block names the missing NPC, got: {detail}"
@@ -3142,7 +3186,7 @@ fn follow_npc_edge_answers_the_fare_dialog_before_arriving() {
     // The cart carries the player to `edge.to`: the run arrives.
     plant_player(&mut c, 100, 0);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -3408,7 +3452,7 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     c.chat_modal_id = -1;
     plant_player(&mut c, 0, 10);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -3811,7 +3855,8 @@ fn follow_alkharid_toll_refuses_without_coins_instead_of_paying() {
     );
     bump_rebuild(&mut c, &mut snap);
     match t.follow(&mut rec, &snap, route, &mut options) {
-        Some(TravelOutcome::Blocked { detail, .. }) => {
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
             assert!(
                 detail.contains(&TEST_TOLL_COIN_OBJ.to_string()) && detail.contains("10"),
                 "refusal must name the missing coins, got {detail}"
@@ -3842,7 +3887,8 @@ fn follow_alkharid_toll_does_not_answer_unknown_pages() {
     plant_choice_dialog(&mut c, &["An unexpected route.", "No thanks."]);
     bump_rebuild(&mut c, &mut snap);
     match t.follow(&mut rec, &snap, route, &mut options) {
-        Some(TravelOutcome::Blocked { detail, .. }) => {
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
             assert!(
                 detail.contains("unrecognized"),
                 "refusal must name the unknown page, got {detail}"
@@ -4056,7 +4102,8 @@ fn follow_rangingguild_missing_loc_nearby_close_does_not_skip_open() {
         bump_rebuild(&mut c, &mut snap);
     }
     match outcome {
-        Some(TravelOutcome::Blocked { detail, .. }) => {
+        Some(TravelOutcome::Blocked { why, .. }) => {
+            let detail = why.to_string();
             assert!(
                 detail.contains("2514"),
                 "blocked waiting for the packed door loc, got: {detail}"
@@ -4452,7 +4499,7 @@ fn follow_npc_edge_answers_choice_one_not_the_op_index() {
     plant_player(&mut c, 100, 0);
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at })
             if at == WorldTile {
                 x: 3300,
@@ -4529,7 +4576,7 @@ fn follow_essence_entry_latches_the_session_on_arrival() {
     plant_player(&mut c, -288, 1633); // world (2912, 4833)
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at })
             if at == WorldTile {
                 x: 2912,
@@ -4612,7 +4659,7 @@ fn follow_essence_entry_accepts_any_mine_landing() {
     plant_player(&mut c, -265, 1646); // world (2935, 4846)
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at })
             if at == WorldTile {
                 x: 2935,
@@ -4683,7 +4730,7 @@ fn follow_essence_exit_arrives_within_the_landing_radius() {
     // The portal drops the player a tile off the anchor: still arrived.
     plant_player(&mut c, 1, 5); // world (3201, 3205), cheb 1 from `to`
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -5075,7 +5122,7 @@ fn follow_jewellery_teleport_rubs_the_packed_item_and_arrives() {
     // `map_findsquare` scatter): the hop accepts the radius.
     plant_player(&mut c, 113, 35); // world (3313, 3235), cheb 2 from `to`
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -5141,7 +5188,7 @@ fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
         .is_none());
     bump_rebuild(&mut c, &mut snap);
     match t.follow(&mut rec, &snap, route, &mut options) {
-        Some(TravelOutcome::Blocked { at, detail, .. }) => {
+        Some(TravelOutcome::Blocked { at, why, .. }) => {
             assert_eq!(
                 at,
                 WorldTile {
@@ -5150,6 +5197,7 @@ fn follow_jewellery_teleport_waits_when_the_inv_tab_is_unbound() {
                     level: 0
                 }
             );
+            let detail = why.to_string();
             assert!(
                 detail.contains("charged teleport item 2552")
                     && detail.contains("inventory control"),
@@ -5251,7 +5299,7 @@ fn follow_jewellery_teleport_answers_the_second_dest_choice() {
     // The glory lands the player at the packed Karamja landing.
     plant_player(&mut c, -282, -24); // world (2918, 3176)
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -5314,7 +5362,7 @@ fn follow_spell_teleport_presses_the_spellbook_button_and_arrives() {
     plant_player(&mut c, 13, 224); // world (3213, 3424)
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at })
             if at == WorldTile {
                 x: 3213,
@@ -5429,7 +5477,7 @@ fn follow_spell_teleport_presses_the_live_spellbook_button_by_text() {
     plant_player(&mut c, 21, 18); // world (3221, 3218)
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { .. })
     ));
 }
@@ -5464,7 +5512,7 @@ fn follow_essence_entry_does_not_latch_for_a_cart_driver() {
     plant_player(&mut c, 100, 0);
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { .. })
     ));
     assert_eq!(t.essence(), None, "a cart ride never latches a session");
@@ -5656,7 +5704,7 @@ fn follow_approaches_a_transport_loc_before_interacting() {
     // The ladder carries the player to `edge.to`: the run arrives.
     plant_player(&mut c, 2, 5);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -5902,9 +5950,7 @@ fn follow_troll_walks_an_open_door_without_closing_it() {
     plant_door(&mut c, true, 1);
     bump_rebuild(&mut c, &mut snap);
     let ops_before_open = rec.loc_ops;
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.loc_ops, ops_before_open,
         "troll must not OP_LOC1 an open door (that Closes it)"
@@ -6153,7 +6199,7 @@ fn cheap_door_hop_steps_through_when_open_lands_on_the_door_tile() {
     plant_player(&mut c, 5, 6);
     bump_rebuild(&mut c, &mut snap);
     assert!(matches!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Arrived { at }) if at.x == 3205 && at.z == 3206
     ));
 }
@@ -6168,9 +6214,7 @@ fn cheap_door_hop_does_not_step_into_a_closed_wall_from_the_door_tile() {
     plant_player(&mut c, 6, 6);
     rec.route = Some((6, 6));
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(rec.loc_ops, 1);
     assert!(rec.sink.steps.is_empty(), "no step into the closed wall");
     assert!(rec.walked.is_empty());
@@ -6483,9 +6527,7 @@ fn follow_cheap_hop_walks_when_the_open_leaf_is_offset() {
     plant_door_at(&mut c, true, 1, 1); // open leaf at (3201, 3201)
     bump_rebuild(&mut c, &mut snap);
     let walks = rec.walked.len();
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert!(
         rec.walked.len() > walks,
         "cheap hop must walk through once the offset open leaf appears"
@@ -6535,7 +6577,7 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
     // One tick later the game reports the pathfind failed.
     c.add_chat(0, "I can't reach that!", "");
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Refused {
             at,
             reason: SendReason::Unreachable,
@@ -6574,7 +6616,19 @@ fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
         .expect("real Lumbridge south staircase")
         .clone();
     let mut c = scene_client();
-    plant_loc_sized(&mut c, 1738, "Staircase", "Climb-up", 4, 7, 2, 2, 0);
+    plant_loc_sized(
+        &mut c,
+        1738,
+        "Staircase",
+        "Climb-up",
+        4,
+        7,
+        LocGeometry {
+            width: 2,
+            length: 2,
+            angle: 0,
+        },
+    );
     for x in 0..104 {
         for z in 0..104 {
             c.collision[0].flags[x][z] =
@@ -6963,9 +7017,7 @@ fn follow_recovers_after_a_stale_view_catches_up_and_the_walk_ends() {
         "the idle window restarts at the new tile"
     );
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.walked.len(),
         2,
@@ -7072,9 +7124,7 @@ fn follow_recovers_a_dropped_walk_while_the_client_route_still_lags() {
     }
     assert_eq!(rec.walked.len(), 1, "recovery waits the idle window");
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.walked.len(),
         2,
@@ -7135,9 +7185,7 @@ fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
     }
     assert_eq!(rec.walked.len(), 1);
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(rec.walked.len(), 2, "fifth distinct idle tick recovers");
 }
 
@@ -7256,9 +7304,7 @@ fn follow_recovers_cancelled_walk_after_partial_progress() {
     );
     // Fifth idle tick at midway tile: same-aim recovery.
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(rec.walked.len(), 2, "one recovery after partial progress");
     assert_eq!(attempts.borrow().len(), 2);
     assert_eq!(
@@ -7326,9 +7372,7 @@ fn follow_partial_progress_tile_change_resets_stall_idle() {
         "tile change must clear prior idle credits"
     );
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.walked.len(),
         2,
@@ -7481,9 +7525,7 @@ fn follow_retries_a_near_tile_when_the_far_hop_is_unreachable() {
     let mut options = TravelOptions::default();
     // The driver rejects a multi-tile hop: follow walks the index
     // back to the adjacent tile (the v1 traveller's fallback).
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert_eq!(
         rec.walked.last().copied(),
         Some((0, 1)),
@@ -7622,7 +7664,7 @@ fn follow_blocks_when_the_transport_loc_is_missing() {
     );
     assert!(matches!(
         outcome,
-        TravelOutcome::Blocked { leg: 0, detail, .. } if detail.contains("99")
+        TravelOutcome::Blocked { leg: 0, why, .. } if why.to_string().contains("99")
     ));
 }
 
@@ -7843,7 +7885,7 @@ fn follow_ends_blocked_when_the_adjacent_route_end_refuses_every_click() {
     }
     bump_rebuild(&mut c, &mut snap);
     assert_eq!(
-        t.follow(&mut rec, &snap, route.clone(), &mut options),
+        t.follow(&mut rec, &snap, route, &mut options),
         Some(TravelOutcome::Stalled {
             at: WorldTile {
                 x: 3200,
@@ -7911,7 +7953,7 @@ fn follow_waits_across_polls_for_the_hop_to_arrive() {
     // Poll 3: the player reaches the leg end — the run arrives.
     plant_player(&mut c, 0, 5);
     bump_rebuild(&mut c, &mut snap);
-    match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+    match t.follow(&mut rec, &snap, route, &mut options) {
         Some(TravelOutcome::Arrived { at }) => {
             assert_eq!(
                 at,
@@ -8002,9 +8044,7 @@ fn follow_click_ahead_sends_the_next_hop_before_exact_stand() {
     // 15-tile aim from (3200,3200) is z=15; stand at z=13 (cheb 2).
     plant_player(&mut c, 0, 13);
     bump_rebuild(&mut c, &mut snap);
-    assert!(t
-        .follow(&mut rec, &snap, route.clone(), &mut options)
-        .is_none());
+    assert!(t.follow(&mut rec, &snap, route, &mut options).is_none());
     assert!(
         rec.walked.len() > first,
         "click-ahead must send the next hop at cheb 2, got {}",
@@ -8271,8 +8311,249 @@ impl Out for Sink {
     }
 }
 
+// The typed NPC reason shrinks the former fat `Option<&'static str>` state.
+// Keep both measured 16-byte reductions pinned.
 #[test]
 fn executor_state_size_pins() {
-    assert_eq!(std::mem::size_of::<Traveller>(), 816);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
+    assert_eq!(std::mem::size_of::<Traveller>(), 800);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 760);
+}
+const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
+    x: 12,
+    z: 34,
+    level: 2,
+};
+
+#[test]
+fn blocked_why_teleport_inventory_control_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TeleportInventoryControlUnavailable { item_id: 2552 }.to_string(),
+        "charged teleport item 2552 never acquired a usable inventory control"
+    );
+}
+
+#[test]
+fn blocked_why_teleport_spell_button_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TeleportSpellButtonRejected { button_id: 42 }.to_string(),
+        "teleport spell button 42 was not accepted by the driver"
+    );
+}
+
+#[test]
+fn blocked_why_teleport_skill_requirement_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TeleportSkillRequirementUnmet {
+            skill: 3,
+            level: 50,
+            observed: Some(48),
+        }
+        .to_string(),
+        "teleport needs skill 3 level 50; observed Some(48)"
+    );
+    assert_eq!(
+        BlockedWhy::TeleportSkillRequirementUnmet {
+            skill: 3,
+            level: 50,
+            observed: None,
+        }
+        .to_string(),
+        "teleport needs skill 3 level 50; observed None"
+    );
+}
+
+#[test]
+fn blocked_why_teleport_item_requirement_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TeleportItemRequirementUnmet {
+            count: 10,
+            item_id: 4242,
+            carried: 9,
+        }
+        .to_string(),
+        "teleport needs 10 of item 4242 (runes or a charged item); carrying 9"
+    );
+}
+
+#[test]
+fn blocked_why_unsupported_spell_teleport_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::UnsupportedSpellTeleport {
+            to: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "packed spell teleport to (12, 34, 2) is not one of the seven standard spellbook teleports"
+    );
+}
+
+#[test]
+fn blocked_why_npc_target_unavailable_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::NpcTargetUnavailable {
+            loc_id: 553,
+            radius: 8,
+            at: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "transport npc 553 has no reachable operable target within 8 tiles of (12, 34, 2) in the loaded scene"
+    );
+}
+
+#[test]
+fn blocked_why_transport_approach_unavailable_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TransportApproachUnavailable {
+            kind: TransportKind::Door,
+            loc_id: 42,
+            at: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "no flood-reachable operable stand for transport loc 42 at (12, 34, 2) in the loaded scene"
+    );
+}
+
+#[test]
+fn blocked_why_transport_target_out_of_range_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TransportTargetOutOfRange {
+            kind: TransportKind::Boat,
+            loc_id: 42,
+            at: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "transport npc 42 is not within 3 tiles of (12, 34, 2) in the loaded scene"
+    );
+}
+
+#[test]
+fn blocked_why_worn_all_requirement_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::WornAllRequirementUnmet {
+            kind: TransportKind::Npc,
+            loc_id: 42,
+            item_id: 946,
+        }
+        .to_string(),
+        "transport npc 42 requires worn_all_req item 946"
+    );
+}
+
+#[test]
+fn blocked_why_slashable_web_failure_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::SlashableWebCannotBeCut {
+            loc_id: 733,
+            reason: WebCutFailure::PackedTransportEdgesUnavailable,
+        }
+        .to_string(),
+        "slashable web loc 733 cannot be cut: the packed transport edge list is unavailable"
+    );
+    assert_eq!(
+        BlockedWhy::SlashableWebCannotBeCut {
+            loc_id: 733,
+            reason: WebCutFailure::NoQualifyingSlashTool,
+        }
+        .to_string(),
+        "slashable web loc 733 cannot be cut: neither a worn slash blade nor a carried knife qualifies"
+    );
+}
+
+#[test]
+fn blocked_why_slashable_web_retry_target_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::SlashableWebMissingOnRetry { loc_id: 733 }.to_string(),
+        "slashable web loc 733 disappeared before retrying its observed cut failure"
+    );
+}
+
+#[test]
+fn blocked_why_fare_unavailable_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::FareUnavailable {
+            loc_id: 2882,
+            count: 10,
+            item_id: 4242,
+            carried: 9,
+        }
+        .to_string(),
+        "transport 2882 needs 10 of item 4242 to pay the fare; carrying 9"
+    );
+}
+
+#[test]
+fn blocked_why_unrecognized_journey_dialogue_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::UnrecognizedJourneyDialogue.to_string(),
+        "unrecognized journey dialogue"
+    );
+}
+
+#[test]
+fn blocked_why_troll_door_approach_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TrollDoorApproachUnavailable {
+            loc_id: 1,
+            tile: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "troll door loc 1 has no standable tile within 1 of WorldTile { x: 12, z: 34, level: 2 } in the loaded scene"
+    );
+}
+
+#[test]
+fn blocked_why_troll_door_missing_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::TrollDoorMissing {
+            loc_id: 1,
+            tile: BLOCKED_DISPLAY_TILE,
+        }
+        .to_string(),
+        "troll door loc 1 is not at WorldTile { x: 12, z: 34, level: 2 } in the loaded scene"
+    );
+}
+
+#[test]
+fn blocked_why_npc_hop_expired_display_is_unchanged() {
+    for (reason, detail) in [
+        (
+            NpcHopBlockReason::TrackedTargetMissing,
+            "tracked target missing",
+        ),
+        (
+            NpcHopBlockReason::NoReachableOperableStand,
+            "no reachable operable stand",
+        ),
+        (
+            NpcHopBlockReason::ApproachRouteRefused,
+            "approach route refused",
+        ),
+        (NpcHopBlockReason::ReachFailure, "reach failure"),
+        (
+            NpcHopBlockReason::UnrecognizedJourneyDialogue,
+            "unrecognized journey dialogue",
+        ),
+    ] {
+        assert_eq!(
+            BlockedWhy::NpcHopExpired {
+                loc_id: 378,
+                reason,
+                attempts: 3,
+                budget: 60,
+            }
+            .to_string(),
+            format!("npc hop 378: {detail}; 3 attempts, leg budget 60 ticks exhausted")
+        );
+    }
+}
+
+#[test]
+fn blocked_why_npc_reach_retries_exhausted_display_is_unchanged() {
+    assert_eq!(
+        BlockedWhy::NpcReachRetriesExhausted {
+            loc_id: 378,
+            attempts: 3,
+        }
+        .to_string(),
+        "npc hop 378 gave up after 3 attempts: reach failure"
+    );
 }
