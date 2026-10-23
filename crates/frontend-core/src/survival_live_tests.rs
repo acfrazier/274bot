@@ -16,8 +16,8 @@ use api::interact::{cheat, tele_args};
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::{
-    mint_live_entries, mint_live_names, run_with_template, InstancePermit, ProfileOptions,
-    SharedClientTemplate, SlotArm,
+    mint_live_entries, mint_live_names, register_guard_action_observer_for_test, run_with_template,
+    GuardDrinkAction, InstancePermit, ProfileOptions, SharedClientTemplate, SlotArm,
 };
 use parking_lot::Mutex;
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
@@ -71,10 +71,13 @@ struct Trace {
     native_never_tick: Option<u32>,
     native_when_needed_frame: Option<u64>,
     native_when_needed_tick: Option<u32>,
+    native_next_tick_first_frame: Option<u64>,
+    native_next_tick_last_frame: Option<u64>,
     arm_never_frame: Option<u64>,
     arm_when_needed_frame: Option<u64>,
     host_never_frame: Option<u64>,
     host_when_needed_frame: Option<u64>,
+    host_when_needed_tick: Option<u32>,
     host_policy_after_copy: bool,
     setting_operation: Option<u64>,
     setting_submit_tick: Option<u32>,
@@ -125,6 +128,7 @@ struct Trace {
     walk_receipt_tick: Option<u32>,
     walk_detail: Option<String>,
     events: Vec<Value>,
+    guard_drinks: Vec<GuardDrinkAction>,
 }
 
 impl Trace {
@@ -139,10 +143,26 @@ impl Trace {
         }
     }
 
-    fn receipt(&self, failure: Option<&str>) -> Value {
+    fn sample_frame_tick(&mut self, frame: u64, tick: u32) {
+        let Some(next_tick) = self
+            .host_when_needed_tick
+            .and_then(|host_tick| host_tick.checked_add(1))
+        else {
+            return;
+        };
+        if tick == next_tick {
+            self.native_next_tick_first_frame
+                .get_or_insert(frame);
+            self.native_next_tick_last_frame = Some(frame);
+        }
+    }
+
+    fn receipt(&self, scenario: &str, failure: Option<&str>) -> Value {
         let projected = self.projected_first_mark_bite();
+        let head = git_head();
         json!({
-            "scenario": "L-GUARD-CURE",
+            "scenario": scenario,
+            "git_head": head,
             "account": self.account,
             "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
             "map_members": true,
@@ -205,6 +225,14 @@ impl Trace {
                 "disk_error": self.disk_error,
                 "arm_when_needed_frame": self.arm_when_needed_frame,
                 "host_when_needed_frame": self.host_when_needed_frame,
+                "host_when_needed_tick": self.host_when_needed_tick,
+                "native_next_tick_frame_bound": {
+                    "tick": self
+                        .host_when_needed_tick
+                        .and_then(|host_tick| host_tick.checked_add(1)),
+                    "first_sampled_frame": self.native_next_tick_first_frame,
+                    "last_sampled_frame": self.native_next_tick_last_frame,
+                },
                 "host_policy_after_copy": self.host_policy_after_copy,
                 "native_when_needed_tick": self.native_when_needed_tick,
                 "native_when_needed_frame": self.native_when_needed_frame,
@@ -221,6 +249,7 @@ impl Trace {
                 "food_drop": self.food_drop_tick,
                 "food_at_finish": self.final_food_count,
                 "raw_poison_marks": self.raw_poison_marks,
+                "accepted_guard_drinks": self.guard_drinks,
                 "post_cure_bite": "not due on the quiet route after poison is cleared; no bite is required",
             },
             "walk": {
@@ -498,7 +527,17 @@ fn walk_request(required_after: api::quest_progress::EvidenceStamp) -> WalkReque
 
 #[test]
 #[ignore = "requires LIVE=1, isohome, Engine A, BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, ENGINE_DIR, NAV_PACK, and LIVE_EVIDENCE_DIR"]
-fn live_frontend_setting_mirrors_into_native_walk_guard() {
+fn live_guard_cure() {
+    run_survival_live_cell("L-GUARD-CURE", "l-guard-cure", false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, isohome, Engine A, BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, ENGINE_DIR, NAV_PACK, and LIVE_EVIDENCE_DIR"]
+fn live_setting_mirror() {
+    run_survival_live_cell("L-SETTING-MIRROR", "l-setting-mirror", true);
+}
+
+fn run_survival_live_cell(scenario: &str, evidence_prefix: &str, stop_after_mirror: bool) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
 
@@ -510,18 +549,20 @@ fn live_frontend_setting_mirrors_into_native_walk_guard() {
         .next()
         .expect("BOT_LIVE_NAME_PREFIX must mint one account");
     let evidence = evidence_root.join(format!(
-        "l-guard-cure_{}_{}",
+        "{evidence_prefix}_{}_{}",
         account,
         scenario::shot::stamp_utc(SystemTime::now())
     ));
     std::fs::create_dir_all(&evidence).expect("create cell evidence directory");
     let vault_path = evidence.join("vault.bin");
+    let guard_action_observer = register_guard_action_observer_for_test(&account);
     let trace = Arc::new(Mutex::new(Trace {
         account: Some(account.clone()),
         ..Trace::default()
     }));
 
-    let run = run_guard_cure_live(&account, &vault_path, Arc::clone(&trace));
+    let run = run_guard_cure_live(&account, &vault_path, Arc::clone(&trace), stop_after_mirror);
+    trace.lock().guard_drinks = guard_action_observer.actions();
     let disk_result = if vault_path.is_file() {
         match Vault::unlock(&vault_path, VAULT_PASSPHRASE) {
             Ok(vault) => {
@@ -545,14 +586,18 @@ fn live_frontend_setting_mirrors_into_native_walk_guard() {
     } else {
         Err("the test did not create its evidence vault".to_owned())
     };
-    let oracle_result = verify_guard_cure(&trace.lock());
+    let oracle_result = if stop_after_mirror {
+        verify_setting_mirror(&trace.lock())
+    } else {
+        verify_guard_cure(&trace.lock())
+    };
     let failure = run
         .as_ref()
         .err()
         .or_else(|| disk_result.as_ref().err())
         .or_else(|| oracle_result.as_ref().err())
         .map(String::as_str);
-    let receipt = trace.lock().receipt(failure);
+    let receipt = trace.lock().receipt(scenario, failure);
     std::fs::write(
         evidence.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt).expect("serialize receipt"),
@@ -561,18 +606,18 @@ fn live_frontend_setting_mirrors_into_native_walk_guard() {
 
     assert!(
         run.is_ok() && disk_result.is_ok() && oracle_result.is_ok(),
-        "L-GUARD-CURE failed; receipt: {}\nrun: {:?}\ndisk: {:?}\noracle: {:?}",
+        "{scenario} failed; receipt: {}\nrun: {:?}\ndisk: {:?}\noracle: {:?}",
         evidence.join("receipt.json").display(),
         run.err(),
         disk_result.err(),
         oracle_result.err(),
     );
 }
-
 fn run_guard_cure_live(
     account: &str,
     vault_path: &Path,
     trace: Arc<Mutex<Trace>>,
+    stop_after_mirror: bool,
 ) -> Result<(), String> {
     let nav_pack = required_path("NAV_PACK")?;
     let nav_flags = std::env::var_os("NAV_FLAGS")
@@ -740,6 +785,7 @@ fn run_guard_cure_live(
 
             {
                 let mut trace = frame_trace.lock();
+                trace.sample_frame_tick(frame_number, tick);
                 if ingame && !state.was_ingame {
                     trace.login_ticks.push(tick);
                     trace.final_login_tick = Some(tick);
@@ -916,6 +962,7 @@ fn run_guard_cure_live(
         }
         if policy == Some(ScriptCurePoison::WhenNeeded) && trace.host_when_needed_frame.is_none() {
             trace.host_when_needed_frame = Some(frame);
+            trace.host_when_needed_tick = Some(tick);
             trace.host_policy_after_copy = true;
             trace.event(
                 "host-guard-policy-mirrored",
@@ -1165,13 +1212,20 @@ fn run_guard_cure_live(
 
         let done = {
             let trace = trace.lock();
-            trace.setting_completed
-                && trace.immune_tick.is_some()
-                && trace.walk_arrived
-                && trace.walk_end.as_deref() == Some("Arrived")
+            let mirror_complete = trace.setting_completed
                 && trace.arm_when_needed_frame.is_some()
                 && trace.native_when_needed_frame.is_some()
                 && trace.host_when_needed_frame.is_some()
+                && trace.native_next_tick_first_frame.is_some()
+                && trace.native_next_tick_last_frame.is_some();
+            if stop_after_mirror {
+                mirror_complete
+            } else {
+                mirror_complete
+                    && trace.immune_tick.is_some()
+                    && trace.walk_arrived
+                    && trace.walk_end.as_deref() == Some("Arrived")
+            }
         };
         if done {
             break;
@@ -1207,6 +1261,115 @@ fn operation_completed(
         ));
     }
     Ok(outcome.is_completed())
+}
+
+fn verify_setting_mirror(trace: &Trace) -> Result<(), String> {
+    if trace.account.is_none()
+        || trace.load_operation.is_none()
+        || !trace.setup_passed
+        || !trace.script_run_retained
+    {
+        return Err("live setting mirror setup or native script start was not observed".into());
+    }
+    if trace.onset_policy.as_deref() != Some("never") {
+        return Err(format!(
+            "native policy at poison onset was {:?}, expected never",
+            trace.onset_policy
+        ));
+    }
+    if trace.setting_operation.is_none() || !trace.setting_completed {
+        return Err("SetSurvival save operation did not complete".into());
+    }
+    if trace.durable_policy.as_deref() != Some("when_needed") {
+        return Err(format!("durable policy was {:?}", trace.durable_policy));
+    }
+    let disk_policy = trace
+        .disk_policy
+        .as_deref()
+        .ok_or("missing reopened vault policy")?;
+    if disk_policy != "when_needed" {
+        return Err(format!("reopened vault policy was {disk_policy}"));
+    }
+
+    let onset_frame = trace.onset_frame.ok_or("missing onset frame")?;
+    let native_never_frame = trace
+        .native_never_frame
+        .ok_or("NativeTick never observed Never")?;
+    let arm_never_frame = trace
+        .arm_never_frame
+        .ok_or("SlotArm never observed Never")?;
+    let host_never_frame = trace
+        .host_never_frame
+        .ok_or("host guard never observed Never")?;
+    if native_never_frame > onset_frame
+        || arm_never_frame > onset_frame
+        || host_never_frame > onset_frame
+    {
+        return Err(format!(
+            "Never baseline was not observed by onset: native={native_never_frame}, arm={arm_never_frame}, onset={onset_frame}"
+        ));
+    }
+
+    let submitted_frame = trace
+        .setting_submit_frame
+        .ok_or("missing SetSurvival frame")?;
+    if submitted_frame.abs_diff(onset_frame) > 1 {
+        return Err(format!(
+            "SetSurvival was submitted {} frames from Onset",
+            submitted_frame.abs_diff(onset_frame)
+        ));
+    }
+
+    let durable_frame = trace.durable_frame.ok_or("missing durable save frame")?;
+    let arm_frame = trace
+        .arm_when_needed_frame
+        .ok_or("SlotArm never mirrored WhenNeeded")?;
+    if arm_frame < durable_frame || arm_frame - durable_frame > 1 {
+        return Err(format!(
+            "SlotArm mirror frame {arm_frame} precedes or is more than one frame after durable save {durable_frame}"
+        ));
+    }
+    let host_frame = trace
+        .host_when_needed_frame
+        .ok_or("host guard never mirrored WhenNeeded")?;
+    if host_frame < durable_frame || host_frame - durable_frame > 1 {
+        return Err(format!(
+            "host guard mirror frame {host_frame} precedes or is more than one frame after durable save {durable_frame}"
+        ));
+    }
+    if !trace.host_policy_after_copy {
+        return Err("host policy was read before the per-frame copy".into());
+    }
+
+    let host_tick = trace
+        .host_when_needed_tick
+        .ok_or("missing host WhenNeeded mirror tick")?;
+    let next_tick = host_tick
+        .checked_add(1)
+        .ok_or("host mirror tick cannot be incremented")?;
+    let native_tick = trace
+        .native_when_needed_tick
+        .ok_or("NativeTick never observed WhenNeeded")?;
+    if native_tick != next_tick {
+        return Err(format!(
+            "NativeTick observed WhenNeeded at tick {native_tick}; expected the next observed tick {next_tick} after host mirror tick {host_tick}"
+        ));
+    }
+    let native_frame = trace
+        .native_when_needed_frame
+        .ok_or("NativeTick never observed WhenNeeded")?;
+    let first_frame = trace
+        .native_next_tick_first_frame
+        .ok_or("missing sampled frame for the next game tick")?;
+    let last_frame = trace
+        .native_next_tick_last_frame
+        .ok_or("missing final sampled frame for the next game tick")?;
+    if first_frame > last_frame || native_frame < first_frame || native_frame > last_frame {
+        return Err(format!(
+            "NativeTick frame {native_frame} falls outside sampled frames {first_frame}..={last_frame} for next tick {next_tick}"
+        ));
+    }
+    Ok(())
 }
 
 fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
@@ -1288,62 +1451,21 @@ fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
     if !trace.onset_walk_pending || trace.route_progress_at_onset.unwrap_or(0) == 0 {
         return Err("poison onset was not observed during a progressing native Walk".into());
     }
-    if trace.setting_operation.is_none() || !trace.setting_completed {
-        return Err("SetSurvival save operation did not complete".into());
+    verify_setting_mirror(trace)?;
+    if trace.guard_drinks.is_empty() {
+        return Err("host walk guard emitted no accepted antipoison Drink".into());
     }
-    if trace.durable_policy.as_deref() != Some("when_needed") {
-        return Err(format!("durable policy was {:?}", trace.durable_policy));
-    }
-    let disk_policy = trace
-        .disk_policy
-        .as_deref()
-        .ok_or("missing reopened vault policy")?;
-    if disk_policy != "when_needed" {
-        return Err(format!("reopened vault policy was {disk_policy}"));
-    }
-    let onset_frame = trace.onset_frame.ok_or("missing onset frame")?;
-    let native_never_frame = trace
-        .native_never_frame
-        .ok_or("NativeTick never observed Never")?;
-    let arm_never_frame = trace
-        .arm_never_frame
-        .ok_or("SlotArm never observed Never")?;
-    let host_never_frame = trace
-        .host_never_frame
-        .ok_or("host guard never observed Never")?;
-    if native_never_frame > onset_frame
-        || arm_never_frame > onset_frame
-        || host_never_frame > onset_frame
+    let host_mirror_tick = trace
+        .host_when_needed_tick
+        .ok_or("missing host WhenNeeded mirror tick")?;
+    if let Some(drink) = trace
+        .guard_drinks
+        .iter()
+        .find(|drink| drink.snapshot_tick <= host_mirror_tick)
     {
         return Err(format!(
-            "Never baseline was not observed by onset: native={native_never_frame}, arm={arm_never_frame}, onset={onset_frame}"
-        ));
-    }
-    let submitted_frame = trace
-        .setting_submit_frame
-        .ok_or("missing SetSurvival frame")?;
-    if submitted_frame.abs_diff(onset_frame) > 1 {
-        return Err(format!(
-            "SetSurvival was submitted {} frames from Onset",
-            submitted_frame.abs_diff(onset_frame)
-        ));
-    }
-    let durable_frame = trace.durable_frame.ok_or("missing durable save frame")?;
-    let arm_frame = trace
-        .arm_when_needed_frame
-        .ok_or("SlotArm never mirrored WhenNeeded")?;
-    let native_frame = trace
-        .native_when_needed_frame
-        .ok_or("NativeTick never observed WhenNeeded")?;
-    let host_frame = trace
-        .host_when_needed_frame
-        .ok_or("host guard never mirrored WhenNeeded")?;
-    if !trace.host_policy_after_copy {
-        return Err("host policy was read before the per-frame copy".into());
-    }
-    if durable_frame.abs_diff(arm_frame) > 1 || durable_frame.abs_diff(host_frame) > 1 {
-        return Err(format!(
-            "running policy missed one-frame mirror: durable={durable_frame}, arm={arm_frame}, host={host_frame}, native_poll={native_frame}"
+            "accepted host guard Drink of {} at snapshot tick {} was not after WhenNeeded mirror tick {host_mirror_tick}",
+            drink.item_name, drink.snapshot_tick
         ));
     }
     if trace.drink_line_tick.is_none()
@@ -1407,6 +1529,23 @@ fn item_count(snapshot: &GameSnapshot, id: i32) -> i32 {
         .fold(0_i32, i32::saturating_add)
 }
 
+fn git_head() -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run git rev-parse HEAD for the live receipt");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("git rev-parse HEAD output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
 fn required_path(name: &str) -> Result<PathBuf, String> {
     let path = std::env::var_os(name)
         .map(PathBuf::from)
@@ -1451,12 +1590,15 @@ mod oracle_tests {
             script_run_retained: true,
             native_never_frame: Some(10),
             native_never_tick: Some(131),
-            native_when_needed_frame: Some(31),
+            native_when_needed_frame: Some(43),
             native_when_needed_tick: Some(135),
+            native_next_tick_first_frame: Some(41),
+            native_next_tick_last_frame: Some(44),
             arm_never_frame: Some(10),
             arm_when_needed_frame: Some(31),
             host_never_frame: Some(10),
             host_when_needed_frame: Some(31),
+            host_when_needed_tick: Some(134),
             host_policy_after_copy: true,
             setting_operation: Some(2),
             setting_submit_tick: Some(132),
@@ -1495,6 +1637,10 @@ mod oracle_tests {
             walk_end: Some("Arrived".into()),
             walk_arrived: true,
             walk_receipt_tick: Some(200),
+            guard_drinks: vec![GuardDrinkAction {
+                snapshot_tick: 135,
+                item_name: "Antipoison(3)".into(),
+            }],
             ..Trace::default()
         }
     }
@@ -1502,6 +1648,24 @@ mod oracle_tests {
     #[test]
     fn oracle_accepts_durable_mirror_drink_and_arrived_walk() {
         assert_eq!(verify_guard_cure(&passing_trace()), Ok(()));
+    }
+
+    #[test]
+    fn setting_mirror_oracle_accepts_durable_save_and_next_tick_poll() {
+        assert_eq!(verify_setting_mirror(&passing_trace()), Ok(()));
+    }
+
+    #[test]
+    fn oracle_rejects_guard_drink_before_or_on_the_host_when_needed_mirror_or_no_drink() {
+        for tick in [132, 134] {
+            let mut early = passing_trace();
+            early.guard_drinks[0].snapshot_tick = tick;
+            assert!(verify_guard_cure(&early).is_err());
+        }
+
+        let mut missing = passing_trace();
+        missing.guard_drinks.clear();
+        assert!(verify_guard_cure(&missing).is_err());
     }
 
     #[test]
@@ -1558,23 +1722,34 @@ mod oracle_tests {
     }
 
     #[test]
-    fn oracle_rejects_missing_durable_one_frame_mirror() {
-        let mut late_arm = passing_trace();
-        late_arm.arm_when_needed_frame = Some(32);
-        assert!(verify_guard_cure(&late_arm).is_err());
+    fn oracle_rejects_pre_save_or_late_policy_mirrors() {
+        for frame in [29, 32] {
+            let mut arm = passing_trace();
+            arm.arm_when_needed_frame = Some(frame);
+            assert!(verify_setting_mirror(&arm).is_err());
 
-        let mut late_host = passing_trace();
-        late_host.host_when_needed_frame = Some(32);
-        assert!(verify_guard_cure(&late_host).is_err());
+            let mut host = passing_trace();
+            host.host_when_needed_frame = Some(frame);
+            assert!(verify_setting_mirror(&host).is_err());
+        }
     }
 
     #[test]
-    fn oracle_accepts_the_next_native_game_tick_after_the_host_frame_mirror() {
-        let mut trace = passing_trace();
-        trace.native_when_needed_frame = Some(57);
-        assert!(verify_guard_cure(&trace).is_ok());
+    fn oracle_accepts_native_poll_within_the_next_tick_frame_samples() {
+        assert!(verify_setting_mirror(&passing_trace()).is_ok());
     }
 
+    #[test]
+    fn oracle_rejects_late_native_poll_tick_or_frame() {
+        let mut late_tick = passing_trace();
+        late_tick.native_when_needed_tick = Some(136);
+        late_tick.native_when_needed_frame = Some(45);
+        assert!(verify_setting_mirror(&late_tick).is_err());
+
+        let mut late_frame = passing_trace();
+        late_frame.native_when_needed_frame = Some(45);
+        assert!(verify_setting_mirror(&late_frame).is_err());
+    }
     #[test]
     fn oracle_rejects_death_or_non_arrival() {
         let mut dead = passing_trace();

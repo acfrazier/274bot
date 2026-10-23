@@ -108,6 +108,11 @@ pub use walk_arm::{
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
+
+#[cfg(feature = "test-support")]
+pub use play_scripts::{
+    register_guard_action_observer_for_test, GuardActionObserver, GuardDrinkAction,
+};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};

@@ -45,17 +45,17 @@ impl GuardianPolicy {
 /// display order.
 pub const GUARDIAN_EVENTS: [(&str, &str); 8] = vault::RANDOM_EVENT_POLICY_EVENTS;
 
-/// When a script drinks a held antipoison: the profile's Cure poison
-/// setting.
+/// When combat or a protected walk drinks a held antipoison: the profile's
+/// Cure poison setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CurePoison {
-    /// Drink when the poison's worst case would take the bot below its
-    /// eating line or kill it.
+    /// Drink during combat or a protected walk when poison makes a health
+    /// bite necessary.
     #[default]
     WhenNeeded,
-    /// Drink as soon as the game reports the poison.
+    /// Drink when combat or a protected walk reports poison.
     Always,
-    /// Never drink. The status row still shows the need.
+    /// Do not drink for poison.
     Never,
 }
 
@@ -113,18 +113,14 @@ pub const SURVIVAL_FIELDS: [(CurePoison, &str, &str); 3] = [
     (
         CurePoison::WhenNeeded,
         "when_needed",
-        "When needed: drink as soon as the game reports the poison, when its worst case would take the bot below its eating line or kill it",
+        "When needed: drink in combat or protected walks",
     ),
     (
         CurePoison::Always,
         "always",
-        "Always: drink as soon as the game reports the poison",
+        "Always: drink when poison is reported in combat or protected walks",
     ),
-    (
-        CurePoison::Never,
-        "never",
-        "Never: never drink. A poisoned bot keeps working and the status row shows the need. It does not stop for poison.",
-    ),
+    (CurePoison::Never, "never", "Never: do not drink for poison"),
 ];
 
 /// The profile's Survival and supplies group, as the front ends read it.

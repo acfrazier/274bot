@@ -310,3 +310,25 @@ first = "0.2.6"
 target = "none"
 severity = "low"
 owner = "T2 survival"
+
+[[item]]
+id = "survival-cure-policy-gatherer-quester"
+kind = "not-in-release"
+area = "Scripts"
+text = """Cure poison does not interrupt Gatherer or Quester steps to drink a held
+  antipoison when poison makes a cure necessary. This behavior is not included."""
+first = "0.2.6"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-poison-need-status"
+kind = "not-in-release"
+area = "Panel and TUI"
+text = """The panel and TUI do not show a status row for a poison-related cure
+  need. A poison-need status row is not included."""
+first = "0.2.6"
+target = "none"
+severity = "low"
+owner = "T2 survival"
