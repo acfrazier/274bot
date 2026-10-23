@@ -202,8 +202,8 @@ impl TuiApp {
         }
         match self.key_scope() {
             "Fleet filter" => "type: name, wN, state · Up/Down move · Enter keep · Esc clear",
-            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world",
-            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world",
+            "Fleet" if self.fleet_model.order() == frontend_core::FleetOrder::LoadOrder => "Up/Down move · Alt-Up/Down reorder · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world · N new profile",
+            "Fleet" => "Up/Down move · Enter select · Space select row · / filter · s sort · m log in · U log out (marked, else loaded shown; asks first) · W world · N new profile",
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
@@ -211,8 +211,8 @@ impl TuiApp {
             "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
             "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
             "Overview" if self.memory.is_some_and(frontend_core::MemoryNotice::can_relog) =>
-                "i login · u logout · r Relog now · x remove · o settings · l loadouts · w manual walk",
-            "Overview" => "i login · u logout · x remove · o settings · l loadouts · w manual walk",
+                "i log in · u log out · r Relog now · x remove · o settings · l loadouts · w manual walk",
+            "Overview" => "i log in · u log out · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
@@ -398,6 +398,12 @@ impl TuiApp {
             Command::ImportProfiles => self.open_modal(Modal::ProfileImport(
                 crate::profile_import::ImportView::default(),
             )),
+            Command::NewProfile => {
+                self.open_modal(Modal::NewProfile(
+                    crate::new_profile::NewProfileView::default(),
+                ));
+                return AppAction::OpenNewProfile;
+            }
             Command::ManualWalk => self.open_modal(Modal::Manual),
             Command::DismissNotice => return AppAction::AckBackground,
             Command::ScriptBrowse | Command::ScriptLoad | Command::ImportCatalog => {
