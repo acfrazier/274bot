@@ -924,8 +924,8 @@ fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
 #[test]
 fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_edits() {
     use api::snapshot::WorldTile;
-    use nav::collision::{pack_walk, WorldCollision};
-    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
     use sha2::{Digest, Sha256};
     let fixture = Fixture::new();
     let mut options = fixture.options(289);
@@ -970,8 +970,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         wildy_cap: None,
         quest_gates: None,
     });
-    let bytes = nav::pack::encode(&collision, &graph, &[]).unwrap();
-    let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
+    let bytes = nav_planner::pack::encode(&collision, &graph, &[]).unwrap();
+    let flags = nav_planner::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
     let pack = fixture.0.join("selected.navpack");
     let flags_path = fixture.0.join("selected.navflags");
     std::fs::write(&pack, &bytes).unwrap();
@@ -1073,10 +1073,10 @@ fn consuming_ticket_does_not_rehash_cache() {
 
 fn tiny_v8_pack() -> Vec<u8> {
     use api::snapshot::WorldTile;
-    use nav::collision::{pack_walk, WorldCollision};
-    use nav::transport::TransportGraph;
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::transport::TransportGraph;
     let (walk, blocked) = pack_walk(&[0; 8]);
-    nav::pack::encode(
+    nav_planner::pack::encode(
         &WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1104,11 +1104,11 @@ fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
         level: 0,
     };
     let digest: [u8; 32] = Sha256::digest(pack).into();
-    nav::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
+    nav_planner::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
 }
 
 fn fixture_canlight_policy() -> [u8; 32] {
-    nav::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64])
+    nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64])
 }
 
 fn tiny_v8_canlight(pack: &[u8]) -> (Vec<u8>, String) {
@@ -1121,21 +1121,21 @@ fn tiny_v8_canlight(pack: &[u8]) -> (Vec<u8>, String) {
     };
     let digest: [u8; 32] = Sha256::digest(pack).into();
     let policy = fixture_canlight_policy();
-    let binding = nav::canlight::header_binding(&digest, &policy);
-    let bytes = nav::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64], &binding);
-    (bytes, nav::pack::sha256_hex(&policy))
+    let binding = nav_planner::canlight::header_binding(&digest, &policy);
+    let bytes = nav_planner::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64], &binding);
+    (bytes, nav_planner::pack::sha256_hex(&policy))
 }
 
 fn write_bundled_reach(root: &std::path::Path, pack: &[u8]) -> String {
     let bytes = tiny_v8_reach(pack);
     std::fs::write(root.join("274bot.navreach"), &bytes).unwrap();
-    nav::manifest::hash_bytes(&bytes)
+    nav_planner::manifest::hash_bytes(&bytes)
 }
 
 fn write_bundled_canlight(root: &std::path::Path, pack: &[u8]) -> (String, String) {
     let (bytes, identity) = tiny_v8_canlight(pack);
     std::fs::write(root.join("274bot.navcanlight"), &bytes).unwrap();
-    (nav::manifest::hash_bytes(&bytes), identity)
+    (nav_planner::manifest::hash_bytes(&bytes), identity)
 }
 
 fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, bytes: &[u8]) {
@@ -1144,7 +1144,7 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
         cache_id,
         content_id: None,
         source_sha256: None,
-        nav_sha256: nav::manifest::hash_bytes(bytes),
+        nav_sha256: nav_planner::manifest::hash_bytes(bytes),
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
@@ -1175,8 +1175,8 @@ fn bundled_identity_decodes_pack_once_and_hashes_sidecars_on_demand() {
         cache_id: cache_id.clone(),
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        format: nav_planner::pack::FORMAT_ID.into(),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
@@ -1254,8 +1254,8 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
         cache_id,
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        format: nav_planner::pack::FORMAT_ID.into(),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
@@ -1298,9 +1298,9 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
         cache_id: cache_id.clone(),
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
-        flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
+        format: nav_planner::pack::FORMAT_ID.into(),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
+        flags_sha256: Some(nav_planner::manifest::hash_bytes(b"bundle-sibling-flags")),
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(canlight_identity),
@@ -1413,7 +1413,7 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         .unwrap_err()
         .contains("navigation/profile mismatch"));
 
-    wrong.nav_sha256 = nav::manifest::hash_bytes(&bytes);
+    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&bytes);
     wrong.revision = 274;
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -1427,8 +1427,8 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
 
     wrong.revision = 289;
     let mut newer = bytes.clone();
-    newer[4] = nav::pack::VERSION + 1;
-    wrong.nav_sha256 = nav::manifest::hash_bytes(&newer);
+    newer[4] = nav_planner::pack::VERSION + 1;
+    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&newer);
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&wrong).unwrap(),
@@ -1440,7 +1440,7 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
 
     let mut garbage = bytes.clone();
     garbage[..4].copy_from_slice(b"nope");
-    wrong.nav_sha256 = nav::manifest::hash_bytes(&garbage);
+    wrong.nav_sha256 = nav_planner::manifest::hash_bytes(&garbage);
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&wrong).unwrap(),
@@ -1528,8 +1528,8 @@ fn external_v9_pack_degrades_to_unavailable_without_deleting_user_file() {
 #[test]
 fn external_real_v10_pack_degrades_to_unavailable_without_deleting_user_file() {
     assert!(matches!(
-        nav::pack::decode(upgrade_home::V10_PACK),
-        Err(nav::pack::PackError::BadVersion(10))
+        nav_planner::pack::decode(upgrade_home::V10_PACK),
+        Err(nav_planner::pack::PackError::BadVersion(10))
     ));
     assert_external_old_pack_degrades_without_deleting_user_file(upgrade_home::V10_PACK);
 }
@@ -1579,7 +1579,8 @@ fn packaged_v16_bundle_supersedes_a_stale_v10_home_pack() {
 #[test]
 fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
     let fixture = Fixture::new();
-    let bytes = nav::pack::encode_grid(&nav::grid::StepGrid::fixture_door_corridor());
+    let bytes =
+        nav_planner::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
     let pack = fixture.0.join("legacy.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut options = fixture.options(274);
@@ -1613,8 +1614,8 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
         cache_id: cache_id.clone(),
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        format: nav_planner::pack::FORMAT_ID.into(),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
@@ -1676,8 +1677,8 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     let reach_sha256 = write_bundled_reach(&root, &bytes);
     let (canlight_bytes, _old_identity) = tiny_v8_canlight(&bytes);
     std::fs::write(root.join("274bot.navcanlight"), &canlight_bytes).unwrap();
-    let canlight_sha256 = nav::manifest::hash_bytes(&canlight_bytes);
-    let new_policy = nav::pack::sha256_hex(&nav::canlight::identity_digest(
+    let canlight_sha256 = nav_planner::manifest::hash_bytes(&canlight_bytes);
+    let new_policy = nav_planner::pack::sha256_hex(&nav_planner::canlight::identity_digest(
         289,
         b"new-bank-zones",
         &[0u64],
@@ -1688,8 +1689,8 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
         cache_id,
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        format: nav_planner::pack::FORMAT_ID.into(),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
@@ -1714,11 +1715,9 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     // admitted this stale file. The real-map bake regression in nav proves
     // such a mask-only change is possible for active nonblocking locs.
     let same_policy_new_mask = [BundledNavIdentity {
-        canlight_identity: Some(nav::pack::sha256_hex(&nav::canlight::identity_digest(
-            289,
-            b"fixture-bank-zones",
-            &[1u64],
-        ))),
+        canlight_identity: Some(nav_planner::pack::sha256_hex(
+            &nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[1u64]),
+        )),
         ..table[0].clone()
     }];
     let error = options
@@ -1749,7 +1748,7 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
         cache_id: cache_id.clone(),
         content_id: None,
         source_sha256: None,
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256.clone()),
         canlight_sha256: Some(canlight_sha256.clone()),
@@ -1767,7 +1766,7 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
         cache_id,
         content_id: None,
         source_sha256: None,
-        format: nav::pack::FORMAT_ID.into(),
+        format: nav_planner::pack::FORMAT_ID.into(),
         nav_sha256: manifest.nav_sha256,
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
@@ -1819,7 +1818,7 @@ fn external_manifest_rejects_wrong_reach_and_canlight_hashes() {
         cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
         content_id: None,
         source_sha256: None,
-        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        nav_sha256: nav_planner::manifest::hash_bytes(&bytes),
         flags_sha256: None,
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
@@ -2071,7 +2070,7 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
 fn public_profile_routes_lumbridge_to_ardougne() {
     use api::snapshot::WorldTile;
     use host_play::walk_map::{ActionError, WalkRequest};
-    use nav::{
+    use nav_planner::{
         router::{find_blocking_zones, FindOptions},
         world::NavWorld,
         world_state::WorldState,
@@ -2109,12 +2108,12 @@ fn public_profile_routes_lumbridge_to_ardougne() {
         state.combat_level = combat;
         let result = WalkRequest {
             slot: Some("members-route-regression"),
-            origin: Some(nav::tile::Tile {
+            origin: Some(nav_planner::tile::Tile {
                 x: from.x,
                 z: from.z,
                 level: from.level,
             }),
-            destination: Some(nav::tile::Tile {
+            destination: Some(nav_planner::tile::Tile {
                 x: to.x,
                 z: to.z,
                 level: to.level,
@@ -2132,19 +2131,19 @@ fn public_profile_routes_lumbridge_to_ardougne() {
             );
             host_play::arm_walk_on(
                 &world,
-                nav::tile::Tile {
+                nav_planner::tile::Tile {
                     x: from.x,
                     z: from.z,
                     level: from.level,
                 },
-                nav::tile::Tile {
+                nav_planner::tile::Tile {
                     x: to.x,
                     z: to.z,
                     level: to.level,
                 },
                 FindOptions::default(),
                 &state,
-                &nav::bank_fetch::BankRows::default(),
+                &nav_planner::bank_fetch::BankRows::default(),
                 admission,
                 &host_play::WalkArms::default(),
                 None,
@@ -2159,8 +2158,8 @@ fn public_profile_routes_lumbridge_to_ardougne() {
                 .legs
                 .iter()
                 .flat_map(|leg| match leg {
-                    nav::router::Leg::Walk { tiles } => tiles.clone(),
-                    nav::router::Leg::Transport { edge } => vec![edge.at, edge.to],
+                    nav_planner::router::Leg::Walk { tiles } => tiles.clone(),
+                    nav_planner::router::Leg::Transport { edge } => vec![edge.at, edge.to],
                 })
                 .collect();
             assert!(

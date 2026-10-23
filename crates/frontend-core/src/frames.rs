@@ -15,9 +15,9 @@ use std::sync::{Arc, Mutex};
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use host_play::{SlotFrameInput, WalkArms};
-use nav::router::Route;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::router::Route;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 /// A front end's per-frame client work for one slot.
 pub trait FrameHook: Send + Sync + 'static {

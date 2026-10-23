@@ -4,9 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use api::snapshot::WorldTile;
-use nav::map::spatial::{GameTile, View};
-use nav::paint::{collision_at, reached};
-use nav::world::NavWorld;
+use nav_planner::map::spatial::{GameTile, View};
+use nav_planner::paint::{collision_at, reached};
+use nav_planner::world::NavWorld;
 
 /// Overlay texture ceiling from design §5.2.
 pub const OVERLAY_MAX_W: u32 = 768;
@@ -298,17 +298,17 @@ pub fn pixel(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
 mod rasterize_rules {
     use super::*;
     use client::dash3d::CollisionFlag;
-    use nav::collision::WorldCollision;
-    use nav::paint::{flood_components, reached};
-    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-    use nav::world::NavWorld;
+    use nav_planner::collision::WorldCollision;
+    use nav_planner::paint::{flood_components, reached};
+    use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav_planner::world::NavWorld;
 
     fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
         let mut flags = vec![0u32; w * h];
         for &(x, z, f) in extras {
             flags[z as usize * w + x as usize] |= f;
         }
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         NavWorld::from_parts(
             WorldCollision {
                 origin: WorldTile {
@@ -427,7 +427,7 @@ mod rasterize_rules {
     fn paints_the_selected_plane() {
         let mut flags = vec![0u32; 2 * 9];
         flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
             WorldCollision {
                 origin: WorldTile {
@@ -558,7 +558,7 @@ mod rasterize_rules {
             },
             banks,
         );
-        let bits = nav::paint::bake_reach(&world.collision, &world.graph);
+        let bits = nav_planner::paint::bake_reach(&world.collision, &world.graph);
         let courtyard = WorldTile {
             x: 2,
             z: 2,

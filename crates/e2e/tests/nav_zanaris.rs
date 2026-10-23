@@ -18,9 +18,9 @@ use std::time::Duration;
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find;
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::find;
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::default_pack_path;
 
 /// The Lumbridge swamp shed door (`zanarisdoor`, loc 2406, m50_49 local
@@ -66,7 +66,7 @@ fn nav_zanaris() {
         .collect();
     if shed.is_empty() {
         fail(
-            "nav_zanaris: pack carries no shed Door edge with a worn req              (rebake with `cargo run -p nav --bin nav-pack`)",
+            "nav_zanaris: pack carries no shed Door edge with a worn req              (rebake with `cargo run -p nav-planner --bin nav-pack`)",
         );
     }
     let e = &shed[0];
@@ -108,7 +108,7 @@ fn nav_zanaris() {
                     route.dest
                 ));
             }
-            if nav::debug_enabled() {
+            if nav_planner::debug_enabled() {
                 println!(
                     "nav_zanaris: shed door -> Zanaris routed ({:.0} ticks, {} legs)",
                     route.ticks,

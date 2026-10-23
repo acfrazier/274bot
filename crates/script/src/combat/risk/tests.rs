@@ -4,12 +4,12 @@ use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
 use api::selected::ClientRevision;
 use api::WorldTile;
-use nav::contract::{
+use nav_planner::contract::{
     BoundZoneExempt, BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView,
 };
-use nav::router::{Leg, Route};
-use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
-use nav::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
+use nav_planner::router::{Leg, Route};
+use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
+use nav_planner::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -51,7 +51,7 @@ impl Fixture {
         self.lease.wilderness()
     }
     fn route<'a>(&self, route: &'a Route) -> RouteView<'a> {
-        nav::producer::route_view(&self.lease, route).expect("the lease identity is minted")
+        nav_planner::producer::route_view(&self.lease, route).expect("the lease identity is minted")
     }
     fn path<'a>(&self, route: &'a Route) -> RoutePath<'a> {
         RoutePath::new(self.route(route)).unwrap()
@@ -130,7 +130,7 @@ fn route(first: i32, last: i32) -> Route {
 fn zone_table(
     zones: Vec<Zone>,
     kinds: Vec<ZoneKind>,
-    carves: Vec<(u16, nav::router::AvoidRect)>,
+    carves: Vec<(u16, nav_planner::router::AvoidRect)>,
     shapes: Vec<u64>,
     wilderness: &WildernessRules,
 ) -> ZoneTable {
@@ -1989,7 +1989,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
     };
     let mut zone = Zone::npc(tile(100), 2, ZoneClass::LevelRule, 114, 0);
     zone.wild = true;
-    let carve = nav::router::AvoidRect {
+    let carve = nav_planner::router::AvoidRect {
         min_x: 98,
         max_x: 99,
         min_z: 98,
@@ -3446,7 +3446,7 @@ fn t5_1_assessment_and_admission_refuse_another_pack() {
     );
     assert_eq!(
         other.zones().kind(assessment.plan.intervals[0].zone).err(),
-        Some(nav::contract::ContractError::PackMismatch)
+        Some(nav_planner::contract::ContractError::PackMismatch)
     );
     assert_eq!(
         assessment.plan.intervals[0].key(fx.zones()),

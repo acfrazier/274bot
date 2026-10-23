@@ -33,7 +33,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 

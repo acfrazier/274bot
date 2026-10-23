@@ -21,10 +21,10 @@ use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::{ProfileOptions, ServerProfile, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use serde_json::json;
 
 const PORT_SARIM_DOCK: WorldTile = WorldTile {
@@ -184,7 +184,7 @@ fn follow_boat(
         Some((from.x, from.z, from.level)),
         "{label}: source tile"
     );
-    let state = nav::WorldState::from_snapshot(snapshot).with_map_members(true);
+    let state = nav_planner::WorldState::from_snapshot(snapshot).with_map_members(true);
     let route = find_with(
         &world.collision,
         &world.graph,

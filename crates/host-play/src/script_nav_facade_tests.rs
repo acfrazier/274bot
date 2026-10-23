@@ -13,10 +13,10 @@ use std::task::{Context, Poll, Waker};
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav::collision::{pack_walk, WorldCollision};
-use nav::contract::{ArrivalSpec, NavLease, PackDigest};
-use nav::transport::TransportGraph;
-use nav::world::NavWorld;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::contract::{ArrivalSpec, NavLease, PackDigest};
+use nav_planner::transport::TransportGraph;
+use nav_planner::world::NavWorld;
 
 use super::{
     approach_tiles, arrival_filter_needed, capture_loc_geometry, route_arrival_filter_future,
@@ -272,7 +272,7 @@ fn router_goal_tiles(
     to: WorldTile,
     loc_id: Option<i32>,
     radius: i32,
-    arrival: nav::arrival::ArrivalKind,
+    arrival: nav_planner::arrival::ArrivalKind,
 ) -> Vec<WorldTile> {
     let live_geometry = if radius > 0 {
         snapshot.and_then(|snapshot| {
@@ -350,7 +350,7 @@ fn selection_goal_tiles(
     to: WorldTile,
     loc_id: Option<i32>,
     radius: i32,
-    arrival: nav::arrival::ArrivalKind,
+    arrival: nav_planner::arrival::ArrivalKind,
 ) -> Vec<WorldTile> {
     crate::walk_permissions::selection_access_tiles(
         world,
@@ -449,7 +449,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         target,
         Some(1278),
         2,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
     );
     assert!(route.contains(&cut_off));
     let selector = selection_goal_tiles(
@@ -458,7 +458,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         target,
         Some(1278),
         2,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
     );
     assert_eq!(
         route, selector,
@@ -480,7 +480,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         target,
         None,
         2,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
     );
     assert!(!reach.contains(&cut_off));
     assert_eq!(
@@ -491,7 +491,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             target,
             None,
             2,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         )
     );
 
@@ -505,7 +505,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             target,
             None,
             105,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         ),
         selection_goal_tiles(
             &world,
@@ -513,7 +513,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             target,
             None,
             105,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         )
     );
 
@@ -526,7 +526,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             blocked_target,
             None,
             0,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         ),
         vec![blocked_target]
     );
@@ -537,7 +537,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             blocked_target,
             None,
             0,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         ),
         vec![blocked_target],
         "exact radius zero preserves the requested tile"
@@ -552,7 +552,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         approach_target,
         Some(1278),
         2,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
     );
     assert!(
         !forced_route.contains(&tile(
@@ -570,7 +570,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             approach_target,
             Some(1278),
             2,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         )
     );
 
@@ -594,7 +594,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
         approach_target,
         Some(1278),
         2,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
     );
     assert!(!collision_route.contains(&blocked_approach));
     assert_eq!(
@@ -605,7 +605,7 @@ fn explicit_loc_fallback_keeps_router_radius_stands_without_reach_filtering() {
             approach_target,
             Some(1278),
             2,
-            nav::arrival::ArrivalKind::Reach,
+            nav_planner::arrival::ArrivalKind::Reach,
         )
     );
 }
@@ -645,8 +645,8 @@ fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
                 "catalog tree {target:?} id={loc_id} must be modeled in-scene"
             );
             for arrival in [
-                nav::arrival::ArrivalKind::Reach,
-                nav::arrival::ArrivalKind::Area,
+                nav_planner::arrival::ArrivalKind::Reach,
+                nav_planner::arrival::ArrivalKind::Area,
             ] {
                 let router = router_goal_tiles(
                     &world,
@@ -675,8 +675,8 @@ fn router_and_selector_goal_tiles_match_for_real_tree_anchors_on_nav_pack() {
         let unmodeled = tree_snapshot(&world, target, loc_id, false, 0, None);
         for radius in [1, 2, 4] {
             for arrival in [
-                nav::arrival::ArrivalKind::Reach,
-                nav::arrival::ArrivalKind::Area,
+                nav_planner::arrival::ArrivalKind::Reach,
+                nav_planner::arrival::ArrivalKind::Area,
             ] {
                 for snapshot in [None, Some(&unmodeled)] {
                     let router = router_goal_tiles(

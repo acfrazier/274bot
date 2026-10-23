@@ -10,9 +10,9 @@ use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::router::{FindOptions, Route};
-use nav::world::NavWorld;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::world::NavWorld;
 
 use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
 use crate::proof::Proof;
@@ -1952,15 +1952,15 @@ impl ScenarioRunner {
             allow_teleports: force_teleports || n.allow_teleports,
             allow_wilderness: n.allow_wilderness,
             zones: if n.allow_danger_zones {
-                nav::zones::ZoneExempt::all()
+                nav_planner::zones::ZoneExempt::all()
             } else {
-                nav::zones::ZoneExempt::NONE
+                nav_planner::zones::ZoneExempt::NONE
             },
             ..FindOptions::default()
         }
     }
 
-    /// Arm a whole-world route: `nav::router::find` over the packed
+    /// Arm a whole-world route: `nav_planner::router::find` over the packed
     /// collision + transport graph loaded into [`NavWorld`] (the same
     /// surface the route is then walked on — the pack is baked from the
     /// maps, so it matches the live world). The origin is the observed
@@ -1982,13 +1982,20 @@ impl ScenarioRunner {
         // cannot pay / has not earned is not relaxed. The traveller's
         // latched essence-mine session lets a route from inside the mine
         // use the exit portal's return hop to the entry wizard.
-        let state =
-            nav::WorldState::from_snapshot(&self.snapshot).with_map_members(self.map_members);
+        let state = nav_planner::WorldState::from_snapshot(&self.snapshot)
+            .with_map_members(self.map_members);
         let opts = FindOptions {
             essence: self.traveller.essence(),
             ..opts
         };
-        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts, &state) {
+        match nav_planner::router::find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            dest,
+            opts,
+            &state,
+        ) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())

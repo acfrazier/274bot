@@ -25,7 +25,7 @@ pub enum UnknownWhy {
     Poison,
     Overflow,
     /// The route, plan, zone key or exemption belongs to another nav pack,
-    /// or names a row this pack does not have (`nav::contract` refused it).
+    /// or names a row this pack does not have (`nav_planner::contract` refused it).
     NavIdentity,
 }
 

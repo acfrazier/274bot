@@ -5,14 +5,14 @@ use crate::map_cache::{
     ArtifactKind, BakePlan, BakeRequest, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
     MapBakeCursorStep, MapBakeProducer, MapCacheError, MapProgressSnapshot, MapStage,
 };
-use nav::map::cache::{BakeStage, CompletedUnit, UnitKey};
-use nav::map::formats::{ClientPois, PayloadReceipt};
-use nav::map::identity::Digest;
-use nav::map::producer::{self, CatalogueCursor, CatalogueProgress, CatalogueStage};
-use nav::map::raster::{
+use nav_planner::map::cache::{BakeStage, CompletedUnit, UnitKey};
+use nav_planner::map::formats::{ClientPois, PayloadReceipt};
+use nav_planner::map::identity::Digest;
+use nav_planner::map::producer::{self, CatalogueCursor, CatalogueProgress, CatalogueStage};
+use nav_planner::map::raster::{
     self, ImageBakeCursor, ImageBakeError, ImageTileSink, RasterProgress, RasterStage,
 };
-use nav::map::spatial::TileKey;
+use nav_planner::map::spatial::TileKey;
 use std::sync::OnceLock;
 
 /// Native client-cache producer. One instance is shared by the process-wide
@@ -63,7 +63,7 @@ impl MapBakeProducer for NativeMapProducer {
             charge
                 .input_bytes()
                 .checked_add(wrapper_bytes)
-                .ok_or(MapCacheError::Map(nav::map::MapError::Limit(
+                .ok_or(MapCacheError::Map(nav_planner::map::MapError::Limit(
                     "native map cursor charge",
                 )))?;
         Ok(api::work::WorkCharge::new(

@@ -17,8 +17,8 @@ use std::time::Duration;
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find;
-use nav::world::NavWorld;
+use nav_planner::router::find;
+use nav_planner::world::NavWorld;
 use scenario::default_pack_path;
 
 /// Seers street, south of the fence seam.

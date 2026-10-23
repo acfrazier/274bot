@@ -13,11 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use frontend_core::surface::InputEv;
-use nav::bank_fetch::BankRows;
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 use crate::session::Session;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice};
@@ -180,7 +180,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 &BankRows::default(),
                 host_play::admission::Admission::manual(
                     FindOptions {
-                        zones: nav::zones::ZoneExempt::all(),
+                        zones: nav_planner::zones::ZoneExempt::all(),
                         ..Default::default()
                     },
                     Default::default(),
@@ -196,7 +196,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 // budget, without transports or a deadline-only false result.
                 matches!(
                     route.route.legs.as_slice(),
-                    [nav::router::Leg::Walk { tiles }] if tiles.len() <= 48
+                    [nav_planner::router::Leg::Walk { tiles }] if tiles.len() <= 48
                 )
             }) {
                 return Ok(dest);

@@ -351,7 +351,7 @@ const NAV_IMPORT_NAMES = new Set([
     'DirectNavigator', 'Navigator', 'PathFinder', 'Reach',
     'Reachability', 'Traversal', 'Walk', 'WalkExecutor', 'Walker',
 ]);
-const NAV_RUST_USE = /\b(?:crate::walk::|native::walk::|walk::|crate::reach_entity::|reach_entity::|NpcReach\b|nav::|InteractReq::WalkTo\b)/;
+const NAV_RUST_USE = /\b(?:crate::walk::|native::walk::|walk::|crate::reach_entity::|reach_entity::|NpcReach\b|nav_planner::|InteractReq::WalkTo\b)/;
 
 function hasRuntimeModuleBinding(node) {
     if (ts.isImportDeclaration(node)) {

@@ -193,8 +193,8 @@ pub(super) fn current_web_action<'a>(
     edges: Option<&'a [TransportEdge]>,
 ) -> Result<&'a TransportEdge, WebCutFailure> {
     let edges = edges.ok_or(WebCutFailure::PackedTransportEdgesUnavailable)?;
-    let state = nav::world_state::WorldState::from_snapshot(snapshot);
-    nav::executor_adapter::select_web_action(edges.iter(), edge, |candidate| {
+    let state = nav_planner::world_state::WorldState::from_snapshot(snapshot);
+    nav_planner::executor_adapter::select_web_action(edges.iter(), edge, |candidate| {
         state.allows(candidate)
     })
     .ok_or(WebCutFailure::NoQualifyingSlashTool)

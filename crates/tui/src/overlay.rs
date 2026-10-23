@@ -11,7 +11,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 
 use crate::app::{wasd_target, AppAction, TuiApp};
 use crate::commands::Command;

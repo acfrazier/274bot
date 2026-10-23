@@ -12,11 +12,11 @@ use client::client::Client;
 use host::Pump;
 use host_play::walk_map::{ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
-use nav::bank_fetch::BankRows;
-use nav::map::identity::Digest;
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::WorldState;
 use serde_json::{json, Value};
 
 const ORIGIN: (i32, i32, i32) = (3205, 3206, 0);

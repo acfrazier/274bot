@@ -750,14 +750,17 @@ fn walk_to_without_a_confirmed_destination_is_refused_and_arms_nothing() {
     );
     // A staged walk over a map with no picked destination: the map
     // refuses it the same way, and no route is armed.
-    let context =
-        crate::walk_map::WalkMapContext::browsing(nav::map::identity::Digest([0; 32]), None, 1);
+    let context = crate::walk_map::WalkMapContext::browsing(
+        nav_planner::map::identity::Digest([0; 32]),
+        None,
+        1,
+    );
     let mut map = crate::walk_map::WalkMap::new();
     d.models_mut().map_mut().stage_walk_to(
         &mut map,
         context,
         None,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
     );
     let walk = d
         .submit(OperatorCommand::WalkTo, Targets::Profile("alice"))

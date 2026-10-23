@@ -43,10 +43,10 @@ use api::quest_progress::{EvidenceStamp, QuestListEvidenceProvider};
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView};
 use api::WorldTile;
-use nav::quest_gates::{QuestEvidence, QuestFamilyId};
-use nav::router::{find_many_with, FindOptions, TargetError};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::router::{find_many_with, FindOptions, TargetError};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 const LUMBRIDGE: WorldTile = WorldTile {
     x: 3222,
@@ -120,7 +120,7 @@ fn quest_evidence(world: &NavWorld, incomplete_quest: Option<&str>) -> QuestEvid
                 colour: if incomplete {
                     QUEST_NOT_STARTED_COLOUR
                 } else {
-                    nav::world_state::QUEST_COMPLETE_COLOUR
+                    nav_planner::world_state::QUEST_COMPLETE_COLOUR
                 },
             }
         })
@@ -202,7 +202,7 @@ fn real_nav_pack() -> PathBuf {
 /// The real pack with its flags, without the danger-zone table.
 fn load_world(pack: &std::path::Path) -> NavWorld {
     let mut world = NavWorld::load_pack(pack).expect("real 289 pack");
-    let (_origin, _walls, _height, flags) = nav::pack::decode_flags_sidecar(
+    let (_origin, _walls, _height, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
     )
     .expect("decode flags");

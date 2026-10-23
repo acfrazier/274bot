@@ -116,7 +116,7 @@ fn observation_stand(cell: SceneRegionInput, here: WorldTile) -> WorldTile {
 /// retain their work-area and resource-origin preference.
 fn observation_goals(
     cells: impl Iterator<Item = SceneRegionInput> + Clone,
-    collision: Option<nav::contract::CollisionView<'_>>,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
     preferred_stand: Option<WorldTile>,
 ) -> Result<WalkGoals, WalkGoalsError> {
     let capacity = cells
@@ -341,7 +341,7 @@ impl<'a> DangerCheck<'a> {
         &mut self,
         tile: WorldTile,
         entity: Option<EntityId>,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
     ) -> bool {
         let loc_id = match entity {
             Some(EntityId::Loc(id)) => Some(id),
@@ -365,7 +365,11 @@ impl<'a> DangerCheck<'a> {
         snapshot: Option<api::snapshot::SnapshotView<'_>>,
     ) -> bool {
         if !resource_arrived(snapshot, entity, tile) {
-            return self.allows(tile, Some(entity), nav::contract::ArrivalKind::Reach);
+            return self.allows(
+                tile,
+                Some(entity),
+                nav_planner::contract::ArrivalKind::Reach,
+            );
         }
         let Some(query) = self.query else {
             return true;
@@ -378,7 +382,7 @@ impl<'a> DangerCheck<'a> {
             tile,
             loc_id,
             RESOURCE_APPROACH_RADIUS,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
         );
         if matches!(decision, WalkDanger::Denied { .. }) {
             self.rejected.get_or_insert(decision);
@@ -446,9 +450,9 @@ impl SelectedTarget {
             RESOURCE_APPROACH_RADIUS
         };
         let arrival = if observation_approach {
-            nav::contract::ArrivalKind::Area
+            nav_planner::contract::ArrivalKind::Area
         } else {
-            nav::contract::ArrivalKind::Reach
+            nav_planner::contract::ArrivalKind::Reach
         };
         let arrived = resource_arrived(Some(snapshot), self.plan.entity, self.plan.tile);
         let safe_goals = match walk_danger {
@@ -488,7 +492,7 @@ impl SelectedTarget {
                 loc_id: if restricted { None } else { loc_id },
                 radius: if restricted { 0 } else { radius },
                 arrival: if restricted {
-                    nav::contract::ArrivalKind::Area
+                    nav_planner::contract::ArrivalKind::Area
                 } else {
                     arrival
                 },
@@ -532,7 +536,7 @@ pub struct SelectionObservation<'a> {
     pub fishing: &'a mut FishingSurvey,
     /// Packed collision used to keep Area r=1 observation stands off tiles
     /// with no legal goals. `None` skips the filter (unit fixtures without a pack).
-    pub collision: Option<nav::contract::CollisionView<'a>>,
+    pub collision: Option<nav_planner::contract::CollisionView<'a>>,
     pub snapshot: Option<api::snapshot::SnapshotView<'a>>,
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
 }
@@ -544,7 +548,7 @@ pub struct ReturnObservation<'a> {
     pub avoided: &'a [AvoidedTile; MAX_AVOID],
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
-    pub collision: Option<nav::contract::CollisionView<'a>>,
+    pub collision: Option<nav_planner::contract::CollisionView<'a>>,
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
 }
 
@@ -1279,7 +1283,7 @@ pub fn resource_return_target(
                         Some(excluded_until.map_or(until, |current| current.min(until)));
                     continue;
                 }
-                if !danger.allows(spot.origin, None, nav::contract::ArrivalKind::Area) {
+                if !danger.allows(spot.origin, None, nav_planner::contract::ArrivalKind::Area) {
                     continue;
                 }
                 consider_candidate(
@@ -1391,7 +1395,10 @@ fn fishing_return_stand(
         .unwrap_or(ReturnStand::Collision)
 }
 
-fn has_area_arrival(collision: Option<nav::contract::CollisionView<'_>>, stand: WorldTile) -> bool {
+fn has_area_arrival(
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
+    stand: WorldTile,
+) -> bool {
     collision.is_none_or(|view| view.area_has_goal(stand, RESOURCE_APPROACH_RADIUS))
 }
 
@@ -1405,7 +1412,7 @@ fn legal_fishing_return_stand(
     origin: WorldTile,
     rank_by: WorldTile,
     area: WorkArea,
-    collision: Option<nav::contract::CollisionView<'_>>,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
     danger: &mut DangerCheck<'_>,
 ) -> Option<WorldTile> {
     if danger.query.is_none() {
@@ -1414,7 +1421,7 @@ fn legal_fishing_return_stand(
     }
     let preferred = observation_stand(cell, origin);
     if has_area_arrival(collision, preferred)
-        && danger.allows(preferred, None, nav::contract::ArrivalKind::Area)
+        && danger.allows(preferred, None, nav_planner::contract::ArrivalKind::Area)
     {
         return Some(preferred);
     }
@@ -1436,7 +1443,7 @@ fn legal_fishing_return_stand(
                 level: cell.level,
             };
             if !has_area_arrival(collision, stand)
-                || !danger.allows(stand, None, nav::contract::ArrivalKind::Area)
+                || !danger.allows(stand, None, nav_planner::contract::ArrivalKind::Area)
             {
                 continue;
             }
@@ -1716,14 +1723,14 @@ fn distance(a: WorldTile, b: WorldTile) -> i64 {
 }
 
 #[cfg(test)]
-pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav::world::NavWorld> {
-    static WORLD: std::sync::LazyLock<std::sync::Arc<nav::world::NavWorld>> =
+pub(crate) fn test_real_nav_world() -> &'static std::sync::Arc<nav_planner::world::NavWorld> {
+    static WORLD: std::sync::LazyLock<std::sync::Arc<nav_planner::world::NavWorld>> =
         std::sync::LazyLock::new(|| {
             let pack = std::env::var_os("NAV_PACK")
                 .map(std::path::PathBuf::from)
                 .expect("NAV_PACK must name the reviewed real 289 nav pack");
             std::sync::Arc::new(
-                nav::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
+                nav_planner::world::NavWorld::load_pack(&pack).unwrap_or_else(|error| {
                     panic!(
                     "load real 289 nav pack {} (set NAV_PACK to the reviewed 289 bake): {error}",
                     pack.display()
@@ -1741,9 +1748,9 @@ pub(crate) mod tests {
     use api::snapshot::{LocLayer, LocView, NpcView};
     use std::collections::HashMap;
 
-    fn empty_collision_fixture() -> nav::collision::WorldCollision {
-        let (walk, blocked) = nav::collision::pack_walk(&[0; 4]);
-        nav::collision::WorldCollision {
+    fn empty_collision_fixture() -> nav_planner::collision::WorldCollision {
+        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4]);
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -1761,18 +1768,18 @@ pub(crate) mod tests {
     /// exception scope). Other script tests obtain contract leases through
     /// it; `configure` edits the world (zones, wilderness) before wrapping.
     pub(crate) fn test_nav_lease(
-        configure: impl FnOnce(&mut nav::world::NavWorld),
-    ) -> nav::contract::NavLease {
+        configure: impl FnOnce(&mut nav_planner::world::NavWorld),
+    ) -> nav_planner::contract::NavLease {
         test_nav_lease_over(empty_collision_fixture(), configure)
     }
 
     pub(crate) fn test_nav_world_over(
-        collision: nav::collision::WorldCollision,
-        configure: impl FnOnce(&mut nav::world::NavWorld),
-    ) -> std::sync::Arc<nav::world::NavWorld> {
+        collision: nav_planner::collision::WorldCollision,
+        configure: impl FnOnce(&mut nav_planner::world::NavWorld),
+    ) -> std::sync::Arc<nav_planner::world::NavWorld> {
         // The checker registers the type path; the constructor is reached
         // through it rather than as a second qualified symbol.
-        type NavWorld = nav::world::NavWorld;
+        type NavWorld = nav_planner::world::NavWorld;
         let mut world = NavWorld::from_parts(collision, Default::default(), Vec::new());
         configure(&mut world);
         std::sync::Arc::new(world)
@@ -1780,12 +1787,12 @@ pub(crate) mod tests {
 
     /// Same, over a caller-built packed collision.
     pub(crate) fn test_nav_lease_over(
-        collision: nav::collision::WorldCollision,
-        configure: impl FnOnce(&mut nav::world::NavWorld),
-    ) -> nav::contract::NavLease {
-        nav::contract::NavLease::wrap(
+        collision: nav_planner::collision::WorldCollision,
+        configure: impl FnOnce(&mut nav_planner::world::NavWorld),
+    ) -> nav_planner::contract::NavLease {
+        nav_planner::contract::NavLease::wrap(
             test_nav_world_over(collision, configure),
-            nav::contract::PackDigest::of(b"script test fixture"),
+            nav_planner::contract::PackDigest::of(b"script test fixture"),
         )
         .expect("lease ids are not exhausted in tests")
     }
@@ -1793,14 +1800,14 @@ pub(crate) mod tests {
     /// A lease over a small synthetic collision the test keeps for its raw
     /// oracle: the grid is copied once (fixture-sized, never a real pack).
     pub(crate) fn test_nav_lease_for_collision(
-        collision: &nav::collision::WorldCollision,
-    ) -> nav::contract::NavLease {
+        collision: &nav_planner::collision::WorldCollision,
+    ) -> nav_planner::contract::NavLease {
         assert!(
             collision.width * collision.height <= 1 << 16,
             "copy only fixture grids; the real pack is leased by test_real_nav_lease"
         );
         test_nav_lease_over(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: collision.origin,
                 width: collision.width,
                 height: collision.height,
@@ -1813,10 +1820,10 @@ pub(crate) mod tests {
     }
 
     /// A lease over the shared real 289 pack world, without copying it.
-    pub(crate) fn test_real_nav_lease() -> nav::contract::NavLease {
-        nav::contract::NavLease::wrap(
+    pub(crate) fn test_real_nav_lease() -> nav_planner::contract::NavLease {
+        nav_planner::contract::NavLease::wrap(
             std::sync::Arc::clone(super::test_real_nav_world()),
-            nav::contract::PackDigest::of(b"real 289 pack"),
+            nav_planner::contract::PackDigest::of(b"real 289 pack"),
         )
         .expect("lease ids are not exhausted in tests")
     }
@@ -1910,7 +1917,7 @@ pub(crate) mod tests {
             _target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
         ) -> crate::native::WalkDanger<'_> {
             crate::native::WalkDanger::Denied {
                 zone: "Draynor jail guards",
@@ -1922,7 +1929,7 @@ pub(crate) mod tests {
             _target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
             _existing: Option<&WalkGoals>,
         ) -> Result<Option<WalkGoals>, WalkGoalsError> {
             Err(WalkGoalsError::Empty)
@@ -2203,7 +2210,7 @@ pub(crate) mod tests {
             _target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
         ) -> WalkDanger<'_> {
             WalkDanger::Allowed
         }
@@ -2213,7 +2220,7 @@ pub(crate) mod tests {
             _target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
             _existing: Option<&WalkGoals>,
         ) -> Result<Option<WalkGoals>, WalkGoalsError> {
             self.calls.set(self.calls.get() + 1);
@@ -2298,7 +2305,7 @@ pub(crate) mod tests {
         assert_eq!(request.candidate_goals.unwrap().as_slice(), &[safe]);
         assert_eq!(request.loc_id, None);
         assert_eq!(request.radius, 0);
-        assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+        assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Area);
         assert!(selected.observation_goals.is_none());
     }
 
@@ -2377,7 +2384,7 @@ pub(crate) mod tests {
         assert!(request.candidate_goals.is_none());
         assert_eq!(request.loc_id, Some(1));
         assert_eq!(request.radius, RESOURCE_APPROACH_RADIUS);
-        assert_eq!(request.arrival, nav::contract::ArrivalKind::Reach);
+        assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Reach);
         assert_eq!(query.calls.get(), 1);
     }
 
@@ -2418,7 +2425,7 @@ pub(crate) mod tests {
         assert_eq!(goals.as_slice(), &[preferred, fallback]);
         assert_eq!(request.loc_id, None);
         assert_eq!(request.radius, 0);
-        assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+        assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Area);
     }
 
     #[test]
@@ -2452,7 +2459,7 @@ pub(crate) mod tests {
                 _target: WorldTile,
                 _loc_id: Option<i32>,
                 _radius: u16,
-                _arrival: nav::contract::ArrivalKind,
+                _arrival: nav_planner::contract::ArrivalKind,
             ) -> WalkDanger<'_> {
                 WalkDanger::Unavailable
             }
@@ -2462,7 +2469,7 @@ pub(crate) mod tests {
                 _target: WorldTile,
                 _loc_id: Option<i32>,
                 _radius: u16,
-                _arrival: nav::contract::ArrivalKind,
+                _arrival: nav_planner::contract::ArrivalKind,
                 _existing: Option<&WalkGoals>,
             ) -> Result<Option<WalkGoals>, WalkGoalsError> {
                 Err(WalkGoalsError::Empty)
@@ -2505,7 +2512,7 @@ pub(crate) mod tests {
             target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
         ) -> WalkDanger<'_> {
             if target == self.0 {
                 WalkDanger::Denied {
@@ -2521,7 +2528,7 @@ pub(crate) mod tests {
             target: WorldTile,
             _loc_id: Option<i32>,
             _radius: u16,
-            _arrival: nav::contract::ArrivalKind,
+            _arrival: nav_planner::contract::ArrivalKind,
             _existing: Option<&WalkGoals>,
         ) -> Result<Option<WalkGoals>, WalkGoalsError> {
             if target == self.0 {
@@ -2641,7 +2648,7 @@ pub(crate) mod tests {
         let stand = legal_fishing_return_stand(cell, here, here, area, None, &mut danger)
             .expect("the cell contains other allowed access sets");
         assert_ne!(stand, here);
-        assert!(danger.allows(stand, None, nav::contract::ArrivalKind::Area));
+        assert!(danger.allows(stand, None, nav_planner::contract::ArrivalKind::Area));
     }
 
     #[test]
@@ -2835,7 +2842,7 @@ pub(crate) mod tests {
     fn synthetic_collision(
         cover: impl IntoIterator<Item = WorldTile>,
         blocked: impl IntoIterator<Item = WorldTile>,
-    ) -> nav::collision::WorldCollision {
+    ) -> nav_planner::collision::WorldCollision {
         let blocked: Vec<WorldTile> = blocked.into_iter().collect();
         let pad = OBSERVATION_RADIUS + i32::from(RESOURCE_APPROACH_RADIUS);
         let mut min_x = i32::MAX;
@@ -2867,8 +2874,8 @@ pub(crate) mod tests {
                 flags[lz * width + lx] = block;
             }
         }
-        let (walk, packed) = nav::collision::pack_walk(&flags);
-        nav::collision::WorldCollision {
+        let (walk, packed) = nav_planner::collision::pack_walk(&flags);
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: min_x,
                 z: min_z,
@@ -2882,10 +2889,15 @@ pub(crate) mod tests {
         }
     }
 
-    fn area_arrival_ok(collision: &nav::collision::WorldCollision, stand: WorldTile) -> bool {
-        nav::arrival::area_has_standable_goal(stand, i32::from(RESOURCE_APPROACH_RADIUS), |tile| {
-            collision.standable(tile)
-        })
+    fn area_arrival_ok(
+        collision: &nav_planner::collision::WorldCollision,
+        stand: WorldTile,
+    ) -> bool {
+        nav_planner::arrival::area_has_standable_goal(
+            stand,
+            i32::from(RESOURCE_APPROACH_RADIUS),
+            |tile| collision.standable(tile),
+        )
     }
 
     const FISHING_GUILD: SceneRegionInput = SceneRegionInput {
@@ -2905,7 +2917,7 @@ pub(crate) mod tests {
         z: 3412,
         level: 0,
     };
-    pub(super) fn real_nav_world() -> &'static nav::world::NavWorld {
+    pub(super) fn real_nav_world() -> &'static nav_planner::world::NavWorld {
         super::test_real_nav_world().as_ref()
     }
 
@@ -2969,7 +2981,7 @@ pub(crate) mod tests {
         index: usize,
         area: WorkArea,
         here: WorldTile,
-        collision: Option<nav::contract::CollisionView<'_>>,
+        collision: Option<nav_planner::contract::CollisionView<'_>>,
     ) -> SelectionResult {
         select(
             catalog,
@@ -2993,7 +3005,7 @@ pub(crate) mod tests {
     }
 
     pub(super) fn area_goals(
-        collision: &nav::collision::WorldCollision,
+        collision: &nav_planner::collision::WorldCollision,
         stand: WorldTile,
     ) -> Vec<WorldTile> {
         let radius = i32::from(RESOURCE_APPROACH_RADIUS);
@@ -3010,17 +3022,17 @@ pub(crate) mod tests {
     }
 
     fn route_observation(
-        world: &nav::world::NavWorld,
+        world: &nav_planner::world::NavWorld,
         from: WorldTile,
         goals: &WalkGoals,
-        state: &nav::world_state::WorldState,
-    ) -> Result<nav::router::Route, nav::router::RouteError> {
-        let preferred = nav::router::find_first_with(
+        state: &nav_planner::world_state::WorldState,
+    ) -> Result<nav_planner::router::Route, nav_planner::router::RouteError> {
+        let preferred = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             from,
             goals.preferred(),
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             state,
         )
         .into_route();
@@ -3028,12 +3040,12 @@ pub(crate) mod tests {
             if goals.fallback().is_empty() {
                 return Err(error);
             }
-            nav::router::find_first_with(
+            nav_planner::router::find_first_with(
                 &world.collision,
                 &world.graph,
                 from,
                 goals.fallback(),
-                nav::router::FindOptions::default(),
+                nav_planner::router::FindOptions::default(),
                 state,
             )
             .into_route()
@@ -4025,19 +4037,19 @@ pub(crate) mod tests {
             "reproduce the review's admitted booth stand"
         );
         assert!(!goals.preferred().contains(&bank));
-        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        let mut state = nav_planner::world_state::WorldState::empty().with_map_members(true);
         state.stats = (0..=20).map(|skill| (skill, 99)).collect();
         let route = route_observation(world, bank, goals, &state).unwrap();
         assert!(goals.preferred().contains(&route.dest));
         assert!(area.contains(route.dest));
         assert_ne!(route.dest, bank);
         assert!(route.ticks > 0.0);
-        let old = nav::router::find_first_with(
+        let old = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             bank,
             &area_goals(&world.collision, selected.plan.tile),
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &state,
         )
         .into_route()
@@ -4659,14 +4671,14 @@ pub(crate) mod tests {
             "Area r=1 around {:?} must list standable goals",
             target.plan.tile
         );
-        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        let mut state = nav_planner::world_state::WorldState::empty().with_map_members(true);
         state.stats = (0..=20).map(|skill| (skill, 99)).collect();
-        let routed = nav::router::find_first_with(
+        let routed = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             ARDOUGNE_START,
             &goals,
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &state,
         );
         let route = routed.route().unwrap_or_else(|error| {
@@ -5584,14 +5596,14 @@ pub(crate) mod tests {
                 .expect("Catherby must provide an unloaded observation request");
         let goals = selected.observation_goals.as_ref().unwrap().as_slice();
         let old_goals = area_goals(&world.collision, selected.plan.tile);
-        let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+        let mut state = nav_planner::world_state::WorldState::empty().with_map_members(true);
         state.stats = (0..=20).map(|skill| (skill, 99)).collect();
-        let old = nav::router::find_first_with(
+        let old = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             here,
             &old_goals,
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &state,
         );
         assert!(
@@ -6216,13 +6228,13 @@ pub(crate) mod tests {
         }
 
         fn bank_accesses(
-            world: &nav::world::NavWorld,
+            world: &nav_planner::world::NavWorld,
             selected: &SelectedGameData,
         ) -> Vec<BankAccess> {
             let placements = selected
                 .bank_placements()
                 .expect("selected bank placement facts");
-            let facts = nav::named_banks::resolve(
+            let facts = nav_planner::named_banks::resolve(
                 api::named_banks::BANK_CATALOG,
                 &placements.rows,
                 |tile| world.collision.standable(tile),
@@ -6277,7 +6289,7 @@ pub(crate) mod tests {
         }
 
         fn nearest_inside_area_stand(
-            world: &nav::world::NavWorld,
+            world: &nav_planner::world::NavWorld,
             area: WorkArea,
         ) -> Option<WorldTile> {
             let region = area.region();
@@ -6305,16 +6317,20 @@ pub(crate) mod tests {
             }
         }
 
-        fn route_status(result: &Result<nav::router::Route, nav::router::RouteError>) -> String {
+        fn route_status(
+            result: &Result<nav_planner::router::Route, nav_planner::router::RouteError>,
+        ) -> String {
             match result {
                 Ok(_) => "Routed".to_owned(),
-                Err(nav::router::RouteError::NoPath) => "NoPath".to_owned(),
-                Err(nav::router::RouteError::BudgetExhausted) => "BudgetExhausted".to_owned(),
+                Err(nav_planner::router::RouteError::NoPath) => "NoPath".to_owned(),
+                Err(nav_planner::router::RouteError::BudgetExhausted) => {
+                    "BudgetExhausted".to_owned()
+                }
             }
         }
 
         fn route_evidence(
-            result: Result<nav::router::Route, nav::router::RouteError>,
+            result: Result<nav_planner::router::Route, nav_planner::router::RouteError>,
             search_kind: &str,
             settled: usize,
             elapsed_us: u128,
@@ -6348,18 +6364,18 @@ pub(crate) mod tests {
         }
 
         fn legacy_route(
-            world: &nav::world::NavWorld,
+            world: &nav_planner::world::NavWorld,
             from: WorldTile,
             goals: &[WorldTile],
-            state: &nav::world_state::WorldState,
+            state: &nav_planner::world_state::WorldState,
         ) -> RouteEvidence {
             let started = Instant::now();
-            let search = nav::router::find_first_with(
+            let search = nav_planner::router::find_first_with(
                 &world.collision,
                 &world.graph,
                 from,
                 goals,
-                nav::router::FindOptions::default(),
+                nav_planner::router::FindOptions::default(),
                 state,
             );
             let settled = search.settled();
@@ -6374,18 +6390,18 @@ pub(crate) mod tests {
         }
 
         fn tiered_route(
-            world: &nav::world::NavWorld,
+            world: &nav_planner::world::NavWorld,
             from: WorldTile,
             goals: &WalkGoals,
-            state: &nav::world_state::WorldState,
+            state: &nav_planner::world_state::WorldState,
         ) -> RouteEvidence {
             let started = Instant::now();
-            let search = nav::router::find_first_with(
+            let search = nav_planner::router::find_first_with(
                 &world.collision,
                 &world.graph,
                 from,
                 goals.preferred(),
-                nav::router::FindOptions::default(),
+                nav_planner::router::FindOptions::default(),
                 state,
             );
             let preferred_elapsed_us = started.elapsed().as_micros();
@@ -6407,12 +6423,12 @@ pub(crate) mod tests {
                 Err(_) => {
                     fallback_status = Some("SeparateTier".to_owned());
                     let fallback_started = Instant::now();
-                    let fallback_search = nav::router::find_first_with(
+                    let fallback_search = nav_planner::router::find_first_with(
                         &world.collision,
                         &world.graph,
                         from,
                         goals.fallback(),
-                        nav::router::FindOptions::default(),
+                        nav_planner::router::FindOptions::default(),
                         state,
                     );
                     fallback_only_settled = fallback_search.settled();
@@ -6482,7 +6498,7 @@ pub(crate) mod tests {
             catalog: &GatherCatalog,
             site: &SiteCase,
             here: WorldTile,
-            collision: nav::contract::CollisionView<'_>,
+            collision: nav_planner::contract::CollisionView<'_>,
             mode: SelectionMode,
         ) -> TargetPick {
             let settings = settings_for_site(site);
@@ -6888,7 +6904,7 @@ pub(crate) mod tests {
             let selected = api::game_data::for_revision(client::io::ClientRevision::R289)
                 .expect("embedded R289 selected game data");
             let all_bank_accesses = bank_accesses(world, &selected);
-            let mut state = nav::world_state::WorldState::empty().with_map_members(true);
+            let mut state = nav_planner::world_state::WorldState::empty().with_map_members(true);
             state.stats = (0..=20).map(|skill| (skill, 99)).collect();
             let mut site_audit = Vec::<SiteAudit>::new();
             let mut exclusions = Vec::<SiteExclusion>::new();

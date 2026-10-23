@@ -888,7 +888,7 @@ impl Grinch {
                         candidate_goals: None,
                         loc_id: None,
                         radius: 0,
-                        arrival: nav::contract::ArrivalKind::Reach,
+                        arrival: nav_planner::contract::ArrivalKind::Reach,
                         options: WalkOptions::default(),
                         required_after: tick.cx.evidence(),
                         evidence: None,
