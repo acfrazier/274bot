@@ -5967,6 +5967,18 @@
       "owner": "T1"
     },
     {
+      "path": "tools/live-map/README.md",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/live-map/live_map.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/live-map/map.toml",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/cellar-pull-windows.sh",
       "owner": "T1"
     },
