@@ -2035,9 +2035,15 @@ mod tests {
     }
 
     #[test]
-    fn replay_and_guard_agree_poisoned() {
+    fn replay_line_exceeds_guard_line_on_quiet_poison() {
+        // One quiet poisoned case for both real decision paths: a six-damage
+        // fire with no attacker. This replaces `replay_and_guard_agree_poisoned`,
+        // which supplied its own replay danger and never called the replay.
+        // The paths do not agree: the guard charges the fire onto its own
+        // base line, while the replay folds the fire into a more
+        // conservative no-crossing line of its own.
         let mut scene = Scene::new(43);
-        scene.stats[3].effective = 7;
+        scene.stats[3].effective = 8;
         scene.add_food("lobster", 0, 1);
         scene.set_poisoned(6);
         let poison_fire = crate::survival::math::poison_fire(
@@ -2046,18 +2052,118 @@ mod tests {
             &scene.tables,
             0,
         );
-        assert_eq!(poison_fire, 6);
-        // The guard path passes danger Some(0) and the fire. Its line is 7.
-        assert!(eat_at(&scene, Some(0), poison_fire, 7, 40).is_some());
-        assert_eq!(eat_at(&scene, Some(0), poison_fire, 8, 40), None);
-        // The replay folds the same fire into its own line of 7, passes that
-        // line as danger 7 / 2 = 3, and passes no second fire. Same line.
-        assert!(eat_at(&scene, Some(3), 0, 7, 40).is_some());
-        assert_eq!(eat_at(&scene, Some(3), 0, 8, 40), None);
-        // The guard itself eats at HP 7 on this quiet poisoned tick.
-        let mut guard = scene.begin().unwrap();
+        assert_eq!(poison_fire, 6, "one six-damage fire is due");
+
+        // The replay's line from its own no-crossing path: `eat_line` returns
+        // `2 * poison_pulse_now + 1` when no crossing lies inside the top-up
+        // window (`combat/risk/replay.rs:391-400`). A marked six-damage poison
+        // has a pulse of 6 (`replay.rs:212-222`), so the line is 2 * 6 + 1 = 13.
+        let lease = crate::gatherer::select::tests::test_nav_lease(|_| {});
+        let route = nav::router::Route {
+            legs: vec![nav::router::Leg::Walk {
+                tiles: (10..=20).map(|x| tile(x, 100)).collect(),
+            }],
+            dest: tile(20, 100),
+            ticks: 0.0,
+        };
+        let path =
+            crate::combat::risk::RoutePath::new(nav::producer::route_view(&lease, &route).unwrap())
+                .unwrap();
+        let plan = crate::combat::risk::RoutePlan::default();
+        let mut input = crate::combat::risk::RiskInput {
+            hp: 8,
+            hp_max: 40,
+            pos: tile(10, 100),
+            poison: api::condition::PoisonState::Poisoned {
+                per_tick: 6,
+                last_mark: 0,
+                hit_since_mark: false,
+            },
+            food_len: 1,
+            // `RiskInput::default()` marks the capture incomplete; this scene
+            // is a complete quiet observation.
+            missing_facts: false,
+            unattributed: false,
+            input_locked: false,
+            overflow: false,
+            ..crate::combat::risk::RiskInput::default()
+        };
+        input.food_ids[0] = food_id("lobster");
+        input.food_counts[0] = 1;
+        let line = crate::combat::risk::eat_line(
+            path,
+            &plan,
+            0,
+            &input,
+            &scene.tables,
+            crate::native::WalkAllow::default(),
+        )
+        .unwrap();
+        assert_eq!(line, 13, "the replay's own quiet poison line");
+
+        // The real replay loop's eat decision (`replay.rs:801-841`) calls
+        // `eat_choice` with `danger = Some(line / 2) = Some(6)` and the
+        // `poison_fire` argument 0, because its own line already charged the
+        // fire. The tick-0 fire lands before the decision (`replay.rs:746-752`).
+        let replay_bites = |hp: u8| {
+            let mut input = input;
+            input.hp = hp;
+            let mut bites = Vec::new();
+            let result = crate::combat::risk::replay(
+                path,
+                &plan,
+                &input,
+                &scene.tables,
+                crate::native::WalkAllow::default(),
+                None,
+                |tick, _, _, _, bite| {
+                    if let Some(id) = bite {
+                        bites.push((tick, id));
+                    }
+                },
+            )
+            .unwrap();
+            assert!(result.passed, "a one-fire quiet route passes at HP {hp}");
+            (result.hp_after, bites)
+        };
+        // At HP 8 the tick-0 fire leaves 2, below the replay's line 13: it
+        // bites on the first tick.
+        assert_eq!(
+            replay_bites(8).1,
+            vec![(0, food_id("lobster"))],
+            "the replay's line 13 permits a bite at HP 8"
+        );
+        // HP 19 -> 13 after the fire still bites; HP 20 -> 14 does not.
+        assert_eq!(replay_bites(19).1, vec![(0, food_id("lobster"))]);
+        assert_eq!(
+            replay_bites(20).1,
+            Vec::new(),
+            "a second charge of the fire would raise the line to 19 and bite at 14"
+        );
+
+        // The guard's line for the same case is `lines(danger) + p`
+        // (`combat/guard.rs:454-470` passes the observed danger and the fire
+        // to the shared helper): base line 1 plus the six-damage fire is 7.
+        assert_eq!(select::lines(Some(0), 40).with_poison(poison_fire).eat, 7);
+        let mut at_eight = Scene::new(43);
+        at_eight.stats[3].effective = 8;
+        at_eight.add_food("lobster", 0, 1);
+        at_eight.set_poisoned(6);
+        let mut guard = at_eight.begin().unwrap();
+        assert_eq!(
+            guard.tick(&at_eight.view_at(0), at_eight.condition()),
+            None,
+            "the guard's line 7 rejects a bite at HP 8"
+        );
+        let mut at_seven = Scene::new(43);
+        at_seven.stats[3].effective = 7;
+        at_seven.add_food("lobster", 0, 1);
+        at_seven.set_poisoned(6);
+        let mut guard = at_seven.begin().unwrap();
         assert_eat(
-            guard.tick(&scene.view_at(0), scene.condition()).as_ref(),
+            guard
+                .tick(&at_seven.view_at(0), at_seven.condition())
+                .as_ref(),
             "Lobster",
         );
     }
