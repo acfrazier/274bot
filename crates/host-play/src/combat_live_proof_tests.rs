@@ -333,10 +333,9 @@ impl Case {
             Self::M1HandIn | Self::M5 | Self::M5Stop => Duration::from_secs(1_200),
             Self::M2 | Self::M3 | Self::M6 | Self::R1 | Self::R3 => Duration::from_secs(900),
             Self::M4 | Self::R2 => Duration::from_secs(300),
-            Self::M0Manual
-            | Self::M0ManualPaused
-            | Self::S2InPlace
-            | Self::S2InPlacePaused => Duration::from_secs(600),
+            Self::M0Manual | Self::M0ManualPaused | Self::S2InPlace | Self::S2InPlacePaused => {
+                Duration::from_secs(600)
+            }
             Self::MageAuto | Self::MageManualFallback | Self::MageManualNoFallback => {
                 Duration::from_secs(900)
             }
@@ -912,29 +911,11 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
         .ok_or_else(|| "combat live proof requires a per-run BOT_CACHE_DIR clone".to_owned())?;
-    if std::env::var_os("BOT_GAME_HOST").is_some() {
-        // The operator selects Engine C explicitly. Permission stays inside
-        // this run's disposable HOME, never in an operator profile.
-        let mut servers = super::Servers::builtins();
-        servers
-            .servers
-            .iter_mut()
-            .find(|profile| profile.name == "local-289")
-            .expect("built-in local-289 profile")
-            .allow_plaintext_offhost = true;
-        let bot_dir = home.join(".274bot");
-        std::fs::create_dir_all(&bot_dir).map_err(|error| error.to_string())?;
-        std::fs::write(
-            bot_dir.join("servers.json"),
-            serde_json::to_vec(&servers).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-    }
     Ok(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
-        host: Some(std::env::var("BOT_GAME_HOST").unwrap_or_else(|_| "127.0.0.1".into())),
-        asset_host: Some(std::env::var("BOT_ASSET_HOST").unwrap_or_else(|_| "127.0.0.1".into())),
+        host: Some("127.0.0.1".into()),
+        asset_host: Some("127.0.0.1".into()),
         port: Some(port),
         http_port: Some(http_port),
         vault_path: Some(home.join("vault")),
@@ -5411,7 +5392,10 @@ impl M0Drive {
             })
             .unwrap_or((false, false, false));
         if case.is_s2()
-            && (slot_live || !native_owner || api_session || before_host["native_walk_live"] != false)
+            && (slot_live
+                || !native_owner
+                || api_session
+                || before_host["native_walk_live"] != false)
         {
             return Ok(());
         }
@@ -8527,13 +8511,13 @@ fn live_combat_m0_manual_movement_pause_restarts_quester_combat_step() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1 and Engine C at 600 ms"]
+#[ignore = "requires LIVE=1 and Engine A on loopback at 600 ms"]
 fn live_s2_inplace_manual_takeover_ends_step_once() {
     run_case(Case::S2InPlace);
 }
 
 #[test]
-#[ignore = "requires LIVE=1 and Engine C at 600 ms"]
+#[ignore = "requires LIVE=1 and Engine A on loopback at 600 ms"]
 fn live_s2_inplace_manual_takeover_pause_restarts_step() {
     run_case(Case::S2InPlacePaused);
 }
@@ -12223,7 +12207,9 @@ fn m0_runner_failure_follows_the_recorded_cause_not_the_read_time() {
 fn s2_oracle_requires_in_place_facts_at_the_takeover_decision() {
     for paused in [false, true] {
         let mut capture = m0_oracle_capture(paused);
-        assert!(!s2_takeover_valid(m0_event(&capture, "M0Takeover").unwrap()));
+        assert!(!s2_takeover_valid(
+            m0_event(&capture, "M0Takeover").unwrap()
+        ));
         let event = m0_event_mut(&mut capture, "M0Takeover");
         event["slot_live_walking_operation"] = json!(false);
         event["slot_live_native_owner"] = json!(true);
@@ -12235,11 +12221,12 @@ fn s2_oracle_requires_in_place_facts_at_the_takeover_decision() {
         event["decision_line"] = json!(line);
         let ready = if paused { paused_ready } else { manual_ready };
         assert!(ready(&capture, s2_takeover_valid));
-        for field in M0_HOST_WALK_WORK
-            .iter()
-            .copied()
-            .chain(["live_walking_operation", "native_walk_live", "api_session", "active_walk"])
-        {
+        for field in M0_HOST_WALK_WORK.iter().copied().chain([
+            "live_walking_operation",
+            "native_walk_live",
+            "api_session",
+            "active_walk",
+        ]) {
             m0_event_mut(&mut capture, "M0Takeover")["decision_line"] =
                 json!(line.replace(&format!("{field}=false"), &format!("{field}=true")));
             assert!(!ready(&capture, s2_takeover_valid), "decision {field}");
@@ -12255,13 +12242,11 @@ fn s2_oracle_rejects_recorded_m0_walking_receipts() {
     for path in std::env::split_paths(&paths) {
         let receipt: Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read M0 receipt")).unwrap();
-        let capture = CombatCapture {
-            frames: serde_json::from_value(receipt["frames"].clone()).unwrap(),
-            statuses: serde_json::from_value(receipt["statuses"].clone()).unwrap(),
-            actions: serde_json::from_value(receipt["actions"].clone()).unwrap(),
-            random_events: serde_json::from_value(receipt["random_events"].clone()).unwrap(),
-            ..Default::default()
-        };
+        let mut capture = CombatCapture::default();
+        capture.frames = serde_json::from_value(receipt["frames"].clone()).unwrap();
+        capture.statuses = serde_json::from_value(receipt["statuses"].clone()).unwrap();
+        capture.actions = serde_json::from_value(receipt["actions"].clone()).unwrap();
+        capture.random_events = serde_json::from_value(receipt["random_events"].clone()).unwrap();
         assert_eq!(
             m0_event(&capture, "M0Takeover").unwrap()["slot_live_walking_operation"],
             true,

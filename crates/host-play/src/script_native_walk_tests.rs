@@ -3981,10 +3981,7 @@ impl script::native::NativeMachine for InPlace {
         Ok(Self { command })
     }
 
-    fn poll(
-        &mut self,
-        _: &mut script::native::ActionContext<'_>,
-    ) -> Poll<Result<(), ActionError>> {
+    fn poll(&mut self, _: &mut script::native::ActionContext<'_>) -> Poll<Result<(), ActionError>> {
         if self.command.load(std::sync::atomic::Ordering::Relaxed) == 2 {
             Poll::Ready(Ok(()))
         } else {
@@ -4044,7 +4041,10 @@ struct TakeoverLog(Mutex<Vec<String>>);
 
 impl api::hostlog::Sink for TakeoverLog {
     fn record(&self, record: &api::hostlog::Record<'_>) {
-        if record.message.contains("walk outcome=cancelled reason=UserInput") {
+        if record
+            .message
+            .contains("walk outcome=cancelled reason=UserInput")
+        {
             self.0.lock().unwrap().push(record.message.to_owned());
         }
     }
@@ -4099,7 +4099,10 @@ fn takeover_with_pause_on_pauses_a_native_owner_without_a_walk() {
         true,
     ));
     assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
-    assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, before + 1);
+    assert_eq!(
+        rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+        before + 1
+    );
 }
 
 #[test]
@@ -4163,12 +4166,26 @@ fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     ));
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Paused);
     rig.observe(2);
-    assert_eq!(slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap(), ticks);
-    assert!(slot.lock().unwrap().seat_probe().is_none_or(|seat| seat.results == 0));
+    assert_eq!(
+        slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap(),
+        ticks
+    );
+    assert!(slot
+        .lock()
+        .unwrap()
+        .seat_probe()
+        .is_none_or(|seat| seat.results == 0));
     slot.lock().unwrap().resume();
     rig.observe(3);
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
-    assert!(slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap().as_u64() > ticks.as_u64());
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.s2Ticks")
+            .unwrap()
+            .as_u64()
+            > ticks.as_u64()
+    );
 }
 
 #[test]
@@ -4184,7 +4201,10 @@ fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
         1,
         false,
     ));
-    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Running);
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Running
+    );
     assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, before);
 }
 
@@ -5588,6 +5608,8 @@ fn s2b_admission_per_bot_layouts() {
     // Grinch's shared native progress and evidence-wait run fences add two
     // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
     // Neither fence retains a scene or allocates a per-bot heap payload.
+    // EVENT-RUNTIME-S2 adds one inline u64 consumed-takeover sequence:
+    // macOS SlotScript measures 4616 B (+8 B), with no new heap payload.
     // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
     // account to NavBot's retained QuestEvidence. The 3760 B pin has no headroom.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
@@ -5606,7 +5628,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4608, 512, 264)
+        (3760, 4616, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5621,7 +5643,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4488, 512, 264)
+        (3760, 4496, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

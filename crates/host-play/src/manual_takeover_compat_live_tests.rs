@@ -5,9 +5,7 @@
 //! Run each ignored cell in a separate process under the repository's `isohome`
 //! caller. Set `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `LIVE_EVIDENCE_DIR`,
 //! `BOT_ENGINE_DIR`, `BOT_NAV_PACK`, and a fresh per-run `BOT_CACHE_DIR` clone.
-//! `BOT_GAME_HOST` and `BOT_ASSET_HOST` default to `concord`; game and asset
-//! ports are fixed at 44594 and 1080. The test creates its off-host permission
-//! only in a one-run profile under the receipt directory.
+//! The cell uses Engine A on loopback: game port 44594 and asset port 1080.
 //!
 //! Example commands, with the environment above set by `isohome`:
 //!
@@ -17,6 +15,7 @@
 //! ```
 
 use super::*;
+use crate::profile::ProfileEnvironment;
 use api::snapshot::GameSnapshot;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -222,8 +221,8 @@ impl Receipt {
             },
             started_unix_ms,
             target: json!({
-                "game_host": env_or("BOT_GAME_HOST", "concord"),
-                "asset_host": env_or("BOT_ASSET_HOST", "concord"),
+                "game_host": "127.0.0.1",
+                "asset_host": "127.0.0.1",
                 "game_port": 44_594,
                 "http_port": 1_080,
                 "revision": 289,
@@ -253,7 +252,7 @@ struct LiveState {
     catalog: Arc<CatalogStart>,
     start_handle: Option<ScriptStartHandle>,
     scripts: Option<script_runtime::ScriptWall>,
-    navs: Option<Arc<StdMutex<HashMap<String, script_nav::NavBot>>>>,
+    navs: Option<Arc<StdMutex<HashMap<String, script_runtime::NavBot>>>>,
     start_requested: bool,
     start_ready: bool,
     callback: u64,
@@ -299,8 +298,15 @@ impl LiveState {
             .scripts
             .as_ref()
             .and_then(|scripts| script_runtime::script_slot(scripts, username));
-        let (script_state, want_run, load_active, live_native_owner, live_walking_operation, api_session) =
-            slot.and_then(|slot| {
+        let (
+            script_state,
+            want_run,
+            load_active,
+            live_native_owner,
+            live_walking_operation,
+            api_session,
+        ) = slot
+            .and_then(|slot| {
                 let slot = slot.lock().ok()?;
                 Some((
                     format!("{:?}", slot.state()),
@@ -353,10 +359,7 @@ impl LiveState {
                 .iter()
                 .find(|stat| stat.index == 17)
                 .map(|stat| stat.xp),
-            player_tile: self
-                .snapshot
-                .tile()
-                .map(|(x, z, level)| [x, z, level]),
+            player_tile: self.snapshot.tile().map(|(x, z, level)| [x, z, level]),
             ingame: client.ingame,
             scene_state: client.scene_state,
             hold: input.hold,
@@ -379,10 +382,9 @@ impl LiveState {
         hold: bool,
     ) -> Result<(), String> {
         if self.runner.on_start_script() && !self.start_ready {
-            let handle = self
-                .start_handle
-                .as_ref()
-                .ok_or_else(|| "scenario reached catalog Start before its host handle was installed".to_owned())?;
+            let handle = self.start_handle.as_ref().ok_or_else(|| {
+                "scenario reached catalog Start before its host handle was installed".to_owned()
+            })?;
             if !self.start_requested {
                 handle.start_load_with_loadouts(
                     &self.account,
@@ -430,17 +432,15 @@ struct CellFrames {
     post_action: FrameObservation,
 }
 
-fn env_or(name: &str, default: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| default.to_owned())
-}
-
-
 fn required_env_path(name: &str) -> Result<PathBuf, String> {
     let path = std::env::var_os(name)
         .map(PathBuf::from)
         .ok_or_else(|| format!("{name} must be explicitly supplied"))?;
     if !path.is_absolute() {
-        return Err(format!("{name} must be an absolute path: {}", path.display()));
+        return Err(format!(
+            "{name} must be an absolute path: {}",
+            path.display()
+        ));
     }
     Ok(path)
 }
@@ -450,7 +450,10 @@ fn canonical_directory(name: &str) -> Result<PathBuf, String> {
     let canonical = std::fs::canonicalize(&supplied)
         .map_err(|error| format!("resolve {name} {}: {error}", supplied.display()))?;
     if !canonical.is_dir() {
-        return Err(format!("{name} must be a directory: {}", canonical.display()));
+        return Err(format!(
+            "{name} must be a directory: {}",
+            canonical.display()
+        ));
     }
     Ok(canonical)
 }
@@ -491,8 +494,10 @@ fn find_json_object<'a>(
 }
 
 fn frozen_catalog() -> Result<FrozenCatalog, String> {
-    let matrix: Value = serde_json::from_str(include_str!("../tests/fixtures/catalog-support-matrix.json"))
-        .map_err(|error| format!("parse frozen catalog support matrix: {error}"))?;
+    let matrix: Value = serde_json::from_str(include_str!(
+        "../tests/fixtures/catalog-support-matrix.json"
+    ))
+    .map_err(|error| format!("parse frozen catalog support matrix: {error}"))?;
     let catalog = find_json_object(&matrix, &|object| {
         object.get("commit").and_then(Value::as_str) == Some(CATALOG_COMMIT)
     })
@@ -537,17 +542,15 @@ fn frozen_catalog() -> Result<FrozenCatalog, String> {
     if !source.starts_with(&root) || !registry.starts_with(&root) {
         return Err("frozen catalog paths escape the selected read-only root".to_owned());
     }
-    let actual_source_sha256 = script::JsCache::origin_sha(
-        &std::fs::read(&source).map_err(|error| error.to_string())?,
-    );
+    let actual_source_sha256 =
+        script::JsCache::origin_sha(&std::fs::read(&source).map_err(|error| error.to_string())?);
     if actual_source_sha256 != source_sha256 {
         return Err(format!(
             "frozen Thiever source identity changed: expected {source_sha256}, got {actual_source_sha256}"
         ));
     }
-    let actual_registry_sha256 = script::JsCache::origin_sha(
-        &std::fs::read(&registry).map_err(|error| error.to_string())?,
-    );
+    let actual_registry_sha256 =
+        script::JsCache::origin_sha(&std::fs::read(&registry).map_err(|error| error.to_string())?);
     if actual_registry_sha256 != registry_sha256 {
         return Err(format!(
             "frozen catalog registry identity changed: expected {registry_sha256}, got {actual_registry_sha256}"
@@ -625,7 +628,7 @@ fn catalog_start(
     Ok(CatalogStart {
         source: card.js,
         shape: card.shape,
-        settings_bag,
+        settings_bag: Some(settings_bag),
         siblings,
         loadouts,
     })
@@ -637,28 +640,11 @@ fn profile_options(
 ) -> Result<(ProfileOptions, ProfileEnvironment, Value), String> {
     let engine_dir = canonical_directory("BOT_ENGINE_DIR")?;
     let nav_pack = canonical_file("BOT_NAV_PACK")?;
+    let cache_dir = canonical_directory("BOT_CACHE_DIR")?;
+    let game_host = "127.0.0.1".to_owned();
+    let asset_host = game_host.clone();
     let game_port = 44_594;
     let http_port = 1_080;
-
-    let mut servers = Servers::builtins();
-    servers
-        .servers
-        .iter_mut()
-        .find(|profile| profile.name == "local-289")
-        .ok_or("built-in local-289 profile is missing")?
-        .allow_plaintext_offhost = true;
-    let bot_dir = home.join(".274bot");
-    std::fs::create_dir_all(&bot_dir).map_err(|error| error.to_string())?;
-    let servers_path = bot_dir.join("servers.json");
-    let mut servers_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&servers_path)
-        .map_err(|error| format!("create one-run profile {}: {error}", servers_path.display()))?;
-    servers_file
-        .write_all(&serde_json::to_vec(&servers).map_err(|error| error.to_string())?)
-        .and_then(|()| servers_file.sync_all())
-        .map_err(|error| format!("write one-run profile {}: {error}", servers_path.display()))?;
 
     let options = ProfileOptions {
         profile: Some("local-289".to_owned()),
@@ -691,19 +677,10 @@ fn profile_options(
         "nav_pack": nav_pack,
         "cache_dir": cache_dir,
         "one_run_home": home,
-        "allow_plaintext_offhost": true,
+        "allow_plaintext_offhost": false,
     });
     Ok((options, environment, facts))
 }
-
-fn nonempty_env_or(name: &str, default: &str) -> Result<String, String> {
-    let value = std::env::var(name).unwrap_or_else(|_| default.to_owned());
-    if value.trim().is_empty() {
-        return Err(format!("{name} cannot be empty"));
-    }
-    Ok(value)
-}
-
 
 fn host_lines_for(account: &str) -> Vec<HostLine> {
     HOST_LINES
@@ -794,10 +771,7 @@ fn no_live_owner_or_walk(frame: &FrameObservation) -> Result<(), String> {
     if frame.api_session != Some(false) {
         return Err("frame does not prove api_session=false".to_owned());
     }
-    let nav = frame
-        .nav
-        .as_ref()
-        .ok_or("frame has no navigation facts")?;
+    let nav = frame.nav.as_ref().ok_or("frame has no navigation facts")?;
     if !nav.no_walking_facts() {
         return Err("frame contains a live native, route, or carried-walk fact".to_owned());
     }
@@ -819,33 +793,52 @@ fn paused_frame_oracle(
     if before.callback >= click.callback {
         return Err("the viewport click did not follow the pre-click observation".to_owned());
     }
-    if before.script_state.as_deref() != Some("Running") || click.script_state.as_deref() != Some("Paused") {
+    if before.script_state.as_deref() != Some("Running")
+        || click.script_state.as_deref() != Some("Paused")
+    {
         return Err("the same-frame script states are not Running then Paused".to_owned());
     }
     if before.manual_move_intent.is_some() {
         return Err("the pre-click observation already contains manual input".to_owned());
     }
     if click.manual_move_intent.as_deref() != Some("Viewport") || click.manual_steps != 0 {
-        return Err("takeover did not follow exactly one world-view click and zero WireCmd Walk steps".to_owned());
+        return Err(
+            "takeover did not follow exactly one world-view click and zero WireCmd Walk steps"
+                .to_owned(),
+        );
     }
     if before.load_active != Some(true) || click.load_active != Some(true) {
-        return Err("the observed compatibility Load was not active before and after takeover".to_owned());
+        return Err(
+            "the observed compatibility Load was not active before and after takeover".to_owned(),
+        );
     }
     no_live_owner_or_walk(before)?;
     no_live_owner_or_walk(click)?;
-    let before_nav = before.nav.as_ref().ok_or("pre-click frame has no nav counters")?;
-    let click_nav = click.nav.as_ref().ok_or("click frame has no nav counters")?;
+    let before_nav = before
+        .nav
+        .as_ref()
+        .ok_or("pre-click frame has no nav counters")?;
+    let click_nav = click
+        .nav
+        .as_ref()
+        .ok_or("click frame has no nav counters")?;
     if click_nav.user_move_intent_seq != before_nav.user_move_intent_seq.saturating_add(1) {
-        return Err("one viewport click did not increment the user intent sequence once".to_owned());
+        return Err(
+            "one viewport click did not increment the user intent sequence once".to_owned(),
+        );
     }
     if click_nav.walk_outcome_seq != before_nav.walk_outcome_seq.saturating_add(1) {
         return Err("the paused takeover did not publish exactly one walk outcome".to_owned());
     }
     if facts.source != "Some(Viewport)" || facts.manual_steps != 0 {
-        return Err("host line does not cite one viewport click and zero manual walk steps".to_owned());
+        return Err(
+            "host line does not cite one viewport click and zero manual walk steps".to_owned(),
+        );
     }
     if facts.intent_seq != click_nav.user_move_intent_seq {
-        return Err("host line intent sequence does not match the same-frame nav observation".to_owned());
+        return Err(
+            "host line intent sequence does not match the same-frame nav observation".to_owned(),
+        );
     }
     if !facts.live_work
         || facts.active_walk
@@ -856,13 +849,19 @@ fn paused_frame_oracle(
         || !facts.pause_owner
         || !facts.routes.no_walking_facts()
     {
-        return Err("host line does not prove a Load-only pause with every walking fact inactive".to_owned());
+        return Err(
+            "host line does not prove a Load-only pause with every walking fact inactive"
+                .to_owned(),
+        );
     }
     if click.live_native_owner != Some(false)
         || click.live_walking_operation != Some(false)
         || click.api_session != Some(false)
     {
-        return Err("same-frame observation has a native owner, walking operation, or input API session".to_owned());
+        return Err(
+            "same-frame observation has a native owner, walking operation, or input API session"
+                .to_owned(),
+        );
     }
     Ok(facts)
 }
@@ -891,7 +890,9 @@ fn paused_oracle(
         || after_resume.script_state.as_deref() != Some("Running")
         || after_resume.load_active != Some(true)
     {
-        return Err("Resume did not return the compatibility script to Running on a later tick".to_owned());
+        return Err(
+            "Resume did not return the compatibility script to Running on a later tick".to_owned(),
+        );
     }
     no_live_owner_or_walk(after_resume)?;
     let pause_xp = click
@@ -912,12 +913,11 @@ fn pause_off_oracle(
     click: &FrameObservation,
     after_click: &FrameObservation,
 ) -> Result<(), String> {
-    let candidates = lines
-        .iter()
-        .filter(|line| is_takeover_line(line))
-        .count();
+    let candidates = lines.iter().filter(|line| is_takeover_line(line)).count();
     if candidates != 0 {
-        return Err(format!("Pause-off cell emitted {candidates} takeover lines"));
+        return Err(format!(
+            "Pause-off cell emitted {candidates} takeover lines"
+        ));
     }
     if before.callback >= click.callback
         || before.script_state.as_deref() != Some("Running")
@@ -927,14 +927,24 @@ fn pause_off_oracle(
         || before.load_active != Some(true)
         || click.load_active != Some(true)
     {
-        return Err("Pause-off click did not leave the active compatibility script Running".to_owned());
+        return Err(
+            "Pause-off click did not leave the active compatibility script Running".to_owned(),
+        );
     }
     no_live_owner_or_walk(before)?;
     no_live_owner_or_walk(click)?;
-    let before_nav = before.nav.as_ref().ok_or("pre-click frame has no nav counters")?;
-    let click_nav = click.nav.as_ref().ok_or("click frame has no nav counters")?;
+    let before_nav = before
+        .nav
+        .as_ref()
+        .ok_or("pre-click frame has no nav counters")?;
+    let click_nav = click
+        .nav
+        .as_ref()
+        .ok_or("click frame has no nav counters")?;
     if click_nav.user_move_intent_seq != before_nav.user_move_intent_seq.saturating_add(1) {
-        return Err("one viewport click did not increment the user intent sequence once".to_owned());
+        return Err(
+            "one viewport click did not increment the user intent sequence once".to_owned(),
+        );
     }
     if click_nav.walk_outcome_seq != before_nav.walk_outcome_seq {
         return Err("Pause-off click changed the walk outcome sequence".to_owned());
@@ -963,7 +973,9 @@ fn pause_off_oracle(
         .thieving_xp
         .ok_or("post-click observation has no Thieving XP")?;
     if after_xp <= click_xp {
-        return Err("registered Thiever produced no new Thieving XP after the Pause-off click".to_owned());
+        return Err(
+            "registered Thiever produced no new Thieving XP after the Pause-off click".to_owned(),
+        );
     }
     Ok(())
 }
@@ -1014,7 +1026,10 @@ fn run_live_sequence(
         let observation = match frame_rx.recv_timeout(remaining) {
             Ok(frame) => frame,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                return Err(format!("live cell exceeded its fixed {} second deadline", LIVE_DEADLINE.as_secs()));
+                return Err(format!(
+                    "live cell exceeded its fixed {} second deadline",
+                    LIVE_DEADLINE.as_secs()
+                ));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err("live slot frame observer disconnected".to_owned());
@@ -1024,6 +1039,7 @@ fn run_live_sequence(
         if !click_sent
             && observation.script_state.as_deref() == Some("Running")
             && observation.load_active == Some(true)
+            && no_live_owner_or_walk(&observation).is_ok()
         {
             let xp = observation
                 .thieving_xp
@@ -1053,7 +1069,9 @@ fn run_live_sequence(
             }
             click = Some(observation.clone());
             if pause_on {
-                let before = pre_click.as_ref().ok_or("click has no pre-click observation")?;
+                let before = pre_click
+                    .as_ref()
+                    .ok_or("click has no pre-click observation")?;
                 let lines = host_lines_for(account);
                 let line = same_frame_host_line(&lines, &observation)?;
                 paused_frame_oracle(&line, before, &observation)?;
@@ -1082,7 +1100,10 @@ fn run_live_sequence(
             }
         }
     }
-    Err(format!("live cell exceeded its fixed {} second deadline", LIVE_DEADLINE.as_secs()))
+    Err(format!(
+        "live cell exceeded its fixed {} second deadline",
+        LIVE_DEADLINE.as_secs()
+    ))
 }
 
 fn run_cell(pause_on: bool) {
@@ -1091,7 +1112,10 @@ fn run_cell(pause_on: bool) {
         .filter(|path| path.is_absolute())
         .unwrap_or_else(|| panic!("LIVE_EVIDENCE_DIR must be an absolute output directory"));
     std::fs::create_dir_all(&evidence_dir).unwrap_or_else(|error| {
-        panic!("create LIVE_EVIDENCE_DIR {}: {error}", evidence_dir.display())
+        panic!(
+            "create LIVE_EVIDENCE_DIR {}: {error}",
+            evidence_dir.display()
+        )
     });
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1111,9 +1135,15 @@ fn run_cell(pause_on: bool) {
         receipt.failure = Some(error.clone());
     }
     if let Err(error) = write_receipt(&receipt_path, &receipt) {
-        result = Err(format!("write JSON receipt {}: {error}", receipt_path.display()));
+        result = Err(format!(
+            "write JSON receipt {}: {error}",
+            receipt_path.display()
+        ));
     }
-    println!("manual-takeover-compat-evidence-json={}", receipt_path.display());
+    println!(
+        "manual-takeover-compat-evidence-json={}",
+        receipt_path.display()
+    );
     if let Err(error) = result {
         panic!("{}: {error}", receipt.cell);
     }
@@ -1154,7 +1184,9 @@ fn run_cell_inner(pause_on: bool, run_dir: &Path, receipt: &mut Receipt) -> Resu
     }));
     let scenario = scenario::get("thiever").ok_or("scenario::get(\"thiever\") returned None")?;
     if scenario.name != "thiever" || scenario.settings.start_script != Some(CATALOG_NAME) {
-        return Err("scenario::get(\"thiever\") did not return the original Thiever scenario".to_owned());
+        return Err(
+            "scenario::get(\"thiever\") did not return the original Thiever scenario".to_owned(),
+        );
     }
     let settings_inject = scenario::settings_inject_map(scenario.settings.script_settings_inject);
     let catalog = Arc::new(catalog_start(&scenario, &frozen, &scratch)?);
@@ -1162,13 +1194,15 @@ fn run_cell_inner(pause_on: bool, run_dir: &Path, receipt: &mut Receipt) -> Resu
         "registry_scenario": scenario.name,
         "start_script": scenario.settings.start_script,
         "settings_inject": settings_inject,
-        "fixture_loadouts": scenario.settings.fixture_loadouts.unwrap_or(&[]),
+        "fixture_loadouts": scenario.settings.fixture_loadouts.unwrap_or(&[])
+            .iter()
+            .map(|row| json!({"name": row.name, "carry": row.carry}))
+            .collect::<Vec<_>>(),
         "original_deadline_seconds": scenario.settings.deadline.as_secs(),
         "fixed_cell_deadline_seconds": LIVE_DEADLINE.as_secs(),
         "proof": format!("{:?}", scenario.proof),
     }));
-    let (options, mut profile_environment, profile_facts) =
-        profile_options(&home, &frozen.root)?;
+    let (options, mut profile_environment, profile_facts) = profile_options(&home, &frozen.root)?;
     profile_environment.home = Some(home.clone());
     receipt.profile = Some(profile_facts);
     let template = options
@@ -1199,7 +1233,7 @@ fn run_cell_inner(pause_on: bool, run_dir: &Path, receipt: &mut Receipt) -> Resu
     let frame_live = Arc::clone(&live);
     let frame_account = account.clone();
     let frame_sender = frame_tx.clone();
-    let slot_input = Arc::new(host::SlotInput::new());
+    let slot_input = host::SlotInput::new();
     slot_input.set_enabled(true);
     let (click_tx, input_rx) = mpsc::channel();
     slot_input.connect_rx(input_rx);
@@ -1339,7 +1373,14 @@ fn fixture_takeover_message() -> String {
     "walk outcome=cancelled reason=UserInput request=0 generation=0 intent_seq=1 source=Some(Viewport) manual_steps=0 tick=41 live_work=true active_walk=false live_native_owner=false live_walking_operation=false api_session=false load_active=true pause_owner=true native_walk_live=false walk_work_live=false route=false compact_route=false has_route=false pending_route=false route_ticket=false route_work_pending=false bank_fetch=false carried_walk=false".to_owned()
 }
 
-fn fixture_frame(callback: u64, tick: u32, state: &str, xp: i32, intent: u64, outcome: u64) -> FrameObservation {
+fn fixture_frame(
+    callback: u64,
+    tick: u32,
+    state: &str,
+    xp: i32,
+    intent: u64,
+    outcome: u64,
+) -> FrameObservation {
     FrameObservation {
         callback,
         host_tick: Some(tick),
@@ -1362,13 +1403,13 @@ fn fixture_frame(callback: u64, tick: u32, state: &str, xp: i32, intent: u64, ou
 }
 
 #[test]
-#[ignore = "requires LIVE=1, own live account, and headed Engine C concord at 600 ms"]
+#[ignore = "requires LIVE=1, an owned live account, and Engine A on loopback at 600 ms"]
 fn compat_thiever_pauses_on_viewport_click() {
     run_cell(true);
 }
 
 #[test]
-#[ignore = "requires LIVE=1, own live account, and headed Engine C concord at 600 ms"]
+#[ignore = "requires LIVE=1, an owned live account, and Engine A on loopback at 600 ms"]
 fn compat_thiever_pause_off_keeps_running() {
     run_cell(false);
 }

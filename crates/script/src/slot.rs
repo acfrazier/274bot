@@ -2490,12 +2490,10 @@ impl SlotScript {
     }
     /// A live native ledger owner, including work that acts in place.
     pub fn live_native_owner(&self) -> bool {
-        self.native_runtime.ledger.as_ref().is_some_and(|ledger| {
-            ledger
-                .owner
-                .as_ref()
-                .is_some_and(|owner| owner.live())
-        })
+        self.native_runtime
+            .ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.owner.as_ref().is_some_and(|owner| owner.live()))
     }
 
     /// Live work a manual movement takes over: a walking operation, a live

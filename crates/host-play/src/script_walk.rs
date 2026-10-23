@@ -530,7 +530,9 @@ pub(crate) fn take_manual_walk_ownership(
             .as_ref()
             .is_some_and(|slot| slot.want_run && slot.state() == script::RunState::Running);
     let live_native_owner = slot.as_ref().is_some_and(|slot| slot.live_native_owner());
-    let live_walking_operation = slot.as_ref().is_some_and(|slot| slot.live_walking_operation());
+    let live_walking_operation = slot
+        .as_ref()
+        .is_some_and(|slot| slot.live_walking_operation());
     let api_session = slot
         .as_ref()
         .is_some_and(|slot| slot.api_session_takes_manual_input());
