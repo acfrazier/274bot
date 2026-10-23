@@ -1238,7 +1238,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
     let mut guard =
         crate::combat::WalkGuard::begin_with(&request, &snapshot, Arc::clone(&scene.tables))
             .expect("Guard starts with level 43 Prayer");
-    let guard_op = guard.tick(&snapshot);
+    let guard_op = guard.tick(&snapshot, None);
     let expected_button = scene
         .data
         .prayer_by_name("Protect from Missiles")
